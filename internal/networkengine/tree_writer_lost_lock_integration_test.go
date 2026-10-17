@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -373,4 +374,31 @@ func TestTreeWriter_APlacementAfterALockLostBeforeItsAppendLeavesTheTreeWritable
 		TreeID: tree, UserID: y, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(8 * time.Hour)})
 	assert.NoError(t, nextErr, "a placement under the root after the first writer's attempt")
 	assert.NoError(t, next.ProjectionErr)
+}
+
+func TestTreeWriter_ARemovalProjectedAtTheVersionAnotherWriterReachedReportsWhatItObserved(t *testing.T) {
+	it := newWriterIntegration(t)
+	ctx := context.Background()
+	tree, root, a, b, c := testTreeUUID(315), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4)
+	it.buildSponsorChain(t, tree, root, a, b, c)
+
+	var load LoadResult
+	var loadErr error
+	events := &lockKillingEvents{EventStore: it.events, t: t, pool: it.pool, meanwhile: func() {
+		load, loadErr = it.writer(t).Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeUnilevel})
+	}}
+	first, firstErr := NewTreeWriter(events, it.store, NewMemorySnapshotStore(), it.engine(t), NewPostgresTreeLocker(it.dsn)).
+		Remove(ctx, RemoveRequest{TreeID: tree, UserID: b, RemovedAt: writeTime.Add(4 * time.Hour)})
+
+	require.NoError(t, firstErr)
+	require.NoError(t, loadErr)
+	require.NotNil(t, load.CaughtUp, "the load reported no caught-up event")
+	assert.Equal(t, first.EventID, load.CaughtUp.EventID)
+	assert.Equal(t, &ProjectionObservation{Version: 5, Found: true}, load.ProjectedAfter)
+	assert.Equal(t, int64(5), first.Version)
+	var refused *ProjectionRefusedError
+	assert.False(t, errors.As(first.ProjectionErr, &refused), "the first writer's projection returned %v", first.ProjectionErr)
+	assert.ErrorContains(t, first.ProjectionErr, "tombstoning removed users ["+b+"] in tree "+tree+" matched 0 of 1 active rows")
+	assert.Equal(t, &ProjectionObservation{Version: 5, Found: true}, first.Observed)
+	assert.Equal(t, map[string]string{root: root, a: root, c: a}, activeSponsors(t, it.store, tree))
 }

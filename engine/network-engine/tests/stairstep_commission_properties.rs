@@ -854,8 +854,8 @@ fn stairstep_walk_two_amounts_do_not_depend_on_snapshot_map_order() {
     );
 }
 
-/// The same five nodes as `heu_936_chain`, but placed so that id order differs
-/// from depth order: 0, then 1, 4, 2 and 3 going down.
+/// Five nodes in a chain, placed so that id order differs from depth order:
+/// 0, then 1, 4, 2 and 3 going down.
 fn heu_936_permuted_chain() -> UnilevelTree {
     let order = [0, 1, 4, 2, 3];
     let mut tree = UnilevelTree::new();

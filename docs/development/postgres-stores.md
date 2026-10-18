@@ -54,10 +54,9 @@ like that, the shared body covers what both twins promise. Tests that run only
 against Postgres cover what the memory twin cannot promise. They are not for a
 behaviour that is merely awkward to share.
 
-Some existing pairs are not under the rule yet. The qualification history store
-and the tree lockers have no shared body. HEU-938 and HEU-939 add one. The event
-store shares bodies for some behaviours and tests the rest per twin. HEU-941
-moves the rest into shared bodies.
+Some existing pairs are not under the rule yet. The tree lockers have no shared
+body. HEU-939 adds one. The event store shares bodies for some behaviours and
+tests the rest per twin. HEU-941 moves the rest into shared bodies.
 
 ## pgx sends only a nil slice as SQL NULL
 

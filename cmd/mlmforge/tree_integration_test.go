@@ -204,8 +204,7 @@ func TestTreeLoad_ReadsTheStoredRows(t *testing.T) {
 	tree := testTreeID(4)
 
 	orphan, absent := testUserID(11), testUserID(12)
-	// Stands in for the row a projected placement writes, with no projection
-	// row beside it.
+	// One active row for the orphan, with no projection row beside it.
 	_, err := pool.Exec(t.Context(), `INSERT INTO tree_nodes
 		(id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at,
 		 created_at, updated_at, removed_at, removed_by_event_id)

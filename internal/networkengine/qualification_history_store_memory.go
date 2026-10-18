@@ -69,8 +69,8 @@ func (s *MemoryQualificationHistoryStore) SaveResult(_ context.Context, periodID
 		s.rows[memQualKey{PeriodID: periodID, UserID: e.UserID}] = QualificationHistoryRow{
 			PeriodID:    periodID,
 			UserID:      e.UserID,
-			Rank:        e.Rank,
-			Ordinal:     e.Ordinal,
+			Rank:        clonePtr(e.Rank),
+			Ordinal:     clonePtr(e.Ordinal),
 			EvaluatedAt: now,
 		}
 	}
@@ -88,7 +88,7 @@ func (s *MemoryQualificationHistoryStore) GetByPeriod(_ context.Context, periodI
 	var out []QualificationHistoryRow
 	for k, v := range s.rows {
 		if k.PeriodID == periodID {
-			out = append(out, v)
+			out = append(out, cloneHistoryRow(v))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -115,7 +115,7 @@ func (s *MemoryQualificationHistoryStore) GetByUserAndPeriodRange(_ context.Cont
 		if k.PeriodID < fromPeriod || k.PeriodID > toPeriod {
 			continue
 		}
-		out = append(out, v)
+		out = append(out, cloneHistoryRow(v))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].PeriodID < out[j].PeriodID
@@ -147,7 +147,7 @@ func (s *MemoryQualificationHistoryStore) GetByUsersAndPeriodRange(_ context.Con
 		if k.PeriodID < fromPeriod || k.PeriodID > toPeriod {
 			continue
 		}
-		out = append(out, v)
+		out = append(out, cloneHistoryRow(v))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].PeriodID != out[j].PeriodID {
@@ -156,4 +156,19 @@ func (s *MemoryQualificationHistoryStore) GetByUsersAndPeriodRange(_ context.Con
 		return out[i].UserID.String() < out[j].UserID.String()
 	})
 	return out, nil
+}
+
+// clonePtr returns a pointer to a copy of *p, or nil for nil.
+func clonePtr[T any](p *T) *T {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+// cloneHistoryRow returns r with its own copies of Rank and Ordinal.
+func cloneHistoryRow(r QualificationHistoryRow) QualificationHistoryRow {
+	r.Rank, r.Ordinal = clonePtr(r.Rank), clonePtr(r.Ordinal)
+	return r
 }

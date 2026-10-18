@@ -35,31 +35,65 @@ func runQualificationHistoryStoreSuite(t *testing.T, newStore func(t *testing.T)
 		return ids
 	}
 
-	t.Run("a ranked and an unranked entry round-trip", func(t *testing.T) {
+	t.Run("ranked and unranked entries round-trip", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
 		require.NoError(t, s.SaveResult(ctx, "2026-05", []QualificationHistoryEntry{
 			{UserID: userA, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
-			{UserID: userB},
+			{UserID: userB, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
+			{UserID: userC},
 		}))
 
 		rows, err := s.GetByPeriod(ctx, "2026-05")
 		require.NoError(t, err)
-		require.Len(t, rows, 2)
-		assert.Equal(t, userA, rows[0].UserID)
-		assert.Equal(t, "2026-05", rows[0].PeriodID)
-		require.NotNil(t, rows[0].Rank)
-		assert.Equal(t, "silver", *rows[0].Rank)
-		require.NotNil(t, rows[0].Ordinal)
-		assert.Equal(t, uint16(2), *rows[0].Ordinal)
-		assert.Equal(t, userB, rows[1].UserID)
-		assert.Nil(t, rows[1].Rank, "an unranked entry reads back with no rank")
-		assert.Nil(t, rows[1].Ordinal, "an unranked entry reads back with no ordinal")
+		require.Len(t, rows, 3)
+		for i, want := range []struct {
+			user    uuid.UUID
+			rank    *string
+			ordinal *uint16
+		}{
+			{userA, strPtr("silver"), u16Ptr(2)},
+			{userB, strPtr("gold"), u16Ptr(3)},
+			{userC, nil, nil},
+		} {
+			assert.Equal(t, want.user, rows[i].UserID, "row %d", i)
+			assert.Equal(t, "2026-05", rows[i].PeriodID, "row %d", i)
+			assert.Equal(t, want.rank, rows[i].Rank, "row %d", i)
+			assert.Equal(t, want.ordinal, rows[i].Ordinal, "row %d", i)
+		}
 
 		missing, err := s.GetByPeriod(ctx, "2026-04")
 		require.NoError(t, err)
-		assert.Empty(t, missing, "a period never saved has no rows")
+		assert.Empty(t, missing, "a period never saved returned rows")
+	})
+
+	t.Run("changing saved entries after the save leaves the stored rows alone", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		rank, ordinal := "silver", uint16(2)
+		entries := []QualificationHistoryEntry{{UserID: userA, Rank: &rank, Ordinal: &ordinal}}
+		require.NoError(t, s.SaveResult(ctx, "2026-05", entries))
+
+		rank, ordinal = "gold", 9
+
+		rows, err := s.GetByPeriod(ctx, "2026-05")
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		require.NotNil(t, rows[0].Rank)
+		assert.Equal(t, "silver", *rows[0].Rank, "the stored rank followed the caller's variable")
+		require.NotNil(t, rows[0].Ordinal)
+		assert.Equal(t, uint16(2), *rows[0].Ordinal, "the stored ordinal followed the caller's variable")
+
+		*rows[0].Rank, *rows[0].Ordinal = "bronze", 7
+
+		again, err := s.GetByPeriod(ctx, "2026-05")
+		require.NoError(t, err)
+		require.Len(t, again, 1)
+		require.NotNil(t, again[0].Rank)
+		assert.Equal(t, "silver", *again[0].Rank, "the stored rank followed a change to a returned row")
+		require.NotNil(t, again[0].Ordinal)
+		assert.Equal(t, uint16(2), *again[0].Ordinal, "the stored ordinal followed a change to a returned row")
 	})
 
 	t.Run("one save stamps every row with one microsecond instant", func(t *testing.T) {
@@ -80,6 +114,7 @@ func runQualificationHistoryStoreSuite(t *testing.T, newStore func(t *testing.T)
 			"one save stamped two instants, %s and %s", at, rows[1].EvaluatedAt)
 		assert.Equal(t, at.Round(0).Truncate(time.Microsecond), at,
 			"EvaluatedAt %s differs from itself after Round(0).Truncate(time.Microsecond)", at)
+		assert.Equal(t, time.Local, at.Location(), "EvaluatedAt came back in location %v", at.Location())
 	})
 
 	t.Run("GetByPeriod orders rows by user id", func(t *testing.T) {
@@ -148,20 +183,24 @@ func runQualificationHistoryStoreSuite(t *testing.T, newStore func(t *testing.T)
 
 		inverted, err := s.GetByUserAndPeriodRange(ctx, userA, "2026-04", "2026-03")
 		require.NoError(t, err)
-		assert.Empty(t, inverted, "an inverted range has no rows")
+		assert.Empty(t, inverted, "an inverted range returned rows")
 
 		unknown, err := s.GetByUserAndPeriodRange(ctx, mustParseUUID(t, "00000000-0000-0000-0000-0000000000ff"),
 			"2026-03", "2026-05")
 		require.NoError(t, err)
-		assert.Empty(t, unknown, "a user never saved has no rows")
+		assert.Empty(t, unknown, "a user never saved returned rows")
 	})
 
 	t.Run("GetByUsersAndPeriodRange reads the requested users in period then user order", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
+		userZ := mustParseUUID(t, "ffffffff-ffff-ffff-ffff-ffffffffffff")
+		userM := mustParseUUID(t, "88888888-8888-8888-8888-888888888888")
 		require.NoError(t, s.SaveResult(ctx, "2026-03", []QualificationHistoryEntry{
-			{UserID: userA, Rank: strPtr("bronze"), Ordinal: u16Ptr(1)},
+			{UserID: userZ, Rank: strPtr("bronze"), Ordinal: u16Ptr(1)},
+			{UserID: userM, Rank: strPtr("bronze"), Ordinal: u16Ptr(1)},
 			{UserID: userB, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+			{UserID: userA, Rank: strPtr("bronze"), Ordinal: u16Ptr(1)},
 		}))
 		require.NoError(t, s.SaveResult(ctx, "2026-04", []QualificationHistoryEntry{
 			{UserID: userA, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
@@ -171,22 +210,27 @@ func runQualificationHistoryStoreSuite(t *testing.T, newStore func(t *testing.T)
 			{UserID: userA, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
 		}))
 
-		rows, err := s.GetByUsersAndPeriodRange(ctx, []uuid.UUID{userA, userB}, "2026-03", "2026-04")
+		rows, err := s.GetByUsersAndPeriodRange(ctx, []uuid.UUID{userZ, userB, userM, userA}, "2026-03", "2026-04")
 		require.NoError(t, err)
-		require.Len(t, rows, 3)
-		assert.Equal(t, "2026-03", rows[0].PeriodID)
-		assert.Equal(t, userA, rows[0].UserID)
-		assert.Equal(t, "2026-03", rows[1].PeriodID)
-		assert.Equal(t, userB, rows[1].UserID)
-		assert.Equal(t, "2026-04", rows[2].PeriodID)
-		assert.Equal(t, userA, rows[2].UserID)
+		type key struct {
+			period string
+			user   uuid.UUID
+		}
+		var got []key
+		for _, r := range rows {
+			got = append(got, key{r.PeriodID, r.UserID})
+		}
+		assert.Equal(t, []key{
+			{"2026-03", userA}, {"2026-03", userB}, {"2026-03", userM}, {"2026-03", userZ},
+			{"2026-04", userA},
+		}, got)
 
 		empty, err := s.GetByUsersAndPeriodRange(ctx, nil, "2026-03", "2026-05")
 		require.NoError(t, err)
-		assert.Empty(t, empty, "an empty user set has no rows")
+		assert.Empty(t, empty, "an empty user set returned rows")
 		inverted, err := s.GetByUsersAndPeriodRange(ctx, []uuid.UUID{userA}, "2026-05", "2026-03")
 		require.NoError(t, err)
-		assert.Empty(t, inverted, "an inverted range has no rows")
+		assert.Empty(t, inverted, "an inverted range returned rows")
 	})
 
 	t.Run("an empty period id is refused and writes nothing", func(t *testing.T) {
@@ -224,7 +268,7 @@ func runQualificationHistoryStoreSuite(t *testing.T, newStore func(t *testing.T)
 			before, err := s.GetByPeriod(ctx, "2026-05")
 			require.NoError(t, err)
 
-			require.Error(t, s.SaveResult(ctx, "2026-05", tc.entries))
+			require.ErrorContains(t, s.SaveResult(ctx, "2026-05", tc.entries), "save qualification history")
 
 			after, err := s.GetByPeriod(ctx, "2026-05")
 			require.NoError(t, err)

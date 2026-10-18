@@ -130,7 +130,10 @@ impl BinaryTree {
             return Err(TreeError::UserAlreadyExists(user_id));
         }
         let parent_idx = self.arena.resolve(parent_id)?;
-        self.arena.resolve(sponsor_id)?;
+        self.arena.resolve(sponsor_id).map_err(|e| match e {
+            TreeError::UserNotFound(id) => TreeError::SponsorNotFound(id),
+            other => other,
+        })?;
         let parent_slots = self.slots.get(&parent_idx).copied().unwrap_or([None, None]);
         if parent_slots[position].is_some() {
             return Err(TreeError::PositionOccupied {
@@ -923,6 +926,31 @@ mod tests {
     }
 
     #[test]
+    fn add_node_with_missing_parent_fails() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        let result = tree.add_node(test_uuid(2), test_uuid(99), 0, test_uuid(1), 2000);
+        assert_eq!(result, Err(TreeError::UserNotFound(test_uuid(99))));
+    }
+
+    #[test]
+    fn add_node_with_missing_sponsor_fails() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        let result = tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(99), 2000);
+        assert_eq!(result, Err(TreeError::SponsorNotFound(test_uuid(99))));
+        assert!(!tree.contains(test_uuid(2)));
+    }
+
+    #[test]
+    fn add_node_with_missing_parent_and_sponsor_reports_the_parent() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        let result = tree.add_node(test_uuid(2), test_uuid(99), 0, test_uuid(98), 2000);
+        assert_eq!(result, Err(TreeError::UserNotFound(test_uuid(99))));
+    }
+
+    #[test]
     fn add_node_right_only_leaves_left_empty() {
         let mut tree = BinaryTree::new();
         tree.add_root(test_uuid(1), 1000).unwrap();
@@ -1272,6 +1300,14 @@ mod tests {
         assert_eq!(
             tree.check_add_node(test_uuid(2), test_uuid(1), 1, test_uuid(1)),
             Err(TreeError::UserAlreadyExists(test_uuid(2)))
+        );
+        assert_eq!(
+            tree.check_add_node(test_uuid(3), test_uuid(99), 1, test_uuid(1)),
+            Err(TreeError::UserNotFound(test_uuid(99)))
+        );
+        assert_eq!(
+            tree.check_add_node(test_uuid(3), test_uuid(1), 1, test_uuid(98)),
+            Err(TreeError::SponsorNotFound(test_uuid(98)))
         );
         assert_eq!(
             tree.check_add_node(test_uuid(2), test_uuid(1), 2, test_uuid(1)),

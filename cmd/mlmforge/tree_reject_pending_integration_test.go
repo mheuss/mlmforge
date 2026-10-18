@@ -90,7 +90,7 @@ func TestTreeRejectEvent_APendingPlacementRejectionNamesTheCommand(t *testing.T)
 	})
 	place := append([]string{"place", "--user-id", next, "--parent-id", root, "--sponsor-id", root}, conn...)
 	_, err = runTreeCmd(t, place...)
-	require.ErrorContains(t, err, "USER_NOT_FOUND")
+	require.ErrorContains(t, err, "SPONSOR_NOT_FOUND")
 	rejection := appendCorrectRejection(t, events, tree, stuck)
 
 	store := networkengine.NewPostgresTreeStore(pool)

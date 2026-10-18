@@ -17,7 +17,7 @@ const fixtureSoftDeleteSQL = `UPDATE tree_nodes SET removed_at = now(), updated_
 func insertRow(ctx context.Context, s TreeStore, row TreeNodeRow) error {
 	switch store := s.(type) {
 	case *MemoryTreeStore:
-		return store.InsertNode(ctx, row)
+		return store.insertNode(ctx, row)
 	case *PostgresTreeStore:
 		return insertNode(ctx, store.pool, row)
 	default:
@@ -30,7 +30,7 @@ func insertRow(ctx context.Context, s TreeStore, row TreeNodeRow) error {
 func tombstoneUser(ctx context.Context, s TreeStore, treeID, userID string) error {
 	switch store := s.(type) {
 	case *MemoryTreeStore:
-		return store.DeleteNode(ctx, treeID, userID)
+		return store.deleteNode(ctx, treeID, userID)
 	case *PostgresTreeStore:
 		_, err := store.pool.Exec(ctx, fixtureSoftDeleteSQL, treeID, userID)
 		return err

@@ -138,9 +138,9 @@ func TestTreeConsumer_ARemovalStillLandsTheRecruitsTheEngineMoved(t *testing.T) 
 	transport.response = json.RawMessage(`{"removed":true,"responsored":[{"user_id":"user-recruit","new_sponsor_id":"user-root"}]}`)
 	consumer := NewTreeEventConsumer(store, newEngineClientWithTransport(transport))
 	ctx := context.Background()
-	require.NoError(t, store.InsertNode(ctx, makeNode("tree1", "user-root", 0, nil, ptr("user-root"), nil)))
-	require.NoError(t, store.InsertNode(ctx, makeNode("tree1", "user-leaf", 1, ptr("user-root"), ptr("user-root"), nil)))
-	require.NoError(t, store.InsertNode(ctx, makeNode("tree1", "user-recruit", 1, ptr("user-root"), ptr("user-leaf"), nil)))
+	require.NoError(t, store.insertNode(ctx, makeNode("tree1", "user-root", 0, nil, ptr("user-root"), nil)))
+	require.NoError(t, store.insertNode(ctx, makeNode("tree1", "user-leaf", 1, ptr("user-root"), ptr("user-root"), nil)))
+	require.NoError(t, store.insertNode(ctx, makeNode("tree1", "user-recruit", 1, ptr("user-root"), ptr("user-leaf"), nil)))
 
 	err := consumer.HandleEvent(ctx, makeEvent(EventTypeNodeRemoved, NodeRemovedPayload{
 		TreeID: "tree1", UserID: "user-leaf", RemovedAt: time.Now(),

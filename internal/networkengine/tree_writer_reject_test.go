@@ -664,7 +664,7 @@ func TestTreeWriterReject_RefusesALoadFailureTheTieRuleDoesNotAccept(t *testing.
 		{"no row carries the event's ID", func(t *testing.T, env *writerEnv) (*TreeWriter, platform.Event) {
 			mustAddRoot(t, env, treeTypeUnilevel)
 			mustPlace(t, env, writerChild, nil)
-			require.NoError(t, env.store.InsertNode(context.Background(), orphanRow()))
+			require.NoError(t, env.store.insertNode(context.Background(), orphanRow()))
 			removal := appendDirect(t, env.events, EventTypeNodeRemoved, NodeRemovedPayload{
 				TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime,
 			})
@@ -675,7 +675,7 @@ func TestTreeWriterReject_RefusesALoadFailureTheTieRuleDoesNotAccept(t *testing.
 			mustAddRoot(t, env, treeTypeUnilevel)
 			mustPlace(t, env, writerChild, nil)
 			placed := streamEvents(t, env.events, TreeStreamName(writerTree))[1]
-			require.NoError(t, env.store.InsertNode(context.Background(), orphanRow()))
+			require.NoError(t, env.store.insertNode(context.Background(), orphanRow()))
 			w, _ := env.writer()
 			return w, placed
 		}},

@@ -243,7 +243,7 @@ func TestTreeWriter_LoadRefusesARedeliveredRemovalOfAUserTheStoreNeverHeld(t *te
 func TestTreeWriter_LoadRefusesRowsTheStreamDoesNotReach(t *testing.T) {
 	env := newWriterEnv()
 	root := appendDirect(t, env.events, EventTypeRootAdded, rootAddedPayload())
-	require.NoError(t, env.store.InsertNode(context.Background(), TreeNodeRow{
+	require.NoError(t, env.store.insertNode(context.Background(), TreeNodeRow{
 		ID: root.ID, TreeID: writerTree, UserID: writerRoot, SponsorID: &writerRoot, EnrolledAt: writeTime,
 	}))
 	w, _ := env.writer()

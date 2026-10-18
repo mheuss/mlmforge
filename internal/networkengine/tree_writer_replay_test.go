@@ -65,26 +65,6 @@ func (s writeCountingStore) UndoRootProjection(context.Context, string, string, 
 	return nil
 }
 
-func (s writeCountingStore) InsertNode(context.Context, TreeNodeRow) error {
-	s.t.Error("the load inserted a row")
-	return nil
-}
-
-func (s writeCountingStore) DeleteNode(context.Context, string, string) error {
-	s.t.Error("the load deleted a row")
-	return nil
-}
-
-func (s writeCountingStore) DeleteNodeAndResponsor(context.Context, string, string, string, []Responsored) error {
-	s.t.Error("the load deleted a row and repointed sponsors")
-	return nil
-}
-
-func (s writeCountingStore) BulkInsert(context.Context, []TreeNodeRow) error {
-	s.t.Error("the load bulk-inserted rows")
-	return nil
-}
-
 func TestTreeWriter_ALoadWithNothingBehindWritesNothingToTheStore(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
@@ -100,7 +80,7 @@ func TestTreeWriter_ALoadWithNothingBehindWritesNothingToTheStore(t *testing.T) 
 func TestTreeWriter_LoadFailsWhenTheStoreHoldsARowTheStreamLacks(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
-	require.NoError(t, env.store.InsertNode(context.Background(), TreeNodeRow{
+	require.NoError(t, env.store.insertNode(context.Background(), TreeNodeRow{
 		ID: testNodeUUID(9), TreeID: writerTree, UserID: writerOther,
 		ParentID: &writerRoot, SponsorID: &writerRoot, Depth: 1, EnrolledAt: writeTime,
 	}))
@@ -217,7 +197,7 @@ func TestTreeWriter_AFailedMembershipReadFailsTheLoad(t *testing.T) {
 func TestTreeWriter_LoadRefusesARootTheStoreDoesNotHold(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
-	require.NoError(t, env.store.DeleteNode(context.Background(), writerTree, writerRoot))
+	require.NoError(t, env.store.deleteNode(context.Background(), writerTree, writerRoot))
 	w, _ := env.writer()
 
 	_, err := w.Load(context.Background(), loadRequest())
@@ -232,8 +212,8 @@ func TestTreeWriter_LoadRefusesAStoreRootTheReplayDidNotLeave(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
 	ctx := context.Background()
-	require.NoError(t, env.store.DeleteNode(ctx, writerTree, writerRoot))
-	require.NoError(t, env.store.InsertNode(ctx, TreeNodeRow{
+	require.NoError(t, env.store.deleteNode(ctx, writerTree, writerRoot))
+	require.NoError(t, env.store.insertNode(ctx, TreeNodeRow{
 		ID: testNodeUUID(9), TreeID: writerTree, UserID: writerOther, SponsorID: &writerOther, EnrolledAt: writeTime,
 	}))
 	w, _ := env.writer()

@@ -45,7 +45,7 @@ func TestTreeLoad_RetriesInTheSameWorkerAfterADrop(t *testing.T) {
 	}
 	for i := range rows {
 		rows[i].EnrolledAt = base.Add(time.Duration(i) * time.Hour)
-		require.NoError(t, store.InsertNode(ctx, rows[i]))
+		require.NoError(t, store.insertNode(ctx, rows[i]))
 	}
 
 	_, err = NewTreeLoader(store, &refusingMutator{EngineClient: client, refuseOn: 2}).

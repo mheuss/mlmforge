@@ -116,7 +116,7 @@ func TestRejectionEvidence_RefusesARemovalWhileAnotherRowBreaksTheLoad(t *testin
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
 	mustPlace(t, env, writerChild, nil)
-	require.NoError(t, env.store.InsertNode(context.Background(), orphanRow()))
+	require.NoError(t, env.store.insertNode(context.Background(), orphanRow()))
 	removal := appendDirect(t, env.events, EventTypeNodeRemoved, NodeRemovedPayload{
 		TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime,
 	})
@@ -135,7 +135,7 @@ func TestRejectionEvidence_RefusesALoadThatStillFailsWithoutTheRow(t *testing.T)
 	mustAddRoot(t, env, treeTypeUnilevel)
 	mustPlace(t, env, writerChild, nil)
 	placed := streamEvents(t, env.events, TreeStreamName(writerTree))[1]
-	require.NoError(t, env.store.InsertNode(context.Background(), orphanRow()))
+	require.NoError(t, env.store.insertNode(context.Background(), orphanRow()))
 	w, _ := env.writer()
 	_, retryErr := w.Place(context.Background(), placeRequest(writerOther, nil))
 	require.ErrorContains(t, retryErr, "references sponsor "+testUserUUID(6))

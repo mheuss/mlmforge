@@ -79,7 +79,7 @@ func loadWithMutator(t *testing.T, treeType string, nodes []TreeNodeRow, m TreeM
 	store := NewMemoryTreeStore()
 	ctx := context.Background()
 	for _, n := range nodes {
-		require.NoError(t, store.InsertNode(ctx, n))
+		require.NoError(t, store.insertNode(ctx, n))
 	}
 	_, err := NewTreeLoader(store, m).LoadTree(ctx, "t", treeType, opts...)
 	return err
@@ -492,9 +492,9 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			var storeRowMutator *stubMutator
 
 			require.False(t, tt.direct && tt.engineFailsAfter >= 0,
-				"a row cannot both seed past InsertNode and drive an engine failure")
+				"a row cannot both seed past insertNode and drive an engine failure")
 			require.False(t, tt.store != nil && (tt.direct || tt.engineFailsAfter >= 0),
-				"a row bringing its own store cannot also seed past InsertNode or drive an engine failure")
+				"a row bringing its own store cannot also seed past insertNode or drive an engine failure")
 			require.False(t, tt.wantFailedOp != "" && tt.engineFailsAfter < 0,
 				"a row naming an engine method must drive an engine failure")
 			require.False(t, tt.wantKind != "" && tt.wantStage != "",

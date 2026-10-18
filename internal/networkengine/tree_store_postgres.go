@@ -29,9 +29,6 @@ const insertNodeSQL = `INSERT INTO tree_nodes (id, tree_id, user_id, parent_id, 
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 ON CONFLICT (id) DO NOTHING`
 
-const softDeleteNodeSQL = `UPDATE tree_nodes SET removed_at = now(), updated_at = now()
-		 WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`
-
 const softDeleteRootSQL = `UPDATE tree_nodes SET removed_at = $3, updated_at = $3
 		 WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`
 
@@ -100,10 +97,6 @@ func NewPostgresTreeStore(pool *pgxpool.Pool) *PostgresTreeStore {
 	return &PostgresTreeStore{pool: pool}
 }
 
-func (s *PostgresTreeStore) InsertNode(ctx context.Context, node TreeNodeRow) error {
-	return insertNode(ctx, s.pool, node)
-}
-
 // execer is the Exec method the store's writes need.
 type execer interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
@@ -123,72 +116,6 @@ func insertNode(ctx context.Context, db execer, node TreeNodeRow) error {
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("%w: id=%s; this insert was for tree=%s user=%s",
 			ErrNodeAlreadyProjected, node.ID, node.TreeID, node.UserID)
-	}
-	return nil
-}
-
-func (s *PostgresTreeStore) DeleteNode(ctx context.Context, treeID, userID string) error {
-	_, err := s.pool.Exec(ctx, softDeleteNodeSQL, treeID, userID)
-	return err
-}
-
-func (s *PostgresTreeStore) DeleteNodeAndResponsor(
-	ctx context.Context,
-	treeID, userID, removalEventID string,
-	moved []Responsored,
-) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	if err := deleteNodeAndResponsor(ctx, tx, treeID, userID, removalEventID, moved); err != nil {
-		return err
-	}
-	return tx.Commit(ctx)
-}
-
-// deleteNodeAndResponsor runs the soft delete and the re-sponsor writes in tx.
-func deleteNodeAndResponsor(
-	ctx context.Context,
-	tx pgx.Tx,
-	treeID, userID, removalEventID string,
-	moved []Responsored,
-) error {
-	// The stamp rides the soft delete's own statement, so it lands with the
-	// tombstone or not at all. removed_at IS NULL can only match the row that
-	// was active, so it cannot reach an earlier placement's tombstone.
-	tag, err := tx.Exec(ctx,
-		`UPDATE tree_nodes SET removed_at = now(), updated_at = now(), removed_by_event_id = $3
-		 WHERE tree_id = $1 AND user_id = $2 AND removed_at IS NULL`,
-		treeID, userID, removalEventID,
-	)
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() != 1 {
-		return fmt.Errorf(
-			"soft delete for user %s in tree %s matched %d active rows; %d re-sponsor writes not applied",
-			userID, treeID, tag.RowsAffected(), len(moved))
-	}
-
-	for _, m := range moved {
-		// removed_at IS NULL: a user removed and re-placed has a historical
-		// row too, and the partial unique index is what keeps them apart.
-		tag, err := tx.Exec(ctx,
-			`UPDATE tree_nodes SET sponsor_id = $1, updated_at = now()
-			 WHERE tree_id = $2 AND user_id = $3 AND removed_at IS NULL`,
-			m.NewSponsorID, treeID, m.UserID,
-		)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() != 1 {
-			return fmt.Errorf(
-				"re-sponsoring %s in tree %s updated %d active rows, expected 1",
-				m.UserID, treeID, tag.RowsAffected())
-		}
 	}
 	return nil
 }
@@ -233,34 +160,6 @@ func (s *PostgresTreeStore) GetByTreeDepthOrdered(ctx context.Context, treeID st
 	}
 	defer rows.Close()
 	return scanTreeNodes(rows)
-}
-
-func (s *PostgresTreeStore) BulkInsert(ctx context.Context, nodes []TreeNodeRow) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin bulk insert: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	for _, node := range nodes {
-		tag, err := tx.Exec(ctx, insertNodeSQL,
-			node.ID, node.TreeID, node.UserID, node.ParentID, node.SponsorID, node.Position, node.Depth, node.EnrolledAt,
-		)
-		if err != nil {
-			if c := conflictError(err); c != nil {
-				return fmt.Errorf("bulk insert node %s: %w", node.UserID, c)
-			}
-			return fmt.Errorf("bulk insert node %s: %w", node.UserID, err)
-		}
-		// InsertNode reads a skipped row as convergence. A bulk load cannot:
-		// the rows are a whole tree, and one already present means the batch
-		// is built from the wrong picture. The deferred rollback discards it.
-		if tag.RowsAffected() == 0 {
-			return fmt.Errorf("bulk insert node %s: %w", node.UserID, ErrNodeAlreadyProjected)
-		}
-	}
-
-	return tx.Commit(ctx)
 }
 
 // scanTreeNode scans a single tree node row. Returns nil if no row found.

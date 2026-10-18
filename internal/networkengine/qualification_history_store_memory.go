@@ -38,15 +38,21 @@ func NewMemoryQualificationHistoryStore() *MemoryQualificationHistoryStore {
 // against the real store. Duplicate UserIDs would fail the (period_id,
 // user_id) PRIMARY KEY on COPY. Mismatched (rank, ordinal) pairs would
 // fail the table CHECK constraint.
-func (s *MemoryQualificationHistoryStore) SaveResult(_ context.Context, periodID string, entries []QualificationHistoryEntry) error {
+func (s *MemoryQualificationHistoryStore) SaveResult(ctx context.Context, periodID string, entries []QualificationHistoryEntry) error {
 	if periodID == "" {
 		return fmt.Errorf("save qualification history: period_id must be non-empty")
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("save qualification history: %w", err)
 	}
 
 	seen := make(map[uuid.UUID]struct{}, len(entries))
 	for _, e := range entries {
 		if (e.Rank == nil) != (e.Ordinal == nil) {
 			return fmt.Errorf("save qualification history: rank and ordinal must both be set or both be nil (user %s)", e.UserID)
+		}
+		if e.Ordinal != nil && *e.Ordinal == 0 {
+			return fmt.Errorf("save qualification history: ordinal must be at least 1 (user %s)", e.UserID)
 		}
 		if _, dup := seen[e.UserID]; dup {
 			return fmt.Errorf("save qualification history: duplicate user_id %s for period %s", e.UserID, periodID)

@@ -39,15 +39,21 @@ func runQualificationHistoryStoreSuite(t *testing.T, newStore func(t *testing.T)
 		s := newStore(t)
 		ctx := context.Background()
 
+		userD := mustParseUUID(t, "00000000-0000-0000-0000-000000000004")
+		userE := mustParseUUID(t, "00000000-0000-0000-0000-000000000005")
+		userF := mustParseUUID(t, "00000000-0000-0000-0000-000000000006")
 		require.NoError(t, s.SaveResult(ctx, "2026-05", []QualificationHistoryEntry{
 			{UserID: userA, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
 			{UserID: userB, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
+			{UserID: userD, Rank: strPtr("bronze"), Ordinal: u16Ptr(1)},
+			{UserID: userE, Rank: strPtr("platinum"), Ordinal: u16Ptr(65535)},
 			{UserID: userC},
+			{UserID: userF, Rank: strPtr("diamond"), Ordinal: u16Ptr(4)},
 		}))
 
 		rows, err := s.GetByPeriod(ctx, "2026-05")
 		require.NoError(t, err)
-		require.Len(t, rows, 3)
+		require.Len(t, rows, 6)
 		for i, want := range []struct {
 			user    uuid.UUID
 			rank    *string
@@ -56,6 +62,9 @@ func runQualificationHistoryStoreSuite(t *testing.T, newStore func(t *testing.T)
 			{userA, strPtr("silver"), u16Ptr(2)},
 			{userB, strPtr("gold"), u16Ptr(3)},
 			{userC, nil, nil},
+			{userD, strPtr("bronze"), u16Ptr(1)},
+			{userE, strPtr("platinum"), u16Ptr(65535)},
+			{userF, strPtr("diamond"), u16Ptr(4)},
 		} {
 			assert.Equal(t, want.user, rows[i].UserID, "row %d", i)
 			assert.Equal(t, "2026-05", rows[i].PeriodID, "row %d", i)
@@ -77,23 +86,41 @@ func runQualificationHistoryStoreSuite(t *testing.T, newStore func(t *testing.T)
 
 		rank, ordinal = "gold", 9
 
-		rows, err := s.GetByPeriod(ctx, "2026-05")
-		require.NoError(t, err)
-		require.Len(t, rows, 1)
-		require.NotNil(t, rows[0].Rank)
-		assert.Equal(t, "silver", *rows[0].Rank, "the stored rank followed the caller's variable")
-		require.NotNil(t, rows[0].Ordinal)
-		assert.Equal(t, uint16(2), *rows[0].Ordinal, "the stored ordinal followed the caller's variable")
+		reads := []struct {
+			name string
+			read func() ([]QualificationHistoryRow, error)
+		}{
+			{"GetByPeriod", func() ([]QualificationHistoryRow, error) { return s.GetByPeriod(ctx, "2026-05") }},
+			{"GetByUserAndPeriodRange", func() ([]QualificationHistoryRow, error) {
+				return s.GetByUserAndPeriodRange(ctx, userA, "2026-05", "2026-05")
+			}},
+			{"GetByUsersAndPeriodRange", func() ([]QualificationHistoryRow, error) {
+				return s.GetByUsersAndPeriodRange(ctx, []uuid.UUID{userA}, "2026-05", "2026-05")
+			}},
+		}
+		for _, r := range reads {
+			rows, err := r.read()
+			require.NoError(t, err, r.name)
+			require.Len(t, rows, 1, r.name)
+			require.NotNil(t, rows[0].Rank, r.name)
+			require.NotNil(t, rows[0].Ordinal, r.name)
+			assert.Equal(t, "silver", *rows[0].Rank,
+				"%s read rank %q after the caller changed its saved variable to %q", r.name, *rows[0].Rank, rank)
+			assert.Equal(t, uint16(2), *rows[0].Ordinal,
+				"%s read ordinal %d after the caller changed its saved variable to %d", r.name, *rows[0].Ordinal, ordinal)
 
-		*rows[0].Rank, *rows[0].Ordinal = "bronze", 7
+			*rows[0].Rank, *rows[0].Ordinal = "bronze", 7
 
-		again, err := s.GetByPeriod(ctx, "2026-05")
-		require.NoError(t, err)
-		require.Len(t, again, 1)
-		require.NotNil(t, again[0].Rank)
-		assert.Equal(t, "silver", *again[0].Rank, "the stored rank followed a change to a returned row")
-		require.NotNil(t, again[0].Ordinal)
-		assert.Equal(t, uint16(2), *again[0].Ordinal, "the stored ordinal followed a change to a returned row")
+			again, err := r.read()
+			require.NoError(t, err, r.name)
+			require.Len(t, again, 1, r.name)
+			require.NotNil(t, again[0].Rank, r.name)
+			require.NotNil(t, again[0].Ordinal, r.name)
+			assert.Equal(t, "silver", *again[0].Rank,
+				"%s read rank %q after a returned row's rank was changed to bronze", r.name, *again[0].Rank)
+			assert.Equal(t, uint16(2), *again[0].Ordinal,
+				"%s read ordinal %d after a returned row's ordinal was changed to 7", r.name, *again[0].Ordinal)
+		}
 	})
 
 	t.Run("one save stamps every row with one microsecond instant", func(t *testing.T) {
@@ -175,11 +202,11 @@ func runQualificationHistoryStoreSuite(t *testing.T, newStore func(t *testing.T)
 		require.NoError(t, err)
 		require.Len(t, rows, 2)
 		assert.Equal(t, "2026-03", rows[0].PeriodID)
-		require.NotNil(t, rows[0].Rank)
-		assert.Equal(t, "bronze", *rows[0].Rank)
+		assert.Equal(t, strPtr("bronze"), rows[0].Rank)
+		assert.Equal(t, u16Ptr(1), rows[0].Ordinal)
 		assert.Equal(t, "2026-04", rows[1].PeriodID)
-		require.NotNil(t, rows[1].Rank)
-		assert.Equal(t, "silver", *rows[1].Rank)
+		assert.Equal(t, strPtr("silver"), rows[1].Rank)
+		assert.Equal(t, u16Ptr(2), rows[1].Ordinal)
 
 		inverted, err := s.GetByUserAndPeriodRange(ctx, userA, "2026-04", "2026-03")
 		require.NoError(t, err)
@@ -240,7 +267,28 @@ func runQualificationHistoryStoreSuite(t *testing.T, newStore func(t *testing.T)
 		err := s.SaveResult(ctx, "", seed)
 		require.EqualError(t, err, "save qualification history: period_id must be non-empty")
 
+		err = s.SaveResult(ctx, "", nil)
+		require.EqualError(t, err, "save qualification history: period_id must be non-empty",
+			"an empty period id with no entries")
+
 		assert.Empty(t, periodUsers(t, s, ""))
+	})
+
+	t.Run("a save under a cancelled context is refused and leaves the prior rows", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.SaveResult(context.Background(), "2026-05", seed))
+		before, err := s.GetByPeriod(context.Background(), "2026-05")
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err = s.SaveResult(ctx, "2026-05", nil)
+		require.ErrorContains(t, err, "save qualification history")
+		assert.ErrorIs(t, err, context.Canceled)
+
+		after, err := s.GetByPeriod(context.Background(), "2026-05")
+		require.NoError(t, err)
+		assert.Equal(t, before, after, "a save under a cancelled context changed the period's rows")
 	})
 
 	refusals := []struct {
@@ -258,6 +306,10 @@ func runQualificationHistoryStoreSuite(t *testing.T, newStore func(t *testing.T)
 		{"a user named twice", []QualificationHistoryEntry{
 			{UserID: userC, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
 			{UserID: userC, Rank: strPtr("gold"), Ordinal: u16Ptr(3)},
+		}},
+		{"an ordinal of 0", []QualificationHistoryEntry{
+			{UserID: userA, Rank: strPtr("silver"), Ordinal: u16Ptr(2)},
+			{UserID: userC, Rank: strPtr("bronze"), Ordinal: u16Ptr(0)},
 		}},
 	}
 	for _, tc := range refusals {

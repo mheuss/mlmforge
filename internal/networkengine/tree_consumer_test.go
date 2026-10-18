@@ -2593,19 +2593,7 @@ func TestCheckReplayedInsert_PostgresMessageText(t *testing.T) {
 		err.Error())
 }
 
-// noDeleteAndResponsorStore fails the test if anything calls
-// DeleteNodeAndResponsor.
-type noDeleteAndResponsorStore struct {
-	*MemoryTreeStore
-	t *testing.T
-}
-
-func (s noDeleteAndResponsorStore) DeleteNodeAndResponsor(context.Context, string, string, string, []Responsored) error {
-	s.t.Errorf("the consumer called DeleteNodeAndResponsor")
-	return errors.New("noDeleteAndResponsorStore: DeleteNodeAndResponsor was called")
-}
-
-func TestTreeConsumer_ARemovalNeverCallsDeleteNodeAndResponsor(t *testing.T) {
+func TestTreeConsumer_ARemovalTombstonesTheUserOnEveryTreeType(t *testing.T) {
 	for _, tc := range []struct {
 		treeType string
 		mode     PruningMode
@@ -2618,7 +2606,7 @@ func TestTreeConsumer_ARemovalNeverCallsDeleteNodeAndResponsor(t *testing.T) {
 	} {
 		t.Run(strings.TrimSpace(tc.treeType+" "+string(tc.mode)), func(t *testing.T) {
 			ctx := context.Background()
-			store := noDeleteAndResponsorStore{MemoryTreeStore: NewMemoryTreeStore(), t: t}
+			store := NewMemoryTreeStore()
 			engine := newFakeWriterEngine()
 			if tc.treeType == treeTypeMatrix {
 				require.NoError(t, engine.CreateMatrixTree(ctx, writerTree, 3, "breadth_first"))

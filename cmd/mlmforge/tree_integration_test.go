@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mlmforge/mlmforge/internal/networkengine"
 	"github.com/mlmforge/mlmforge/internal/platform"
 	"github.com/stretchr/testify/require"
 )
@@ -204,13 +203,15 @@ func TestTreeLoad_ReadsTheStoredRows(t *testing.T) {
 	pool := pgContainer.NewPool(t)
 	tree := testTreeID(4)
 
-	store := networkengine.NewPostgresTreeStore(pool)
 	orphan, absent := testUserID(11), testUserID(12)
-	require.NoError(t, store.InsertNode(t.Context(), networkengine.TreeNodeRow{
-		ID: testTreeID(110), TreeID: tree, UserID: orphan,
-		ParentID: &absent, SponsorID: &absent,
-		Depth: 1, EnrolledAt: time.Unix(1, 0).UTC(),
-	}))
+	// Stands in for the row a projected placement writes, with no projection
+	// row beside it.
+	_, err := pool.Exec(t.Context(), `INSERT INTO tree_nodes
+		(id, tree_id, user_id, parent_id, sponsor_id, position, depth, enrolled_at,
+		 created_at, updated_at, removed_at, removed_by_event_id)
+		VALUES ($1, $2, $3, $4, $5, NULL, 1, $6, now(), now(), NULL, NULL)`,
+		testTreeID(110), tree, orphan, absent, absent, time.Unix(1, 0).UTC())
+	require.NoError(t, err)
 
 	out, err := runTreeCmd(t,
 		"load",

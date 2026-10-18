@@ -394,3 +394,26 @@ digits, as a UUID. `uuid.Parse` refuses both. `uuid.Parse` accepts a
 not braces. Postgres refuses both with SQLSTATE 22P02. The memory event store's
 `canonicalEventID` mirrors Postgres's input syntax. HEU-944 asks whether one
 helper should serve both stores.
+
+## The test database collates in byte order
+
+HEU-938, 2026-10-17.
+
+The Postgres the suites run against is `postgres:16-alpine`, built on musl. Its
+default collation is `en_US.utf8`, and on musl that compares text in byte order,
+the same as Go. A linguistic collation does not. Under ICU's `en-US-x-icu`,
+`'2026-a' < '2026-B'` is true, and in Go it is false. So a test of ordering or
+range filtering on a text column passes against both twins in CI, whatever the
+production server's collation does. Declare the collation on the column when
+byte order matters. HEU-947 asks this for `qualification_history.period_id`.
+
+## A memory twin copies pointer fields in and out
+
+HEU-938, 2026-10-17.
+
+A Postgres read returns values, not the pointers a caller saved. A memory twin
+that stores the caller's `*string` or `*uint16`, or hands its own out on a read,
+lets a later change on either side alter what the store holds. Copy each
+pointed-to value on write and on every read. Pin it with a shared case that
+changes the caller's variable after the save, and a returned row after the read,
+through every read method.

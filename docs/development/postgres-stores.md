@@ -1,10 +1,63 @@
 # Postgres Stores
 
-How to write a Go store against Postgres in this codebase. Every entry below
-cost real debugging on HEU-555 or HEU-855 and is invisible until it bites.
+How to write a Go store against Postgres in this codebase. The first section is
+the rule for testing a store pair. Every entry after it cost real debugging and
+is invisible until it bites.
 
-For the store *shape* — one interface, two implementations, a shared suite —
-see UC-NET-008 in [`../use-cases/network-engine.md`](../use-cases/network-engine.md).
+## Pair the implementations through one suite
+
+Every implemented store interface here has a memory twin for unit tests and a
+Postgres twin for production.
+
+**A new memory/Postgres store pair has one test body that takes a constructor and runs against both twins.**
+
+The body asks the constructor for each store it needs, and each twin's test
+function hands it that twin's constructor.
+
+```go
+func TestMemoryCommissionRunStore(t *testing.T) {
+	runCommissionRunStoreSuite(t, func(t *testing.T) CommissionRunStore {
+		return NewMemoryCommissionRunStore()
+	})
+}
+
+func TestPostgresCommissionRunStore(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("postgres container unavailable")
+	}
+	runCommissionRunStoreSuite(t, func(t *testing.T) CommissionRunStore {
+		return NewPostgresCommissionRunStore(pgContainer.NewPool(t))
+	})
+}
+```
+
+`runCommissionRunStoreSuite` is the worked example. Each case asks the
+constructor for a fresh store, so no case sees rows an earlier case wrote.
+
+Twins tested separately drift. These defects shipped that way. In each, the
+memory twin did something Postgres does not, and no test of that behaviour ran
+against both:
+
+- The memory event store accepted a duplicate event ID that the unique `id`
+  column rejects. HEU-791 fixed it.
+- The memory tree store kept the caller's timestamps, while Postgres applied
+  its own defaults. HEU-403 fixed it.
+
+A shared body catches this drift in every behaviour it asserts, because one
+assertion runs against both twins. It catches nothing in a behaviour it leaves
+out. The tree store had a shared suite before HEU-403 was fixed. That suite did
+not assert timestamps.
+
+Some twins promise different things by design. The memory tree locker excludes
+within one process. The Postgres one excludes across processes. For a pair
+like that, the shared body covers what both twins promise. Tests that run only
+against Postgres cover what the memory twin cannot promise. They are not for a
+behaviour that is merely awkward to share.
+
+Some existing pairs are not under the rule yet. The qualification history store
+and the tree lockers have no shared body. HEU-938 and HEU-939 add one. The event
+store shares bodies for some behaviours and tests the rest per twin. HEU-941
+moves the rest into shared bodies.
 
 ## pgx sends only a nil slice as SQL NULL
 
@@ -120,6 +173,22 @@ tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 Otherwise someone hardening the production pool to REPEATABLE READ breaks the
 error contract with every test still green.
 
+## Two separate reads can straddle another writer's commit
+
+Two queries on the pool, with no transaction or lock around them, each see the
+latest commit at the moment they run. A commit can land between them. The second
+read then disagrees with the first, and code that combines the two answers can
+draw a conclusion neither read supports.
+
+When the second read carries this operation's own evidence, trust it over the
+first. The later read saw more.
+
+HEU-868 hit this in the removal reconcile. The stamp read found nothing. Another
+writer then projected the same removal. The user read returned a tombstone
+stamped by this event. The reconcile refused the event with a message naming it
+twice. It now converges when the user read's tombstone carries this event's
+stamp.
+
 ## `now()` is the transaction timestamp
 
 `now()` is `transaction_timestamp()`, captured at `BEGIN` — before the
@@ -180,8 +249,8 @@ if !utf8.ValidString(s) || strings.ContainsRune(s, 0) { ... }
 
 ## A NOT NULL column does not make a branch unreachable
 
-Every store interface here has two implementations. Postgres carries the
-constraint. The in-memory one does not.
+Every implemented store interface here has two implementations. Postgres
+carries the constraint. The in-memory one does not.
 
 HEU-562 deleted a guard on an empty `user_id` in the tree loader, reasoning that
 the column is `UUID NOT NULL` so no row can hold one. That reasoning checked one
@@ -312,3 +381,16 @@ SIGKILLed client's migration file ran to completion and committed on Postgres
 rolled back within about a second of the kill. Pass it as `-c` in the
 connection's `options`. Postgres 13 refuses the parameter at startup. It needs
 Postgres 14 or later.
+
+## Go's uuid.Parse is not Postgres's uuid input
+
+HEU-931, 2026-10-17.
+
+A memory twin that canonicalises ids with `uuid.Parse` agrees with Postgres on
+the canonical form and on uppercase. It disagrees on other spellings. Postgres
+reads a hyphen after any group of four hex digits, and braces around 32 bare hex
+digits, as a UUID. `uuid.Parse` refuses both. `uuid.Parse` accepts a
+`urn:uuid:` prefix, and a 38-character value whose first and last characters are
+not braces. Postgres refuses both with SQLSTATE 22P02. The memory event store's
+`canonicalEventID` mirrors Postgres's input syntax. HEU-944 asks whether one
+helper should serve both stores.

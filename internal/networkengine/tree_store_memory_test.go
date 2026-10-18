@@ -190,7 +190,7 @@ func TestMemoryTreeStore_Suite(t *testing.T) {
 		return NewMemoryTreeStore()
 	}, func(t *testing.T, s TreeStore, nodeID string) *string {
 		for _, n := range s.(*MemoryTreeStore).nodes {
-			if n.ID == nodeID {
+			if n.ID == uuidKey(nodeID) {
 				return n.RemovedByEventID
 			}
 		}
@@ -199,7 +199,7 @@ func TestMemoryTreeStore_Suite(t *testing.T) {
 	}, func(t *testing.T, s TreeStore, nodeID string, at time.Time) {
 		nodes := s.(*MemoryTreeStore).nodes
 		for i := range nodes {
-			if nodes[i].ID == nodeID {
+			if nodes[i].ID == uuidKey(nodeID) {
 				nodes[i].UpdatedAt = at
 				return
 			}
@@ -208,7 +208,7 @@ func TestMemoryTreeStore_Suite(t *testing.T) {
 	}, func(t *testing.T, s TreeStore, nodeID string, at time.Time) {
 		nodes := s.(*MemoryTreeStore).nodes
 		for i := range nodes {
-			if nodes[i].ID == nodeID {
+			if nodes[i].ID == uuidKey(nodeID) {
 				nodes[i].RemovedAt = &at
 				return
 			}

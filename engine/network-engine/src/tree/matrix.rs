@@ -2696,6 +2696,96 @@ mod tests {
         assert_eq!(sponsor.user_id, test_uuid(1));
     }
 
+    /// Root 1, with 2 under it and 3 under 2. Node 4 is sponsored by 2 but
+    /// placed under 1, and node 5 is sponsored by 3 but placed under 4.
+    fn tree_with_recruits_outside_a_subtree() -> MatrixTree {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 1).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), 2).unwrap();
+        tree.add_node_at(test_uuid(4), test_uuid(2), test_uuid(1), 1, 3)
+            .unwrap();
+        tree.add_node_at(test_uuid(5), test_uuid(3), test_uuid(4), 0, 4)
+            .unwrap();
+        tree
+    }
+
+    #[test]
+    fn holding_tank_removal_reports_moved_recruits_in_breadth_first_order() {
+        // Removal is destructive, so each iteration builds its own tree.
+        for _ in 0..256 {
+            let mut tree = tree_with_recruits_outside_a_subtree();
+
+            let result = tree
+                .remove_node(test_uuid(2), PruningMode::HoldingTank)
+                .unwrap();
+
+            let moved: Vec<Uuid> = result.responsored.iter().map(|r| r.user_id).collect();
+            assert_eq!(moved, vec![test_uuid(4), test_uuid(5)]);
+        }
+    }
+
+    #[test]
+    fn holding_tank_removal_appends_recruits_to_the_new_sponsor_in_breadth_first_order() {
+        // Removal is destructive, so each iteration builds its own tree.
+        for _ in 0..256 {
+            let mut tree = tree_with_recruits_outside_a_subtree();
+
+            tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+                .unwrap();
+
+            let sponsored: Vec<Uuid> = tree
+                .get_sponsored(test_uuid(1))
+                .unwrap()
+                .iter()
+                .map(|n| n.user_id)
+                .collect();
+            assert_eq!(sponsored, vec![test_uuid(4), test_uuid(5)]);
+        }
+    }
+
+    #[test]
+    fn holding_tank_removal_reports_the_breadth_first_sponsorless_recruiter() {
+        // Removal is destructive, so each iteration builds its own tree.
+        for _ in 0..256 {
+            let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+            tree.add_root(test_uuid(1), 0).unwrap();
+            // Nodes 3 and 5 go to the tank and lose their sponsors, so both
+            // come back carrying none.
+            tree.add_node(test_uuid(2), test_uuid(1), 1).unwrap();
+            tree.add_node(test_uuid(3), test_uuid(2), 2).unwrap();
+            tree.add_node(test_uuid(6), test_uuid(1), 3).unwrap();
+            tree.add_node(test_uuid(5), test_uuid(6), 4).unwrap();
+            tree.remove_node(test_uuid(3), PruningMode::HoldingTank)
+                .unwrap();
+            tree.remove_node(test_uuid(2), PruningMode::PromoteEarliest)
+                .unwrap();
+            tree.remove_node(test_uuid(5), PruningMode::HoldingTank)
+                .unwrap();
+            tree.remove_node(test_uuid(6), PruningMode::PromoteEarliest)
+                .unwrap();
+            tree.place_from_tank(test_uuid(3), test_uuid(1), 0).unwrap();
+            tree.place_from_tank(test_uuid(5), test_uuid(3), 0).unwrap();
+            // Each has a recruit outside the subtree a removal of 3 takes.
+            tree.add_node_at(test_uuid(7), test_uuid(3), test_uuid(1), 1, 5)
+                .unwrap();
+            tree.add_node_at(test_uuid(8), test_uuid(5), test_uuid(7), 0, 6)
+                .unwrap();
+
+            let err = tree
+                .remove_node(test_uuid(3), PruningMode::HoldingTank)
+                .unwrap_err();
+
+            assert_eq!(
+                err,
+                TreeError::SponsorlessWithRecruits {
+                    user_id: test_uuid(3),
+                    surviving_sponsored: 1,
+                }
+            );
+        }
+    }
+
     #[test]
     fn holding_tank_removal_reports_every_recruit_it_moved() {
         let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();

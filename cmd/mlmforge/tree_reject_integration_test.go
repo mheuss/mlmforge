@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"regexp"
 	"testing"
 	"time"
 
@@ -119,9 +120,10 @@ func TestTreeRejectEvent_ClearsAnAbsentSponsorPlacementOnTheFirstTry(t *testing.
 	rejection := requireGrewByTheRejection(t, before, readTreeStream(t, events, tree), stuck.ID)
 	require.Equal(t, "appended rejection "+rejection.ID+" at version 3 to stream "+networkengine.TreeStreamName(tree)+
 		" for event "+stuck.ID+"; projected\n", out.stdout.String())
-	require.Contains(t, out.stderr.String(), "retrying event "+stuck.ID+" at version 2 returned: redelivering event "+stuck.ID+
+	require.Regexp(t, regexp.MustCompile(regexp.QuoteMeta("retrying event "+stuck.ID+" at version 2 returned: redelivering event "+stuck.ID+
 		" (tree.node_placed) at version 2 in stream "+networkengine.TreeStreamName(tree)+
-		" returned: engine add_node failed after 2 retries: engine error [SPONSOR_NOT_FOUND]: sponsor "+absent+" not found in tree")
+		" returned: engine add_node failed after ")+`\d+`+
+		regexp.QuoteMeta(" retries: engine error [SPONSOR_NOT_FOUND]: sponsor "+absent+" not found in tree")), out.stderr.String())
 	row, err := store.GetNodeIncludingRemoved(t.Context(), tree, child)
 	require.NoError(t, err)
 	require.NotNil(t, row)

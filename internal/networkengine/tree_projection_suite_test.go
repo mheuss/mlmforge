@@ -368,6 +368,27 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		})
 	}
 
+	t.Run("undoing a root leaves the user's row and the version of another tree", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		other := testTreeUUID(2)
+		otherRoot := testUserUUID(9)
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(5), other, otherRoot, 0, nil, ptr(otherRoot), nil), 1))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(6), other, root, 1, ptr(otherRoot), ptr(otherRoot), intPtr(0)), 2))
+
+		require.NoError(t, s.UndoRootProjection(ctx, tree, root, 1))
+
+		member, err := s.GetNode(ctx, other, root)
+		require.NoError(t, err)
+		assert.NotNil(t, member, "no active member row read back in the other tree after the undo")
+		version, found, err := s.ProjectedVersion(ctx, other)
+		require.NoError(t, err)
+		assert.True(t, found, "no projection row read back for the other tree")
+		assert.Equal(t, int64(2), version, "projected version read back for the other tree")
+	})
+
 	t.Run("a rejection soft-deletes the rejected event's row and records its version", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

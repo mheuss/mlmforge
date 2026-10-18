@@ -53,8 +53,8 @@ func findUnversionedStoreWrites(dir string) ([]string, error) {
 		report := func(pos token.Pos, ident string) {
 			found = append(found, fmt.Sprintf("%s:%d: %s", name, fset.Position(pos).Line, ident))
 		}
-		// A selector's name and a declaration's name are idents too. Marking
-		// them first stops the ident case reporting them a second time.
+		// A selector's name and a function declaration's name are idents too.
+		// Marking them first stops the ident case reporting them.
 		seen := map[*ast.Ident]bool{}
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch n := n.(type) {

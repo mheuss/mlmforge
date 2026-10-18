@@ -201,8 +201,9 @@ voided, making the lifecycle read backwards.
 A memory twin of a `now()` default takes one clock reading per transaction, not
 one per row. Every row a Postgres transaction inserts carries the same instant.
 A twin that reads the clock per row passes every single-row test and disagrees
-on the first batch. Pin it with a two-row batch in the shared suite. Found on
-HEU-403, where the tree store's memory `BulkInsert` stamped each row separately.
+on the first batch. A twin with a multi-row write needs a shared-suite case that
+writes two rows in one call. Found on HEU-403, where the tree store's memory
+`BulkInsert` stamped each row separately.
 
 ## A same-period foreign key is expressible
 

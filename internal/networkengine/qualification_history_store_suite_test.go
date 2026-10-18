@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// runQualificationHistoryStoreSuite is the shared behavioral contract. Both the
-// memory and Postgres implementations must pass it identically. newStore
-// returns a fresh, empty store on each call.
+// runQualificationHistoryStoreSuite is the behavioral contract for a
+// QualificationHistoryStore. newStore must return a fresh, empty store on each
+// call.
 func runQualificationHistoryStoreSuite(t *testing.T, newStore func(t *testing.T) QualificationHistoryStore) {
 	t.Helper()
 
@@ -79,7 +79,7 @@ func runQualificationHistoryStoreSuite(t *testing.T, newStore func(t *testing.T)
 		assert.True(t, at.Equal(rows[1].EvaluatedAt),
 			"one save stamped two instants, %s and %s", at, rows[1].EvaluatedAt)
 		assert.Equal(t, at.Round(0).Truncate(time.Microsecond), at,
-			"EvaluatedAt %s carries more than microsecond precision or a monotonic reading", at)
+			"EvaluatedAt %s differs from itself after Round(0).Truncate(time.Microsecond)", at)
 	})
 
 	t.Run("GetByPeriod orders rows by user id", func(t *testing.T) {
@@ -109,7 +109,7 @@ func runQualificationHistoryStoreSuite(t *testing.T, newStore func(t *testing.T)
 
 		assert.Equal(t, []uuid.UUID{userA, userB}, periodUsers(t, s, "2026-05"))
 		assert.Equal(t, []uuid.UUID{userA, userB}, periodUsers(t, s, "2026-04"),
-			"a save touched another period")
+			"2026-04 rows after saving 2026-05 differ from the rows saved to 2026-04")
 	})
 
 	t.Run("a save with no entries empties its period", func(t *testing.T) {

@@ -1028,8 +1028,8 @@ func runTreeStoreSuite(
 		upper := strings.ToUpper(tree)
 		root, child := hexUser(1), hexUser(2)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0))))
 
 		got, err := s.GetNode(ctx, upper, child)
@@ -1055,11 +1055,11 @@ func runTreeStoreSuite(
 		ctx := context.Background()
 		tree := testTreeUUID(1)
 
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(1), tree, hexUser(1), 0, nil, nil, nil)))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(1), tree, hexUser(1), 0, nil, nil, nil), 1))
 
-		err := s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), strings.ToUpper(tree), hexUser(2), 0, nil, nil, nil))
+		err := s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(2), strings.ToUpper(tree), hexUser(2), 0, nil, nil, nil), 2)
 		assert.ErrorIs(t, err, ErrRootConflict)
 	})
 
@@ -1069,8 +1069,8 @@ func runTreeStoreSuite(
 		tree := testTreeUUID(1)
 		root, child := hexUser(1), hexUser(2)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0))))
 
 		got, err := s.GetNode(ctx, tree, strings.ToUpper(child))
@@ -1090,15 +1090,15 @@ func runTreeStoreSuite(
 		root, child := hexUser(1), hexUser(2)
 		up := strings.ToUpper
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0))))
 
-		require.NoError(t, s.DeleteNode(ctx, up(tree), up(child)))
+		require.NoError(t, tombstoneUser(ctx, s, up(tree), up(child)))
 
 		active, err := s.GetNode(ctx, tree, child)
 		require.NoError(t, err)
-		assert.Nil(t, active, "DeleteNode under the uppercase ids left the row active")
+		assert.Nil(t, active, "tombstoneUser under the uppercase ids left the row active")
 
 		tombstone, err := s.GetNodeIncludingRemoved(ctx, up(tree), up(child))
 		require.NoError(t, err)
@@ -1114,14 +1114,16 @@ func runTreeStoreSuite(
 		event := testNodeUUID(9)
 		up := strings.ToUpper
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, removed, 1, ptr(root), ptr(root), intPtr(0))))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(3), tree, moved, 2, ptr(removed), ptr(removed), intPtr(0))))
 
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, up(tree), up(removed), event,
-			[]Responsored{{UserID: up(moved), NewSponsorID: up(root)}}))
+		require.NoError(t, s.ProjectRemoval(ctx, up(tree), RemovalProjection{
+			Users:       []string{up(removed)},
+			Responsored: []Responsored{{UserID: up(moved), NewSponsorID: up(root)}},
+		}, event, 1))
 
 		byEvent, err := s.GetNodeByRemovalEvent(ctx, up(tree), event)
 		require.NoError(t, err)
@@ -1139,11 +1141,11 @@ func runTreeStoreSuite(
 		s := newStore(t)
 		ctx := context.Background()
 
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(1), testTreeUUID(1), hexUser(1), 0, nil, nil, nil)))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(1), testTreeUUID(1), hexUser(1), 0, nil, nil, nil), 1))
 
-		err := s.InsertNode(ctx,
-			makeUUIDNode(strings.ToUpper(testNodeUUID(1)), testTreeUUID(2), hexUser(2), 0, nil, nil, nil))
+		err := s.ProjectInsert(ctx,
+			makeUUIDNode(strings.ToUpper(testNodeUUID(1)), testTreeUUID(2), hexUser(2), 0, nil, nil, nil), 1)
 		assert.ErrorIs(t, err, ErrNodeAlreadyProjected)
 	})
 
@@ -1154,11 +1156,11 @@ func runTreeStoreSuite(
 		root, removed := hexUser(1), hexUser(2)
 		event := testNodeUUID(9)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, removed, 1, ptr(root), ptr(root), intPtr(0))))
 
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, removed, strings.ToUpper(event), nil))
+		require.NoError(t, stampRemoval(ctx, s, tree, removed, strings.ToUpper(event), 1))
 
 		byEvent, err := s.GetNodeByRemovalEvent(ctx, tree, event)
 		require.NoError(t, err)
@@ -1179,9 +1181,9 @@ func runTreeStoreSuite(
 		root, child := hexUser(1), hexUser(2)
 		up := strings.ToUpper
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), up(tree), up(root), 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), up(tree), up(child), 1, ptr(up(root)), ptr(up(root)), intPtr(0))))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), up(tree), up(root), 0, nil, nil, nil), 1))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(2), up(tree), up(child), 1, ptr(up(root)), ptr(up(root)), intPtr(0)), 2))
 
 		got, err := s.GetNode(ctx, tree, child)
 		require.NoError(t, err)

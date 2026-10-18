@@ -2063,7 +2063,7 @@ func TestHandleNodeRemoved_RefusesWhenOnlyAnotherRemovalsTombstoneExists(t *test
 	ctx := context.Background()
 	seedRemovable(t, store)
 	earlier := makeEvent(EventTypeNodeRemoved, removedPayload())
-	require.NoError(t, store.DeleteNodeAndResponsor(ctx, "tree1", posUser, earlier.ID, nil))
+	require.NoError(t, stampRemoval(ctx, store.MemoryTreeStore, "tree1", posUser, earlier.ID, 1))
 	tomb, err := store.GetNodeIncludingRemoved(ctx, "tree1", posUser)
 	require.NoError(t, err)
 	require.NotNil(t, tomb)
@@ -2112,10 +2112,13 @@ func TestHandleNodeRemoved_ConvergesWhenTheUserReadFindsThisRemovalsStamp(t *tes
 				UserID: posUser, Depth: 1, ParentID: ptr(posParent), EnrolledAt: posEnrolled,
 			}))
 			event := makeEvent(EventTypeNodeRemoved, removedPayload())
-			require.NoError(t, mem.DeleteNodeAndResponsor(ctx, "tree1", posUser, tc.spell(event.ID), nil))
+			event.Version = 3
+			require.NoError(t, stampRemoval(ctx, mem, "tree1", posUser, tc.spell(event.ID), 1))
 			before, err := mem.GetByTree(ctx, "tree1")
 			require.NoError(t, err)
 			require.Len(t, before, 1, "active rows before HandleEvent")
+			versionBefore, foundBefore, err := mem.ProjectedVersion(ctx, "tree1")
+			require.NoError(t, err)
 
 			err = c.HandleEvent(ctx, event)
 
@@ -2124,9 +2127,10 @@ func TestHandleNodeRemoved_ConvergesWhenTheUserReadFindsThisRemovalsStamp(t *tes
 			after, err := mem.GetByTree(ctx, "tree1")
 			require.NoError(t, err)
 			assert.Equal(t, before, after, "active rows after HandleEvent")
-			_, found, verr := mem.ProjectedVersion(ctx, "tree1")
+			versionAfter, foundAfter, verr := mem.ProjectedVersion(ctx, "tree1")
 			require.NoError(t, verr)
-			assert.False(t, found, "ProjectedVersion found a row for tree1")
+			assert.Equal(t, foundBefore, foundAfter, "projection row found for tree1 before and after HandleEvent")
+			assert.Equal(t, versionBefore, versionAfter, "projected version of tree1 before and after HandleEvent")
 		})
 	}
 }
@@ -2207,7 +2211,7 @@ func TestHandleNodeRemoved_ReconcileConvergesOnItsOwnTombstoneBehindALaterPlacem
 	ctx := context.Background()
 	seedRemovable(t, store)
 	event := makeEvent(EventTypeNodeRemoved, removedPayload())
-	require.NoError(t, store.DeleteNodeAndResponsor(ctx, "tree1", posUser, event.ID, nil))
+	require.NoError(t, stampRemoval(ctx, store.MemoryTreeStore, "tree1", posUser, event.ID, 1))
 	later := seedReplacement(t, store)
 
 	err := c.HandleEvent(ctx, event)
@@ -2226,7 +2230,7 @@ func TestHandleNodeRemoved_ReconcileFailsWhenOnlyAnEarlierRemovalsTombstoneExist
 	ctx := context.Background()
 	seedRemovable(t, store)
 	earlier := makeEvent(EventTypeNodeRemoved, removedPayload())
-	require.NoError(t, store.DeleteNodeAndResponsor(ctx, "tree1", posUser, earlier.ID, nil))
+	require.NoError(t, stampRemoval(ctx, store.MemoryTreeStore, "tree1", posUser, earlier.ID, 1))
 	seedReplacement(t, store)
 	event := makeEvent(EventTypeNodeRemoved, removedPayload())
 

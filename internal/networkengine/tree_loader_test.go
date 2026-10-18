@@ -418,7 +418,7 @@ func loadWithStub(t *testing.T, treeType string, nodes []TreeNodeRow, opts ...Lo
 	return mutator, err
 }
 
-// loadWithStubDirect is loadWithStub for fixtures insertNode itself refuses,
+// loadWithStubDirect is loadWithStub for fixtures the store's insert refuses,
 // like duplicate slots, which the mirror of migration 000004 rejects at
 // insert. It seeds the store directly so loader preflight can still be tested
 // against corruption that predates the index in a real database.
@@ -637,7 +637,7 @@ func TestValidateNodes_RootSponsorIsExempt(t *testing.T) {
 }
 
 // TestValidateNodes_DuplicateUserID is the one validation case that cannot be
-// driven through LoadTree: MemoryTreeStore.insertNode refuses the fixture
+// driven through LoadTree: the memory store's insert refuses the fixture
 // (the pkey mirror fires first here, since makeNode derives the row ID from
 // the user ID, and the active-user mirror would refuse it regardless), so it
 // is unconstructable through the store.
@@ -661,7 +661,7 @@ func TestTreeLoader_ValidationFailures_Positions(t *testing.T) {
 		opts     []LoadTreeOption
 		nodes    []TreeNodeRow
 		wantErr  string
-		// direct seeds the store without insertNode. Required for fixtures
+		// direct seeds the store without its insert. Required for fixtures
 		// the store itself now refuses (duplicate slots, per the migration
 		// 000004 mirror), which preflight must still catch when they predate
 		// the index in a real database.

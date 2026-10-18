@@ -82,7 +82,7 @@ func (s *MemoryTreeStore) insertNodeAt(node TreeNodeRow, now time.Time) error {
 	return nil
 }
 
-// appendUnchecked stores a row without any of insertNode's checks, for a test
+// appendUnchecked stores a row without the insert's checks, for a test
 // that needs a row the constraints refuse.
 func (s *MemoryTreeStore) appendUnchecked(node TreeNodeRow) error {
 	node.ID, node.TreeID, node.UserID = uuidKey(node.ID), uuidKey(node.TreeID), uuidKey(node.UserID)

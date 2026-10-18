@@ -64,7 +64,7 @@ func (s *MemoryQualificationHistoryStore) SaveResult(_ context.Context, periodID
 		}
 	}
 
-	now := time.Now()
+	now := time.Now().Round(0).Truncate(time.Microsecond)
 	for _, e := range entries {
 		s.rows[memQualKey{PeriodID: periodID, UserID: e.UserID}] = QualificationHistoryRow{
 			PeriodID:    periodID,

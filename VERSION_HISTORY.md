@@ -90,6 +90,7 @@
 - Markdown always diffs as text. `.gitattributes` sets `*.md diff`, so a markdown file holding a stray NUL byte no longer renders as binary. `git grep` now prints its matching lines, and gitleaks now reads its added lines. Without the attribute gitleaks skipped the whole file, while still counting the commit as scanned. (HEU-802)
 - `docs/development/postgres-stores.md` states the paired-store rule itself: a new memory/Postgres store pair has one test body that runs against both twins. Its opening pointer named UC-NET-008. That use case is about rank result persistence. It covers neither paired twins nor a shared suite. (HEU-792)
 - The in-memory tree store matches every id it holds by UUID value, as Postgres does. That covers row, tree, user, parent, sponsor and event ids. It used to match them by spelling, so an uppercase id found no row in memory and the right row in Postgres. It stores and returns them in canonical form. (HEU-931)
+- The qualification history store's twins run one shared test suite. The memory twin now stamps EvaluatedAt at microsecond precision with no monotonic reading, as a Postgres read returns it. (HEU-938)
 
 ### Removed
 - None.

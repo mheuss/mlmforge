@@ -36,8 +36,7 @@ type QualificationHistoryRow struct {
 //
 // period_id is opaque to the store and compared lexicographically. Callers
 // must use zero-padded, sortable strings (e.g., "2026-05", "2026-W21").
-// Mixed widths like "2026-1" vs "2026-10" sort incorrectly. The memory
-// implementation has a unit test that documents this failure mode.
+// Mixed widths like "2026-1" vs "2026-10" sort incorrectly.
 //
 // Read semantics: a missing row means "not evaluated for this period." An
 // explicit row with a NULL rank means "evaluated, did not qualify"

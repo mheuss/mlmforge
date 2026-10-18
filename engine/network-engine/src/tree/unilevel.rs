@@ -84,7 +84,10 @@ impl UnilevelTree {
             return Err(TreeError::UserAlreadyExists(user_id));
         }
         self.arena.resolve(parent_id)?;
-        self.arena.resolve(sponsor_id)?;
+        self.arena.resolve(sponsor_id).map_err(|e| match e {
+            TreeError::UserNotFound(id) => TreeError::SponsorNotFound(id),
+            other => other,
+        })?;
         Ok(())
     }
 
@@ -336,6 +339,23 @@ mod tests {
         tree.add_root(test_uuid(1), 1000).unwrap();
         let result = tree.add_node(test_uuid(2), test_uuid(99), test_uuid(1), 2000);
         assert!(matches!(result, Err(TreeError::UserNotFound(_))));
+    }
+
+    #[test]
+    fn add_node_with_missing_sponsor_fails() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        let result = tree.add_node(test_uuid(2), test_uuid(1), test_uuid(99), 2000);
+        assert_eq!(result, Err(TreeError::SponsorNotFound(test_uuid(99))));
+        assert!(!tree.contains(test_uuid(2)));
+    }
+
+    #[test]
+    fn add_node_with_missing_parent_and_sponsor_reports_the_parent() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        let result = tree.add_node(test_uuid(2), test_uuid(99), test_uuid(98), 2000);
+        assert_eq!(result, Err(TreeError::UserNotFound(test_uuid(99))));
     }
 
     #[test]
@@ -1060,7 +1080,7 @@ mod tests {
         );
         assert_eq!(
             tree.check_add_node(test_uuid(2), test_uuid(1), test_uuid(98)),
-            Err(TreeError::UserNotFound(test_uuid(98)))
+            Err(TreeError::SponsorNotFound(test_uuid(98)))
         );
     }
 

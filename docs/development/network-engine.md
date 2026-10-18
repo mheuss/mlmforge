@@ -862,7 +862,7 @@ Every tree type resolves the sponsor at insert time and rejects one that is not 
 
 Automatic spillover always places a recruit below their sponsor, so depth order happened to work. Explicit placement removes that coincidence: an admin override can put a node at depth 1 whose sponsor sits at depth 10, and depth-ordered replay then fails mid-tree.
 
-The error code differs by type, which matters when grepping logs. Only `MatrixTree` remaps the failure to `SponsorNotFound` → `SPONSOR_NOT_FOUND`. `UnilevelTree` and `BinaryTree` let the bare resolve error through, so they report `USER_NOT_FOUND` for the same fault.
+Every tree type reports a missing sponsor as `SponsorNotFound` → `SPONSOR_NOT_FOUND`, and a missing parent as `USER_NOT_FOUND`. The parent is checked first, so a placement missing both reports the parent. Before HEU-940, unilevel and binary reported a missing sponsor as `USER_NOT_FOUND`, so older logs show that code for this fault.
 
 `orderForReplay` topologically sorts on both edges. Do not replace it with a depth sort.
 

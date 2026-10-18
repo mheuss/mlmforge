@@ -116,9 +116,18 @@ func TestTreeRejectEvent_ClearsAnAbsentSponsorPlacementOnTheFirstTry(t *testing.
 	out, err = runTreeCmd(t, append([]string{"reject-event", "--event-id", stuck.ID, "--reason", "sponsor never enrolled"}, conn...)...)
 
 	require.NoError(t, err, out.stderr.String())
-	requireGrewByTheRejection(t, before, readTreeStream(t, events, tree), stuck.ID)
-	require.Contains(t, out.stderr.String(), "retrying event "+stuck.ID+" at version 2 returned: redelivering event "+stuck.ID)
-	require.Contains(t, out.stderr.String(), "SPONSOR_NOT_FOUND")
+	rejection := requireGrewByTheRejection(t, before, readTreeStream(t, events, tree), stuck.ID)
+	require.Equal(t, "appended rejection "+rejection.ID+" at version 3 to stream "+networkengine.TreeStreamName(tree)+
+		" for event "+stuck.ID+"; projected\n", out.stdout.String())
+	require.Contains(t, out.stderr.String(), "retrying event "+stuck.ID+" at version 2 returned: redelivering event "+stuck.ID+
+		" (tree.node_placed) at version 2 in stream "+networkengine.TreeStreamName(tree)+
+		" returned: engine add_node failed after 2 retries: engine error [SPONSOR_NOT_FOUND]: sponsor "+absent+" not found in tree")
+	row, err := store.GetNodeIncludingRemoved(t.Context(), tree, child)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	require.Equal(t, stuck.ID, row.ID)
+	require.NotNil(t, row.RemovedAt, "the stuck placement's row is still active")
+	require.Nil(t, row.RemovedByEventID)
 	requireProjectedVersion(t, store, tree, 3)
 
 	out, err = runTreeCmd(t, append([]string{"place", "--user-id", next, "--parent-id", root, "--sponsor-id", root}, conn...)...)

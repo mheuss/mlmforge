@@ -2620,14 +2620,21 @@ func TestTreeConsumer_ARemovalTombstonesTheUserOnEveryTreeType(t *testing.T) {
 				ptr(writerRoot), ptr(writerRoot), tc.position)))
 			consumer := NewTreeEventConsumer(store, engine)
 
-			err := consumer.HandleEvent(ctx, versionedEvent(t, writerTree, 3, EventTypeNodeRemoved, NodeRemovedPayload{
+			event := versionedEvent(t, writerTree, 3, EventTypeNodeRemoved, NodeRemovedPayload{
 				TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime, TreeType: tc.treeType, PruningMode: tc.mode,
-			}))
+			})
+
+			err := consumer.HandleEvent(ctx, event)
 
 			require.NoError(t, err)
 			row, err := store.GetNode(ctx, writerTree, writerChild)
 			require.NoError(t, err)
 			assert.Nil(t, row, "the removal left %s active", writerChild)
+			tomb, err := store.GetNodeIncludingRemoved(ctx, writerTree, writerChild)
+			require.NoError(t, err)
+			require.NotNil(t, tomb, "no row read back for %s after the removal", writerChild)
+			require.NotNil(t, tomb.RemovedByEventID, "no removal stamp read back for %s after the removal", writerChild)
+			assert.Equal(t, event.ID, *tomb.RemovedByEventID)
 		})
 	}
 }

@@ -335,6 +335,25 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		assert.Equal(t, before, readProjectionState(t, s, tree, root))
 	})
 
+	t.Run("undoing a root does not cross tree boundaries", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		other := testTreeUUID(2)
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(5), other, root, 0, nil, ptr(root), nil), 1))
+
+		// Undoing in other, whose row went in second. An undo that ignores the
+		// tree finds tree's row first.
+		require.NoError(t, s.UndoRootProjection(ctx, other, root, 1))
+
+		inTree, err := s.GetNode(ctx, tree, root)
+		require.NoError(t, err)
+		assert.NotNil(t, inTree, "no active root read back in the first tree after an undo in the other")
+		inOther, err := s.GetNode(ctx, other, root)
+		require.NoError(t, err)
+		assert.Nil(t, inOther, "active root read back in the other tree after its undo")
+	})
+
 	t.Run("a rejection soft-deletes the rejected event's row and records its version", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

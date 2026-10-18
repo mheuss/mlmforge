@@ -1083,7 +1083,7 @@ func runTreeStoreSuite(
 		assert.Equal(t, []string{child}, nodeUserIDs(children))
 	})
 
-	t.Run("an uppercase id deletes the same row and reads its tombstone", func(t *testing.T) {
+	t.Run("an uppercase id removes the same row and reads its tombstone", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 		tree := testTreeUUID(1)
@@ -1094,11 +1094,11 @@ func runTreeStoreSuite(
 		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0))))
 
-		require.NoError(t, tombstoneUser(ctx, s, up(tree), up(child)))
+		require.NoError(t, stampRemoval(ctx, s, up(tree), up(child), testNodeUUID(9), 1))
 
 		active, err := s.GetNode(ctx, tree, child)
 		require.NoError(t, err)
-		assert.Nil(t, active, "tombstoneUser under the uppercase ids left the row active")
+		assert.Nil(t, active, "the removal under the uppercase ids left the row active")
 
 		tombstone, err := s.GetNodeIncludingRemoved(ctx, up(tree), up(child))
 		require.NoError(t, err)

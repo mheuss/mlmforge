@@ -181,7 +181,7 @@ func TestPostgresTreeStore_ConcurrentRootsLeaveOne(t *testing.T) {
 	assert.Equal(t, 1, roots, "and the tree holds exactly one active root")
 }
 
-func TestPostgresTreeStore_DeleteNode(t *testing.T) {
+func TestPostgresTreeStore_GetNodeSkipsATombstone(t *testing.T) {
 	store := newTestPostgresTreeStore(t)
 	ctx := context.Background()
 
@@ -297,7 +297,7 @@ func TestPostgresTreeStore_PartialIndex(t *testing.T) {
 
 	node := makeUUIDNode(testNodeUUID(1), tree1, userA, 0, nil, nil, nil)
 	require.NoError(t, insertNode(ctx, store.pool, node))
-	require.NoError(t, tombstoneUser(ctx, store, tree1, userA))
+	require.NoError(t, stampRemoval(ctx, store, tree1, userA, testNodeUUID(9), 1))
 
 	got, err := store.GetNode(ctx, tree1, userA)
 	require.NoError(t, err)
@@ -461,6 +461,7 @@ func TestPostgresTreeStore_ProjectsALargeRemovalInsideTheWriteTimeout(t *testing
 			store := newTestPostgresTreeStore(t)
 			tx, err := store.pool.Begin(context.Background())
 			require.NoError(t, err)
+			defer func() { _ = tx.Rollback(context.Background()) }()
 			for _, row := range rows {
 				require.NoError(t, insertNode(context.Background(), tx, row))
 			}

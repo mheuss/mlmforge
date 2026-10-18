@@ -2112,6 +2112,7 @@ func TestHandleNodeRemoved_ConvergesWhenTheUserReadFindsThisRemovalsStamp(t *tes
 				UserID: posUser, Depth: 1, ParentID: ptr(posParent), EnrolledAt: posEnrolled,
 			}))
 			event := makeEvent(EventTypeNodeRemoved, removedPayload())
+			// Keep this above the stamp's version on the next line.
 			event.Version = 3
 			require.NoError(t, stampRemoval(ctx, mem, "tree1", posUser, tc.spell(event.ID), 1))
 			before, err := mem.GetByTree(ctx, "tree1")
@@ -2129,8 +2130,8 @@ func TestHandleNodeRemoved_ConvergesWhenTheUserReadFindsThisRemovalsStamp(t *tes
 			assert.Equal(t, before, after, "active rows after HandleEvent")
 			versionAfter, foundAfter, verr := mem.ProjectedVersion(ctx, "tree1")
 			require.NoError(t, verr)
-			assert.Equal(t, foundBefore, foundAfter, "projection row found for tree1 before and after HandleEvent")
-			assert.Equal(t, versionBefore, versionAfter, "projected version of tree1 before and after HandleEvent")
+			assert.Equal(t, foundBefore, foundAfter, "found flag of tree1's projection row, before vs after HandleEvent")
+			assert.Equal(t, versionBefore, versionAfter, "projected version of tree1, before vs after HandleEvent")
 		})
 	}
 }

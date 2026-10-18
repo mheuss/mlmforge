@@ -465,3 +465,31 @@ With that root still on the tracked tree, the scratch binary is compared against
 sources it was not built from. A fix committed after the scratch build makes the
 binary read as stale, and the run stops before any test asserts. Pointing the
 root at the copy compares the binary with the sources it was built from.
+
+## A mapped covering case must run the code the deleted case ran
+
+A table that maps each deleted test to a covering case reads as complete,
+whatever it actually covers. A row is only true if the covering case runs the
+production function the deleted case ran.
+
+Before marking a deleted case covered, name the function it exercised. Mutate
+that function and watch the covering case go red.
+
+HEU-864 mapped "DeleteNode does not cross tree boundaries" to a case written
+through `ProjectRemoval`. That path never calls the memory store's `deleteNode`.
+`UndoRootProjection` still did. Dropping the tree check from `deleteNode` passed
+the whole suite until a case drove the undo.
+
+## A one-direction test of a scoped write passes a scope-blind pick
+
+A write that must stay inside one tree can lose its tree filter and still pick
+the right row, because of insertion order or id order. A test that only removes
+the row inserted second passes any scope-blind write that takes the newest or the
+highest id.
+
+Test a scoped write in both directions. Assert what it must leave alone, such as
+the other tree's rows and projected version. Seed the untouched side with state
+the write could plausibly reach.
+
+HEU-864's first cross-tree undo case undid only the second root. Three scope-blind
+mutations, one on memory and two on Postgres, passed it.

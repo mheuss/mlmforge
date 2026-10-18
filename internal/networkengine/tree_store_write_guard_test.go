@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,63 +27,53 @@ var unversionedStoreHelpers = map[string]bool{
 
 // storeImplementations are the files the guard does not read.
 var storeImplementations = map[string]bool{
-	"internal/networkengine/tree_store_memory.go":   true,
-	"internal/networkengine/tree_store_postgres.go": true,
+	"tree_store_memory.go":   true,
+	"tree_store_postgres.go": true,
 }
 
-// findUnversionedStoreWrites returns "path:line: Name" for each use of a write
-// that skips the projected version, in a non-test Go file under root, other
-// than in the store implementations.
-func findUnversionedStoreWrites(root string) ([]string, error) {
+// findUnversionedStoreWrites returns "file:line: Name" for each use of a write
+// that skips the projected version, in a non-test Go file in dir, other than in
+// the store implementations.
+func findUnversionedStoreWrites(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
 	var found []string
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			switch d.Name() {
-			case ".git", ".worktrees", ".sop-tmp", "target", "node_modules":
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		if storeImplementations[rel] {
-			return nil
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || storeImplementations[name] {
+			continue
 		}
 		fset := token.NewFileSet()
-		file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+		file, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, parser.SkipObjectResolution)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		report := func(pos token.Pos, name string) {
-			found = append(found, fmt.Sprintf("%s:%d: %s", rel, fset.Position(pos).Line, name))
+		report := func(pos token.Pos, ident string) {
+			found = append(found, fmt.Sprintf("%s:%d: %s", name, fset.Position(pos).Line, ident))
 		}
-		// Any selector, not only a call's, so a method value such as
-		// f := s.insertNode is reported too.
+		// A selector's name and a declaration's name are idents too. Marking
+		// them first stops the ident case reporting them a second time.
+		seen := map[*ast.Ident]bool{}
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch n := n.(type) {
+			case *ast.FuncDecl:
+				seen[n.Name] = true
 			case *ast.SelectorExpr:
+				seen[n.Sel] = true
 				if unversionedStoreWrites[n.Sel.Name] {
 					report(n.Pos(), n.Sel.Name)
 				}
-			case *ast.CallExpr:
-				if id, ok := n.Fun.(*ast.Ident); ok && unversionedStoreHelpers[id.Name] {
-					report(n.Pos(), id.Name)
+			case *ast.Ident:
+				if !seen[n] && unversionedStoreHelpers[n.Name] {
+					report(n.Pos(), n.Name)
 				}
 			}
 			return true
 		})
-		return nil
-	})
-	return found, err
+	}
+	return found, nil
 }
 
 // moduleRoot walks up from the working directory to the directory holding
@@ -104,28 +93,28 @@ func moduleRoot(t *testing.T) string {
 }
 
 func TestFindUnversionedStoreWrites_NamesEachUseOutsideTheStores(t *testing.T) {
-	root := t.TempDir()
-	write := func(rel, body string) {
-		path := filepath.Join(root, filepath.FromSlash(rel))
-		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
-		require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+	dir := t.TempDir()
+	write := func(name, body string) {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644))
 	}
-	write("internal/networkengine/writer.go", "package networkengine\n\nfunc run(s *MemoryTreeStore) {\n\ts.insertNode(nil, row)\n\ts.ProjectInsert(nil, row, 1)\n\tf := s.deleteNode\n\tinsertNode(nil, tx, row)\n}\n")
-	write("internal/networkengine/writer_test.go", "package networkengine\n\nfunc seed(s *MemoryTreeStore) { s.insertNode(nil, row) }\n")
-	write("internal/networkengine/tree_store_memory.go", "package networkengine\n\nfunc f(s *MemoryTreeStore) { s.deleteNode(nil, \"\", \"\") }\n")
+	write("writer.go", "package networkengine\n\nfunc run(s *MemoryTreeStore) {\n\ts.insertNode(nil, row)\n\ts.ProjectInsert(nil, row, 1)\n\tf := s.deleteNode\n\tinsertNode(nil, tx, row)\n\tg := insertNode\n}\n")
+	write("writer_test.go", "package networkengine\n\nfunc seed(s *MemoryTreeStore) { s.insertNode(nil, row) }\n")
+	write("tree_store_memory.go", "package networkengine\n\nfunc f(s *MemoryTreeStore) { s.deleteNode(nil, \"\", \"\") }\n")
+	write("other.go", "package networkengine\n\nfunc (h holder) insertNode() {}\n")
 
-	found, err := findUnversionedStoreWrites(root)
+	found, err := findUnversionedStoreWrites(dir)
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{
-		"internal/networkengine/writer.go:4: insertNode",
-		"internal/networkengine/writer.go:6: deleteNode",
-		"internal/networkengine/writer.go:7: insertNode",
+		"writer.go:4: insertNode",
+		"writer.go:6: deleteNode",
+		"writer.go:7: insertNode",
+		"writer.go:8: insertNode",
 	}, found)
 }
 
 func TestNoProductionCodeCallsAnUnversionedStoreWrite(t *testing.T) {
-	found, err := findUnversionedStoreWrites(moduleRoot(t))
+	found, err := findUnversionedStoreWrites(filepath.Join(moduleRoot(t), "internal", "networkengine"))
 
 	require.NoError(t, err)
 	assert.Empty(t, found, "uses of insertNode or deleteNode in non-test Go files outside the store implementations")

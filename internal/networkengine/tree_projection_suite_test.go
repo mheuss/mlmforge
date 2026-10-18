@@ -335,24 +335,38 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		assert.Equal(t, before, readProjectionState(t, s, tree, root))
 	})
 
-	t.Run("undoing a root does not cross tree boundaries", func(t *testing.T) {
-		s := newStore(t)
-		ctx := context.Background()
-		other := testTreeUUID(2)
-		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
-		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(5), other, root, 0, nil, ptr(root), nil), 1))
+	for _, tc := range []struct {
+		name       string
+		undoSecond bool
+	}{
+		{"the tree whose root went in second", true},
+		{"the tree whose root went in first", false},
+	} {
+		t.Run("undoing a root does not cross tree boundaries, undoing "+tc.name, func(t *testing.T) {
+			s := newStore(t)
+			ctx := context.Background()
+			other := testTreeUUID(2)
+			require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+			require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(5), other, root, 0, nil, ptr(root), nil), 1))
+			undone, kept := other, tree
+			if !tc.undoSecond {
+				undone, kept = tree, other
+			}
 
-		// Undoing in other, whose row went in second. An undo that ignores the
-		// tree finds tree's row first.
-		require.NoError(t, s.UndoRootProjection(ctx, other, root, 1))
+			require.NoError(t, s.UndoRootProjection(ctx, undone, root, 1))
 
-		inTree, err := s.GetNode(ctx, tree, root)
-		require.NoError(t, err)
-		assert.NotNil(t, inTree, "no active root read back in the first tree after an undo in the other")
-		inOther, err := s.GetNode(ctx, other, root)
-		require.NoError(t, err)
-		assert.Nil(t, inOther, "active root read back in the other tree after its undo")
-	})
+			inKept, err := s.GetNode(ctx, kept, root)
+			require.NoError(t, err)
+			assert.NotNil(t, inKept, "no active root read back in the kept tree after an undo in the other")
+			inUndone, err := s.GetNode(ctx, undone, root)
+			require.NoError(t, err)
+			assert.Nil(t, inUndone, "active root read back in the tree whose root was undone")
+			keptVersion, keptFound, err := s.ProjectedVersion(ctx, kept)
+			require.NoError(t, err)
+			assert.True(t, keptFound, "no projection row read back for the kept tree")
+			assert.Equal(t, int64(1), keptVersion, "projected version read back for the kept tree")
+		})
+	}
 
 	t.Run("a rejection soft-deletes the rejected event's row and records its version", func(t *testing.T) {
 		s := newStore(t)

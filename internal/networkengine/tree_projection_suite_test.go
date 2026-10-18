@@ -2,6 +2,8 @@ package networkengine
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -674,6 +676,182 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 			assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit, grand))
 		})
 	}
+
+	t.Run("an uppercase tree id reaches the same projection", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		upper := strings.ToUpper(tree)
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+
+		version, found, err := s.ProjectedVersion(ctx, upper)
+		require.NoError(t, err)
+		assert.True(t, found, "ProjectedVersion found no projection row under tree %s", upper)
+		assert.Equal(t, int64(2), version)
+
+		version, found, rows, err := s.ProjectedRows(ctx, upper)
+		require.NoError(t, err)
+		assert.True(t, found)
+		assert.Equal(t, int64(2), version)
+		assert.Equal(t, []string{root, child}, nodeUserIDs(rows))
+
+		require.NoError(t, s.ProjectRemoval(ctx, upper, onlyChild, testNodeUUID(9), 3))
+
+		got := readProjectionState(t, s, tree, child)
+		assert.Equal(t, int64(3), got.version)
+		require.NotNil(t, got.rows[child])
+		assert.NotNil(t, got.rows[child].RemovedAt)
+	})
+
+	t.Run("a refusal under an uppercase tree id reports the tree id as given", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		upper := strings.ToUpper(tree)
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 3))
+		low := childRow
+		low.TreeID = upper
+
+		calls := []struct {
+			name string
+			call func() error
+		}{
+			{"ProjectInsert", func() error { return s.ProjectInsert(ctx, low, 2) }},
+			{"ProjectRemoval", func() error { return s.ProjectRemoval(ctx, upper, onlyChild, testNodeUUID(9), 2) }},
+			{"ProjectRejection", func() error { return s.ProjectRejection(ctx, upper, childRow.ID, 2) }},
+		}
+		for _, c := range calls {
+			var refused *ProjectionRefusedError
+			require.ErrorAs(t, c.call(), &refused, c.name)
+			assert.Equal(t, upper, refused.TreeID, "%s reported tree %s, want %s as given", c.name, refused.TreeID, upper)
+		}
+	})
+
+	t.Run("removal and undo messages report uppercase ids as given", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		up := strings.ToUpper
+		r := hexUser(1)
+		upTree, upRoot, upAbsent := up(tree), up(r), up(hexUser(5))
+
+		err := s.ProjectRemoval(ctx, upTree, RemovalProjection{}, testNodeUUID(9), 1)
+		assert.EqualError(t, err, fmt.Sprintf("project removal in tree %s: the removal names no users", upTree))
+
+		err = s.ProjectRemoval(ctx, upTree, onlyChild, testNodeUUID(9), 0)
+		assert.EqualError(t, err, fmt.Sprintf(
+			"tree %s was given event version 0, below 1; nothing was written", upTree))
+
+		err = s.UndoRootProjection(ctx, upTree, upRoot, 1)
+		assert.EqualError(t, err, fmt.Sprintf(
+			"tree %s has no projection row; the root row for %s at version 1 was not deleted", upTree, upRoot))
+
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(11), tree, r, 0, nil, ptr(r), nil), 1))
+
+		err = s.UndoRootProjection(ctx, upTree, upRoot, 2)
+		assert.EqualError(t, err, fmt.Sprintf(
+			"tree %s has projected version 1, not 2; the root row for %s was not deleted", upTree, upRoot))
+
+		err = s.UndoRootProjection(ctx, upTree, upAbsent, 1)
+		assert.EqualError(t, err, fmt.Sprintf(
+			"soft delete for root %s in tree %s matched 0 active rows; the projected version was not changed",
+			upAbsent, upTree))
+
+		err = s.ProjectRemoval(ctx, upTree, RemovalProjection{Users: []string{upAbsent}}, testNodeUUID(9), 2)
+		assert.EqualError(t, err, fmt.Sprintf(
+			"tombstoning removed users [%s] in tree %s matched 0 of 1 active rows", upAbsent, upTree))
+
+		below := fmt.Sprintf("tree %s was given event version 0, below 1; nothing was written", upTree)
+		upRow := makeUUIDNode(testNodeUUID(12), upTree, hexUser(2), 1, ptr(r), ptr(r), intPtr(0))
+		assert.EqualError(t, s.ProjectInsert(ctx, upRow, 0), below, "ProjectInsert")
+		assert.EqualError(t, s.ProjectRejection(ctx, upTree, testNodeUUID(12), 0), below, "ProjectRejection")
+		assert.EqualError(t, s.UndoRootProjection(ctx, upTree, upRoot, 0), below, "UndoRootProjection")
+	})
+
+	t.Run("a row projected under an uppercase tree id advances the canonical version", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		row := rootRow
+		row.TreeID = strings.ToUpper(tree)
+
+		require.NoError(t, s.ProjectInsert(ctx, row, 1))
+
+		got := readProjectionState(t, s, tree)
+		assert.True(t, got.found, "ProjectInsert under tree %s left no projection row for %s", row.TreeID, tree)
+		assert.Equal(t, int64(1), got.version)
+	})
+
+	t.Run("a removal writes uppercase sponsor and parent ids in canonical form", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		r, c, rec, g := hexUser(1), hexUser(2), hexUser(3), hexUser(4)
+		up := strings.ToUpper
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(11), tree, r, 0, nil, ptr(r), nil), 1))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(12), tree, c, 1, ptr(r), ptr(r), intPtr(0)), 2))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(13), tree, rec, 1, ptr(r), ptr(c), intPtr(1)), 3))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(14), tree, g, 2, ptr(c), ptr(c), intPtr(0)), 4))
+
+		require.NoError(t, s.ProjectRemoval(ctx, tree, RemovalProjection{
+			Users:       []string{c},
+			Responsored: []Responsored{{UserID: rec, NewSponsorID: up(r)}},
+			Relocated:   []Relocation{{UserID: g, ParentID: up(r), Position: 0, Depth: 1}},
+		}, testNodeUUID(19), 5))
+
+		got := readProjectionState(t, s, tree, rec, g)
+		require.NotNil(t, got.rows[rec])
+		require.NotNil(t, got.rows[rec].SponsorID)
+		assert.Equal(t, r, *got.rows[rec].SponsorID)
+		require.NotNil(t, got.rows[g])
+		require.NotNil(t, got.rows[g].ParentID)
+		assert.Equal(t, r, *got.rows[g].ParentID)
+	})
+
+	t.Run("an uppercase rejected event id soft-deletes that event's row", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+
+		require.NoError(t, s.ProjectRejection(ctx, tree, strings.ToUpper(childRow.ID), 3))
+
+		got := readProjectionState(t, s, tree, child)
+		require.NotNil(t, got.rows[child])
+		assert.NotNil(t, got.rows[child].RemovedAt, "the rejection of %s left the row active", strings.ToUpper(childRow.ID))
+	})
+
+	t.Run("a removal stamps an uppercase removal event id in canonical form", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		event := testNodeUUID(9)
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+
+		require.NoError(t, s.ProjectRemoval(ctx, tree, onlyChild, strings.ToUpper(event), 3))
+
+		got := readProjectionState(t, s, tree, child)
+		require.NotNil(t, got.rows[child])
+		require.NotNil(t, got.rows[child].RemovedByEventID)
+		assert.Equal(t, event, *got.rows[child].RemovedByEventID)
+	})
+
+	t.Run("an uppercase tree id reaches the same row for a rejection and an undo", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		upper := strings.ToUpper(tree)
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+
+		require.NoError(t, s.ProjectRejection(ctx, upper, childRow.ID, 3))
+		require.NoError(t, s.UndoRootProjection(ctx, upper, root, 3))
+
+		got := readProjectionState(t, s, tree, root, child)
+		assert.Equal(t, int64(2), got.version)
+		require.NotNil(t, got.rows[child])
+		assert.NotNil(t, got.rows[child].RemovedAt, "the rejection under tree %s left the row active", upper)
+		require.NotNil(t, got.rows[root])
+		assert.NotNil(t, got.rows[root].RemovedAt, "the undo under tree %s left the root active", upper)
+	})
 }
 
 func TestMemoryTreeStore_ProjectionSuite(t *testing.T) {

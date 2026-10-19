@@ -700,6 +700,7 @@ impl MatrixTree {
         parent_id: Uuid,
         position: u8,
     ) -> Result<(), TreeError> {
+        Arena::check_user_id(user_id)?;
         if position >= self.width {
             return Err(TreeError::PositionOutOfRange {
                 user_id: parent_id,
@@ -2333,6 +2334,26 @@ mod tests {
 
         assert_eq!(result, Err(TreeError::UserInHoldingTank(test_uuid(2))));
         assert!(!tree.contains(test_uuid(2)));
+    }
+
+    #[test]
+    fn place_from_tank_refuses_a_nil_user_id_from_a_restored_tank() {
+        let mut crafted = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        crafted.add_root(test_uuid(1), 1000).unwrap();
+        crafted.holding_tank.push(HoldingTankEntry {
+            user_id: Uuid::nil(),
+            sponsor_user_id: None,
+            enrolled_at: 0,
+        });
+        let json = serde_json::to_string(&crafted).unwrap();
+        let mut tree: MatrixTree = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(
+            tree.place_from_tank(Uuid::nil(), test_uuid(1), 0),
+            Err(TreeError::NilUserId)
+        );
+        assert_eq!(tree.holding_tank.len(), 1);
+        assert!(!tree.arena.index.contains_key(&Uuid::nil()));
     }
 
     #[test]

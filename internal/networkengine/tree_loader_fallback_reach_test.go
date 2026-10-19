@@ -158,8 +158,8 @@ func TestLoadTree_FailuresAtEveryStageNeverRenderTheFallback(t *testing.T) {
 				store = twoRootStore{treeID: "t", rows: tt.rows}
 			} else {
 				seeded := networkengine.NewMemoryTreeStore()
-				for _, r := range tt.rows {
-					require.NoError(t, seeded.InsertNode(t.Context(), r))
+				for i, r := range tt.rows {
+					require.NoError(t, seeded.ProjectInsert(t.Context(), r, int64(i+1)))
 				}
 				store = seeded
 			}

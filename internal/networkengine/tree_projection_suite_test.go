@@ -296,7 +296,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 	t.Run("undoing a root in a tree with no projection row deletes nothing", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
-		require.NoError(t, s.InsertNode(ctx, rootRow))
+		require.NoError(t, insertRow(ctx, s, rootRow))
 		before := readProjectionState(t, s, tree, root)
 
 		err := s.UndoRootProjection(ctx, tree, root, 1)
@@ -333,6 +333,60 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 
 		require.EqualError(t, err, "tree "+tree+" has projected version 2, not 1; the root row for "+root+" was not deleted")
 		assert.Equal(t, before, readProjectionState(t, s, tree, root))
+	})
+
+	for _, tc := range []struct {
+		name       string
+		undoSecond bool
+	}{
+		{"the tree whose root went in second", true},
+		{"the tree whose root went in first", false},
+	} {
+		t.Run("undoing a root does not cross tree boundaries, undoing "+tc.name, func(t *testing.T) {
+			s := newStore(t)
+			ctx := context.Background()
+			other := testTreeUUID(2)
+			require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+			require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(5), other, root, 0, nil, ptr(root), nil), 1))
+			undone, kept := other, tree
+			if !tc.undoSecond {
+				undone, kept = tree, other
+			}
+
+			require.NoError(t, s.UndoRootProjection(ctx, undone, root, 1))
+
+			inKept, err := s.GetNode(ctx, kept, root)
+			require.NoError(t, err)
+			assert.NotNil(t, inKept, "no active root read back in the kept tree after an undo in the other")
+			inUndone, err := s.GetNode(ctx, undone, root)
+			require.NoError(t, err)
+			assert.Nil(t, inUndone, "active root read back in the tree whose root was undone")
+			keptVersion, keptFound, err := s.ProjectedVersion(ctx, kept)
+			require.NoError(t, err)
+			assert.True(t, keptFound, "no projection row read back for the kept tree")
+			assert.Equal(t, int64(1), keptVersion, "projected version read back for the kept tree")
+		})
+	}
+
+	t.Run("undoing a root leaves the user's row and the version of another tree", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		other := testTreeUUID(2)
+		otherRoot := testUserUUID(9)
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(5), other, otherRoot, 0, nil, ptr(otherRoot), nil), 1))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(6), other, root, 1, ptr(otherRoot), ptr(otherRoot), intPtr(0)), 2))
+
+		require.NoError(t, s.UndoRootProjection(ctx, tree, root, 1))
+
+		member, err := s.GetNode(ctx, other, root)
+		require.NoError(t, err)
+		assert.NotNil(t, member, "no active member row read back in the other tree after the undo")
+		version, found, err := s.ProjectedVersion(ctx, other)
+		require.NoError(t, err)
+		assert.True(t, found, "no projection row read back for the other tree")
+		assert.Equal(t, int64(2), version, "projected version read back for the other tree")
 	})
 
 	t.Run("a rejection soft-deletes the rejected event's row and records its version", func(t *testing.T) {
@@ -416,6 +470,25 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		got := readProjectionState(t, s, tree, child)
 		assert.Equal(t, int64(4), got.version)
 		assert.Equal(t, before.rows[child], got.rows[child], "the rejection rewrote a tombstone")
+	})
+
+	t.Run("a cancelled insert or removal writes nothing", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		require.NoError(t, s.ProjectInsert(ctx, recruitRow, 3))
+		before := readProjectionState(t, s, tree, root, child, recruit, grand)
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+
+		assert.ErrorIs(t, s.ProjectInsert(cancelled, grandRow, 4), context.Canceled, "ProjectInsert")
+		assert.ErrorIs(t, s.ProjectRemoval(cancelled, tree, RemovalProjection{
+			Users:       []string{child},
+			Responsored: []Responsored{{UserID: recruit, NewSponsorID: root}},
+		}, testNodeUUID(9), 4), context.Canceled, "ProjectRemoval")
+
+		assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit, grand))
 	})
 
 	t.Run("a rejection with a cancelled context writes nothing", func(t *testing.T) {

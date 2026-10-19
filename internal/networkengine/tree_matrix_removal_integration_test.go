@@ -175,7 +175,7 @@ func TestTreeConsumer_ARedeliveredPlacementConvergesAfterAPromotionMovedItsNode_
 	require.NoError(t, store.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{a},
 		Responsored: moved.Responsored, Relocated: moved.Relocated}, uuid.NewString(), 3))
 	require.NoError(t, engine.AddNodeAt(ctx, tree, a, root, root, 1, writeTime.Unix()))
-	require.NoError(t, store.InsertNode(ctx, TreeNodeRow{ID: uuid.NewString(), TreeID: tree, UserID: a,
+	require.NoError(t, store.insertNode(ctx, TreeNodeRow{ID: uuid.NewString(), TreeID: tree, UserID: a,
 		ParentID: ptr(root), SponsorID: ptr(root), Position: intPtr(1), Depth: 1, EnrolledAt: writeTime}))
 
 	err = consumer.HandleEvent(ctx, events[2])

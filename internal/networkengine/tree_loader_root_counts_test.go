@@ -26,10 +26,10 @@ func TestLoadTree_RootStageReportsTheNonRootCount(t *testing.T) {
 	}
 
 	store := networkengine.NewMemoryTreeStore()
-	for _, r := range []networkengine.TreeNodeRow{
+	for i, r := range []networkengine.TreeNodeRow{
 		root("u0"), child("u1", "u0", 2), child("u2", "u0", 3),
 	} {
-		require.NoError(t, store.InsertNode(t.Context(), r))
+		require.NoError(t, store.ProjectInsert(t.Context(), r, int64(i+1)))
 	}
 
 	_, err := networkengine.NewTreeLoader(store, failingMutator{failOn: "AddRoot"}).

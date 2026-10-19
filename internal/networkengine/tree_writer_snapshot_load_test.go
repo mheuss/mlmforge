@@ -257,7 +257,7 @@ func TestTreeWriterSnapshotLoad_FailsWhenTheFullReplayAlsoDisagrees(t *testing.T
 	mustAddRoot(t, env, treeTypeUnilevel)
 	seedSnapshot(t, env, 1)
 	root := writerRoot
-	require.NoError(t, env.store.InsertNode(context.Background(), TreeNodeRow{
+	require.NoError(t, env.store.insertNode(context.Background(), TreeNodeRow{
 		ID: testNodeUUID(70), TreeID: writerTree, UserID: writerOther, ParentID: &root, SponsorID: &root,
 		Depth: 1, EnrolledAt: writeTime,
 	}))
@@ -429,7 +429,7 @@ func TestTreeWriterSnapshotLoad_CountsZeroRowsAsAMismatchOnTheSnapshotPath(t *te
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
 	seedSnapshot(t, env, 1)
-	require.NoError(t, env.store.DeleteNode(context.Background(), writerTree, writerRoot))
+	require.NoError(t, env.store.deleteNode(context.Background(), writerTree, writerRoot))
 	w, engine := env.writer()
 
 	res, err := w.Load(context.Background(), loadRequest())

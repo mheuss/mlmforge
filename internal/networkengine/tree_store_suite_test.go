@@ -37,7 +37,7 @@ func runTreeStoreSuite(
 ) {
 	t.Helper()
 
-	t.Run("InsertNode then GetNode returns the row", func(t *testing.T) {
+	t.Run("ProjectInsert then GetNode returns the row", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
@@ -45,9 +45,9 @@ func runTreeStoreSuite(
 		rootUser := testUserUUID(1)
 		childUser := testUserUUID(2)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), tree, childUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil), 1))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, childUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0)), 2))
 
 		got, err := s.GetNode(ctx, tree, childUser)
 		require.NoError(t, err)
@@ -70,7 +70,7 @@ func runTreeStoreSuite(
 		s := newStore(t)
 		ctx := context.Background()
 
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(1), testTreeUUID(1), testUserUUID(1), 0, nil, nil, nil)))
 
 		got, err := s.GetNode(ctx, testTreeUUID(1), testUserUUID(99))
@@ -85,7 +85,7 @@ func runTreeStoreSuite(
 		ctx := context.Background()
 
 		user := testUserUUID(1)
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(1), testTreeUUID(1), user, 0, nil, nil, nil)))
 
 		got, err := s.GetNode(ctx, testTreeUUID(2), user)
@@ -100,7 +100,7 @@ func runTreeStoreSuite(
 		tree := testTreeUUID(1)
 		user := testUserUUID(1)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
 
 		got, err := s.GetNode(ctx, tree, user)
 		require.NoError(t, err)
@@ -120,8 +120,8 @@ func runTreeStoreSuite(
 		tree := testTreeUUID(1)
 		user := testUserUUID(1)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
-		require.NoError(t, s.DeleteNode(ctx, tree, user))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, tombstoneUser(ctx, s, tree, user))
 
 		got, err := s.GetNode(ctx, tree, user)
 		require.NoError(t, err, "a soft-deleted row reads as absent, not as an error")
@@ -138,16 +138,16 @@ func runTreeStoreSuite(
 		removedUser := testUserUUID(3)
 		grandchildUser := testUserUUID(4)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, keptUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(3), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(1))))
 		// A grandchild, to prove GetChildren is one level and not a subtree walk.
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(4), tree, grandchildUser, 2, ptr(keptUser), ptr(keptUser), intPtr(0))))
 
-		require.NoError(t, s.DeleteNode(ctx, tree, removedUser))
+		require.NoError(t, tombstoneUser(ctx, s, tree, removedUser))
 
 		children, err := s.GetChildren(ctx, tree, rootUser)
 		require.NoError(t, err)
@@ -165,15 +165,15 @@ func runTreeStoreSuite(
 		keptUser := testUserUUID(2)
 		removedUser := testUserUUID(3)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, keptUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(3), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(1))))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(4), otherTree, testUserUUID(4), 0, nil, nil, nil)))
 
-		require.NoError(t, s.DeleteNode(ctx, tree, removedUser))
+		require.NoError(t, tombstoneUser(ctx, s, tree, removedUser))
 
 		got, err := s.GetByTree(ctx, tree)
 		require.NoError(t, err)
@@ -181,10 +181,9 @@ func runTreeStoreSuite(
 			"active rows of this tree only")
 	})
 
-	// DeleteNode is asserted through every read path rather than GetNode
-	// alone. A soft delete that one query honors and another ignores is the
-	// shape that breaks startup bulk-load.
-	t.Run("DeleteNode makes the row invisible to every read", func(t *testing.T) {
+	// The tombstone is asserted through every read path rather than GetNode
+	// alone, so a soft delete that one query honors and another ignores fails.
+	t.Run("a tombstoned row is invisible to every read", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
@@ -192,11 +191,11 @@ func runTreeStoreSuite(
 		rootUser := testUserUUID(1)
 		childUser := testUserUUID(2)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, childUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
 
-		require.NoError(t, s.DeleteNode(ctx, tree, childUser))
+		require.NoError(t, tombstoneUser(ctx, s, tree, childUser))
 
 		got, err := s.GetNode(ctx, tree, childUser)
 		require.NoError(t, err)
@@ -215,252 +214,6 @@ func runTreeStoreSuite(
 		assert.ElementsMatch(t, []string{rootUser}, nodeUserIDs(ordered), "GetByTreeDepthOrdered")
 	})
 
-	t.Run("DeleteNodeAndResponsor stamps the removing event on the row", func(t *testing.T) {
-		s := newStore(t)
-		ctx := context.Background()
-
-		tree := testTreeUUID(1)
-		rootUser := testUserUUID(1)
-		removedUser := testUserUUID(2)
-		removalEvent := testNodeUUID(9)
-
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, removedUser, removalEvent, nil))
-
-		got, err := s.GetNodeIncludingRemoved(ctx, tree, removedUser)
-		require.NoError(t, err)
-		require.NotNil(t, got)
-		require.NotNil(t, got.RemovedByEventID, "the soft delete writes the removing event id")
-		assert.Equal(t, removalEvent, *got.RemovedByEventID)
-	})
-
-	t.Run("DeleteNodeAndResponsor refuses when no active row matches", func(t *testing.T) {
-		s := newStore(t)
-		ctx := context.Background()
-
-		tree := testTreeUUID(1)
-		rootUser := testUserUUID(1)
-		goneUser := testUserUUID(2)
-		recruit := testUserUUID(3)
-
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), tree, goneUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(3), tree, recruit, 1, ptr(rootUser), ptr(rootUser), intPtr(1))))
-		require.NoError(t, s.DeleteNode(ctx, tree, goneUser))
-
-		before, err := s.GetNodeIncludingRemoved(ctx, tree, goneUser)
-		require.NoError(t, err)
-		require.NotNil(t, before)
-		require.NotNil(t, before.RemovedAt)
-
-		err = s.DeleteNodeAndResponsor(ctx, tree, goneUser, testNodeUUID(9),
-			[]Responsored{{UserID: recruit, NewSponsorID: goneUser}})
-		require.Error(t, err, "a soft delete matching no active row is not a success")
-
-		tomb, err := s.GetNodeIncludingRemoved(ctx, tree, goneUser)
-		require.NoError(t, err)
-		require.NotNil(t, tomb)
-		assert.Nil(t, tomb.RemovedByEventID, "the existing tombstone gains no stamp")
-		require.NotNil(t, tomb.RemovedAt)
-		assert.True(t, before.RemovedAt.Equal(*tomb.RemovedAt), "the existing tombstone keeps its removal time")
-
-		unmoved, err := s.GetNode(ctx, tree, recruit)
-		require.NoError(t, err)
-		require.NotNil(t, unmoved)
-		require.NotNil(t, unmoved.SponsorID)
-		assert.Equal(t, rootUser, *unmoved.SponsorID, "the re-sponsor write is not committed")
-	})
-
-	// An older tombstone for the same user, plus a later active placement.
-	t.Run("DeleteNodeAndResponsor stamps the active row, not an older tombstone", func(t *testing.T) {
-		s := newStore(t)
-		ctx := context.Background()
-
-		tree := testTreeUUID(1)
-		rootUser := testUserUUID(1)
-		user := testUserUUID(2)
-		removalEvent := testNodeUUID(9)
-
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		require.NoError(t, s.DeleteNode(ctx, tree, user))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(3), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(1))))
-
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, user, removalEvent, nil))
-
-		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
-		require.NoError(t, err)
-		require.NotNil(t, got)
-		assert.Equal(t, testNodeUUID(3), got.ID, "the later placement is the one removed")
-		require.NotNil(t, got.RemovedByEventID)
-		assert.Equal(t, removalEvent, *got.RemovedByEventID)
-
-		assert.Nil(t, stampOf(t, s, testNodeUUID(2)), "the older tombstone gains no stamp")
-	})
-
-	t.Run("DeleteNodeAndResponsor repoints the moved recruits", func(t *testing.T) {
-		s := newStore(t)
-		ctx := context.Background()
-
-		tree := testTreeUUID(1)
-		rootUser := testUserUUID(1)
-		removedUser := testUserUUID(2)
-		movedUser := testUserUUID(3)
-
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		// The same user id in another tree, inserted before this tree's row. A
-		// lookup that ignores the tree scans linearly and reaches this one
-		// first, so inserting it after would let a tree-blind scan pass.
-		otherTree := testTreeUUID(2)
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(4), otherTree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(5), otherTree, movedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(3), tree, movedUser, 2, ptr(removedUser), ptr(removedUser), intPtr(0))))
-
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, removedUser, testNodeUUID(9),
-			[]Responsored{{UserID: movedUser, NewSponsorID: rootUser}}))
-
-		gone, err := s.GetNode(ctx, tree, removedUser)
-		require.NoError(t, err)
-		assert.Nil(t, gone, "the removed user is soft-deleted")
-
-		moved, err := s.GetNode(ctx, tree, movedUser)
-		require.NoError(t, err)
-		require.NotNil(t, moved, "the recruit stays active")
-		require.NotNil(t, moved.SponsorID)
-		assert.Equal(t, rootUser, *moved.SponsorID, "the recruit is re-sponsored to the new sponsor")
-
-		elsewhere, err := s.GetNode(ctx, otherTree, movedUser)
-		require.NoError(t, err)
-		require.NotNil(t, elsewhere)
-		require.NotNil(t, elsewhere.SponsorID)
-		assert.Equal(t, rootUser, *elsewhere.SponsorID, "the other tree's row keeps its own sponsor")
-		assert.Equal(t, 1, elsewhere.Depth, "and is the other tree's row, not this tree's")
-	})
-
-	// Both writes or neither. The store's own doc comment says a soft delete
-	// landing without the sponsor updates leaves the tree unable to reload,
-	// so the failure case is part of the contract, not an implementation
-	// detail. The two implementations word the error differently, so this
-	// asserts that one is returned and that nothing was written, not its text.
-	t.Run("DeleteNodeAndResponsor writes nothing when a recruit is absent", func(t *testing.T) {
-		s := newStore(t)
-		ctx := context.Background()
-
-		tree := testTreeUUID(1)
-		rootUser := testUserUUID(1)
-		removedUser := testUserUUID(2)
-		validUser := testUserUUID(3)
-		absentUser := testUserUUID(99)
-
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(3), tree, validUser, 2, ptr(removedUser), ptr(removedUser), intPtr(0))))
-
-		// The valid recruit goes first so the batch has a sponsor write to
-		// undo. With only the absent one, an implementation that wrote each
-		// sponsor inline before the delete would pass having written nothing.
-		err := s.DeleteNodeAndResponsor(ctx, tree, removedUser, testNodeUUID(9), []Responsored{
-			{UserID: validUser, NewSponsorID: rootUser},
-			{UserID: absentUser, NewSponsorID: rootUser},
-		})
-		require.Error(t, err, "re-sponsoring a user with no active row must fail")
-
-		stillThere, err := s.GetNode(ctx, tree, removedUser)
-		require.NoError(t, err)
-		assert.NotNil(t, stillThere, "the soft delete must roll back with the sponsor updates")
-
-		untouched, err := s.GetNode(ctx, tree, validUser)
-		require.NoError(t, err)
-		require.NotNil(t, untouched)
-		require.NotNil(t, untouched.SponsorID)
-		assert.Equal(t, removedUser, *untouched.SponsorID,
-			"the valid recruit's sponsor write must roll back too")
-	})
-
-	t.Run("BulkInsert inserts every row", func(t *testing.T) {
-		s := newStore(t)
-		ctx := context.Background()
-
-		tree := testTreeUUID(1)
-		rootUser := testUserUUID(1)
-		childA := testUserUUID(2)
-		childB := testUserUUID(3)
-
-		require.NoError(t, s.BulkInsert(ctx, []TreeNodeRow{
-			makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil),
-			makeUUIDNode(testNodeUUID(2), tree, childA, 1, ptr(rootUser), ptr(rootUser), intPtr(0)),
-			makeUUIDNode(testNodeUUID(3), tree, childB, 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
-		}))
-
-		got, err := s.GetByTree(ctx, tree)
-		require.NoError(t, err)
-		assert.ElementsMatch(t, []string{rootUser, childA, childB}, nodeUserIDs(got))
-	})
-
-	// Every other BulkInsert case starts from an empty store, where preserving
-	// what was already there is vacuous. This one starts from a populated one,
-	// which is how the loader actually uses it.
-	t.Run("BulkInsert preserves rows already in the store", func(t *testing.T) {
-		s := newStore(t)
-		ctx := context.Background()
-
-		tree := testTreeUUID(1)
-		rootUser := testUserUUID(1)
-		childA := testUserUUID(2)
-		childB := testUserUUID(3)
-
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-
-		require.NoError(t, s.BulkInsert(ctx, []TreeNodeRow{
-			makeUUIDNode(testNodeUUID(2), tree, childA, 1, ptr(rootUser), ptr(rootUser), intPtr(0)),
-			makeUUIDNode(testNodeUUID(3), tree, childB, 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
-		}))
-
-		got, err := s.GetByTree(ctx, tree)
-		require.NoError(t, err)
-		assert.ElementsMatch(t, []string{rootUser, childA, childB}, nodeUserIDs(got),
-			"the batch adds to the store rather than replacing it")
-
-		root, err := s.GetNode(ctx, tree, rootUser)
-		require.NoError(t, err)
-		require.NotNil(t, root, "the pre-existing row survives the batch")
-		assert.Equal(t, testNodeUUID(1), root.ID, "and survives intact, not as a blank row")
-	})
-
-	t.Run("a failed BulkInsert leaves rows already in the store alone", func(t *testing.T) {
-		s := newStore(t)
-		ctx := context.Background()
-
-		tree := testTreeUUID(1)
-		rootUser := testUserUUID(1)
-
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-
-		err := s.BulkInsert(ctx, []TreeNodeRow{
-			makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 1, ptr(rootUser), ptr(rootUser), intPtr(0)),
-			makeUUIDNode(testNodeUUID(1), tree, testUserUUID(3), 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
-		})
-		require.ErrorIs(t, err, ErrNodeAlreadyProjected)
-
-		got, err := s.GetByTree(ctx, tree)
-		require.NoError(t, err)
-		assert.ElementsMatch(t, []string{rootUser}, nodeUserIDs(got),
-			"the rollback restores what was there, and no more")
-	})
-
 	t.Run("GetNodeByRemovalEvent returns the row that event removed", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
@@ -471,13 +224,13 @@ func runTreeStoreSuite(
 		otherRemoved := testUserUUID(3)
 		removalEvent := testNodeUUID(9)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, otherRemoved, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(3), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(1))))
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, otherRemoved, testNodeUUID(8), nil))
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, removedUser, removalEvent, nil))
+		require.NoError(t, stampRemoval(ctx, s, tree, otherRemoved, testNodeUUID(8), 1))
+		require.NoError(t, stampRemoval(ctx, s, tree, removedUser, removalEvent, 2))
 
 		got, err := s.GetNodeByRemovalEvent(ctx, tree, removalEvent)
 		require.NoError(t, err)
@@ -496,13 +249,13 @@ func runTreeStoreSuite(
 		user := testUserUUID(2)
 		removalEvent := testNodeUUID(9)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, user, removalEvent, nil))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, stampRemoval(ctx, s, tree, user, removalEvent, 1))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(3), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(1))))
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, user, removalEvent, nil))
+		require.NoError(t, stampRemoval(ctx, s, tree, user, removalEvent, 2))
 
 		got, err := s.GetNodeByRemovalEvent(ctx, tree, removalEvent)
 		require.NoError(t, err)
@@ -518,10 +271,10 @@ func runTreeStoreSuite(
 		rootUser := testUserUUID(1)
 		removedUser := testUserUUID(2)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, removedUser, testNodeUUID(8), nil))
+		require.NoError(t, stampRemoval(ctx, s, tree, removedUser, testNodeUUID(8), 1))
 
 		got, err := s.GetNodeByRemovalEvent(ctx, tree, testNodeUUID(9))
 		require.NoError(t, err, "an event that removed nothing is not an error")
@@ -538,11 +291,11 @@ func runTreeStoreSuite(
 		removedUser := testUserUUID(2)
 		removalEvent := testNodeUUID(9)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), otherTree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(2), otherTree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(3), otherTree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, otherTree, removedUser, removalEvent, nil))
+		require.NoError(t, stampRemoval(ctx, s, otherTree, removedUser, removalEvent, 1))
 
 		got, err := s.GetNodeByRemovalEvent(ctx, tree, removalEvent)
 		require.NoError(t, err)
@@ -553,7 +306,7 @@ func runTreeStoreSuite(
 		s := newStore(t)
 		ctx := context.Background()
 
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(1), testTreeUUID(1), testUserUUID(1), 0, nil, nil, nil)))
 
 		got, err := s.GetNodeIncludingRemoved(ctx, testTreeUUID(1), testUserUUID(99))
@@ -566,7 +319,7 @@ func runTreeStoreSuite(
 		ctx := context.Background()
 
 		tree, user := testTreeUUID(1), testUserUUID(1)
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
 
 		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
 		require.NoError(t, err)
@@ -580,8 +333,8 @@ func runTreeStoreSuite(
 		ctx := context.Background()
 
 		tree, user := testTreeUUID(1), testUserUUID(1)
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
-		require.NoError(t, s.DeleteNode(ctx, tree, user))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, tombstoneUser(ctx, s, tree, user))
 
 		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
 		require.NoError(t, err)
@@ -595,9 +348,9 @@ func runTreeStoreSuite(
 		ctx := context.Background()
 
 		tree, user := testTreeUUID(1), testUserUUID(1)
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
-		require.NoError(t, s.DeleteNode(ctx, tree, user))
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, tombstoneUser(ctx, s, tree, user))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(2), tree, user, 0, nil, nil, nil)))
 
 		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
 		require.NoError(t, err)
@@ -616,37 +369,15 @@ func runTreeStoreSuite(
 		ctx := context.Background()
 
 		tree, user := testTreeUUID(1), testUserUUID(1)
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
-		require.NoError(t, s.DeleteNode(ctx, tree, user))
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree, user, 0, nil, nil, nil)))
-		require.NoError(t, s.DeleteNode(ctx, tree, user))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, tombstoneUser(ctx, s, tree, user))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(2), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, tombstoneUser(ctx, s, tree, user))
 
 		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		assert.Equal(t, testNodeUUID(2), got.ID, "the most recent removal, not the first")
-	})
-
-	t.Run("BulkInsert writes nothing when one row in the batch is bad", func(t *testing.T) {
-		s := newStore(t)
-		ctx := context.Background()
-
-		tree := testTreeUUID(1)
-		rootUser := testUserUUID(1)
-		childUser := testUserUUID(2)
-
-		err := s.BulkInsert(ctx, []TreeNodeRow{
-			makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil),
-			makeUUIDNode(testNodeUUID(2), tree, childUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0)),
-			// Same row id as the first. The primary key is not partial, so
-			// both implementations reject it whatever its tree or state.
-			makeUUIDNode(testNodeUUID(1), tree, testUserUUID(3), 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
-		})
-		require.ErrorIs(t, err, ErrNodeAlreadyProjected, "a duplicate row id must fail the batch")
-
-		got, err := s.GetByTree(ctx, tree)
-		require.NoError(t, err)
-		assert.Empty(t, nodeUserIDs(got), "a failed batch leaves no rows behind")
 	})
 
 	// GetByTreeDepthOrdered is the only TreeStore method with a stated
@@ -677,17 +408,17 @@ func runTreeStoreSuite(
 
 		// Inserted deepest first and with the same-depth pair reversed, so
 		// insertion order cannot produce the expected sequence by accident.
-		require.NoError(t, s.InsertNode(ctx, deep))
-		require.NoError(t, s.InsertNode(ctx, late))
-		require.NoError(t, s.InsertNode(ctx, early))
-		require.NoError(t, s.InsertNode(ctx, root))
+		require.NoError(t, insertRow(ctx, s, deep))
+		require.NoError(t, insertRow(ctx, s, late))
+		require.NoError(t, insertRow(ctx, s, early))
+		require.NoError(t, insertRow(ctx, s, root))
 
 		// Another tree, at a depth that would sort into the middle. A
 		// tree-scope leak here returns another tenant's nodes inside an
 		// ordered read, where the caller has no reason to re-filter.
 		other := makeUUIDNode(testNodeUUID(5), testTreeUUID(2), testUserUUID(5), 1, nil, nil, nil)
 		other.EnrolledAt = time.Date(2026, 2, 15, 0, 0, 0, 0, time.UTC)
-		require.NoError(t, s.InsertNode(ctx, other))
+		require.NoError(t, insertRow(ctx, s, other))
 
 		got, err := s.GetByTreeDepthOrdered(ctx, tree)
 		require.NoError(t, err)
@@ -700,7 +431,7 @@ func runTreeStoreSuite(
 	// because Postgres returns TIMESTAMPTZ in the session zone while the
 	// memory store returns the value as given. Same instant, different
 	// representation, so assert.Equal fails on Postgres alone. HEU-795.
-	t.Run("InsertNode round-trips EnrolledAt", func(t *testing.T) {
+	t.Run("ProjectInsert round-trips EnrolledAt", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
@@ -709,7 +440,7 @@ func runTreeStoreSuite(
 		node := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
 		node.EnrolledAt = time.Date(2026, 5, 17, 13, 45, 6, 0, time.UTC)
 
-		require.NoError(t, s.InsertNode(ctx, node))
+		require.NoError(t, s.ProjectInsert(ctx, node, 1))
 
 		got, err := s.GetNode(ctx, tree, user)
 		require.NoError(t, err)
@@ -718,7 +449,7 @@ func runTreeStoreSuite(
 			"EnrolledAt round-trips as the same instant, got %v want %v", got.EnrolledAt, node.EnrolledAt)
 	})
 
-	t.Run("InsertNode stamps CreatedAt and UpdatedAt over the caller's values", func(t *testing.T) {
+	t.Run("ProjectInsert stamps CreatedAt and UpdatedAt over the caller's values", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
@@ -729,7 +460,7 @@ func runTreeStoreSuite(
 		node.UpdatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 		before := time.Now().Add(-time.Second)
-		require.NoError(t, s.InsertNode(ctx, node))
+		require.NoError(t, s.ProjectInsert(ctx, node, 1))
 
 		got, err := s.GetNode(ctx, tree, user)
 		require.NoError(t, err)
@@ -739,51 +470,6 @@ func runTreeStoreSuite(
 			"CreatedAt read back as %v, want between %v and %v", got.CreatedAt, before, after)
 		assert.True(t, got.CreatedAt.Equal(got.UpdatedAt),
 			"CreatedAt read back as %v and UpdatedAt as %v, want the same instant", got.CreatedAt, got.UpdatedAt)
-	})
-
-	t.Run("BulkInsert stamps CreatedAt and UpdatedAt over the caller's values", func(t *testing.T) {
-		s := newStore(t)
-		ctx := context.Background()
-
-		tree := testTreeUUID(1)
-		user := testUserUUID(1)
-		node := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
-		node.CreatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-		node.UpdatedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-
-		before := time.Now().Add(-time.Second)
-		require.NoError(t, s.BulkInsert(ctx, []TreeNodeRow{node}))
-
-		got, err := s.GetNode(ctx, tree, user)
-		require.NoError(t, err)
-		require.NotNil(t, got)
-		after := time.Now().Add(time.Second)
-		assert.True(t, got.CreatedAt.After(before) && got.CreatedAt.Before(after),
-			"CreatedAt read back as %v, want between %v and %v", got.CreatedAt, before, after)
-		assert.True(t, got.CreatedAt.Equal(got.UpdatedAt),
-			"CreatedAt read back as %v and UpdatedAt as %v, want the same instant", got.CreatedAt, got.UpdatedAt)
-	})
-
-	t.Run("BulkInsert stamps every row in a batch with one instant", func(t *testing.T) {
-		s := newStore(t)
-		ctx := context.Background()
-
-		tree := testTreeUUID(1)
-		rootUser := testUserUUID(1)
-		childUser := testUserUUID(2)
-		require.NoError(t, s.BulkInsert(ctx, []TreeNodeRow{
-			makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil),
-			makeUUIDNode(testNodeUUID(2), tree, childUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0)),
-		}))
-
-		root, err := s.GetNode(ctx, tree, rootUser)
-		require.NoError(t, err)
-		require.NotNil(t, root)
-		child, err := s.GetNode(ctx, tree, childUser)
-		require.NoError(t, err)
-		require.NotNil(t, child)
-		assert.True(t, root.CreatedAt.Equal(child.CreatedAt),
-			"first row's CreatedAt read back as %v, second as %v, want the same instant", root.CreatedAt, child.CreatedAt)
 	})
 
 	t.Run("GetChildren does not cross tree boundaries", func(t *testing.T) {
@@ -796,11 +482,11 @@ func runTreeStoreSuite(
 		kidA := testUserUUID(2)
 		kidB := testUserUUID(3)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), treeA, sharedUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), treeB, sharedUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), treeA, sharedUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(2), treeB, sharedUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(3), treeA, kidA, 1, ptr(sharedUser), ptr(sharedUser), intPtr(0))))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(4), treeB, kidB, 1, ptr(sharedUser), ptr(sharedUser), intPtr(0))))
 
 		children, err := s.GetChildren(ctx, treeA, sharedUser)
@@ -809,42 +495,17 @@ func runTreeStoreSuite(
 			"the same user parents a child in both trees; only this tree's child comes back")
 	})
 
-	t.Run("DeleteNode does not cross tree boundaries", func(t *testing.T) {
-		s := newStore(t)
-		ctx := context.Background()
-
-		treeA := testTreeUUID(1)
-		treeB := testTreeUUID(2)
-		sharedUser := testUserUUID(1)
-
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), treeA, sharedUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), treeB, sharedUser, 0, nil, nil, nil)))
-
-		// Deleting from treeB, the row inserted second. A linear scan that
-		// ignores the tree lands on treeA's row instead, so deleting from treeA
-		// would pass with the tree filter dropped.
-		require.NoError(t, s.DeleteNode(ctx, treeB, sharedUser))
-
-		survivor, err := s.GetNode(ctx, treeA, sharedUser)
-		require.NoError(t, err)
-		assert.NotNil(t, survivor, "the other tree's row is untouched")
-
-		removed, err := s.GetNode(ctx, treeB, sharedUser)
-		require.NoError(t, err)
-		assert.Nil(t, removed, "the named tree's row is gone")
-	})
-
 	// UC-NET-014 rests on the double rejecting the same writes Postgres
 	// rejects, so each constraint below has a case on both stores.
-	t.Run("InsertNode rejects a duplicate row id", func(t *testing.T) {
+	t.Run("ProjectInsert rejects a duplicate row id", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(1), testTreeUUID(1), testUserUUID(1), 0, nil, nil, nil)))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(1), testTreeUUID(1), testUserUUID(1), 0, nil, nil, nil), 1))
 
-		err := s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(1), testTreeUUID(2), testUserUUID(2), 0, nil, nil, nil))
+		err := s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(1), testTreeUUID(2), testUserUUID(2), 0, nil, nil, nil), 1)
 		assert.ErrorIs(t, err, ErrNodeAlreadyProjected,
 			"the primary key is not partial, so a different tree and user does not excuse it")
 	})
@@ -853,7 +514,7 @@ func runTreeStoreSuite(
 	// its id. A redelivered event whose row was since removed must still be
 	// refused, or redelivery inserts a second row in memory and is rejected in
 	// Postgres.
-	t.Run("InsertNode rejects a duplicate row id after a soft delete", func(t *testing.T) {
+	t.Run("ProjectInsert rejects a duplicate row id after a soft delete", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
@@ -861,14 +522,14 @@ func runTreeStoreSuite(
 		user := testUserUUID(1)
 		node := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
 
-		require.NoError(t, s.InsertNode(ctx, node))
-		require.NoError(t, s.DeleteNode(ctx, tree, user))
+		require.NoError(t, s.ProjectInsert(ctx, node, 1))
+		require.NoError(t, tombstoneUser(ctx, s, tree, user))
 
-		err := s.InsertNode(ctx, node)
+		err := s.ProjectInsert(ctx, node, 1)
 		assert.ErrorIs(t, err, ErrNodeAlreadyProjected, "a removed row still holds its id")
 	})
 
-	t.Run("InsertNode rejects a second active row for one user in a tree", func(t *testing.T) {
+	t.Run("ProjectInsert rejects a second active row for one user in a tree", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
@@ -876,13 +537,13 @@ func runTreeStoreSuite(
 		rootUser := testUserUUID(1)
 		user := testUserUUID(2)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil), 1))
 		// Depth 1 on the conflicting pair is deliberate; see HEU-810.
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(0)), 2))
 
-		err := s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(3), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(1)))
+		err := s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(3), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(1)), 3)
 		require.ErrorIs(t, err, ErrActiveUserConflict)
 
 		// The sentinel says which branch. It cannot say which row, and this is
@@ -891,39 +552,39 @@ func runTreeStoreSuite(
 		assert.Contains(t, err.Error(), user, "the message names the user")
 	})
 
-	t.Run("InsertNode rejects a second active claim on one slot", func(t *testing.T) {
+	t.Run("ProjectInsert rejects a second active claim on one slot", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
 		tree := testTreeUUID(1)
 		rootUser := testUserUUID(1)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil), 1))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 1, ptr(rootUser), ptr(rootUser), intPtr(0)), 2))
 
-		err := s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(3), tree, testUserUUID(3), 1, ptr(rootUser), ptr(rootUser), intPtr(0)))
+		err := s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(3), tree, testUserUUID(3), 1, ptr(rootUser), ptr(rootUser), intPtr(0)), 3)
 		assert.ErrorIs(t, err, ErrSlotConflict, "one active claim per tree, parent and position")
 	})
 
-	t.Run("InsertNode rejects a second active root in a tree", func(t *testing.T) {
+	t.Run("ProjectInsert rejects a second active root in a tree", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
 		tree := testTreeUUID(1)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, testUserUUID(1), 0, nil, nil, nil)))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, testUserUUID(1), 0, nil, nil, nil), 1))
 
 		// Two different users, so this row violates the root index alone.
 		// A same-user row would violate the active-user index too, and
 		// Postgres picks which of two violated indexes it reports.
-		err := s.InsertNode(ctx, makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 0, nil, nil, nil))
+		err := s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 0, nil, nil, nil), 2)
 		require.ErrorIs(t, err, ErrRootConflict)
 
 		// A removed root does not block its replacement (ADR-023).
-		require.NoError(t, s.DeleteNode(ctx, tree, testUserUUID(1)))
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(3), tree, testUserUUID(3), 0, nil, nil, nil)))
+		require.NoError(t, tombstoneUser(ctx, s, tree, testUserUUID(1)))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(3), tree, testUserUUID(3), 0, nil, nil, nil), 3))
 	})
 
 	// A refused insert must not be a disguised update. On Postgres that is the
@@ -936,10 +597,10 @@ func runTreeStoreSuite(
 
 		tree := testTreeUUID(1)
 		user := testUserUUID(1)
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil), 1))
 
 		redelivered := makeUUIDNode(testNodeUUID(1), tree, user, 7, nil, nil, nil)
-		require.ErrorIs(t, s.InsertNode(ctx, redelivered), ErrNodeAlreadyProjected)
+		require.ErrorIs(t, s.ProjectInsert(ctx, redelivered, 1), ErrNodeAlreadyProjected)
 
 		got, err := s.GetNode(ctx, tree, user)
 		require.NoError(t, err)
@@ -968,31 +629,25 @@ func runTreeStoreSuite(
 		user := testUserUUID(1)
 		node := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
 
-		require.NoError(t, s.InsertNode(ctx, node))
+		require.NoError(t, s.ProjectInsert(ctx, node, 1))
 
-		err := s.InsertNode(ctx, node)
+		err := s.ProjectInsert(ctx, node, 1)
 		assert.ErrorIs(t, err, ErrNodeAlreadyProjected,
 			"the primary key is the branch that means already projected")
 	})
 
-	t.Run("every method refuses a cancelled context", func(t *testing.T) {
+	t.Run("every read refuses a cancelled context", func(t *testing.T) {
 		s := newStore(t)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
 		tree := testTreeUUID(1)
 		user := testUserUUID(1)
-		node := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
 
 		calls := []struct {
 			name string
 			call func() error
 		}{
-			{"InsertNode", func() error { return s.InsertNode(ctx, node) }},
-			{"DeleteNode", func() error { return s.DeleteNode(ctx, tree, user) }},
-			{"DeleteNodeAndResponsor", func() error {
-				return s.DeleteNodeAndResponsor(ctx, tree, user, testNodeUUID(9), nil)
-			}},
 			{"GetNode", func() error {
 				_, err := s.GetNode(ctx, tree, user)
 				return err
@@ -1017,55 +672,13 @@ func runTreeStoreSuite(
 				_, err := s.GetByTreeDepthOrdered(ctx, tree)
 				return err
 			}},
-			{"BulkInsert", func() error { return s.BulkInsert(ctx, []TreeNodeRow{node}) }},
 		}
 		for _, c := range calls {
 			assert.ErrorIs(t, c.call(), context.Canceled, c.name)
 		}
 	})
 
-	t.Run("a write with a cancelled context changes nothing", func(t *testing.T) {
-		s := newStore(t)
-		ctx := context.Background()
-
-		tree := testTreeUUID(1)
-		rootUser := testUserUUID(1)
-		removedUser := testUserUUID(2)
-		recruit := testUserUUID(3)
-		newUser := testUserUUID(4)
-
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(3), tree, recruit, 2, ptr(removedUser), ptr(removedUser), intPtr(0))))
-
-		cancelled, cancel := context.WithCancel(ctx)
-		cancel()
-
-		require.ErrorIs(t, s.InsertNode(cancelled,
-			makeUUIDNode(testNodeUUID(4), tree, newUser, 1, ptr(rootUser), ptr(rootUser), intPtr(1))), context.Canceled, "InsertNode")
-		require.ErrorIs(t, s.BulkInsert(cancelled, []TreeNodeRow{
-			makeUUIDNode(testNodeUUID(5), tree, newUser, 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
-		}), context.Canceled, "BulkInsert")
-		require.ErrorIs(t, s.DeleteNode(cancelled, tree, recruit), context.Canceled, "DeleteNode")
-		require.ErrorIs(t, s.DeleteNodeAndResponsor(cancelled, tree, removedUser, testNodeUUID(9),
-			[]Responsored{{UserID: recruit, NewSponsorID: rootUser}}), context.Canceled, "DeleteNodeAndResponsor")
-
-		got, err := s.GetByTree(ctx, tree)
-		require.NoError(t, err)
-		assert.ElementsMatch(t, []string{rootUser, removedUser, recruit}, nodeUserIDs(got),
-			"active users read back after the four cancelled writes")
-
-		moved, err := s.GetNode(ctx, tree, recruit)
-		require.NoError(t, err)
-		require.NotNil(t, moved)
-		require.NotNil(t, moved.SponsorID)
-		assert.Equal(t, removedUser, *moved.SponsorID, "recruit's sponsor read back after the cancelled re-sponsor")
-		assert.Nil(t, stampOf(t, s, testNodeUUID(2)), "removal stamp read back on the row the cancelled delete named")
-	})
-
-	t.Run("DeleteNode moves UpdatedAt forward", func(t *testing.T) {
+	t.Run("a rejection moves UpdatedAt forward", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
@@ -1073,7 +686,7 @@ func runTreeStoreSuite(
 		user := testUserUUID(1)
 		stale := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil), 1))
 		setUpdatedAt(t, s, testNodeUUID(1), stale)
 		backdated, err := s.GetNode(ctx, tree, user)
 		require.NoError(t, err)
@@ -1081,96 +694,14 @@ func runTreeStoreSuite(
 		require.True(t, backdated.UpdatedAt.Equal(stale),
 			"UpdatedAt read back as %v after setUpdatedAt, want %v", backdated.UpdatedAt, stale)
 
-		require.NoError(t, s.DeleteNode(ctx, tree, user))
+		require.NoError(t, s.ProjectRejection(ctx, tree, testNodeUUID(1), 2))
 
 		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
 		require.NoError(t, err)
 		require.NotNil(t, got)
+		assert.NotNil(t, got.RemovedAt, "no removed_at read back after the rejection")
 		assert.True(t, got.UpdatedAt.After(stale),
-			"UpdatedAt read back as %v after the delete, want later than %v", got.UpdatedAt, stale)
-	})
-
-	t.Run("DeleteNodeAndResponsor moves UpdatedAt forward on the removed row and the recruit", func(t *testing.T) {
-		s := newStore(t)
-		ctx := context.Background()
-
-		tree := testTreeUUID(1)
-		rootUser := testUserUUID(1)
-		removedUser := testUserUUID(2)
-		recruit := testUserUUID(3)
-		stale := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(3), tree, recruit, 2, ptr(removedUser), ptr(removedUser), intPtr(0))))
-		setUpdatedAt(t, s, testNodeUUID(2), stale)
-		setUpdatedAt(t, s, testNodeUUID(3), stale)
-		for _, u := range []string{removedUser, recruit} {
-			backdated, err := s.GetNode(ctx, tree, u)
-			require.NoError(t, err)
-			require.NotNil(t, backdated)
-			require.True(t, backdated.UpdatedAt.Equal(stale),
-				"%s's UpdatedAt read back as %v after setUpdatedAt, want %v", u, backdated.UpdatedAt, stale)
-		}
-
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, removedUser, testNodeUUID(9),
-			[]Responsored{{UserID: recruit, NewSponsorID: rootUser}}))
-
-		removed, err := s.GetNodeIncludingRemoved(ctx, tree, removedUser)
-		require.NoError(t, err)
-		require.NotNil(t, removed)
-		assert.True(t, removed.UpdatedAt.After(stale),
-			"removed row's UpdatedAt read back as %v, want later than %v", removed.UpdatedAt, stale)
-
-		moved, err := s.GetNode(ctx, tree, recruit)
-		require.NoError(t, err)
-		require.NotNil(t, moved)
-		assert.True(t, moved.UpdatedAt.After(stale),
-			"recruit's UpdatedAt read back as %v, want later than %v", moved.UpdatedAt, stale)
-	})
-
-	t.Run("BulkInsert reports a slot conflict as ErrSlotConflict", func(t *testing.T) {
-		s := newStore(t)
-		ctx := context.Background()
-
-		tree := testTreeUUID(1)
-		rootUser := testUserUUID(1)
-		ahead := testUserUUID(3)
-
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-
-		err := s.BulkInsert(ctx, []TreeNodeRow{
-			makeUUIDNode(testNodeUUID(3), tree, ahead, 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
-			makeUUIDNode(testNodeUUID(4), tree, testUserUUID(4), 1, ptr(rootUser), ptr(rootUser), intPtr(0)),
-		})
-		require.ErrorIs(t, err, ErrSlotConflict)
-
-		got, err := s.GetNode(ctx, tree, ahead)
-		require.NoError(t, err)
-		assert.Nil(t, got, "active row read back for the user placed ahead of the conflicting row")
-	})
-
-	t.Run("BulkInsert reports a user conflict as ErrActiveUserConflict", func(t *testing.T) {
-		s := newStore(t)
-		ctx := context.Background()
-
-		tree := testTreeUUID(1)
-		rootUser := testUserUUID(1)
-		user := testUserUUID(2)
-
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
-
-		// Depth 1 and a free slot are deliberate. See HEU-810 and HEU-794.
-		err := s.BulkInsert(ctx, []TreeNodeRow{
-			makeUUIDNode(testNodeUUID(3), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(1)),
-		})
-		require.ErrorIs(t, err, ErrActiveUserConflict)
+			"UpdatedAt read back as %v after the rejection, want later than %v", got.UpdatedAt, stale)
 	})
 
 	t.Run("GetNodeIncludingRemoved breaks a removal-time tie by the highest id", func(t *testing.T) {
@@ -1188,8 +719,8 @@ func runTreeStoreSuite(
 			{testNodeUUID(1), userA}, {testNodeUUID(2), userA},
 			{testNodeUUID(4), userB}, {testNodeUUID(3), userB},
 		} {
-			require.NoError(t, s.InsertNode(ctx, makeUUIDNode(p.id, tree, p.user, 1, nil, nil, nil)))
-			require.NoError(t, s.DeleteNode(ctx, tree, p.user))
+			require.NoError(t, insertRow(ctx, s, makeUUIDNode(p.id, tree, p.user, 1, nil, nil, nil)))
+			require.NoError(t, tombstoneUser(ctx, s, tree, p.user))
 			setRemovedAt(t, s, p.id, tie)
 			back, err := s.GetNodeIncludingRemoved(ctx, tree, p.user)
 			require.NoError(t, err)
@@ -1222,12 +753,12 @@ func runTreeStoreSuite(
 
 		// eventA stamps its higher id second and eventB stamps its higher id
 		// first, so neither a first-found nor a last-found rule returns both.
-		for _, p := range []struct{ id, event string }{
+		for i, p := range []struct{ id, event string }{
 			{testNodeUUID(1), eventA}, {testNodeUUID(2), eventA},
 			{testNodeUUID(4), eventB}, {testNodeUUID(3), eventB},
 		} {
-			require.NoError(t, s.InsertNode(ctx, makeUUIDNode(p.id, tree, user, 1, nil, nil, nil)))
-			require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, user, p.event, nil))
+			require.NoError(t, insertRow(ctx, s, makeUUIDNode(p.id, tree, user, 1, nil, nil, nil)))
+			require.NoError(t, stampRemoval(ctx, s, tree, user, p.event, int64(i+1)))
 			setRemovedAt(t, s, p.id, tie)
 			back, err := s.GetNodeByRemovalEvent(ctx, tree, p.event)
 			require.NoError(t, err)
@@ -1260,9 +791,9 @@ func runTreeStoreSuite(
 
 		event := testNodeUUID(9)
 
-		for _, id := range []string{lower, upper} {
-			require.NoError(t, s.InsertNode(ctx, makeUUIDNode(id, tree, user, 1, nil, nil, nil)))
-			require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, user, event, nil))
+		for i, id := range []string{lower, upper} {
+			require.NoError(t, insertRow(ctx, s, makeUUIDNode(id, tree, user, 1, nil, nil, nil)))
+			require.NoError(t, stampRemoval(ctx, s, tree, user, event, int64(i+1)))
 			setRemovedAt(t, s, id, tie)
 			back, err := s.GetNodeIncludingRemoved(ctx, tree, user)
 			require.NoError(t, err)
@@ -1298,15 +829,15 @@ func runTreeStoreSuite(
 		// The higher id gets the earlier removal, so an order on id alone
 		// returns the wrong row. Both stamps are in the past, so a hook that did
 		// not land leaves a later removed_at than either.
-		for _, p := range []struct {
+		for i, p := range []struct {
 			id string
 			at time.Time
 		}{
 			{testNodeUUID(2), earlier},
 			{testNodeUUID(1), later},
 		} {
-			require.NoError(t, s.InsertNode(ctx, makeUUIDNode(p.id, tree, user, 1, nil, nil, nil)))
-			require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, user, event, nil))
+			require.NoError(t, insertRow(ctx, s, makeUUIDNode(p.id, tree, user, 1, nil, nil, nil)))
+			require.NoError(t, stampRemoval(ctx, s, tree, user, event, int64(i+1)))
 			setRemovedAt(t, s, p.id, p.at)
 			back, err := s.GetNodeIncludingRemoved(ctx, tree, user)
 			require.NoError(t, err)
@@ -1329,6 +860,167 @@ func runTreeStoreSuite(
 			"GetNodeByRemovalEvent returned id %s, want %s, the later removal", byEvent.ID, testNodeUUID(1))
 	})
 
+	t.Run("a removal stamps the active row, not an older tombstone", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		user := testUserUUID(2)
+		removalEvent := testNodeUUID(9)
+
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(2), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, tombstoneUser(ctx, s, tree, user))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(3), tree, user, 1, ptr(rootUser), ptr(rootUser), intPtr(1))))
+
+		require.NoError(t, stampRemoval(ctx, s, tree, user, removalEvent, 1))
+
+		assert.Nil(t, stampOf(t, s, testNodeUUID(2)), "removal stamp read back on the older tombstone")
+		got, err := s.GetNodeIncludingRemoved(ctx, tree, user)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Equal(t, testNodeUUID(3), got.ID,
+			"GetNodeIncludingRemoved returned id %s, want %s, the later placement", got.ID, testNodeUUID(3))
+		assert.NotNil(t, got.RemovedAt, "no removed_at read back on the user's latest row")
+		require.NotNil(t, got.RemovedByEventID, "no removal stamp read back on the user's latest row")
+		assert.Equal(t, removalEvent, *got.RemovedByEventID)
+	})
+
+	t.Run("a removal moves UpdatedAt forward on the removed row and the recruit", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		removedUser := testUserUUID(2)
+		recruit := testUserUUID(3)
+		stale := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(2), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(3), tree, recruit, 2, ptr(removedUser), ptr(removedUser), intPtr(0))))
+		setUpdatedAt(t, s, testNodeUUID(2), stale)
+		setUpdatedAt(t, s, testNodeUUID(3), stale)
+		for _, u := range []string{removedUser, recruit} {
+			backdated, err := s.GetNode(ctx, tree, u)
+			require.NoError(t, err)
+			require.NotNil(t, backdated)
+			require.True(t, backdated.UpdatedAt.Equal(stale),
+				"%s's UpdatedAt read back as %v after setUpdatedAt, want %v", u, backdated.UpdatedAt, stale)
+		}
+
+		require.NoError(t, s.ProjectRemoval(ctx, tree, RemovalProjection{
+			Users:       []string{removedUser},
+			Responsored: []Responsored{{UserID: recruit, NewSponsorID: rootUser}},
+		}, testNodeUUID(9), 1))
+
+		removed, err := s.GetNodeIncludingRemoved(ctx, tree, removedUser)
+		require.NoError(t, err)
+		require.NotNil(t, removed)
+		assert.True(t, removed.UpdatedAt.After(stale),
+			"removed row's UpdatedAt read back as %v, want later than %v", removed.UpdatedAt, stale)
+
+		moved, err := s.GetNode(ctx, tree, recruit)
+		require.NoError(t, err)
+		require.NotNil(t, moved)
+		assert.True(t, moved.UpdatedAt.After(stale),
+			"recruit's UpdatedAt read back as %v, want later than %v", moved.UpdatedAt, stale)
+	})
+
+	t.Run("a removal does not cross tree boundaries", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		treeA := testTreeUUID(1)
+		treeB := testTreeUUID(2)
+		sharedUser := testUserUUID(1)
+
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), treeA, sharedUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(2), treeB, sharedUser, 0, nil, nil, nil)))
+
+		// Removing from treeB, the row inserted second, so a removal that lands
+		// on the first row it finds does not pass.
+		require.NoError(t, stampRemoval(ctx, s, treeB, sharedUser, testNodeUUID(9), 1))
+
+		survivor, err := s.GetNode(ctx, treeA, sharedUser)
+		require.NoError(t, err)
+		assert.NotNil(t, survivor, "no active row read back in treeA after a removal in treeB")
+
+		removed, err := s.GetNode(ctx, treeB, sharedUser)
+		require.NoError(t, err)
+		assert.Nil(t, removed, "treeB's active row read back after its removal")
+	})
+
+	t.Run("a removal of a user with only a tombstone fails and leaves the tombstone alone", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree := testTreeUUID(1)
+		rootUser := testUserUUID(1)
+		goneUser := testUserUUID(2)
+
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(2), tree, goneUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, tombstoneUser(ctx, s, tree, goneUser))
+		before, err := s.GetNodeIncludingRemoved(ctx, tree, goneUser)
+		require.NoError(t, err)
+		require.NotNil(t, before)
+		require.NotNil(t, before.RemovedAt)
+
+		err = stampRemoval(ctx, s, tree, goneUser, testNodeUUID(9), 1)
+
+		assert.ErrorContains(t, err, "matched 0 of 1 active rows")
+		assert.Nil(t, stampOf(t, s, testNodeUUID(2)), "removal stamp read back on the existing tombstone")
+		after, err := s.GetNodeIncludingRemoved(ctx, tree, goneUser)
+		require.NoError(t, err)
+		require.NotNil(t, after)
+		require.NotNil(t, after.RemovedAt, "no removed_at read back on the existing tombstone")
+		assert.True(t, before.RemovedAt.Equal(*after.RemovedAt),
+			"removed_at read back as %v, was %v before the removal", *after.RemovedAt, *before.RemovedAt)
+	})
+
+	t.Run("a removal re-sponsors only in its own tree", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		treeA := testTreeUUID(1)
+		treeB := testTreeUUID(2)
+		rootUser := testUserUUID(1)
+		removedUser := testUserUUID(2)
+		recruit := testUserUUID(3)
+
+		// The recruit's treeA row goes in first, so a re-sponsor that ignores
+		// the tree meets it before treeB's row.
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), treeA, recruit, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(2), treeB, rootUser, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(3), treeB, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(4), treeB, recruit, 2, ptr(removedUser), ptr(removedUser), intPtr(0))))
+
+		require.NoError(t, s.ProjectRemoval(ctx, treeB, RemovalProjection{
+			Users:       []string{removedUser},
+			Responsored: []Responsored{{UserID: recruit, NewSponsorID: rootUser}},
+		}, testNodeUUID(9), 1))
+
+		other, err := s.GetNode(ctx, treeA, recruit)
+		require.NoError(t, err)
+		require.NotNil(t, other, "no active row read back for the recruit in treeA")
+		assert.Nil(t, other.SponsorID, "sponsor read back on treeA's recruit after a removal in treeB")
+
+		moved, err := s.GetNode(ctx, treeB, recruit)
+		require.NoError(t, err)
+		require.NotNil(t, moved, "no active row read back for the recruit in treeB")
+		require.NotNil(t, moved.SponsorID, "no sponsor read back on treeB's recruit")
+		assert.Equal(t, rootUser, *moved.SponsorID)
+	})
+
 	t.Run("an uppercase tree id reads the same tree", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
@@ -1336,8 +1028,8 @@ func runTreeStoreSuite(
 		upper := strings.ToUpper(tree)
 		root, child := hexUser(1), hexUser(2)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0))))
 
 		got, err := s.GetNode(ctx, upper, child)
@@ -1363,11 +1055,11 @@ func runTreeStoreSuite(
 		ctx := context.Background()
 		tree := testTreeUUID(1)
 
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(1), tree, hexUser(1), 0, nil, nil, nil)))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(1), tree, hexUser(1), 0, nil, nil, nil), 1))
 
-		err := s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), strings.ToUpper(tree), hexUser(2), 0, nil, nil, nil))
+		err := s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(2), strings.ToUpper(tree), hexUser(2), 0, nil, nil, nil), 2)
 		assert.ErrorIs(t, err, ErrRootConflict)
 	})
 
@@ -1377,8 +1069,8 @@ func runTreeStoreSuite(
 		tree := testTreeUUID(1)
 		root, child := hexUser(1), hexUser(2)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0))))
 
 		got, err := s.GetNode(ctx, tree, strings.ToUpper(child))
@@ -1391,22 +1083,22 @@ func runTreeStoreSuite(
 		assert.Equal(t, []string{child}, nodeUserIDs(children))
 	})
 
-	t.Run("an uppercase id deletes the same row and reads its tombstone", func(t *testing.T) {
+	t.Run("an uppercase id removes the same row and reads its tombstone", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 		tree := testTreeUUID(1)
 		root, child := hexUser(1), hexUser(2)
 		up := strings.ToUpper
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0))))
 
-		require.NoError(t, s.DeleteNode(ctx, up(tree), up(child)))
+		require.NoError(t, stampRemoval(ctx, s, up(tree), up(child), testNodeUUID(9), 1))
 
 		active, err := s.GetNode(ctx, tree, child)
 		require.NoError(t, err)
-		assert.Nil(t, active, "DeleteNode under the uppercase ids left the row active")
+		assert.Nil(t, active, "the removal under the uppercase ids left the row active")
 
 		tombstone, err := s.GetNodeIncludingRemoved(ctx, up(tree), up(child))
 		require.NoError(t, err)
@@ -1422,14 +1114,16 @@ func runTreeStoreSuite(
 		event := testNodeUUID(9)
 		up := strings.ToUpper
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, removed, 1, ptr(root), ptr(root), intPtr(0))))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(3), tree, moved, 2, ptr(removed), ptr(removed), intPtr(0))))
 
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, up(tree), up(removed), event,
-			[]Responsored{{UserID: up(moved), NewSponsorID: up(root)}}))
+		require.NoError(t, s.ProjectRemoval(ctx, up(tree), RemovalProjection{
+			Users:       []string{up(removed)},
+			Responsored: []Responsored{{UserID: up(moved), NewSponsorID: up(root)}},
+		}, event, 1))
 
 		byEvent, err := s.GetNodeByRemovalEvent(ctx, up(tree), event)
 		require.NoError(t, err)
@@ -1447,11 +1141,11 @@ func runTreeStoreSuite(
 		s := newStore(t)
 		ctx := context.Background()
 
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(1), testTreeUUID(1), hexUser(1), 0, nil, nil, nil)))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(1), testTreeUUID(1), hexUser(1), 0, nil, nil, nil), 1))
 
-		err := s.InsertNode(ctx,
-			makeUUIDNode(strings.ToUpper(testNodeUUID(1)), testTreeUUID(2), hexUser(2), 0, nil, nil, nil))
+		err := s.ProjectInsert(ctx,
+			makeUUIDNode(strings.ToUpper(testNodeUUID(1)), testTreeUUID(2), hexUser(2), 0, nil, nil, nil), 1)
 		assert.ErrorIs(t, err, ErrNodeAlreadyProjected)
 	})
 
@@ -1462,11 +1156,11 @@ func runTreeStoreSuite(
 		root, removed := hexUser(1), hexUser(2)
 		event := testNodeUUID(9)
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(2), tree, removed, 1, ptr(root), ptr(root), intPtr(0))))
 
-		require.NoError(t, s.DeleteNodeAndResponsor(ctx, tree, removed, strings.ToUpper(event), nil))
+		require.NoError(t, stampRemoval(ctx, s, tree, removed, strings.ToUpper(event), 1))
 
 		byEvent, err := s.GetNodeByRemovalEvent(ctx, tree, event)
 		require.NoError(t, err)
@@ -1487,9 +1181,9 @@ func runTreeStoreSuite(
 		root, child := hexUser(1), hexUser(2)
 		up := strings.ToUpper
 
-		require.NoError(t, s.InsertNode(ctx, makeUUIDNode(testNodeUUID(1), up(tree), up(root), 0, nil, nil, nil)))
-		require.NoError(t, s.InsertNode(ctx,
-			makeUUIDNode(testNodeUUID(2), up(tree), up(child), 1, ptr(up(root)), ptr(up(root)), intPtr(0))))
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), up(tree), up(root), 0, nil, nil, nil), 1))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(2), up(tree), up(child), 1, ptr(up(root)), ptr(up(root)), intPtr(0)), 2))
 
 		got, err := s.GetNode(ctx, tree, child)
 		require.NoError(t, err)

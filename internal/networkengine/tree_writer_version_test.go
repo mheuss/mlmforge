@@ -181,12 +181,12 @@ func TestTreeWriter_RefusesATreeWithNoProjectionRowBeforeRedeliveringItsLastRemo
 	root := appendDirect(t, env.events, EventTypeRootAdded, rootAddedPayload())
 	placed := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
 	appendDirect(t, env.events, EventTypeNodeRemoved, NodeRemovedPayload{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime})
-	require.NoError(t, env.store.InsertNode(ctx, TreeNodeRow{
+	require.NoError(t, env.store.insertNode(ctx, TreeNodeRow{
 		ID: root.ID, TreeID: writerTree, UserID: writerRoot, SponsorID: &writerRoot, EnrolledAt: writeTime}))
-	require.NoError(t, env.store.InsertNode(ctx, TreeNodeRow{
+	require.NoError(t, env.store.insertNode(ctx, TreeNodeRow{
 		ID: placed.ID, TreeID: writerTree, UserID: writerChild, ParentID: &writerRoot, SponsorID: &writerRoot,
 		Depth: 1, EnrolledAt: writeTime}))
-	require.NoError(t, env.store.DeleteNode(ctx, writerTree, writerChild))
+	require.NoError(t, env.store.deleteNode(ctx, writerTree, writerChild))
 	engine := &countingRemoveEngine{TreeRebuilder: newFakeWriterEngine()}
 	w := NewTreeWriter(env.events, env.store, env.snapshots, engine, env.locker)
 
@@ -211,10 +211,10 @@ func TestTreeWriter_RefusesATreeWithNoProjectionRowOrActiveRowsBeforeRedeliverin
 	appendDirect(t, env.events, EventTypeRootAdded, rootAddedPayload())
 	placed := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
 	appendDirect(t, env.events, EventTypeNodeRemoved, NodeRemovedPayload{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime})
-	require.NoError(t, env.store.InsertNode(ctx, TreeNodeRow{
+	require.NoError(t, env.store.insertNode(ctx, TreeNodeRow{
 		ID: placed.ID, TreeID: writerTree, UserID: writerChild, ParentID: &writerRoot, SponsorID: &writerRoot,
 		Depth: 1, EnrolledAt: writeTime}))
-	require.NoError(t, env.store.DeleteNode(ctx, writerTree, writerChild))
+	require.NoError(t, env.store.deleteNode(ctx, writerTree, writerChild))
 	engine := &countingRemoveEngine{TreeRebuilder: newFakeWriterEngine()}
 	w := NewTreeWriter(env.events, env.store, env.snapshots, engine, env.locker)
 

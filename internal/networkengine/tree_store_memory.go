@@ -24,7 +24,7 @@ func NewMemoryTreeStore() *MemoryTreeStore {
 	return &MemoryTreeStore{}
 }
 
-func (s *MemoryTreeStore) InsertNode(ctx context.Context, node TreeNodeRow) error {
+func (s *MemoryTreeStore) insertNode(ctx context.Context, node TreeNodeRow) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -82,7 +82,7 @@ func (s *MemoryTreeStore) insertNodeAt(node TreeNodeRow, now time.Time) error {
 	return nil
 }
 
-// appendUnchecked stores a row without any of InsertNode's checks, for a test
+// appendUnchecked stores a row without the insert's checks, for a test
 // that needs a row the constraints refuse.
 func (s *MemoryTreeStore) appendUnchecked(node TreeNodeRow) error {
 	node.ID, node.TreeID, node.UserID = uuidKey(node.ID), uuidKey(node.TreeID), uuidKey(node.UserID)
@@ -92,7 +92,7 @@ func (s *MemoryTreeStore) appendUnchecked(node TreeNodeRow) error {
 	return nil
 }
 
-func (s *MemoryTreeStore) DeleteNode(ctx context.Context, treeID, userID string) error {
+func (s *MemoryTreeStore) deleteNode(ctx context.Context, treeID, userID string) error {
 	treeID, userID = uuidKey(treeID), uuidKey(userID)
 	if err := ctx.Err(); err != nil {
 		return err
@@ -104,63 +104,6 @@ func (s *MemoryTreeStore) DeleteNode(ctx context.Context, treeID, userID string)
 			s.nodes[i].UpdatedAt = now
 			return nil
 		}
-	}
-	return nil
-}
-
-func (s *MemoryTreeStore) DeleteNodeAndResponsor(
-	ctx context.Context,
-	treeID, userID, removalEventID string,
-	moved []Responsored,
-) error {
-	treeID, userID, removalEventID = uuidKey(treeID), uuidKey(userID), uuidKey(removalEventID)
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	// Mirrors the Postgres transaction by staging: nothing is written until
-	// every re-sponsor target has been found.
-	now := time.Now()
-	targets := make([]int, 0, len(moved))
-	for _, m := range moved {
-		found := -1
-		for i := range s.nodes {
-			if s.nodes[i].TreeID == treeID && s.nodes[i].UserID == uuidKey(m.UserID) && s.nodes[i].RemovedAt == nil {
-				found = i
-				break
-			}
-		}
-		if found < 0 {
-			return fmt.Errorf(
-				"re-sponsoring %s in tree %s found no active row to update",
-				m.UserID, treeID)
-		}
-		targets = append(targets, found)
-	}
-
-	// Captured before anything is written. Searching for a removed row after
-	// the delete can find an earlier placement's tombstone.
-	removing := -1
-	for i := range s.nodes {
-		if s.nodes[i].TreeID == treeID && s.nodes[i].UserID == userID && s.nodes[i].RemovedAt == nil {
-			removing = i
-			break
-		}
-	}
-	if removing < 0 {
-		return fmt.Errorf(
-			"soft delete for user %s in tree %s matched 0 active rows; %d re-sponsor writes not applied",
-			userID, treeID, len(moved))
-	}
-
-	if err := s.DeleteNode(ctx, treeID, userID); err != nil {
-		return err
-	}
-	event := removalEventID
-	s.nodes[removing].RemovedByEventID = &event
-	for i, m := range moved {
-		sponsor := uuidKey(m.NewSponsorID)
-		s.nodes[targets[i]].SponsorID = &sponsor
-		s.nodes[targets[i]].UpdatedAt = now
 	}
 	return nil
 }
@@ -277,28 +220,6 @@ func (s *MemoryTreeStore) GetByTreeDepthOrdered(ctx context.Context, treeID stri
 	return result, nil
 }
 
-func (s *MemoryTreeStore) BulkInsert(ctx context.Context, nodes []TreeNodeRow) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	// The batch goes into a copy, and the original is restored on the first
-	// error. That makes the batch all-or-none, including a conflict between
-	// two rows of this batch.
-	staged := make([]TreeNodeRow, len(s.nodes), len(s.nodes)+len(nodes))
-	copy(staged, s.nodes)
-
-	original := s.nodes
-	s.nodes = staged
-	now := time.Now()
-	for _, n := range nodes {
-		if err := s.insertNodeAt(n, now); err != nil {
-			s.nodes = original
-			return err
-		}
-	}
-	return nil
-}
-
 func (s *MemoryTreeStore) ProjectedVersion(ctx context.Context, treeID string) (int64, bool, error) {
 	treeID = uuidKey(treeID)
 	if err := ctx.Err(); err != nil {
@@ -333,7 +254,7 @@ func (s *MemoryTreeStore) ProjectInsert(ctx context.Context, node TreeNodeRow, e
 	if err := s.refuseBelow(node.TreeID, given, eventVersion); err != nil {
 		return err
 	}
-	if err := s.InsertNode(ctx, node); err != nil {
+	if err := s.insertNode(ctx, node); err != nil {
 		return err
 	}
 	s.advance(node.TreeID, eventVersion)
@@ -553,7 +474,7 @@ func (s *MemoryTreeStore) UndoRootProjection(ctx context.Context, treeID, userID
 		return fmt.Errorf("soft delete for root %s in tree %s matched 0 active rows; the projected version was not changed",
 			givenUser, givenTree)
 	}
-	if err := s.DeleteNode(ctx, treeID, userID); err != nil {
+	if err := s.deleteNode(ctx, treeID, userID); err != nil {
 		return err
 	}
 	s.projected[treeID] = eventVersion - 1

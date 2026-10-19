@@ -36,21 +36,6 @@ type RemovalProjection struct {
 // The adjacency table is a read model projected from events. The Rust
 // engine is the runtime authority for topology queries.
 type TreeStore interface {
-	// InsertNode adds a node to the adjacency table.
-	InsertNode(ctx context.Context, node TreeNodeRow) error
-
-	// DeleteNode soft-deletes a node by setting removed_at.
-	DeleteNode(ctx context.Context, treeID, userID string) error
-
-	// DeleteNodeAndResponsor soft-deletes a node, stamps the removing event
-	// onto the tombstoned row, and repoints the recruits the engine moved, in
-	// one transaction.
-	//
-	// Both writes or neither. A soft delete that lands without the sponsor
-	// updates leaves the store naming a user the active-row query will not
-	// return, and the tree stops reloading.
-	DeleteNodeAndResponsor(ctx context.Context, treeID, userID, removalEventID string, moved []Responsored) error
-
 	// GetNode returns a single active node by tree and user ID.
 	GetNode(ctx context.Context, treeID, userID string) (*TreeNodeRow, error)
 
@@ -100,10 +85,6 @@ type TreeStore interface {
 	// idx_tree_nodes_depth(tree_id, depth) backs the leading key, so the cost
 	// is a sort within each depth group.
 	GetByTreeDepthOrdered(ctx context.Context, treeID string) ([]TreeNodeRow, error)
-
-	// BulkInsert adds multiple nodes in a single transaction, and records no
-	// projected version.
-	BulkInsert(ctx context.Context, nodes []TreeNodeRow) error
 
 	// ProjectedVersion returns the stream version the tree's rows reflect.
 	// found is false when the tree has no projection row.

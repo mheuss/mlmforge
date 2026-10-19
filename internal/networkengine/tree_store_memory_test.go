@@ -32,7 +32,7 @@ func TestMemoryTreeStore_InsertAndGetNode(t *testing.T) {
 	ctx := context.Background()
 
 	node := makeNode("tree-1", "user-a", 0, nil, nil, nil)
-	require.NoError(t, store.InsertNode(ctx, node))
+	require.NoError(t, store.insertNode(ctx, node))
 
 	got, err := store.GetNode(ctx, "tree-1", "user-a")
 	require.NoError(t, err)
@@ -53,13 +53,13 @@ func TestMemoryTreeStore_GetNodeNotFound(t *testing.T) {
 	assert.Nil(t, got)
 }
 
-func TestMemoryTreeStore_DeleteNode(t *testing.T) {
+func TestMemoryTreeStore_GetNodeSkipsATombstone(t *testing.T) {
 	store := NewMemoryTreeStore()
 	ctx := context.Background()
 
 	node := makeNode("tree-1", "user-a", 0, nil, nil, nil)
-	require.NoError(t, store.InsertNode(ctx, node))
-	require.NoError(t, store.DeleteNode(ctx, "tree-1", "user-a"))
+	require.NoError(t, store.insertNode(ctx, node))
+	require.NoError(t, store.deleteNode(ctx, "tree-1", "user-a"))
 
 	got, err := store.GetNode(ctx, "tree-1", "user-a")
 	require.NoError(t, err)
@@ -75,10 +75,10 @@ func TestMemoryTreeStore_GetChildren(t *testing.T) {
 	child2 := makeNode("tree-1", "child-2", 1, ptr("root"), ptr("root"), intPtr(1))
 	child3 := makeNode("tree-1", "child-3", 1, ptr("root"), ptr("root"), intPtr(2))
 
-	require.NoError(t, store.InsertNode(ctx, root))
-	require.NoError(t, store.InsertNode(ctx, child1))
-	require.NoError(t, store.InsertNode(ctx, child2))
-	require.NoError(t, store.InsertNode(ctx, child3))
+	require.NoError(t, store.insertNode(ctx, root))
+	require.NoError(t, store.insertNode(ctx, child1))
+	require.NoError(t, store.insertNode(ctx, child2))
+	require.NoError(t, store.insertNode(ctx, child3))
 
 	children, err := store.GetChildren(ctx, "tree-1", "root")
 	require.NoError(t, err)
@@ -90,11 +90,11 @@ func TestMemoryTreeStore_GetByTree(t *testing.T) {
 	ctx := context.Background()
 
 	// Tree 1: 2 nodes.
-	require.NoError(t, store.InsertNode(ctx, makeNode("tree-1", "a", 0, nil, nil, nil)))
-	require.NoError(t, store.InsertNode(ctx, makeNode("tree-1", "b", 1, ptr("a"), ptr("a"), nil)))
+	require.NoError(t, store.insertNode(ctx, makeNode("tree-1", "a", 0, nil, nil, nil)))
+	require.NoError(t, store.insertNode(ctx, makeNode("tree-1", "b", 1, ptr("a"), ptr("a"), nil)))
 
 	// Tree 2: 1 node.
-	require.NoError(t, store.InsertNode(ctx, makeNode("tree-2", "x", 0, nil, nil, nil)))
+	require.NoError(t, store.insertNode(ctx, makeNode("tree-2", "x", 0, nil, nil, nil)))
 
 	got, err := store.GetByTree(ctx, "tree-1")
 	require.NoError(t, err)
@@ -106,9 +106,9 @@ func TestMemoryTreeStore_GetByTreeDepthOrdered(t *testing.T) {
 	ctx := context.Background()
 
 	// Insert out of depth order.
-	require.NoError(t, store.InsertNode(ctx, makeNode("tree-1", "grandchild", 2, ptr("child"), ptr("child"), nil)))
-	require.NoError(t, store.InsertNode(ctx, makeNode("tree-1", "root", 0, nil, nil, nil)))
-	require.NoError(t, store.InsertNode(ctx, makeNode("tree-1", "child", 1, ptr("root"), ptr("root"), nil)))
+	require.NoError(t, store.insertNode(ctx, makeNode("tree-1", "grandchild", 2, ptr("child"), ptr("child"), nil)))
+	require.NoError(t, store.insertNode(ctx, makeNode("tree-1", "root", 0, nil, nil, nil)))
+	require.NoError(t, store.insertNode(ctx, makeNode("tree-1", "child", 1, ptr("root"), ptr("root"), nil)))
 
 	got, err := store.GetByTreeDepthOrdered(ctx, "tree-1")
 	require.NoError(t, err)
@@ -118,48 +118,29 @@ func TestMemoryTreeStore_GetByTreeDepthOrdered(t *testing.T) {
 	assert.Equal(t, 2, got[2].Depth)
 }
 
-func TestMemoryTreeStore_BulkInsert(t *testing.T) {
-	store := NewMemoryTreeStore()
-	ctx := context.Background()
-
-	nodes := []TreeNodeRow{
-		makeNode("tree-1", "a", 0, nil, nil, nil),
-		makeNode("tree-1", "b", 1, ptr("a"), ptr("a"), nil),
-		makeNode("tree-1", "c", 1, ptr("a"), ptr("a"), nil),
-		makeNode("tree-1", "d", 2, ptr("b"), ptr("b"), nil),
-		makeNode("tree-1", "e", 2, ptr("c"), ptr("c"), nil),
-	}
-
-	require.NoError(t, store.BulkInsert(ctx, nodes))
-
-	got, err := store.GetByTree(ctx, "tree-1")
-	require.NoError(t, err)
-	assert.Len(t, got, 5)
-}
-
 func TestMemoryTreeStore_DuplicateActiveSlotRejected(t *testing.T) {
 	store := NewMemoryTreeStore()
 	ctx := context.Background()
 
-	require.NoError(t, store.InsertNode(ctx, makeNode("tree-1", "u2", 1, ptr("u1"), ptr("u1"), intPtr(0))))
+	require.NoError(t, store.insertNode(ctx, makeNode("tree-1", "u2", 1, ptr("u1"), ptr("u1"), intPtr(0))))
 
-	err := store.InsertNode(ctx, makeNode("tree-1", "u3", 1, ptr("u1"), ptr("u1"), intPtr(0)))
+	err := store.insertNode(ctx, makeNode("tree-1", "u3", 1, ptr("u1"), ptr("u1"), intPtr(0)))
 	require.ErrorIs(t, err, ErrSlotConflict)
 	assert.Contains(t, err.Error(), "held by u2", "error names the incumbent")
 
 	// Same position under a different parent stays legal.
-	require.NoError(t, store.InsertNode(ctx, makeNode("tree-1", "u4", 2, ptr("u2"), ptr("u1"), intPtr(0))))
+	require.NoError(t, store.insertNode(ctx, makeNode("tree-1", "u4", 2, ptr("u2"), ptr("u1"), intPtr(0))))
 
 	// A soft-deleted claim does not block a live replacement (ADR-023).
-	require.NoError(t, store.DeleteNode(ctx, "tree-1", "u2"))
-	require.NoError(t, store.InsertNode(ctx, makeNode("tree-1", "u5", 1, ptr("u1"), ptr("u1"), intPtr(0))))
+	require.NoError(t, store.deleteNode(ctx, "tree-1", "u2"))
+	require.NoError(t, store.insertNode(ctx, makeNode("tree-1", "u5", 1, ptr("u1"), ptr("u1"), intPtr(0))))
 
 	// Two active rows with positions but nil parents do not conflict — the
 	// index's parent_id is NULL for both, and Postgres treats NULLs as
 	// distinct in unique indexes. The mirror must match that. Depth 1 is
 	// deliberate; see HEU-810.
-	require.NoError(t, store.InsertNode(ctx, makeNode("tree-2", "r1", 1, nil, ptr("r1"), intPtr(0))))
-	require.NoError(t, store.InsertNode(ctx, makeNode("tree-2", "r2", 1, nil, ptr("r2"), intPtr(0))))
+	require.NoError(t, store.insertNode(ctx, makeNode("tree-2", "r1", 1, nil, ptr("r1"), intPtr(0))))
+	require.NoError(t, store.insertNode(ctx, makeNode("tree-2", "r2", 1, nil, ptr("r2"), intPtr(0))))
 }
 
 func TestMemoryTreeStore_DuplicateIDRejected(t *testing.T) {
@@ -167,13 +148,13 @@ func TestMemoryTreeStore_DuplicateIDRejected(t *testing.T) {
 	ctx := context.Background()
 
 	row := makeNode("tree-1", "u1", 0, nil, nil, nil)
-	require.NoError(t, store.InsertNode(ctx, row))
+	require.NoError(t, store.insertNode(ctx, row))
 
 	// Same event ID replayed into a different tree and user: the pkey
 	// mirror rejects it before any per-tree uniqueness is consulted.
 	dup := makeNode("tree-2", "u2", 0, nil, nil, nil)
 	dup.ID = row.ID
-	err := store.InsertNode(ctx, dup)
+	err := store.insertNode(ctx, dup)
 	assert.ErrorIs(t, err, ErrNodeAlreadyProjected)
 }
 
@@ -184,9 +165,9 @@ func TestMemoryTreeStore_DeletedNodeExcludedFromActive(t *testing.T) {
 	root := makeNode("tree-1", "root", 0, nil, nil, nil)
 	child := makeNode("tree-1", "child", 1, ptr("root"), ptr("root"), nil)
 
-	require.NoError(t, store.InsertNode(ctx, root))
-	require.NoError(t, store.InsertNode(ctx, child))
-	require.NoError(t, store.DeleteNode(ctx, "tree-1", "child"))
+	require.NoError(t, store.insertNode(ctx, root))
+	require.NoError(t, store.insertNode(ctx, child))
+	require.NoError(t, store.deleteNode(ctx, "tree-1", "child"))
 
 	// GetByTree should exclude deleted node.
 	byTree, err := store.GetByTree(ctx, "tree-1")
@@ -202,56 +183,6 @@ func TestMemoryTreeStore_DeletedNodeExcludedFromActive(t *testing.T) {
 	ordered, err := store.GetByTreeDepthOrdered(ctx, "tree-1")
 	require.NoError(t, err)
 	assert.Len(t, ordered, 1)
-}
-
-func TestMemoryTreeStore_DeleteNodeAndResponsor(t *testing.T) {
-	ctx := context.Background()
-	root := "user-1"
-	recruiter := "user-2"
-
-	newStore := func() *MemoryTreeStore {
-		s := NewMemoryTreeStore()
-		require.NoError(t, s.InsertNode(ctx, TreeNodeRow{
-			ID: "n1", TreeID: "tree-1", UserID: root, Depth: 0,
-		}))
-		require.NoError(t, s.InsertNode(ctx, TreeNodeRow{
-			ID: "n2", TreeID: "tree-1", UserID: recruiter, ParentID: &root, SponsorID: &root, Depth: 1,
-		}))
-		require.NoError(t, s.InsertNode(ctx, TreeNodeRow{
-			ID: "n3", TreeID: "tree-1", UserID: "user-3", ParentID: &root, SponsorID: &recruiter, Depth: 1,
-		}))
-		return s
-	}
-
-	t.Run("moves the sponsor and soft-deletes the removed node", func(t *testing.T) {
-		store := newStore()
-
-		require.NoError(t, store.DeleteNodeAndResponsor(ctx, "tree-1", recruiter, "ev-remove",
-			[]Responsored{{UserID: "user-3", NewSponsorID: root}}))
-
-		gone, err := store.GetNode(ctx, "tree-1", recruiter)
-		require.NoError(t, err)
-		assert.Nil(t, gone)
-
-		moved, err := store.GetNode(ctx, "tree-1", "user-3")
-		require.NoError(t, err)
-		require.NotNil(t, moved)
-		require.NotNil(t, moved.SponsorID)
-		assert.Equal(t, root, *moved.SponsorID)
-	})
-
-	t.Run("writes nothing when a target has no active row", func(t *testing.T) {
-		store := newStore()
-
-		err := store.DeleteNodeAndResponsor(ctx, "tree-1", recruiter, "ev-remove",
-			[]Responsored{{UserID: "user-99", NewSponsorID: root}})
-		require.Error(t, err)
-
-		// The staging exists so a missing target leaves the soft delete unmade.
-		still, err := store.GetNode(ctx, "tree-1", recruiter)
-		require.NoError(t, err)
-		assert.NotNil(t, still, "a failed re-sponsor must not leave the node deleted")
-	})
 }
 
 func TestMemoryTreeStore_Suite(t *testing.T) {

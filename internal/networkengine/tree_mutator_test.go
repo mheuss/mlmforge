@@ -170,7 +170,7 @@ func TestTreeMutator_LoaderAcceptsInterface(t *testing.T) {
 
 	root := makeNode("tree-1", "user-0", 0, nil, ptr("user-0"), nil)
 	root.EnrolledAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, store.InsertNode(ctx, root))
+	require.NoError(t, store.insertNode(ctx, root))
 
 	mutator := &stubMutator{}
 	loader := NewTreeLoader(store, mutator)

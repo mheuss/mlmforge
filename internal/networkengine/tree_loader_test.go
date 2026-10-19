@@ -140,7 +140,7 @@ func TestTreeLoader_LoadSingleRoot(t *testing.T) {
 	store := NewMemoryTreeStore()
 	root := makeNode("tree-1", "root-user", 0, nil, ptr("root-user"), nil)
 	root.EnrolledAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, store.InsertNode(context.Background(), root))
+	require.NoError(t, store.insertNode(context.Background(), root))
 
 	transport := newOrderRecordingTransport()
 	engine := newEngineClientWithTransport(transport)
@@ -161,19 +161,19 @@ func TestTreeLoader_LoadChain(t *testing.T) {
 
 	root := makeNode("tree-1", "user-0", 0, nil, ptr("user-0"), nil)
 	root.EnrolledAt = enrolled
-	require.NoError(t, store.InsertNode(ctx, root))
+	require.NoError(t, store.insertNode(ctx, root))
 
 	node1 := makeNode("tree-1", "user-1", 1, ptr("user-0"), ptr("user-0"), nil)
 	node1.EnrolledAt = enrolled.Add(time.Hour)
-	require.NoError(t, store.InsertNode(ctx, node1))
+	require.NoError(t, store.insertNode(ctx, node1))
 
 	node2 := makeNode("tree-1", "user-2", 2, ptr("user-1"), ptr("user-1"), nil)
 	node2.EnrolledAt = enrolled.Add(2 * time.Hour)
-	require.NoError(t, store.InsertNode(ctx, node2))
+	require.NoError(t, store.insertNode(ctx, node2))
 
 	node3 := makeNode("tree-1", "user-3", 3, ptr("user-2"), ptr("user-2"), nil)
 	node3.EnrolledAt = enrolled.Add(3 * time.Hour)
-	require.NoError(t, store.InsertNode(ctx, node3))
+	require.NoError(t, store.insertNode(ctx, node3))
 
 	transport := newOrderRecordingTransport()
 	engine := newEngineClientWithTransport(transport)
@@ -198,14 +198,14 @@ func TestTreeLoader_SkipsRemovedNodes(t *testing.T) {
 
 	root := makeNode("tree-1", "user-0", 0, nil, ptr("user-0"), nil)
 	root.EnrolledAt = enrolled
-	require.NoError(t, store.InsertNode(ctx, root))
+	require.NoError(t, store.insertNode(ctx, root))
 
 	child := makeNode("tree-1", "user-1", 1, ptr("user-0"), ptr("user-0"), nil)
 	child.EnrolledAt = enrolled.Add(time.Hour)
-	require.NoError(t, store.InsertNode(ctx, child))
+	require.NoError(t, store.insertNode(ctx, child))
 
 	// Soft-delete the child.
-	require.NoError(t, store.DeleteNode(ctx, "tree-1", "user-1"))
+	require.NoError(t, store.deleteNode(ctx, "tree-1", "user-1"))
 
 	transport := newOrderRecordingTransport()
 	engine := newEngineClientWithTransport(transport)
@@ -226,7 +226,7 @@ func TestTreeLoader_NoDepthZeroRoot(t *testing.T) {
 
 	// Insert a single node with depth 1 — invalid for a root.
 	node := makeNode("tree-1", "user-0", 1, nil, ptr("user-0"), nil)
-	require.NoError(t, store.InsertNode(ctx, node))
+	require.NoError(t, store.insertNode(ctx, node))
 
 	transport := newOrderRecordingTransport()
 	engine := newEngineClientWithTransport(transport)
@@ -248,12 +248,12 @@ func TestTreeLoader_ChildWithNilParent(t *testing.T) {
 	// Valid root.
 	root := makeNode("tree-1", "user-0", 0, nil, ptr("user-0"), nil)
 	root.EnrolledAt = enrolled
-	require.NoError(t, store.InsertNode(ctx, root))
+	require.NoError(t, store.insertNode(ctx, root))
 
 	// Child with nil ParentID and nil SponsorID — data corruption.
 	child := makeNode("tree-1", "user-1", 1, nil, nil, nil)
 	child.EnrolledAt = enrolled.Add(time.Hour)
-	require.NoError(t, store.InsertNode(ctx, child))
+	require.NoError(t, store.insertNode(ctx, child))
 
 	transport := newOrderRecordingTransport()
 	engine := newEngineClientWithTransport(transport)
@@ -271,7 +271,7 @@ func TestTreeLoader_LoadMatrixTree_RootOnlyRoutesToCreateMatrixTree(t *testing.T
 
 	root := makeNode("m-tree", "user-0", 0, nil, ptr("user-0"), nil)
 	root.EnrolledAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, store.InsertNode(ctx, root))
+	require.NoError(t, store.insertNode(ctx, root))
 
 	mutator := &stubMutator{}
 	loader := NewTreeLoader(store, mutator)
@@ -294,19 +294,19 @@ func TestTreeLoader_LoadMatrixTree_MultiNodeReplaysExplicitPlacement(t *testing.
 
 	root := makeNode("m-tree", "user-0", 0, nil, ptr("user-0"), nil)
 	root.EnrolledAt = enrolled
-	require.NoError(t, store.InsertNode(ctx, root))
+	require.NoError(t, store.insertNode(ctx, root))
 
 	// user-1 at slot 2. Spillover would have chosen slot 0.
 	child := makeNode("m-tree", "user-1", 1, ptr("user-0"), ptr("user-0"), intPtr(2))
 	child.EnrolledAt = enrolled.Add(time.Hour)
-	require.NoError(t, store.InsertNode(ctx, child))
+	require.NoError(t, store.insertNode(ctx, child))
 
 	// user-2 sits under user-1 but is sponsored by user-0, so parent and
 	// sponsor differ. Without this the test cannot detect a transposition,
 	// because identical values hide the swap.
 	grandchild := makeNode("m-tree", "user-2", 2, ptr("user-1"), ptr("user-0"), intPtr(1))
 	grandchild.EnrolledAt = enrolled.Add(2 * time.Hour)
-	require.NoError(t, store.InsertNode(ctx, grandchild))
+	require.NoError(t, store.insertNode(ctx, grandchild))
 
 	mutator := &stubMutator{}
 	loader := NewTreeLoader(store, mutator)
@@ -411,14 +411,14 @@ func loadWithStub(t *testing.T, treeType string, nodes []TreeNodeRow, opts ...Lo
 	store := NewMemoryTreeStore()
 	ctx := context.Background()
 	for _, n := range nodes {
-		require.NoError(t, store.InsertNode(ctx, n))
+		require.NoError(t, store.insertNode(ctx, n))
 	}
 	mutator := &stubMutator{}
 	_, err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", treeType, opts...)
 	return mutator, err
 }
 
-// loadWithStubDirect is loadWithStub for fixtures InsertNode itself refuses,
+// loadWithStubDirect is loadWithStub for fixtures the store's insert refuses,
 // like duplicate slots, which the mirror of migration 000004 rejects at
 // insert. It seeds the store directly so loader preflight can still be tested
 // against corruption that predates the index in a real database.
@@ -637,7 +637,7 @@ func TestValidateNodes_RootSponsorIsExempt(t *testing.T) {
 }
 
 // TestValidateNodes_DuplicateUserID is the one validation case that cannot be
-// driven through LoadTree: MemoryTreeStore.InsertNode refuses the fixture
+// driven through LoadTree: the memory store's insert refuses the fixture
 // (the pkey mirror fires first here, since makeNode derives the row ID from
 // the user ID, and the active-user mirror would refuse it regardless), so it
 // is unconstructable through the store.
@@ -661,7 +661,7 @@ func TestTreeLoader_ValidationFailures_Positions(t *testing.T) {
 		opts     []LoadTreeOption
 		nodes    []TreeNodeRow
 		wantErr  string
-		// direct seeds the store without InsertNode. Required for fixtures
+		// direct seeds the store without its insert. Required for fixtures
 		// the store itself now refuses (duplicate slots, per the migration
 		// 000004 mirror), which preflight must still catch when they predate
 		// the index in a real database.
@@ -879,7 +879,7 @@ func TestTreeLoader_ReplayFailureReportsProgress(t *testing.T) {
 			store := NewMemoryTreeStore()
 			ctx := context.Background()
 			for _, n := range build(tt.treeType == "matrix") {
-				require.NoError(t, store.InsertNode(ctx, n))
+				require.NoError(t, store.insertNode(ctx, n))
 			}
 
 			mutator := &failAfterNMutator{failOn: tt.failOn, err: boom}
@@ -924,7 +924,7 @@ func TestTreeLoader_AddRootFailureReportsCreatedTree(t *testing.T) {
 
 			root := makeNode("t", "u0", 0, nil, ptr("u0"), nil)
 			root.EnrolledAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-			require.NoError(t, store.InsertNode(ctx, root))
+			require.NoError(t, store.insertNode(ctx, root))
 
 			mutator := &failAfterNMutator{failRoot: tt.failRoot, landRootThenFail: tt.landRootThenFail, err: boom}
 			_, err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", "unilevel")
@@ -955,7 +955,7 @@ func TestTreeLoader_CreateTreeFailureStopsBeforeRoot(t *testing.T) {
 	boom := errors.New("transport closed")
 
 	root := makeNode("t", "u0", 0, nil, ptr("u0"), nil)
-	require.NoError(t, store.InsertNode(ctx, root))
+	require.NoError(t, store.insertNode(ctx, root))
 
 	mutator := &stubMutator{failWith: boom}
 	_, err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", "unilevel")
@@ -978,7 +978,7 @@ func TestTreeLoader_CreateMatrixTreeFailureStopsBeforeRoot(t *testing.T) {
 	boom := errors.New("transport closed")
 
 	root := makeNode("t", "u0", 0, nil, ptr("u0"), nil)
-	require.NoError(t, store.InsertNode(ctx, root))
+	require.NoError(t, store.insertNode(ctx, root))
 
 	mutator := &stubMutator{failWith: boom}
 	_, err := NewTreeLoader(store, mutator).LoadTree(ctx, "t", "matrix", WithMatrixParams(3, "breadth_first"))
@@ -1358,7 +1358,7 @@ func TestTreeLoader_LoadMatrixTree_RequiresParams(t *testing.T) {
 
 	root := makeNode("m-tree", "user-0", 0, nil, ptr("user-0"), nil)
 	root.EnrolledAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, store.InsertNode(ctx, root))
+	require.NoError(t, store.insertNode(ctx, root))
 
 	mutator := &stubMutator{}
 	loader := NewTreeLoader(store, mutator)

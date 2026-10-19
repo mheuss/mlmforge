@@ -282,7 +282,7 @@ func TestTreePersistence_LoadMatrixTreeCreatesInEngine(t *testing.T) {
 
 	// Seed a matrix root directly, as if projected from a prior run's events.
 	root := makeUUIDNode(testNodeUUID(1), treeID, rootID, 0, nil, ptr(rootID), nil)
-	require.NoError(t, treeStore.InsertNode(ctx, root))
+	require.NoError(t, insertNode(ctx, treeStore.pool, root))
 
 	// Before HEU-533 this errored at the create step. The engine has never
 	// seen treeID, so this mirrors startup reconstruction.
@@ -334,7 +334,7 @@ func TestTreePersistence_MatrixMultiNodeRoundTrip(t *testing.T) {
 	}
 	for i := range rows {
 		rows[i].EnrolledAt = base.Add(time.Duration(i) * time.Hour)
-		require.NoError(t, treeStore.InsertNode(ctx, rows[i]))
+		require.NoError(t, insertNode(ctx, treeStore.pool, rows[i]))
 	}
 
 	loader := NewTreeLoader(treeStore, engine)
@@ -639,7 +639,7 @@ func TestTreePersistence_RejectedTreeLeavesEngineLoadable(t *testing.T) {
 	}
 	for i := range rows {
 		rows[i].EnrolledAt = base.Add(time.Duration(i) * time.Hour)
-		require.NoError(t, treeStore.InsertNode(ctx, rows[i]))
+		require.NoError(t, insertNode(ctx, treeStore.pool, rows[i]))
 	}
 
 	loader := NewTreeLoader(treeStore, engine)
@@ -656,7 +656,7 @@ func TestTreePersistence_RejectedTreeLeavesEngineLoadable(t *testing.T) {
 
 	// Correct the data the way an operator would, then retry. This is the step
 	// that proves the engine is still usable: a leaked create would fail here.
-	require.NoError(t, treeStore.DeleteNode(ctx, treeID, u3))
+	require.NoError(t, tombstoneUser(ctx, treeStore, treeID, u3))
 	_, lerr := loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(3, "breadth_first"))
 
 	require.NoError(t, lerr)
@@ -772,8 +772,8 @@ func TestTreePersistence_SupersededRedeliveryIsRefused(t *testing.T) {
 	})
 	require.NoError(t, consumer.HandleEvent(ctx, okEvent))
 
-	require.NoError(t, treeStore.DeleteNode(ctx, treeID, u2))
-	require.NoError(t, treeStore.InsertNode(ctx, TreeNodeRow{
+	require.NoError(t, tombstoneUser(ctx, treeStore, treeID, u2))
+	require.NoError(t, insertNode(ctx, treeStore.pool, TreeNodeRow{
 		ID:         testNodeUUID(9),
 		TreeID:     treeID,
 		UserID:     u2,

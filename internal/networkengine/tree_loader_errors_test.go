@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -219,6 +220,18 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			engineFailsAfter: -1,
 			want:             `tree t has a row with an empty user ID (row ID "id-")`,
 			wantKind:         TreeLoadDataInvalid,
+		},
+		{
+			name:     "nil user ID",
+			treeType: treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", uuid.Nil.String(), 1, ptr("u0"), ptr("u0"), nil),
+			},
+			engineFailsAfter: -1,
+			want:             "tree t has a row with the nil UUID as its user ID (row ID \"id-" + uuid.Nil.String() + "\")",
+			wantKind:         TreeLoadDataInvalid,
+			wantNodeIDs:      []string{uuid.Nil.String()},
 		},
 		{
 			// The empty row and b form a sponsor cycle.

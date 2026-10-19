@@ -135,7 +135,7 @@ pub(crate) fn validate_snapshot_volumes(
     }
 }
 
-/// Run every whole-map snapshot check a calculator needs before it starts.
+/// Run the whole-map snapshot checks in a fixed order before a calculator starts.
 ///
 /// The rank check runs first, so an unknown rank surfaces ahead of a bad volume.
 pub(crate) fn validate_snapshots(

@@ -119,6 +119,7 @@ impl CompensationPlan {
         self.caps.validate().map_err(|e| format!("caps: {e}"))?;
         self.check_rank_ladder_non_empty()?;
         self.check_rank_name_and_ordinal_floor()?;
+        self.check_base_rank_requires_nothing()?;
         self.check_unique_structure_names()?;
         for structure in &mut self.structures {
             structure.validate()?;
@@ -151,6 +152,48 @@ impl CompensationPlan {
                     "ranks: rank at index {idx} ('{}') has ordinal 0; ordinals start at 1",
                     rank.name
                 ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Reject a lowest rank that sets any qualification requirement.
+    fn check_base_rank_requires_nothing(&self) -> Result<(), String> {
+        let Some(base) = self.ranks.iter().min_by_key(|r| r.ordinal) else {
+            return Ok(());
+        };
+        let name = &base.name;
+        let q = &base.qualification;
+        let refuse = |what: String| -> Result<(), String> {
+            Err(format!(
+                "ranks: base rank '{name}' {what}; the lowest rank must require nothing"
+            ))
+        };
+        if !q.required_products.is_empty() {
+            return refuse(format!("requires products {:?}", q.required_products));
+        }
+        if q.window.is_some() {
+            return refuse("has a window".to_string());
+        }
+        if q.tenure.is_some() {
+            return refuse("has a tenure requirement".to_string());
+        }
+        for sq in &q.structures {
+            let structure = &sq.structure;
+            for (field, value) in [
+                ("personal_volume", sq.personal_volume),
+                ("group_volume", sq.group_volume),
+                ("min_retail_volume", sq.min_retail_volume),
+            ] {
+                if value != 0.0 {
+                    return refuse(format!("sets {field} {value} on structure '{structure}'"));
+                }
+            }
+            if sq.distributor_count.is_some() {
+                return refuse(format!("sets distributor_count on structure '{structure}'"));
+            }
+            if !sq.leg_quality.is_empty() {
+                return refuse(format!("sets leg_quality on structure '{structure}'"));
             }
         }
         Ok(())
@@ -992,6 +1035,153 @@ mod tests {
     fn plan_accepts_distinct_structure_names() {
         let mut plan =
             plan_with_structures(vec![named_streamline("stream"), named_unilevel("uni")]);
+        assert!(plan.validate().is_ok());
+    }
+
+    // --- base rank ---
+
+    /// A structure entry that sets no threshold.
+    fn zero_threshold(structure: &str) -> crate::config::rank::StructureQualification {
+        crate::config::rank::StructureQualification {
+            structure: structure.to_string(),
+            personal_volume: 0.0,
+            group_volume: 0.0,
+            max_group_volume_per_leg: 0.0,
+            min_retail_volume: 0.0,
+            distributor_count: None,
+            leg_quality: vec![],
+        }
+    }
+
+    #[test]
+    fn plan_accepts_a_base_rank_with_no_structure_entries() {
+        let mut plan = plan_with_two_ranks();
+        assert!(plan.validate().is_ok());
+    }
+
+    #[test]
+    fn plan_accepts_a_base_rank_whose_structure_entries_set_no_threshold() {
+        let mut plan = plan_with_two_ranks();
+        plan.ranks[0].qualification.structures = vec![zero_threshold("main")];
+        assert!(plan.validate().is_ok());
+    }
+
+    #[test]
+    fn plan_accepts_a_per_leg_cap_on_the_base_rank() {
+        let mut plan = plan_with_two_ranks();
+        let mut entry = zero_threshold("main");
+        entry.max_group_volume_per_leg = 500.0;
+        plan.ranks[0].qualification.structures = vec![entry];
+        assert!(plan.validate().is_ok());
+    }
+
+    #[test]
+    fn plan_rejects_each_base_rank_requirement() {
+        use crate::config::rank::{
+            DistributorCountRequirement, LegPredicate, LegQualityRequirement, RankDefinition,
+            RankQualificationWindow, SearchMode, TenureRequirement,
+        };
+        type Mutate = fn(&mut RankDefinition);
+        let cases: Vec<(Mutate, &str)> = vec![
+            (
+                |r| r.qualification.structures[0].personal_volume = 50.0,
+                "sets personal_volume 50 on structure 'main'",
+            ),
+            (
+                |r| r.qualification.structures[0].group_volume = 1000.0,
+                "sets group_volume 1000 on structure 'main'",
+            ),
+            (
+                |r| r.qualification.structures[0].min_retail_volume = 10.0,
+                "sets min_retail_volume 10 on structure 'main'",
+            ),
+            (
+                |r| r.qualification.structures[0].personal_volume = f64::NAN,
+                "sets personal_volume NaN on structure 'main'",
+            ),
+            (
+                |r| {
+                    r.qualification.structures[0].distributor_count =
+                        Some(DistributorCountRequirement {
+                            count: 1,
+                            min_rank: "associate".to_string(),
+                            search_mode: SearchMode::AnyLevel,
+                            search_depth: None,
+                            total_count: 1,
+                            min_leg_group_volume: 0.0,
+                        })
+                },
+                "sets distributor_count on structure 'main'",
+            ),
+            (
+                |r| {
+                    r.qualification.structures[0].leg_quality = vec![LegQualityRequirement {
+                        count: 1,
+                        predicate: LegPredicate::ContainsPersonalVolume {
+                            min_personal_volume: 100.0,
+                        },
+                    }]
+                },
+                "sets leg_quality on structure 'main'",
+            ),
+            (
+                |r| r.qualification.required_products = vec!["starter-kit".to_string()],
+                "requires products",
+            ),
+            (
+                |r| {
+                    r.qualification.window = Some(RankQualificationWindow {
+                        threshold_rank: "associate".to_string(),
+                        qualifying_periods: 1,
+                        window_periods: 1,
+                    })
+                },
+                "has a window",
+            ),
+            (
+                |r| {
+                    r.qualification.tenure = Some(TenureRequirement {
+                        threshold_rank: "associate".to_string(),
+                        periods: 1,
+                    })
+                },
+                "has a tenure requirement",
+            ),
+        ];
+        for (mutate, expected) in cases {
+            let mut plan = plan_with_two_ranks();
+            plan.ranks[0].qualification.structures = vec![zero_threshold("main")];
+            mutate(&mut plan.ranks[0]);
+            let err = plan.validate().unwrap_err();
+            assert!(
+                err.contains("base rank 'associate'"),
+                "unexpected error: {err}"
+            );
+            assert!(err.contains(expected), "expected {expected:?}, got: {err}");
+        }
+    }
+
+    #[test]
+    fn plan_finds_the_base_rank_by_ordinal_not_position() {
+        let mut plan = plan_with_two_ranks();
+        plan.ranks.swap(0, 1);
+        let mut entry = zero_threshold("main");
+        entry.personal_volume = 50.0;
+        plan.ranks[1].qualification.structures = vec![entry];
+        let err = plan.validate().unwrap_err();
+        assert!(
+            err.contains("base rank 'associate'"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn plan_accepts_a_requirement_on_a_rank_above_the_base() {
+        let mut plan = plan_with_two_ranks();
+        plan.ranks.swap(0, 1);
+        let mut entry = zero_threshold("main");
+        entry.personal_volume = 100.0;
+        plan.ranks[0].qualification.structures = vec![entry];
         assert!(plan.validate().is_ok());
     }
 }

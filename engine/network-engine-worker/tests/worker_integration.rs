@@ -5079,6 +5079,33 @@ fn evaluate_ranks_returns_structure_not_found_when_tree_missing() {
     child.wait().unwrap();
 }
 
+#[test]
+fn load_plan_refuses_a_base_rank_with_a_requirement() {
+    let mut child = common::spawn_worker();
+    let plan =
+        RANK_TEST_PLAN_JSON.replacen(r#""personal_volume": 0.0"#, r#""personal_volume": 50.0"#, 1);
+
+    let resp = send_load_plan(&mut child, &plan);
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(
+        parsed["ok"].as_bool(),
+        Some(false),
+        "expected ok=false, got: {}",
+        resp
+    );
+    assert_eq!(parsed["error"]["code"], "INVALID_PLAN", "got: {}", resp);
+    let message = parsed["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("base rank 'associate' sets personal_volume 50 on structure 'Test'"),
+        "unexpected message: {}",
+        message
+    );
+
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}
+
 /// Minimal plan for windowed-gate tests. Two ranks on structure "Test":
 /// - `associate` (ordinal 1): PV >= 0 — serves as `threshold_rank` for the window.
 /// - `silver` (ordinal 2): PV >= 0 + window gate (2-of-3 periods at >= associate).

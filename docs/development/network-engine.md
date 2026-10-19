@@ -128,6 +128,26 @@ Clear the slot on removal. This releases heap allocations (the children Vec) and
 
 Removal is leaf-only. Removing a node with children returns an error. The caller must remove children first, working from leaves up.
 
+A live node never holds `Uuid::nil()`. Every mutation that adds a user to a tree refuses it with `NilUserId`. The streamline engine refuses it before it touches any state. (HEU-710)
+
+`Arena::node` and `Arena::node_mut` hard-assert that the slot is live, in release builds too. Without the assert, a release build returns a freed slot as a node with no edges. Both builds were measured in release on 2026-10-19. The runs interleaved a `debug_assert!` build (A) with an `assert!` build (B):
+
+- Branch collection under the root of a 131,071-node full binary tree, 50 per run, six pairs. A: 217, 231, 243, 211, 217, 220 µs, median 218.5. B: 268, 252, 241, 254, 242, 247 µs, median 249.5. About 31 µs more per collection, +14%.
+- `calculate_binary_pairing` on the same tree with all 65,536 leaves as volume sources, 10 per run, eight pairs. A: 116.70, 98.93, 112.04, 102.88, 102.35, 99.73, 103.21, 99.21 ms, median 102.62. B: 103.53, 110.65, 103.97, 105.40, 99.07, 100.04, 100.35, 99.69 ms, median 101.94. No measurable difference.
+
+Where the cost lands, read on 2026-10-19:
+
+- Branch collection (`collect_subtree`, behind binary and matrix `get_branch`) calls `node()` twice per node. That is the first measurement.
+- Binary commission's leg-volume pass calls `node()` twice per node across the whole tree. It is the only commission calculator that does. That is the second measurement.
+- The other commission calculators walk through `walk_upline`, `bfs_downline`, `get_sponsored` and `get_sponsor`, which index `nodes` directly. Stairstep also calls `get_parent` once per breakaway, which reaches `node()` twice.
+- Rank evaluation calls `get_children` from the leg-volume and leg-quality predicates, once per predicate it evaluates.
+- Rank evaluation also orders users by depth. It calls `get_position` once per user in each tree that holds the user. Binary and matrix `get_position` call `node()` once.
+- Mutations call `node()` and `node_mut()` a fixed number of times per operation. Matrix removal is the exception. It reads every node in the removed or promoted subtree.
+
+Rerun both measurements before changing these asserts back.
+
+A panic here reaches the worker's `catch_unwind` and answers `INTERNAL_ERROR`. Nothing restores the engine's state. A panic partway through a mutation leaves it as the handler had left it. A freed-slot read is a bug. A loud failure beats a silently wrong payout.
+
 ## Testing Conventions
 
 ### Unit tests

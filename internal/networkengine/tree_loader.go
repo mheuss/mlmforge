@@ -7,6 +7,8 @@ import (
 	"math"
 	"sort"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // TreeLoader rebuilds the Rust engine's in-memory state from the
@@ -239,6 +241,11 @@ func validateNodes(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNode
 		if n.UserID == "" {
 			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
 				fmt.Sprintf("tree %s has a row with an empty user ID (row ID %q)", treeID, n.ID))
+		}
+		if id, err := uuid.Parse(n.UserID); err == nil && id == uuid.Nil {
+			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
+				fmt.Sprintf("tree %s has a row with the nil UUID as its user ID (row ID %q)", treeID, n.ID),
+				n.UserID)
 		}
 		if _, dup := byID[n.UserID]; dup {
 			return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,

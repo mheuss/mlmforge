@@ -100,6 +100,7 @@ pub(crate) fn tree_error_to_response(request_id: &str, e: TreeError) -> Response
         TreeError::SubtreeFull(_) => "SUBTREE_FULL",
         TreeError::SponsorlessWithRecruits { .. } => "SPONSORLESS_WITH_RECRUITS",
         TreeError::SponsorCycle { .. } => "SPONSOR_CYCLE",
+        TreeError::NilUserId => "NIL_USER_ID",
     };
     Response::error(request_id.to_string(), code, e.to_string())
 }
@@ -479,6 +480,13 @@ mod tests {
         let response = tree_error_to_response("req-1", e);
 
         assert_eq!(response.error.as_ref().unwrap().code, "SPONSOR_CYCLE");
+    }
+
+    #[test]
+    fn a_nil_user_id_maps_to_its_own_wire_code() {
+        let response = tree_error_to_response("req-1", TreeError::NilUserId);
+
+        assert_eq!(response.error.as_ref().unwrap().code, "NIL_USER_ID");
     }
 
     #[test]

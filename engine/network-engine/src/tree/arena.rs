@@ -501,7 +501,8 @@ impl Arena {
     /// Direct arena access by index.
     pub(crate) fn node(&self, idx: NodeIndex) -> &Node {
         let n = &self.nodes[idx.0];
-        debug_assert!(
+        // A debug_assert! here lets a release build return the freed slot's zeroed node.
+        assert!(
             n.user_id != uuid::Uuid::nil(),
             "accessed tombstoned slot at index {}",
             idx.0
@@ -511,7 +512,8 @@ impl Arena {
 
     /// Mutable arena access by index.
     pub(crate) fn node_mut(&mut self, idx: NodeIndex) -> &mut Node {
-        debug_assert!(
+        // A debug_assert! here lets a release build return the freed slot's zeroed node.
+        assert!(
             self.nodes[idx.0].user_id != uuid::Uuid::nil(),
             "accessed tombstoned slot at index {}",
             idx.0
@@ -530,6 +532,14 @@ impl Arena {
             self.nodes.push(node);
             idx
         }
+    }
+
+    /// Refuses the nil UUID, which the arena reserves for freed slots.
+    pub(crate) fn check_user_id(user_id: Uuid) -> Result<(), TreeError> {
+        if user_id.is_nil() {
+            return Err(TreeError::NilUserId);
+        }
+        Ok(())
     }
 
     /// Clears a slot and adds it to the free list for reuse.
@@ -1115,11 +1125,28 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "accessed tombstoned slot")]
+    fn node_panics_on_a_freed_slot() {
+        let mut arena = Arena::new();
+        let idx = arena.alloc_slot(make_node(test_uuid(1), None, 0));
+        arena.tombstone(idx);
+        let _ = arena.node(idx);
+    }
+
+    #[test]
+    #[should_panic(expected = "accessed tombstoned slot")]
+    fn node_mut_panics_on_a_freed_slot() {
+        let mut arena = Arena::new();
+        let idx = arena.alloc_slot(make_node(test_uuid(1), None, 0));
+        arena.tombstone(idx);
+        let _ = arena.node_mut(idx);
+    }
+
+    #[test]
     fn tombstone_clears_node() {
         let mut arena = Arena::new();
         let idx = arena.alloc_slot(make_node(test_uuid(1), None, 0));
         arena.tombstone(idx);
-        // Access the raw slot directly to avoid the debug_assert in node().
         assert_eq!(arena.nodes[idx.0].user_id, Uuid::nil());
     }
 

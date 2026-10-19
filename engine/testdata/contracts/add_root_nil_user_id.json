@@ -1,0 +1,12 @@
+{
+    "description": "add_root refuses the nil UUID as a user id",
+    "setup": [
+        {"id": "s-1", "op": "create_tree", "params": {"structure": "main", "tree_type": "unilevel"}}
+    ],
+    "request": {
+        "id": "c-nil",
+        "op": "add_root",
+        "params": {"structure": "main", "user_id": "00000000-0000-0000-0000-000000000000", "enrolled_at": 1000}
+    },
+    "expected_response": {"id": "c-nil", "ok": false, "error": {"code": "NIL_USER_ID", "message_contains": "nil UUID"}}
+}

@@ -31,7 +31,7 @@ func TestRejectionEvidence_CountsWhatShowsTheEventCannotApply(t *testing.T) {
 	}
 	for _, code := range []string{
 		"POSITION_OCCUPIED", "INVALID_POSITION", "HAS_CHILDREN", "CANNOT_REMOVE_ROOT", "TREE_EMPTY",
-		"SPONSOR_NOT_FOUND", "SUBTREE_FULL", "SPONSORLESS_WITH_RECRUITS", "SPONSOR_CYCLE",
+		"SPONSOR_NOT_FOUND", "SUBTREE_FULL", "SPONSORLESS_WITH_RECRUITS", "SPONSOR_CYCLE", "NIL_USER_ID",
 	} {
 		counted["engine "+code] = fmt.Errorf("engine add_node failed after 2 retries: %w", fakeEngineError(code, "refused"))
 	}

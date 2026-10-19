@@ -64,7 +64,7 @@ The Rust `Request` struct deserializes `params` as `Box<serde_json::value::RawVa
 
 ### Error Code Taxonomy
 
-The worker returns an error code in the `error.code` field. There are 46 of
+The worker returns an error code in the `error.code` field. There are 47 of
 them, grouped below by the area that raises them. Codes are shared across areas
 where the condition is the same, so each one is listed once.
 
@@ -90,6 +90,7 @@ which maps every `TreeError` variant, plus a few handler-level checks.
 | `SUBTREE_FULL` | Spillover found no open slot in the target subtree |
 | `SPONSORLESS_WITH_RECRUITS` | Cannot remove a node whose recruits outlive it when no sponsor of its own does. See [030](030-sponsor-continuity-on-removal.md) |
 | `SPONSOR_CYCLE` | A sponsor chain did not reach an end within the number of slots in the tree |
+| `NIL_USER_ID` | A tree add or place named the nil UUID as its user id. Also raised by streamline |
 
 **Plan loading.** Raised by `handle_load_plan` and by the commission handlers'
 `require_plan` gate. See [028](028-commission-config-from-validated-state.md).

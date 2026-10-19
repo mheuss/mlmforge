@@ -38,4 +38,7 @@ pub enum StreamlineError {
 
     #[error("tree operation failed: {0}")]
     TreeError(String),
+
+    #[error("user id is the nil UUID")]
+    NilUserId,
 }

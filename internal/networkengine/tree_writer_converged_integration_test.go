@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/mlmforge/mlmforge/internal/platform"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -154,4 +155,33 @@ func TestTreeWriter_ARemovalOfAUserWhosePlacementWasRejectedIsRefused(t *testing
 	placedY, err := it.writer(t).Place(ctx, placeY)
 	require.NoError(t, err)
 	require.NoError(t, placedY.ProjectionErr)
+}
+
+func TestTreeWriter_ANilUserPlacementAnotherWriteDeliveredIsClearedByRejectEvent(t *testing.T) {
+	it := newWriterIntegration(t)
+	ctx := context.Background()
+	tree, root, x := testTreeUUID(333), testUserUUID(1), testUserUUID(7)
+	nilUser := uuid.Nil.String()
+	it.addUnilevelRoot(t, tree, root)
+	stuck := appendForeign(t, it, tree, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: tree, UserID: nilUser, ParentID: root, SponsorID: root, TreeType: treeTypeUnilevel,
+		EnrolledAt: writeTime.Add(time.Hour)})
+	placeX := PlaceRequest{TreeID: tree, UserID: x, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(2 * time.Hour)}
+	_, refusedErr := it.writer(t).Place(ctx, placeX)
+	require.ErrorContains(t, refusedErr, "NIL_USER_ID")
+	stored, err := it.store.GetNodeIncludingRemoved(ctx, tree, nilUser)
+	require.NoError(t, err)
+	require.NotNil(t, stored, "the refused place projected no row for the nil user")
+
+	rejected, err := it.writer(t).Reject(ctx, RejectRequest{TreeID: tree, EventID: stuck.ID, Reason: "nil user id"})
+
+	require.NoError(t, err)
+	require.Equal(t, RejectOutcomeRejected, rejected.Outcome, "the retry returned %v", rejected.RetryErr)
+	assert.NoError(t, rejected.ProjectionErr)
+	_, err = it.writer(t).Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeUnilevel})
+	require.NoError(t, err, "the load after the rejection returned an error")
+	placedX, err := it.writer(t).Place(ctx, placeX)
+	require.NoError(t, err)
+	require.NoError(t, placedX.ProjectionErr)
+	assert.Equal(t, map[string]string{root: root, x: root}, activeSponsors(t, it.store, tree))
 }

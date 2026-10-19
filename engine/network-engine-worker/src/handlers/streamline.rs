@@ -75,6 +75,7 @@ fn streamline_error_to_response(
         StreamlineError::NoOwnedStreams(_) => "NO_OWNED_STREAMS",
         StreamlineError::StreamChoiceNotAllowed => "STREAM_CHOICE_NOT_ALLOWED",
         StreamlineError::TreeError(_) => "TREE_ERROR",
+        StreamlineError::NilUserId => "NIL_USER_ID",
     };
     Response::error(request_id.to_string(), code, e.to_string())
 }

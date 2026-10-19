@@ -90,6 +90,7 @@ var rejectionRefusalCodes = map[string]bool{
 	"SUBTREE_FULL":              true,
 	"SPONSORLESS_WITH_RECRUITS": true,
 	"SPONSOR_CYCLE":             true,
+	"NIL_USER_ID":               true,
 }
 
 // rejectionSentinels are the errors that count as evidence that an event

@@ -80,11 +80,13 @@ Volume sources, their distributors, and every upline node the walk reaches must 
 
 Volume amounts are validated too: `cv_amount` must be finite and non-negative. NaN, positive infinity, negative infinity, and negative values all produce `InvalidCvAmount` errors. These are input integrity checks, not business rules. A non-finite CV amount is always a bug upstream.
 
+`personal_volume` follows the same rule on every snapshot in the map. NaN, both infinities and negative values produce `InvalidPersonalVolume` errors. The check runs after the snapshot rank check and before any calculator starts.
+
 This decision was the reverse until 2026-09-10. Upline nodes missing from snapshots were treated as ineligible with no signal, on the grounds that missing upline data is a completeness issue rather than an integrity issue. That reasoning missed one thing. The snapshot map is a request parameter. Under compression a missing upline is skipped without consuming a level, so omitting one promotes every ancestor above it. Absence chosen by the caller and absence caused by a data gap are indistinguishable at the point of use. The engine cannot be lenient about one without being lenient about both.
 
-> **Decided, and in force as of protocol 9.** Every ticket that builds it has landed. This note stays a list of tickets rather than a description of behaviour.
+> **Decided, and in force as of protocol 15.** Every ticket that builds it has landed. This note stays a list of tickets rather than a description of behaviour.
 >
-> Five tickets build it and each carries its own protocol version, so **the version the worker reports is what tells you how far it has got.** HEU-611 at 3, HEU-608 at 5, HEU-609 at 6, HEU-706 at 7 and HEU-726 at 9 have all landed. If another ticket joins this decision it lands here with its own version, and this note goes back to naming what has not.
+> Six tickets build it and each carries its own protocol version, so **the version the worker reports is what tells you how far it has got.** HEU-611 at 3, HEU-608 at 5, HEU-609 at 6, HEU-706 at 7, HEU-726 at 9 and HEU-709 at 15 have all landed. If another ticket joins this decision it lands here with its own version, and this note goes back to naming what has not.
 >
 > This note is deliberately a list of tickets rather than a description of current behaviour. The first version described the behaviour, and one third of it was false within eleven hours of being written and stamped as checked. A ticket landing is one word to delete here; a behaviour changing is a paragraph to re-verify.
 

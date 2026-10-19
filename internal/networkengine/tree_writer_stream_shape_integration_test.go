@@ -132,3 +132,24 @@ func TestTreeWriter_AForeignPlacementLabelledBinaryOnAUnilevelStreamIsRefusedAnd
 	assert.Nil(t, row, "the refused placement left a row")
 	assert.Equal(t, map[string]string{root: root, y: root}, activeSponsors(t, it.store, tree))
 }
+
+func TestTreeWriterReject_RefusesAMismatchedRemovalTheStoreAlreadyStamped(t *testing.T) {
+	it := newWriterIntegration(t)
+	ctx := context.Background()
+	tree, root, a := testTreeUUID(9424), testUserUUID(1), testUserUUID(2)
+	placeUnilevelChild(t, it, tree, root, a)
+	foreign := appendForeign(t, it, tree, EventTypeNodeRemoved, NodeRemovedPayload{
+		TreeID: tree, UserID: a, RemovedAt: writeTime.Add(2 * time.Hour), TreeType: treeTypeBinary})
+	require.NoError(t, it.store.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{a}}, foreign.ID, foreign.Version))
+
+	res, err := it.writer(t).Reject(ctx, RejectRequest{TreeID: tree, EventID: foreign.ID, Reason: "stamped before the check"})
+
+	require.ErrorContains(t, err, "returned an error that is not one reject-event accepts as evidence; nothing was appended")
+	assert.Empty(t, res.Outcome)
+	var replay *TreeReplayError
+	require.ErrorAs(t, res.RetryErr, &replay)
+	assert.Equal(t, TreeReplayStageReplay, replay.Stage)
+	last, err := it.events.ReadLastEvent(ctx, TreeStreamName(tree))
+	require.NoError(t, err)
+	assert.Equal(t, foreign.Version, last.Version, "reject-event appended an event")
+}

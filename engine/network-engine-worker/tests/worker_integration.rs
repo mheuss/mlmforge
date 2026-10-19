@@ -4931,10 +4931,9 @@ fn calculate_streamline_unknown_structure_returns_not_found() {
     worker.wait().unwrap();
 }
 
-/// Minimal plan used by `evaluate_ranks` integration tests. The single rank
-/// "associate" requires PV=50 inside structure "Test", so a distributor with
-/// PV=0 falls through to `Unranked`. The plan is shared by the happy-path
-/// test and the STRUCTURE_NOT_FOUND error-path test.
+/// Minimal plan for `evaluate_ranks` integration tests. The base rank
+/// "associate" requires nothing. "silver" requires PV=50 inside structure
+/// "Test".
 const RANK_TEST_PLAN_JSON: &str = r#"{
     "name": "RankTest",
     "version": 2,
@@ -4954,6 +4953,10 @@ const RANK_TEST_PLAN_JSON: &str = r#"{
     "volume": {"inhibit_signup_volume": false, "base_currency": "USD", "volume_to_dollar_multiplier": 1.0, "deduct_qualifying_volume": false},
     "ranks": [
         {"name": "associate", "ordinal": 1,
+         "qualification": {"structures": [{"structure": "Test", "personal_volume": 0.0, "group_volume": 0.0, "max_group_volume_per_leg": 1e12, "min_retail_volume": 0.0, "distributor_count": null}], "required_products": []},
+         "qualified_structures": ["Test"],
+         "demotion_policy": "promotion_only"},
+        {"name": "silver", "ordinal": 2,
          "qualification": {"structures": [{"structure": "Test", "personal_volume": 50.0, "group_volume": 0.0, "max_group_volume_per_leg": 1e12, "min_retail_volume": 0.0, "distributor_count": null}], "required_products": []},
          "qualified_structures": ["Test"],
          "demotion_policy": "promotion_only"}
@@ -4968,7 +4971,7 @@ const RANK_TEST_PLAN_JSON: &str = r#"{
 }"#;
 
 #[test]
-fn evaluate_ranks_returns_unranked_for_zero_pv_distributor() {
+fn evaluate_ranks_returns_the_base_rank_for_a_zero_pv_distributor() {
     let mut child = common::spawn_worker();
 
     // The wire protocol sends one JSON object per line. Minify the plan JSON
@@ -5012,8 +5015,9 @@ fn evaluate_ranks_returns_unranked_for_zero_pv_distributor() {
         resp
     );
     assert_eq!(
-        parsed["result"]["ranks"][ROOT]["kind"], "unranked",
-        "expected unranked result for ROOT, got: {}",
+        parsed["result"]["ranks"][ROOT],
+        serde_json::json!({"kind": "qualified", "rank": "associate", "ordinal": 1}),
+        "expected the base rank for ROOT, got: {}",
         resp
     );
 
@@ -5267,8 +5271,9 @@ fn evaluate_ranks_accepts_null_nested_and_history() {
         resp
     );
     assert_eq!(
-        parsed["result"]["ranks"][ROOT]["kind"], "unranked",
-        "a zero-PV distributor should still evaluate to unranked, got: {}",
+        parsed["result"]["ranks"][ROOT],
+        serde_json::json!({"kind": "qualified", "rank": "associate", "ordinal": 1}),
+        "a zero-PV distributor should still hold the base rank, got: {}",
         resp
     );
 

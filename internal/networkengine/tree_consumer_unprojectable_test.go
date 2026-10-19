@@ -125,3 +125,22 @@ func TestTreeConsumer_RefusesATreeTypeTheStreamDoesNotRecord(t *testing.T) {
 		})
 	}
 }
+
+func TestTreeConsumer_ProjectsARemovalWithNoTreeTypeOnAUnilevelStream(t *testing.T) {
+	ctx := context.Background()
+	inner := NewMemoryTreeStore()
+	require.NoError(t, inner.insertNode(ctx, makeNode("tree1", "user-root", 0, nil, ptr("user-root"), nil)))
+	require.NoError(t, inner.insertNode(ctx, makeNode("tree1", "user-child", 1, ptr("user-root"), ptr("user-root"), nil)))
+	store := &writeSpyStore{MemoryTreeStore: inner}
+	transport := newRecordingTransport()
+	transport.response = json.RawMessage(`{"removed":true,"responsored":[]}`)
+	consumer := NewTreeEventConsumer(getNodeFailingStore{store}, newEngineClientWithTransport(transport))
+
+	err := consumer.HandleEvent(ctx, treeShape{treeType: treeTypeUnilevel},
+		makeEvent(EventTypeNodeRemoved, NodeRemovedPayload{TreeID: "tree1", UserID: "user-child"}))
+
+	require.NoError(t, err)
+	require.Len(t, transport.calls, 1)
+	assert.Equal(t, "remove_node", transport.calls[0].op)
+	assert.Equal(t, []string{"ProjectRemoval"}, store.writes)
+}

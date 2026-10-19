@@ -80,7 +80,7 @@ Volume sources, their distributors, and every upline node the walk reaches must 
 
 Volume amounts are validated too: `cv_amount` must be finite and non-negative. NaN, positive infinity, negative infinity, and negative values all produce `InvalidCvAmount` errors. These are input integrity checks, not business rules. A non-finite CV amount is always a bug upstream.
 
-`personal_volume` follows the same rule on every snapshot in the map. NaN, both infinities and negative values produce `InvalidPersonalVolume` errors. The check runs after the snapshot rank check and before any calculator starts.
+`personal_volume` follows the same rule on every snapshot in the map. NaN, both infinities and negative values produce `InvalidPersonalVolume` errors. The check runs after the snapshot rank check and before the calculator reads any snapshot.
 
 This decision was the reverse until 2026-09-10. Upline nodes missing from snapshots were treated as ineligible with no signal, on the grounds that missing upline data is a completeness issue rather than an integrity issue. That reasoning missed one thing. The snapshot map is a request parameter. Under compression a missing upline is skipped without consuming a level, so omitting one promotes every ancestor above it. Absence chosen by the caller and absence caused by a data gap are indistinguishable at the point of use. The engine cannot be lenient about one without being lenient about both.
 

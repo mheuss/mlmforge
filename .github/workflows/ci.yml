@@ -167,8 +167,8 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
-      # A debug build fires debug_assert! too, so only a release run can tell
-      # these tests from their debug_assert! form. The count check fails the
+      # A debug build fires debug_assert! too, so only a release run fails
+      # these tests when the asserts are weakened. The count check fails the
       # step if a rename leaves the filter matching nothing.
       - name: Release-only assert tests
         run: |

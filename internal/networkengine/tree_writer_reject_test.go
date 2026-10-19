@@ -187,7 +187,7 @@ func TestTreeWriterCatchUp_RefusesAPendingRejectionWithoutHandlingIt(t *testing.
 	rejection := appendRejection(t, env, placed)
 	w, _ := env.writer()
 
-	_, err := w.catchUp(context.Background(), writerTree, TreeStreamName(writerTree), rejection, 2, true)
+	_, err := w.catchUp(context.Background(), writerTree, TreeStreamName(writerTree), unilevelShape, rejection, 2, true)
 
 	require.EqualError(t, err, pendingMessage(rejection, placed, 2))
 	row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
@@ -268,7 +268,7 @@ func TestTreeWriterProject_RefusesARejectionThatNamesTheWrongEvent(t *testing.T)
 	})
 	w, _ := env.writer()
 
-	err := w.project(context.Background(), TreeStreamName(writerTree), bad.ID, 3)
+	err := w.project(context.Background(), TreeStreamName(writerTree), unilevelShape, bad.ID, 3)
 
 	require.EqualError(t, err, fmt.Sprintf("project event %s at version 3 in stream %s: rejection %s at version 3 of stream %s "+
 		"names event %s (%s), and version 2 holds event %s (%s)",
@@ -292,7 +292,7 @@ func TestTreeWriterCatchUp_RefusesAnAppliedRejectionThatNamesTheWrongEvent(t *te
 	require.NoError(t, env.store.ProjectRejection(context.Background(), writerTree, testNodeUUID(77), 3))
 	w, _ := env.writer()
 
-	_, err := w.catchUp(context.Background(), writerTree, stream, bad, 3, true)
+	_, err := w.catchUp(context.Background(), writerTree, stream, unilevelShape, bad, 3, true)
 
 	require.EqualError(t, err, fmt.Sprintf("rejection %s at version 3 of stream %s names event %s (%s), and version 2 holds event %s (%s); nothing was appended",
 		bad.ID, stream, other, EventTypeNodePlaced, placed.ID, EventTypeNodePlaced))

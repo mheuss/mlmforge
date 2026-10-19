@@ -64,9 +64,15 @@ func makeEvent(eventType string, payload any) platform.Event {
 	}
 }
 
-// deliver hands ev to c.
+// deliver hands ev to c from a stream that records the tree type ev's
+// payload names.
 func deliver(ctx context.Context, c *TreeEventConsumer, ev platform.Event) error {
-	return c.HandleEvent(ctx, ev)
+	var p struct {
+		TreeType string `json:"tree_type"`
+	}
+	// An undecodable payload is still delivered, as written.
+	_ = json.Unmarshal(ev.Payload, &p)
+	return c.HandleEvent(ctx, treeShape{treeType: p.TreeType}, ev)
 }
 
 func TestTreeConsumer_HandleRootAdded(t *testing.T) {

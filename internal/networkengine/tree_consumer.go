@@ -33,8 +33,8 @@ func NewTreeEventConsumer(store TreeStore, engine TreeEngine) *TreeEventConsumer
 	}
 }
 
-// HandleEvent processes a single tree event.
-func (c *TreeEventConsumer) HandleEvent(ctx context.Context, event platform.Event) error {
+// HandleEvent processes a single tree event from a stream that records shape.
+func (c *TreeEventConsumer) HandleEvent(ctx context.Context, shape treeShape, event platform.Event) error {
 	switch event.Type {
 	case EventTypeRootAdded:
 		return c.handleRootAdded(ctx, event)

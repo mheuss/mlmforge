@@ -264,9 +264,10 @@ fn emit_generation_earnings(
 /// # Errors
 ///
 /// Returns `CalculationError` if a snapshot names a rank the plan does not
-/// define, if a volume source is not found in the tree or snapshot data, if an
-/// upline node the level walk reaches has no snapshot, or if a volume source
-/// has an invalid CV amount.
+/// define, if a snapshot's personal_volume is negative or not finite, if a
+/// volume source is not found in the tree or snapshot data, if an upline node
+/// the level walk reaches has no snapshot, or if a volume source has an
+/// invalid CV amount.
 ///
 /// That upline-snapshot check covers only the nodes the level walk itself
 /// reaches. It is not a guarantee about this function. The generation
@@ -284,7 +285,7 @@ pub fn calculate_generation(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
-    walk::validate_snapshot_ranks(plan, snapshots)?;
+    walk::validate_snapshots(plan, snapshots)?;
     let gen_config = &structure.generation_commission;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
@@ -1123,6 +1124,48 @@ mod calculate_tests {
         assert_eq!(
             err,
             CalculationError::UnknownSnapshotRank(uuid(1), "diamond".to_string())
+        );
+    }
+
+    #[test]
+    fn calculate_generation_rejects_a_nan_personal_volume() {
+        let tree = build_chain(3);
+        let plan = two_rank_plan();
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+
+        let mut snapshots: HashMap<_, _> = HashMap::new();
+        snapshots.insert(uuid(0), director_snapshot());
+        snapshots.insert(
+            uuid(1),
+            DistributorSnapshot {
+                personal_volume: f64::NAN,
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                CalculationError::InvalidPersonalVolume(id, pv)
+                    if id == uuid(1) && pv.is_nan()
+            ),
+            "got {err:?}"
         );
     }
 

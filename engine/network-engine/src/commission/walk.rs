@@ -116,6 +116,35 @@ pub(crate) fn validate_snapshot_ranks(
     }
 }
 
+/// Reject a snapshot whose personal volume is non-finite or negative.
+///
+/// On `Err`, the user ID is the lowest among the offending snapshots.
+pub(crate) fn validate_snapshot_volumes(
+    snapshots: &HashMap<Uuid, DistributorSnapshot>,
+) -> Result<(), CalculationError> {
+    let offender = snapshots
+        .iter()
+        .filter(|(_, s)| !s.personal_volume.is_finite() || s.personal_volume < 0.0)
+        .min_by_key(|(id, _)| **id);
+    match offender {
+        Some((user_id, s)) => Err(CalculationError::InvalidPersonalVolume(
+            *user_id,
+            s.personal_volume,
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Run the whole-map snapshot checks in a fixed order.
+pub(crate) fn validate_snapshots(
+    plan: &CompensationPlan,
+    snapshots: &HashMap<Uuid, DistributorSnapshot>,
+) -> Result<(), CalculationError> {
+    // Rank first, so an unknown rank surfaces ahead of a bad volume.
+    validate_snapshot_ranks(plan, snapshots)?;
+    validate_snapshot_volumes(snapshots)
+}
+
 /// Resolve the SkipBelowRank threshold ordinal from compression config.
 ///
 /// Returns `Some(ordinal)` when compression is configured with
@@ -795,6 +824,127 @@ mod tests {
         let snapshots = HashMap::new();
 
         assert!(validate_snapshot_ranks(&plan, &snapshots).is_ok());
+    }
+
+    // --- validate_snapshot_volumes ---
+
+    fn snapshot_with_pv(pv: f64) -> DistributorSnapshot {
+        DistributorSnapshot {
+            personal_volume: pv,
+            ..snapshot_with_rank("associate")
+        }
+    }
+
+    fn assert_rejects_volume(pv: f64) {
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), snapshot_with_pv(pv));
+
+        let err = validate_snapshot_volumes(&snapshots).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                CalculationError::InvalidPersonalVolume(id, observed)
+                    if id == test_uuid(1) && observed.to_bits() == pv.to_bits()
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn validate_snapshot_volumes_rejects_nan() {
+        assert_rejects_volume(f64::NAN);
+    }
+
+    #[test]
+    fn validate_snapshot_volumes_rejects_positive_infinity() {
+        assert_rejects_volume(f64::INFINITY);
+    }
+
+    #[test]
+    fn validate_snapshot_volumes_rejects_negative_infinity() {
+        assert_rejects_volume(f64::NEG_INFINITY);
+    }
+
+    #[test]
+    fn validate_snapshot_volumes_rejects_a_negative_value() {
+        assert_rejects_volume(-0.5);
+    }
+
+    #[test]
+    fn validate_snapshot_volumes_accepts_zero_negative_zero_and_positive_values() {
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), snapshot_with_pv(0.0));
+        snapshots.insert(test_uuid(2), snapshot_with_pv(-0.0));
+        snapshots.insert(test_uuid(3), snapshot_with_pv(150.0));
+
+        assert_eq!(validate_snapshot_volumes(&snapshots), Ok(()));
+    }
+
+    #[test]
+    fn validate_snapshot_volumes_reports_the_lowest_offending_user_id() {
+        // Rebuilt inside the loop so each pass samples a fresh HashMap order.
+        for _ in 0..32 {
+            let mut snapshots = HashMap::new();
+            snapshots.insert(test_uuid(3), snapshot_with_pv(f64::NAN));
+            snapshots.insert(test_uuid(1), snapshot_with_pv(-1.0));
+            snapshots.insert(test_uuid(4), snapshot_with_pv(f64::INFINITY));
+            snapshots.insert(test_uuid(2), snapshot_with_pv(150.0));
+
+            assert_eq!(
+                validate_snapshot_volumes(&snapshots),
+                Err(CalculationError::InvalidPersonalVolume(test_uuid(1), -1.0))
+            );
+        }
+    }
+
+    #[test]
+    fn validate_snapshot_volumes_accepts_an_empty_map() {
+        assert_eq!(validate_snapshot_volumes(&HashMap::new()), Ok(()));
+    }
+
+    #[test]
+    fn invalid_personal_volume_message_states_the_user_and_the_observed_value() {
+        let err = CalculationError::InvalidPersonalVolume(test_uuid(1), f64::NAN);
+
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "snapshot for {} has personal_volume NaN; it must be finite and not negative",
+                test_uuid(1)
+            )
+        );
+    }
+
+    // --- validate_snapshots ---
+
+    #[test]
+    fn validate_snapshots_reports_an_unknown_rank_before_a_bad_volume() {
+        // The bad volume sits on the lower user ID, so only the check order
+        // can make the rank error win.
+        let plan = test_plan_with_ranks(&[("associate", 1)]);
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), snapshot_with_pv(f64::NAN));
+        snapshots.insert(test_uuid(2), snapshot_with_rank("diamond"));
+
+        assert_eq!(
+            validate_snapshots(&plan, &snapshots),
+            Err(CalculationError::UnknownSnapshotRank(
+                test_uuid(2),
+                "diamond".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn validate_snapshots_rejects_a_bad_volume_when_every_rank_is_known() {
+        let plan = test_plan_with_ranks(&[("associate", 1)]);
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), snapshot_with_pv(-2.0));
+
+        assert_eq!(
+            validate_snapshots(&plan, &snapshots),
+            Err(CalculationError::InvalidPersonalVolume(test_uuid(1), -2.0))
+        );
     }
 
     // --- resolve_threshold_ordinal ---

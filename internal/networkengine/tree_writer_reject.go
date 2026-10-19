@@ -242,7 +242,7 @@ func (w *TreeWriter) Reject(ctx context.Context, r RejectRequest) (result Reject
 		return result, fmt.Errorf("reject event %s in tree %s: a read of the last event of stream %s returned none", eventID, tree, stream)
 	}
 	if last.Type == EventTypeEventRejected {
-		return w.resumeRejection(ctx, result, tree, eventID.String(), *last, projected, projectedFound)
+		return w.resumeRejection(ctx, result, tree, eventID.String(), shape, *last, projected, projectedFound)
 	}
 	if !sameUUID(last.ID, eventID.String()) {
 		return result, fmt.Errorf("stream %s ends with event %s at version %d, not event %s; nothing was appended",
@@ -281,7 +281,7 @@ func (w *TreeWriter) Reject(ctx context.Context, r RejectRequest) (result Reject
 		return result, err
 	}
 	result.Outcome, result.EventID, result.Version = RejectOutcomeRejected, event.ID, version
-	result.ProjectionErr = w.project(ctx, stream, event.ID, version)
+	result.ProjectionErr = w.project(ctx, stream, shape, event.ID, version)
 	if result.ProjectionErr != nil {
 		result.Observed = w.observe(ctx, tree)
 	}
@@ -301,13 +301,13 @@ func (w *TreeWriter) retry(ctx context.Context, tree, stream string, shape treeS
 	if !sameUUID(last.ID, expected.ID) {
 		return prep.warnings, fmt.Errorf("a read of stream %s for the retry returned last event %s, where event %s was expected", stream, last.ID, expected.ID)
 	}
-	_, err = w.catchUp(ctx, tree, stream, *last, prep.loaded, prep.found)
+	_, err = w.catchUp(ctx, tree, stream, shape, *last, prep.loaded, prep.found)
 	return prep.warnings, err
 }
 
 // resumeRejection handles a stream that already ends with a rejection.
 func (w *TreeWriter) resumeRejection(ctx context.Context, result RejectResult, tree, eventID string,
-	last platform.Event, projected int64, projectedFound bool) (RejectResult, error) {
+	shape treeShape, last platform.Event, projected int64, projectedFound bool) (RejectResult, error) {
 	if !projectedFound {
 		projected = 0
 	}
@@ -331,7 +331,7 @@ func (w *TreeWriter) resumeRejection(ctx context.Context, result RejectResult, t
 			return result, fmt.Errorf("%w; nothing was appended or projected", err)
 		}
 		result.Outcome = RejectOutcomeResumed
-		result.ProjectionErr = w.project(ctx, stream, last.ID, last.Version)
+		result.ProjectionErr = w.project(ctx, stream, shape, last.ID, last.Version)
 		if result.ProjectionErr != nil {
 			result.Observed = w.observe(ctx, tree)
 		}

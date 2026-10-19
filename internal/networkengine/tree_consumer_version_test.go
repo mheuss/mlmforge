@@ -16,7 +16,7 @@ func TestHandleRootAdded_CompensationRestoresTheProjectedVersion(t *testing.T) {
 	c, store := newRootConsumer(tr)
 	event := makeEvent(EventTypeRootAdded, rootPayload())
 
-	err := c.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), c, event)
 
 	require.Error(t, err)
 	assert.Nil(t, activeRow(t, store, posUser), "the row this call inserted is undone")
@@ -42,7 +42,7 @@ func TestHandleRootAdded_CompensationRestoresTheVersionBeforeALaterRoot(t *testi
 	event := makeEvent(EventTypeRootAdded, rootPayload())
 	event.Version = 3
 
-	err := c.HandleEvent(ctx, event)
+	err := deliver(ctx, c, event)
 
 	require.Error(t, err)
 	assert.Nil(t, activeRow(t, store, posUser), "the row this call inserted is undone")

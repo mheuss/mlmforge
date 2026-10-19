@@ -57,7 +57,7 @@ func (f rejectionFixture) rejection(t *testing.T, mutate func(*platform.Event, *
 func TestTreeConsumer_EventRejectedSoftDeletesTheRejectedRow(t *testing.T) {
 	f := newRejectionFixture(t)
 
-	require.NoError(t, f.consumer.HandleEvent(context.Background(), f.rejection(t, nil)))
+	require.NoError(t, deliver(context.Background(), f.consumer, f.rejection(t, nil)))
 
 	got := readProjectionState(t, f.store, f.tree, f.root, f.child)
 	assert.Equal(t, int64(3), got.version)
@@ -72,10 +72,10 @@ func TestTreeConsumer_EventRejectedSoftDeletesTheRejectedRow(t *testing.T) {
 func TestTreeConsumer_EventRejectedTwiceLeavesTheStoreAsOnce(t *testing.T) {
 	f := newRejectionFixture(t)
 	event := f.rejection(t, nil)
-	require.NoError(t, f.consumer.HandleEvent(context.Background(), event))
+	require.NoError(t, deliver(context.Background(), f.consumer, event))
 	before := readProjectionState(t, f.store, f.tree, f.root, f.child)
 
-	require.NoError(t, f.consumer.HandleEvent(context.Background(), event))
+	require.NoError(t, deliver(context.Background(), f.consumer, event))
 
 	assert.Equal(t, before, readProjectionState(t, f.store, f.tree, f.root, f.child))
 }
@@ -116,7 +116,7 @@ func TestTreeConsumer_EventRejectedRefusals(t *testing.T) {
 			f := newRejectionFixture(t)
 			before := readProjectionState(t, f.store, f.tree, f.root, f.child)
 
-			err := f.consumer.HandleEvent(context.Background(), f.rejection(t, c.mutate))
+			err := deliver(context.Background(), f.consumer, f.rejection(t, c.mutate))
 
 			require.EqualError(t, err, c.want(f))
 			assert.Equal(t, before, readProjectionState(t, f.store, f.tree, f.root, f.child))
@@ -130,7 +130,7 @@ func TestTreeConsumer_EventRejectedThatDoesNotUnmarshal(t *testing.T) {
 	event := f.rejection(t, nil)
 	event.Payload = json.RawMessage(`{not json}`)
 
-	err := f.consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), f.consumer, event)
 
 	require.ErrorContains(t, err, "unmarshal event_rejected payload")
 	assert.Equal(t, int64(2), readProjectionState(t, f.store, f.tree).version)
@@ -151,7 +151,7 @@ func TestTreeConsumer_EventRejectedAtVersion2IsApplied(t *testing.T) {
 		}),
 	}
 
-	require.NoError(t, consumer.HandleEvent(context.Background(), event))
+	require.NoError(t, deliver(context.Background(), consumer, event))
 
 	got := readProjectionState(t, store, tree, root)
 	assert.Equal(t, int64(2), got.version)
@@ -163,7 +163,7 @@ func TestTreeConsumer_EventRejectedAtVersion2IsApplied(t *testing.T) {
 func TestTreeConsumer_EventRejectedCanonicalisesTheRejectedEventID(t *testing.T) {
 	f := newRejectionFixture(t)
 
-	require.NoError(t, f.consumer.HandleEvent(context.Background(), f.rejection(t, func(_ *platform.Event, p *EventRejectedPayload) {
+	require.NoError(t, deliver(context.Background(), f.consumer, f.rejection(t, func(_ *platform.Event, p *EventRejectedPayload) {
 		p.RejectedEventID = strings.ToUpper(p.RejectedEventID)
 	})))
 
@@ -176,7 +176,7 @@ func TestTreeConsumer_EventRejectedRefusesARejectedEventIDThatIsNotAUUID(t *test
 	f := newRejectionFixture(t)
 	before := readProjectionState(t, f.store, f.tree, f.root, f.child)
 
-	err := f.consumer.HandleEvent(context.Background(), f.rejection(t, func(_ *platform.Event, p *EventRejectedPayload) {
+	err := deliver(context.Background(), f.consumer, f.rejection(t, func(_ *platform.Event, p *EventRejectedPayload) {
 		p.RejectedEventID = "not-a-uuid"
 	}))
 

@@ -431,7 +431,7 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	var expected int64
 	if last != nil {
 		expected = last.Version
-		if result.CaughtUp, err = w.catchUp(ctx, tree, stream, *last, loaded, found); err != nil {
+		if result.CaughtUp, err = w.catchUp(ctx, tree, stream, shape, *last, loaded, found); err != nil {
 			return result, err
 		}
 	}
@@ -444,7 +444,7 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 		return result, err
 	}
 	result.EventID, result.Version = event.ID, version
-	result.ProjectionErr = w.project(ctx, stream, event.ID, version)
+	result.ProjectionErr = w.project(ctx, stream, shape, event.ID, version)
 	if result.ProjectionErr != nil {
 		result.Observed = w.observe(ctx, tree)
 	} else if version-prep.snapshotVersion >= snapshotInterval {
@@ -494,7 +494,7 @@ func (w *TreeWriter) Load(ctx context.Context, r LoadRequest) (result LoadResult
 		result.Nodes = prep.nodes
 		return result, nil
 	}
-	if result.CaughtUp, err = w.catchUp(ctx, tree, stream, *last, loaded, found); err != nil {
+	if result.CaughtUp, err = w.catchUp(ctx, tree, stream, shape, *last, loaded, found); err != nil {
 		return result, err
 	}
 	after, afterFound, err := w.store.ProjectedVersion(ctx, tree)
@@ -918,7 +918,7 @@ var treeEventTypes = map[string]bool{
 }
 
 // catchUp redelivers the stream's last event through the consumer.
-func (w *TreeWriter) catchUp(ctx context.Context, tree, stream string, last platform.Event, loaded int64, found bool) (*CaughtUpEvent, error) {
+func (w *TreeWriter) catchUp(ctx context.Context, tree, stream string, shape treeShape, last platform.Event, loaded int64, found bool) (*CaughtUpEvent, error) {
 	// An unlisted type is refused rather than reported as caught up.
 	if !treeEventTypes[last.Type] {
 		return nil, fmt.Errorf("stream %s ends with event %s at version %d of type %q, which catch-up does not redeliver; nothing was appended",
@@ -932,7 +932,7 @@ func (w *TreeWriter) catchUp(ctx context.Context, tree, stream string, last plat
 			return nil, fmt.Errorf("%w; nothing was appended", err)
 		}
 	}
-	if err := w.consumer.HandleEvent(ctx, last); err != nil {
+	if err := w.consumer.HandleEvent(ctx, shape, last); err != nil {
 		return nil, &CatchUpFailedError{TreeID: tree, EventID: last.ID, Version: last.Version, Type: last.Type, Err: err}
 	}
 	return &CaughtUpEvent{EventID: last.ID, Version: last.Version, Type: last.Type}, nil
@@ -976,7 +976,7 @@ func (w *TreeWriter) append(ctx context.Context, stream string, expected int64, 
 }
 
 // project reads the event stored at version and projects that copy.
-func (w *TreeWriter) project(ctx context.Context, stream, eventID string, version int64) error {
+func (w *TreeWriter) project(ctx context.Context, stream string, shape treeShape, eventID string, version int64) error {
 	stored, err := w.events.ReadStream(ctx, stream, version, 1)
 	if err != nil {
 		return fmt.Errorf("read back event %s at version %d in stream %s: %w", eventID, version, stream, err)
@@ -998,7 +998,7 @@ func (w *TreeWriter) project(ctx context.Context, stream, eventID string, versio
 			return fmt.Errorf("project event %s at version %d in stream %s: %w", eventID, version, stream, err)
 		}
 	}
-	if err := w.consumer.HandleEvent(ctx, stored[0]); err != nil {
+	if err := w.consumer.HandleEvent(ctx, shape, stored[0]); err != nil {
 		return fmt.Errorf("project event %s at version %d in stream %s: %w", eventID, version, stream, err)
 	}
 	return nil

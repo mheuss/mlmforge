@@ -153,7 +153,7 @@ func TestTreeMutator_ConsumerAcceptsInterface(t *testing.T) {
 	}
 	event := makeEvent(EventTypeRootAdded, payload)
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"user-root"}, mutator.roots)

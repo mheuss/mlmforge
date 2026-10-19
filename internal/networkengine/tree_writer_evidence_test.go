@@ -184,7 +184,7 @@ func TestTreeConsumer_ARedeliveryMeetsItsOwnTombstoneBeforeAnotherEventsRow(t *t
 		}),
 	}
 
-	err := consumer.HandleEvent(ctx, event)
+	err := deliver(ctx, consumer, event)
 
 	require.ErrorIs(t, err, ErrReplayedPlacement)
 	for _, conflict := range []error{ErrActiveUserConflict, ErrSlotConflict, ErrRootConflict} {

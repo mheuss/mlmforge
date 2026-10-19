@@ -90,6 +90,28 @@ func TestCheckNodePlacedShape(t *testing.T) {
 	}
 }
 
+func TestCheckNodePlacedOnStream_AcceptsOnlyTheStreamsTreeType(t *testing.T) {
+	positions := map[string]*int{treeTypeUnilevel: nil, treeTypeBinary: intPtr(0), treeTypeMatrix: intPtr(0)}
+	types := []string{treeTypeUnilevel, treeTypeBinary, treeTypeMatrix}
+	for _, stream := range types {
+		for _, label := range types {
+			t.Run(label+" on a "+stream+" stream", func(t *testing.T) {
+				p := NodePlacedPayload{TreeID: writerTree, UserID: writerChild, ParentID: writerRoot,
+					SponsorID: writerRoot, Position: positions[label], TreeType: label, EnrolledAt: writeTime}
+
+				err := checkNodePlacedOnStream(p, stream)
+
+				if label == stream {
+					assert.NoError(t, err)
+					return
+				}
+				assert.EqualError(t, err, "node_placed for "+writerChild+" in tree "+writerTree+
+					` has tree_type "`+label+`", and the stream records tree type `+stream)
+			})
+		}
+	}
+}
+
 // Each row is a stream type, tree_type and mode. An empty expectation accepts.
 // Any other is a phrase the error must contain.
 func TestNodeRemovedShape_FollowsTheCompatibilityTable(t *testing.T) {
@@ -105,8 +127,8 @@ func TestNodeRemovedShape_FollowsTheCompatibilityTable(t *testing.T) {
 		stream   string
 		treeType string
 		mode     PruningMode
-		consumer string
-		replay   string
+		shape    string
+		onStream string
 	}{
 		{"unilevel stream, no tree_type, no mode", treeTypeUnilevel, "", "", "", ""},
 		{"binary stream, no tree_type, no mode", treeTypeBinary, "", "", "", ""},
@@ -139,8 +161,8 @@ func TestNodeRemovedShape_FollowsTheCompatibilityTable(t *testing.T) {
 			p := NodeRemovedPayload{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime,
 				TreeType: tc.treeType, PruningMode: tc.mode}
 
-			assertShapeVerdict(t, checkNodeRemovedShape(p), tc.consumer)
-			assertShapeVerdict(t, checkNodeRemovedOnStream(p, tc.stream), tc.replay)
+			assertShapeVerdict(t, checkNodeRemovedShape(p), tc.shape)
+			assertShapeVerdict(t, checkNodeRemovedOnStream(p, tc.stream), tc.onStream)
 		})
 	}
 }

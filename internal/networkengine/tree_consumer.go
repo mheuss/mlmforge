@@ -33,15 +33,15 @@ func NewTreeEventConsumer(store TreeStore, engine TreeEngine) *TreeEventConsumer
 	}
 }
 
-// HandleEvent processes a single tree event.
-func (c *TreeEventConsumer) HandleEvent(ctx context.Context, event platform.Event) error {
+// HandleEvent processes a single tree event from a stream that records shape.
+func (c *TreeEventConsumer) HandleEvent(ctx context.Context, shape treeShape, event platform.Event) error {
 	switch event.Type {
 	case EventTypeRootAdded:
 		return c.handleRootAdded(ctx, event)
 	case EventTypeNodePlaced:
-		return c.handleNodePlaced(ctx, event)
+		return c.handleNodePlaced(ctx, shape, event)
 	case EventTypeNodeRemoved:
-		return c.handleNodeRemoved(ctx, event)
+		return c.handleNodeRemoved(ctx, shape, event)
 	case EventTypeEventRejected:
 		return c.handleEventRejected(ctx, event)
 	default:
@@ -210,7 +210,7 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 		err, event.ID, payload.UserID, payload.TreeID, describeExistingRow(row))
 }
 
-func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform.Event) error {
+func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, shape treeShape, event platform.Event) error {
 	var payload NodePlacedPayload
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
 		return unprojectable(fmt.Errorf("unmarshal node_placed payload: %w", err))
@@ -225,7 +225,7 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 	if err := checkUserID("node_placed", payload.TreeID, payload.UserID); err != nil {
 		return unprojectable(err)
 	}
-	if err := checkNodePlacedShape(payload); err != nil {
+	if err := checkNodePlacedOnStream(payload, shape.treeType); err != nil {
 		return unprojectable(err)
 	}
 
@@ -299,7 +299,7 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, event platform
 	}, reconcile)
 }
 
-func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platform.Event) error {
+func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, shape treeShape, event platform.Event) error {
 	var payload NodeRemovedPayload
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
 		return unprojectable(fmt.Errorf("unmarshal node_removed payload: %w", err))
@@ -308,10 +308,10 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, event platfor
 	if err := checkStream(event, "node_removed", payload.TreeID, payload.UserID); err != nil {
 		return unprojectable(err)
 	}
-	if err := checkNodeRemovedShape(payload); err != nil {
+	if err := checkNodeRemovedOnStream(payload, shape.treeType); err != nil {
 		return unprojectable(err)
 	}
-	call, callErr := nodeRemovedCall(payload, payload.TreeType)
+	call, callErr := nodeRemovedCall(payload, shape.treeType)
 	if callErr != nil {
 		return unprojectable(callErr)
 	}

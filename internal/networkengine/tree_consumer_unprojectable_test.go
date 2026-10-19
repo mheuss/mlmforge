@@ -57,7 +57,7 @@ func TestTreeConsumer_DeterministicRefusalsCarryErrUnprojectableEvent(t *testing
 				Version: 1, Payload: c.payload,
 			}
 
-			err := consumer.HandleEvent(context.Background(), event)
+			err := deliver(context.Background(), consumer, event)
 
 			require.ErrorIs(t, err, ErrUnprojectableEvent)
 			assert.Empty(t, transport.calls)
@@ -80,8 +80,86 @@ func TestTreeConsumer_AFailedParentReadIsNotUnprojectable(t *testing.T) {
 		TreeType: treeTypeUnilevel, EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	})
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 
 	require.EqualError(t, err, "get parent node: connection reset by peer")
 	assert.NotErrorIs(t, err, ErrUnprojectableEvent)
+}
+
+func TestTreeConsumer_RefusesATreeTypeTheStreamDoesNotRecord(t *testing.T) {
+	unilevel := treeShape{treeType: treeTypeUnilevel}
+	matrix := treeShape{treeType: treeTypeMatrix, width: 2, spillover: "breadth_first"}
+	binary := treeShape{treeType: treeTypeBinary}
+	cases := []struct {
+		name      string
+		eventType string
+		stream    treeShape
+		payload   any
+		want      string
+	}{
+		{"a removal labelled binary on a unilevel stream", EventTypeNodeRemoved, unilevel,
+			NodeRemovedPayload{TreeID: "tree1", UserID: "user-child", TreeType: treeTypeBinary},
+			`node_removed for user-child in tree tree1 has tree_type "binary", and the stream records tree type unilevel`},
+		{"a removal labelled matrix on a unilevel stream", EventTypeNodeRemoved, unilevel,
+			NodeRemovedPayload{TreeID: "tree1", UserID: "user-child", TreeType: treeTypeMatrix, PruningMode: PruningPromoteEarliest},
+			`node_removed for user-child in tree tree1 has tree_type "matrix", and the stream records tree type unilevel`},
+		{"a removal with no tree type on a matrix stream", EventTypeNodeRemoved, matrix,
+			NodeRemovedPayload{TreeID: "tree1", UserID: "user-child"},
+			`node_removed for user-child in tree tree1 has no tree_type, and the stream records tree type matrix`},
+		{"a placement labelled binary on a unilevel stream", EventTypeNodePlaced, unilevel,
+			NodePlacedPayload{TreeID: "tree1", UserID: "user-new", ParentID: "user-root", SponsorID: "user-root",
+				Position: intPtr(0), TreeType: treeTypeBinary},
+			`node_placed for user-new in tree tree1 has tree_type "binary", and the stream records tree type unilevel`},
+		{"a placement labelled matrix on a unilevel stream", EventTypeNodePlaced, unilevel,
+			NodePlacedPayload{TreeID: "tree1", UserID: "user-new", ParentID: "user-root", SponsorID: "user-root",
+				Position: intPtr(0), TreeType: treeTypeMatrix},
+			`node_placed for user-new in tree tree1 has tree_type "matrix", and the stream records tree type unilevel`},
+		{"a placement labelled unilevel on a binary stream", EventTypeNodePlaced, binary,
+			NodePlacedPayload{TreeID: "tree1", UserID: "user-new", ParentID: "user-root", SponsorID: "user-root",
+				TreeType: treeTypeUnilevel},
+			`node_placed for user-new in tree tree1 has tree_type "unilevel", and the stream records tree type binary`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			inner := NewMemoryTreeStore()
+			require.NoError(t, inner.insertNode(ctx, makeNode("tree1", "user-root", 0, nil, ptr("user-root"), nil)))
+			require.NoError(t, inner.insertNode(ctx, makeNode("tree1", "user-child", 1, ptr("user-root"), ptr("user-root"), nil)))
+			store := &writeSpyStore{MemoryTreeStore: inner}
+			transport := newRecordingTransport()
+			consumer := NewTreeEventConsumer(getNodeFailingStore{store}, newEngineClientWithTransport(transport))
+
+			err := consumer.HandleEvent(ctx, c.stream, makeEvent(c.eventType, c.payload))
+
+			require.ErrorIs(t, err, ErrUnprojectableEvent)
+			assert.EqualError(t, err, c.want)
+			assert.Empty(t, transport.calls)
+			assert.Empty(t, store.writes)
+		})
+	}
+}
+
+func TestTreeConsumer_ProjectsARemovalWithNoTreeTypeOnAStreamThatIsNotMatrix(t *testing.T) {
+	for _, streamType := range []string{treeTypeUnilevel, treeTypeBinary} {
+		t.Run(streamType, func(t *testing.T) {
+			ctx := context.Background()
+			store := NewMemoryTreeStore()
+			require.NoError(t, store.insertNode(ctx, makeNode("tree1", "user-root", 0, nil, ptr("user-root"), nil)))
+			require.NoError(t, store.insertNode(ctx, makeNode("tree1", "user-child", 1, ptr("user-root"), ptr("user-root"), nil)))
+			transport := newRecordingTransport()
+			transport.response = json.RawMessage(`{"removed":true,"responsored":[]}`)
+			consumer := NewTreeEventConsumer(store, newEngineClientWithTransport(transport))
+
+			err := consumer.HandleEvent(ctx, treeShape{treeType: streamType},
+				makeEvent(EventTypeNodeRemoved, NodeRemovedPayload{TreeID: "tree1", UserID: "user-child"}))
+
+			require.NoError(t, err)
+			require.Len(t, transport.calls, 1)
+			assert.Equal(t, "remove_node", transport.calls[0].op)
+			row, err := store.GetNodeIncludingRemoved(ctx, "tree1", "user-child")
+			require.NoError(t, err)
+			require.NotNil(t, row)
+			assert.NotNil(t, row.RemovedAt)
+		})
+	}
 }

@@ -149,7 +149,17 @@ func TestTreeWriterReject_RefusesAMismatchedRemovalTheStoreAlreadyStamped(t *tes
 	var replay *TreeReplayError
 	require.ErrorAs(t, res.RetryErr, &replay)
 	assert.Equal(t, TreeReplayStageReplay, replay.Stage)
+	assert.Equal(t, foreign.Version, replay.FailedVersion)
+	assert.Equal(t, EventTypeNodeRemoved, replay.FailedType)
+	assert.ErrorContains(t, replay.Err, "the stream records tree type unilevel")
 	last, err := it.events.ReadLastEvent(ctx, TreeStreamName(tree))
 	require.NoError(t, err)
 	assert.Equal(t, foreign.Version, last.Version, "reject-event appended an event")
+	projected, _, err := it.store.ProjectedVersion(ctx, tree)
+	require.NoError(t, err)
+	assert.Equal(t, foreign.Version, projected)
+	stamped, err := it.store.GetNodeByRemovalEvent(ctx, tree, foreign.ID)
+	require.NoError(t, err)
+	require.NotNil(t, stamped, "the refusal removed the stamp")
+	assert.Equal(t, a, stamped.UserID)
 }

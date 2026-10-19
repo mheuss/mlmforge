@@ -139,8 +139,8 @@ Where the cost lands, read on 2026-10-19:
 
 - Branch collection (`collect_subtree`, behind binary and matrix `get_branch`) calls `node()` twice per node. That is the first measurement.
 - Binary commission's leg-volume pass calls `node()` twice per node across the whole tree. It is the only commission calculator that does. That is the second measurement.
-- The other commission calculators walk through `walk_upline`, `bfs_downline`, `get_sponsored` and `get_sponsor`, which index `nodes` directly.
-- Rank evaluation calls `get_children` once per distributor. Mutations call `node()` and `node_mut()` a fixed number of times per operation, except the matrix spillover search.
+- The other commission calculators walk through `walk_upline`, `bfs_downline`, `get_sponsored` and `get_sponsor`, which index `nodes` directly. Stairstep also calls `get_parent` once per breakaway, which reaches `node()` twice.
+- Rank evaluation calls `get_children` from the leg-volume and leg-quality predicates, once per predicate it evaluates. Mutations call `node()` and `node_mut()` a fixed number of times per operation, except the matrix spillover search.
 
 Rerun both measurements before changing these asserts back.
 

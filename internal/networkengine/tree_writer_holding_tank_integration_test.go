@@ -92,6 +92,8 @@ func TestTreeWriterReject_ClearsATankedUsersPlacementAWriteDeliveredFirst(t *tes
 	assert.Equal(t, TreeReplayStageReplay, replay.Stage)
 	assert.Equal(t, foreign.Version, replay.FailedVersion)
 	assert.True(t, sameUUID(foreign.ID, replay.FailedEventID), "replay failed on event %s, not %s", replay.FailedEventID, foreign.ID)
+	require.ErrorAs(t, rejected.RetryErr, &engineErr)
+	assert.Equal(t, "USER_IN_HOLDING_TANK", engineErr.Code)
 	assert.NoError(t, rejected.ProjectionErr)
 	placeAfterRejecting(t, it, tree, root, a, b, load)
 }

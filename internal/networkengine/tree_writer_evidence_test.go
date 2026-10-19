@@ -254,6 +254,9 @@ func TestRejectionEvidence_RefusesAReplayFailureThatIsNotTheLastPlacementsRefusa
 		{"a drop-stage failure carrying a refusal code", placement, &TreeReplayError{TreeID: writerTree,
 			Stage: TreeReplayStageDrop, FailedVersion: placement.Version, FailedEventID: placement.ID,
 			FailedType: placement.Type, Err: fakeEngineError("POSITION_OCCUPIED", "refused")}},
+		{"a membership-stage failure naming the placement", placement, &TreeReplayError{TreeID: writerTree,
+			Stage: TreeReplayStageMembership, FailedVersion: placement.Version, FailedEventID: placement.ID,
+			FailedType: placement.Type, Err: fakeEngineError("POSITION_OCCUPIED", "refused")}},
 		{"a fence refusal beside a replay refusal of the placement", placement, &RefusedAfterFailedBuildError{
 			Refusal: &StreamMovedError{TreeID: writerTree, LoadedVersion: 1, LastVersion: 3},
 			Build:   replayRefusal(placement, "POSITION_OCCUPIED")}},

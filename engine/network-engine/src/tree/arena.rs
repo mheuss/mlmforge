@@ -501,7 +501,7 @@ impl Arena {
     /// Direct arena access by index.
     pub(crate) fn node(&self, idx: NodeIndex) -> &Node {
         let n = &self.nodes[idx.0];
-        // A hard assert on purpose: without it a release build returns a freed slot as a node with no edges.
+        // A hard assert on purpose. Do not weaken it to debug_assert!.
         assert!(
             n.user_id != uuid::Uuid::nil(),
             "accessed tombstoned slot at index {}",
@@ -512,7 +512,7 @@ impl Arena {
 
     /// Mutable arena access by index.
     pub(crate) fn node_mut(&mut self, idx: NodeIndex) -> &mut Node {
-        // A hard assert on purpose: without it a release build returns a freed slot as a node with no edges.
+        // A hard assert on purpose. Do not weaken it to debug_assert!.
         assert!(
             self.nodes[idx.0].user_id != uuid::Uuid::nil(),
             "accessed tombstoned slot at index {}",

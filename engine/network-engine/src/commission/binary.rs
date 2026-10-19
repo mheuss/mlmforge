@@ -175,8 +175,9 @@ fn apply_aggregate_cap(earnings: &mut [BinaryCommissionEarning], cap: f64) {
 /// # Errors
 ///
 /// Returns `CalculationError` if the cycle-step config is invalid, if a
-/// snapshot names a rank the plan does not define, if a volume source is not
-/// found in the tree or snapshot data, or if a volume source has an invalid
+/// snapshot names a rank the plan does not define, if a snapshot's
+/// personal_volume is negative or not finite, if a volume source is not found
+/// in the tree or snapshot data, or if a volume source has an invalid
 /// cv_amount.
 pub fn calculate_binary_pairing(
     tree: &BinaryTree,
@@ -219,7 +220,7 @@ pub fn calculate_binary_pairing(
     // Below the match on purpose. The Pairing arm's percent assert and the
     // CycleStep arm's config validation each stay first on their own path,
     // and the CycleStep arm has already returned by here.
-    walk::validate_snapshot_ranks(plan, snapshots)?;
+    walk::validate_snapshots(plan, snapshots)?;
 
     let multiplier = structure
         .binary_commission
@@ -394,7 +395,7 @@ fn calculate_binary_cycle_step(
         .validate()
         .map_err(CalculationError::ConfigError)?;
 
-    walk::validate_snapshot_ranks(plan, snapshots)?;
+    walk::validate_snapshots(plan, snapshots)?;
 
     // Phase 1: Prep (shared with pairing calculator)
     let volume_totals = aggregate_volume(tree, snapshots, volume, ownership)?;
@@ -1849,6 +1850,55 @@ mod tests {
         );
     }
 
+    #[test]
+    fn calculate_binary_pairing_rejects_a_nan_personal_volume() {
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                personal_volume: f64::NAN,
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: 500.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 500.0,
+            },
+        ];
+
+        let err = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                CalculationError::InvalidPersonalVolume(id, pv)
+                    if id == test_uuid(1) && pv.is_nan()
+            ),
+            "got {err:?}"
+        );
+    }
+
     /// Pins the rank check above the per-source checks, per design decision 2.
     /// This input is bad on both counts: only the check order decides which
     /// error surfaces.
@@ -2033,6 +2083,59 @@ mod tests {
         assert_eq!(
             err,
             CalculationError::UnknownSnapshotRank(test_uuid(1), "diamond".to_string())
+        );
+    }
+
+    #[test]
+    fn pairing_in_cycle_step_mode_rejects_a_nan_personal_volume() {
+        let steps = vec![CycleStep {
+            threshold: 300.0,
+            amount: 25.0,
+        }];
+        let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(1),
+            DistributorSnapshot {
+                personal_volume: f64::NAN,
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: 500.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: 500.0,
+            },
+        ];
+
+        let err = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                CalculationError::InvalidPersonalVolume(id, pv)
+                    if id == test_uuid(1) && pv.is_nan()
+            ),
+            "got {err:?}"
         );
     }
 

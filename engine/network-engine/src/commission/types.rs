@@ -113,6 +113,10 @@ pub enum CalculationError {
     #[error("volume source {0} has invalid cv_amount: {1}")]
     InvalidCvAmount(Uuid, f64),
 
+    /// A snapshot has a non-finite or negative personal_volume.
+    #[error("snapshot for {0} has personal_volume {1}; it must be finite and not negative")]
+    InvalidPersonalVolume(Uuid, f64),
+
     /// Commission config failed validation.
     #[error("config error: {0}")]
     ConfigError(String),

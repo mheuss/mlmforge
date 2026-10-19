@@ -23,8 +23,9 @@ use super::{walk, walk_order};
 /// `spillover` disagrees with `structure.matrix_params` — checked before any
 /// other work, so it precedes volume/snapshot validation. Otherwise returns
 /// `CalculationError` if a snapshot names a rank the plan does not define, if
-/// a volume source is not found in the tree or snapshot data, if an upline
-/// node the walk reaches has no snapshot, or if a volume source has an invalid
+/// a snapshot's `personal_volume` is negative or not finite, if a volume
+/// source is not found in the tree or snapshot data, if an upline node the
+/// walk reaches has no snapshot, or if a volume source has an invalid
 /// `cv_amount`.
 pub fn calculate_matrix(
     tree: &MatrixTree,
@@ -49,7 +50,7 @@ pub fn calculate_matrix(
         });
     }
 
-    walk::validate_snapshot_ranks(plan, snapshots)?;
+    walk::validate_snapshots(plan, snapshots)?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
 
@@ -800,6 +801,50 @@ mod tests {
         assert_eq!(
             err,
             CalculationError::UnknownSnapshotRank(test_uuid(0), "diamond".to_string())
+        );
+    }
+
+    #[test]
+    fn calculate_matrix_rejects_a_nan_personal_volume() {
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(
+            test_uuid(0),
+            DistributorSnapshot {
+                personal_volume: f64::NAN,
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                CalculationError::InvalidPersonalVolume(id, pv)
+                    if id == test_uuid(0) && pv.is_nan()
+            ),
+            "got {err:?}"
         );
     }
 

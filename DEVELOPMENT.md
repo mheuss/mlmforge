@@ -380,9 +380,9 @@ Amended 2026-10-14 by HEU-297: startup no longer bulk-loads the adjacency table.
 - Aspirational rank types in `internal/networkengine/types.go` (`RankGroup`, `RankDescriptor`, `QualificationRule`, `QualificationStatus`, `RuleProgress`, `RankEvent`, `Rank`) are deleted. The Go side uses thin wire DTOs over the Rust types, matching the established pattern for tree, commission, and snapshot ops.
 - Streamline and board plan structures are excluded from rank evaluation in HEU-443. They do not expose `TreeNavigator` and rank semantics for those structures differ enough that bolting on evaluation now would be premature.
 - Backward compat for callers that already supply `DistributorSnapshot.rank` directly is preserved. No commission flow is forced to use the new op.
-- Every plan's lowest rank requires nothing. It sets no threshold above zero, no required products, no window and no tenure. Go `validateRanks` and the engine's `CompensationPlan::validate` both refuse a plan that breaks this, and name the rank (HEU-761).
+- Every plan's lowest rank requires nothing. Its structure entries set no volume, no distributor count and no leg quality. It requires no products and has no window or tenure. Go `validateRanks` and the engine's `CompensationPlan::validate` both refuse a plan that breaks this, and name the rank (HEU-761).
 - The evaluator never evaluates the lowest rank. Every distributor in the inputs holds at least that rank, including a distributor in no registered tree. `Unranked` is unreachable from `evaluate_ranks` for a plan with any rank. The variant stays, and Go keeps reading a nil history ordinal as Unranked.
-- The `DistributorSnapshot.rank` override path never carries "unranked". A caller that builds commission snapshots from rank evaluation must use the evaluated rank's name. Every evaluated distributor has one.
+- The `DistributorSnapshot.rank` override path does not accept "unranked". Every calculator refuses a snapshot rank the plan does not define. A caller that builds commission snapshots from rank evaluation must use the evaluated rank's name. Every evaluated distributor has one.
 
 ---
 

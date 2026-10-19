@@ -100,6 +100,7 @@ pub(crate) fn tree_error_to_response(request_id: &str, e: TreeError) -> Response
         TreeError::SubtreeFull(_) => "SUBTREE_FULL",
         TreeError::SponsorlessWithRecruits { .. } => "SPONSORLESS_WITH_RECRUITS",
         TreeError::SponsorCycle { .. } => "SPONSOR_CYCLE",
+        TreeError::NilUserId => "NIL_USER_ID",
     };
     Response::error(request_id.to_string(), code, e.to_string())
 }

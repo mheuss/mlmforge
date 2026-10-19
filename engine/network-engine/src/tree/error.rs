@@ -68,4 +68,7 @@ pub enum TreeError {
 
     #[error("sponsor chain from user {user_id} did not reach an end within {bound} steps")]
     SponsorCycle { user_id: Uuid, bound: usize },
+
+    #[error("user id is the nil UUID")]
+    NilUserId,
 }

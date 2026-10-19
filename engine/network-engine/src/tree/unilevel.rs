@@ -38,6 +38,7 @@ impl UnilevelTree {
 
     /// Refuses a root this tree cannot take. Changes nothing.
     pub fn check_add_root(&self, user_id: Uuid) -> Result<(), TreeError> {
+        Arena::check_user_id(user_id)?;
         if self.arena.root.is_some() {
             return Err(TreeError::RootAlreadyExists);
         }
@@ -80,6 +81,7 @@ impl UnilevelTree {
         parent_id: Uuid,
         sponsor_id: Uuid,
     ) -> Result<(), TreeError> {
+        Arena::check_user_id(user_id)?;
         if self.arena.index.contains_key(&user_id) {
             return Err(TreeError::UserAlreadyExists(user_id));
         }
@@ -1039,6 +1041,48 @@ mod tests {
         tree.add_root(test_uuid(1), 0).unwrap();
 
         assert!(tree.remove_node(test_uuid(1)).is_ok());
+    }
+
+    #[test]
+    fn check_add_root_and_add_root_refuse_a_nil_user_id() {
+        let mut tree = UnilevelTree::new();
+
+        assert_eq!(tree.check_add_root(Uuid::nil()), Err(TreeError::NilUserId));
+        assert_eq!(tree.add_root(Uuid::nil(), 1000), Err(TreeError::NilUserId));
+        assert!(tree.arena.root.is_none());
+    }
+
+    #[test]
+    fn check_add_node_and_add_node_refuse_a_nil_user_id() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+
+        assert_eq!(
+            tree.check_add_node(Uuid::nil(), test_uuid(1), test_uuid(1)),
+            Err(TreeError::NilUserId)
+        );
+        assert_eq!(
+            tree.add_node(Uuid::nil(), test_uuid(1), test_uuid(1), 2000),
+            Err(TreeError::NilUserId)
+        );
+        assert_eq!(tree.arena.node_count(), 1);
+    }
+
+    #[test]
+    fn a_nil_user_id_cannot_take_a_freed_slot() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 2000)
+            .unwrap();
+        tree.remove_node(test_uuid(2)).unwrap();
+        assert_eq!(tree.arena.free_list.len(), 1);
+
+        assert_eq!(
+            tree.add_node(Uuid::nil(), test_uuid(1), test_uuid(1), 3000),
+            Err(TreeError::NilUserId)
+        );
+        assert_eq!(tree.arena.free_list.len(), 1);
+        assert!(!tree.arena.index.contains_key(&Uuid::nil()));
     }
 
     #[test]

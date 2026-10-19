@@ -1,0 +1,12 @@
+{
+    "description": "check_mutation refuses an add_root naming the nil UUID with the code add_root returns",
+    "setup": [
+        {"id": "s-1", "op": "create_tree", "params": {"structure": "test", "tree_type": "unilevel"}}
+    ],
+    "request": {
+        "id": "cm-nil",
+        "op": "check_mutation",
+        "params": {"structure": "test", "mutation": "add_root", "user_id": "00000000-0000-0000-0000-000000000000", "enrolled_at": 1000}
+    },
+    "expected_response": {"id": "cm-nil", "ok": false, "error": {"code": "NIL_USER_ID"}}
+}

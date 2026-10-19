@@ -532,6 +532,16 @@ impl Arena {
         }
     }
 
+    /// Refuses the nil UUID as a user id.
+    ///
+    /// A freed slot holds the nil UUID, so a live node with that id would read as freed.
+    pub(crate) fn check_user_id(user_id: Uuid) -> Result<(), TreeError> {
+        if user_id.is_nil() {
+            return Err(TreeError::NilUserId);
+        }
+        Ok(())
+    }
+
     /// Clears a slot and adds it to the free list for reuse.
     pub(crate) fn tombstone(&mut self, idx: NodeIndex) {
         debug_assert!(

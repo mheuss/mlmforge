@@ -175,8 +175,9 @@ fn apply_aggregate_cap(earnings: &mut [BinaryCommissionEarning], cap: f64) {
 /// # Errors
 ///
 /// Returns `CalculationError` if the cycle-step config is invalid, if a
-/// snapshot names a rank the plan does not define, if a volume source is not
-/// found in the tree or snapshot data, or if a volume source has an invalid
+/// snapshot names a rank the plan does not define, if a snapshot's
+/// personal_volume is negative or not finite, if a volume source is not found
+/// in the tree or snapshot data, or if a volume source has an invalid
 /// cv_amount.
 pub fn calculate_binary_pairing(
     tree: &BinaryTree,

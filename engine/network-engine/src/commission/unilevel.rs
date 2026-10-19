@@ -19,9 +19,10 @@ use super::{walk, walk_order};
 /// # Errors
 ///
 /// Returns `CalculationError` if a snapshot names a rank the plan does not
-/// define, if a volume source is not found in the tree or snapshot data, if an
-/// upline node the walk reaches has no snapshot, or if a volume source's
-/// cv_amount is negative or not finite.
+/// define, if a snapshot's personal_volume is negative or not finite, if a
+/// volume source is not found in the tree or snapshot data, if an upline node
+/// the walk reaches has no snapshot, or if a volume source's cv_amount is
+/// negative or not finite.
 pub fn calculate_unilevel(
     tree: &UnilevelTree,
     plan: &CompensationPlan,

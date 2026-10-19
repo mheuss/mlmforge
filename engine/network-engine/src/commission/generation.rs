@@ -264,9 +264,10 @@ fn emit_generation_earnings(
 /// # Errors
 ///
 /// Returns `CalculationError` if a snapshot names a rank the plan does not
-/// define, if a volume source is not found in the tree or snapshot data, if an
-/// upline node the level walk reaches has no snapshot, or if a volume source
-/// has an invalid CV amount.
+/// define, if a snapshot's personal_volume is negative or not finite, if a
+/// volume source is not found in the tree or snapshot data, if an upline node
+/// the level walk reaches has no snapshot, or if a volume source has an
+/// invalid CV amount.
 ///
 /// That upline-snapshot check covers only the nodes the level walk itself
 /// reaches. It is not a guarantee about this function. The generation

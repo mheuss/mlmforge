@@ -645,9 +645,10 @@ fn walk_multi_tier_overrides(
 /// # Errors
 ///
 /// Returns [`CalculationError`] if a snapshot names a rank the plan does not
-/// define, if a volume source is not found in the tree or snapshot data, if an
-/// upline node Walk 1 reaches has no snapshot, or if a volume source has a
-/// non-finite or negative cv_amount.
+/// define, if a snapshot has a non-finite or negative personal_volume, if a
+/// volume source is not found in the tree or snapshot data, if an upline node
+/// Walk 1 reaches has no snapshot, or if a volume source has a non-finite or
+/// negative cv_amount.
 ///
 /// Walk 2 makes no upline-snapshot check, and the breakaway set is built from
 /// the snapshot map, so omitting a snapshot anywhere in the tree can change

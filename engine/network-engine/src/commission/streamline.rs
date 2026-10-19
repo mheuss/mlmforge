@@ -16,8 +16,9 @@ use super::{walk, walk_order};
 
 /// Calculate streamline commissions across all active streams.
 ///
-/// Rejects an invalid dynamic-compression config, and a snapshot naming a rank
-/// the plan does not define. Also rejects volume it cannot pay: a source with
+/// Rejects an invalid dynamic-compression config, a snapshot naming a rank the
+/// plan does not define, and a snapshot whose personal_volume is negative or
+/// not finite. Also rejects volume it cannot pay: a source with
 /// a non-finite or negative CV amount, a source held by no stream, or a source
 /// with no snapshot. An upline node the walk reaches with no snapshot is
 /// rejected too. A source held only by a frozen stream is accepted and

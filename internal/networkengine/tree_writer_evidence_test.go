@@ -206,3 +206,64 @@ func TestRejectionEvidence_RefusesWhenNoActiveRowCarriesTheEventsID(t *testing.T
 	require.NoError(t, err)
 	assert.False(t, got, "a data_invalid load counted as evidence with no row carrying the event's ID")
 }
+
+// replayRefusal is a load that failed at replay on ev with an engine refusal of
+// code.
+func replayRefusal(ev platform.Event, code string) error {
+	return fmt.Errorf("load tree %s; nothing was appended: %w", writerTree, &TreeReplayError{
+		TreeID: writerTree, Stage: TreeReplayStageReplay, ReachedVersion: ev.Version - 1, ProjectedVersion: ev.Version,
+		FailedVersion: ev.Version, FailedEventID: ev.ID, FailedType: ev.Type,
+		Err: fmt.Errorf("engine add_node_at for %s: %w", writerChild, fakeEngineError(code, "refused")),
+	})
+}
+
+func TestRejectionEvidence_CountsReplayRefusingTheLastPlacement(t *testing.T) {
+	w, _ := newWriterEnv().writer()
+	last := platform.Event{ID: testNodeUUID(5), Type: EventTypeNodePlaced, Version: 2}
+	for _, code := range []string{"USER_IN_HOLDING_TANK", "POSITION_OCCUPIED", "SPONSOR_NOT_FOUND"} {
+		t.Run(code, func(t *testing.T) {
+			got, err := w.rejectionEvidence(context.Background(), writerTree, unilevelShape, last, replayRefusal(last, code))
+
+			require.NoError(t, err)
+			assert.True(t, got)
+		})
+	}
+}
+
+func TestRejectionEvidence_RefusesAReplayFailureThatIsNotTheLastPlacementsRefusal(t *testing.T) {
+	w, _ := newWriterEnv().writer()
+	placement := platform.Event{ID: testNodeUUID(5), Type: EventTypeNodePlaced, Version: 2}
+	removal := platform.Event{ID: testNodeUUID(5), Type: EventTypeNodeRemoved, Version: 2}
+	root := platform.Event{ID: testNodeUUID(5), Type: EventTypeRootAdded, Version: 2}
+	earlier := platform.Event{ID: testNodeUUID(5), Type: EventTypeNodePlaced, Version: 1}
+	sameVersion := platform.Event{ID: testNodeUUID(6), Type: EventTypeNodePlaced, Version: 2}
+	cases := []struct {
+		name string
+		last platform.Event
+		err  error
+	}{
+		{"a removal replay refused", removal, replayRefusal(removal, "HAS_CHILDREN")},
+		{"a root replay refused", root, replayRefusal(root, "NIL_USER_ID")},
+		{"an earlier placement replay refused", placement, replayRefusal(earlier, "POSITION_OCCUPIED")},
+		{"another event at the same version", placement, replayRefusal(sameVersion, "POSITION_OCCUPIED")},
+		{"a code that is not a refusal", placement, replayRefusal(placement, "USER_ALREADY_EXISTS")},
+		{"an internal error", placement, replayRefusal(placement, "INTERNAL_ERROR")},
+		{"a replay mismatch with no engine error", placement, &TreeReplayError{TreeID: writerTree,
+			Stage: TreeReplayStageReplay, FailedVersion: placement.Version, FailedEventID: placement.ID,
+			FailedType: placement.Type, Expected: "tree type unilevel", Observed: "tree type binary"}},
+		{"a drop-stage failure carrying a refusal code", placement, &TreeReplayError{TreeID: writerTree,
+			Stage: TreeReplayStageDrop, FailedVersion: placement.Version, FailedEventID: placement.ID,
+			FailedType: placement.Type, Err: fakeEngineError("POSITION_OCCUPIED", "refused")}},
+		{"a fence refusal beside a replay refusal of the placement", placement, &RefusedAfterFailedBuildError{
+			Refusal: &StreamMovedError{TreeID: writerTree, LoadedVersion: 1, LastVersion: 3},
+			Build:   replayRefusal(placement, "POSITION_OCCUPIED")}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := w.rejectionEvidence(context.Background(), writerTree, unilevelShape, c.last, c.err)
+
+			require.NoError(t, err)
+			assert.False(t, got)
+		})
+	}
+}

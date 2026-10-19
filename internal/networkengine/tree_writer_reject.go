@@ -117,6 +117,9 @@ func (w *TreeWriter) rejectionEvidence(ctx context.Context, tree string, shape t
 	if errors.As(retryErr, &replay) && replay.Stage == TreeReplayStageDrop {
 		return false, nil
 	}
+	if errors.As(retryErr, &replay) && replayRefusedPlacement(replay, last) {
+		return true, nil
+	}
 	var failed *CatchUpFailedError
 	if errors.As(retryErr, &failed) {
 		if !sameUUID(failed.EventID, last.ID) {
@@ -161,6 +164,19 @@ func (w *TreeWriter) stuckRowStopsTheLoad(ctx context.Context, tree string, shap
 		return false, nil
 	}
 	return preflight(tree, shape.treeType, shape.config(), remaining) == nil, nil
+}
+
+// replayRefusedPlacement reports whether e is replay refusing last, a
+// node_placed, with a code in rejectionRefusalCodes.
+func replayRefusedPlacement(e *TreeReplayError, last platform.Event) bool {
+	if e.Stage != TreeReplayStageReplay || last.Type != EventTypeNodePlaced {
+		return false
+	}
+	if e.FailedVersion != last.Version || !sameUUID(e.FailedEventID, last.ID) {
+		return false
+	}
+	var engineErr *EngineError
+	return errors.As(e.Err, &engineErr) && rejectionRefusalCodes[engineErr.Code]
 }
 
 // RejectRequest names the tree event to reject and why.

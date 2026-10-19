@@ -68,3 +68,30 @@ func TestTreeWriterReject_ClearsATankedUsersPlacementItDeliversFirst(t *testing.
 	assert.NoError(t, rejected.ProjectionErr)
 	placeAfterRejecting(t, it, tree, root, a, b, load)
 }
+
+func TestTreeWriterReject_ClearsATankedUsersPlacementAWriteDeliveredFirst(t *testing.T) {
+	it := newWriterIntegration(t)
+	ctx := context.Background()
+	tree, root, a, b := testTreeUUID(9301), testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	foreign, load := tankedPlacement(t, it, tree, root, a)
+	_, writeErr := it.writer(t).Place(ctx, PlaceRequest{TreeID: tree, UserID: b, ParentID: root, SponsorID: root,
+		Position: intPtr(1), EnrolledAt: writeTime.Add(3 * time.Hour)})
+	var engineErr *EngineError
+	require.ErrorAs(t, writeErr, &engineErr)
+	require.Equal(t, "USER_IN_HOLDING_TANK", engineErr.Code)
+	projected, _, err := it.store.ProjectedVersion(ctx, tree)
+	require.NoError(t, err)
+	require.Equal(t, foreign.Version, projected, "the write did not commit the placement before the engine refused it")
+
+	rejected, err := it.writer(t).Reject(ctx, RejectRequest{TreeID: tree, EventID: foreign.ID, Reason: "the user is in the holding tank"})
+
+	require.NoError(t, err)
+	assert.Equal(t, RejectOutcomeRejected, rejected.Outcome)
+	var replay *TreeReplayError
+	require.ErrorAs(t, rejected.RetryErr, &replay)
+	assert.Equal(t, TreeReplayStageReplay, replay.Stage)
+	assert.Equal(t, foreign.Version, replay.FailedVersion)
+	assert.True(t, sameUUID(foreign.ID, replay.FailedEventID), "replay failed on event %s, not %s", replay.FailedEventID, foreign.ID)
+	assert.NoError(t, rejected.ProjectionErr)
+	placeAfterRejecting(t, it, tree, root, a, b, load)
+}

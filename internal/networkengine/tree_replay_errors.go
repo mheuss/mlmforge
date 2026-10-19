@@ -24,6 +24,7 @@ type TreeReplayError struct {
 	ReachedVersion   int64
 	ProjectedVersion int64
 	FailedVersion    int64
+	FailedEventID    string
 	FailedType       string
 	Expected         string
 	Observed         string

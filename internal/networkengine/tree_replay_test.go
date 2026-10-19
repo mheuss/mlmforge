@@ -442,11 +442,14 @@ func TestReplayStream_RefusesAPlacementOfAnotherShape(t *testing.T) {
 	one := 1
 	payload := childPlacedPayload(writerChild)
 	payload.TreeType, payload.Position = treeTypeBinary, &one
-	appendDirect(t, env.events, EventTypeNodePlaced, payload)
+	placed := appendDirect(t, env.events, EventTypeNodePlaced, payload)
 
 	_, err := env.replay(1, 2)
 
 	requireReplayInvariant(t, err, "tree type unilevel", "tree type binary")
+	var replay *TreeReplayError
+	require.ErrorAs(t, err, &replay)
+	assert.True(t, sameUUID(placed.ID, replay.FailedEventID), "replay named event %q, not %s", replay.FailedEventID, placed.ID)
 }
 
 func TestReplayStream_RefusesAnUnknownEventType(t *testing.T) {
@@ -470,6 +473,8 @@ func TestReplayStream_ReportsTheEventAnEngineRefused(t *testing.T) {
 	require.ErrorAs(t, err, &replay)
 	assert.Equal(t, int64(2), replay.FailedVersion)
 	assert.Equal(t, int64(1), replay.ReachedVersion)
+	placed := streamEvents(t, env.events, TreeStreamName(writerTree))[1]
+	assert.True(t, sameUUID(placed.ID, replay.FailedEventID), "replay named event %q, not %s", replay.FailedEventID, placed.ID)
 	var engineErr *EngineError
 	assert.True(t, errors.As(err, &engineErr), "the engine's refusal is not reachable through errors.As")
 }

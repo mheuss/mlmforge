@@ -199,7 +199,7 @@ func (r *replayer) failRead(err error) error {
 
 func (r *replayer) failEvent(ev platform.Event, err error) error {
 	return &TreeReplayError{TreeID: r.tree, Stage: TreeReplayStageReplay, ReachedVersion: r.res.reached,
-		ProjectedVersion: r.to, FailedVersion: ev.Version, FailedType: ev.Type, Err: err}
+		ProjectedVersion: r.to, FailedVersion: ev.Version, FailedEventID: ev.ID, FailedType: ev.Type, Err: err}
 }
 
 func (r *replayer) invariant(expected, observed string) error {
@@ -209,5 +209,5 @@ func (r *replayer) invariant(expected, observed string) error {
 
 func (r *replayer) invariantAt(ev platform.Event, expected, observed string) error {
 	return &TreeReplayError{TreeID: r.tree, Stage: TreeReplayStageReplay, ReachedVersion: r.res.reached,
-		ProjectedVersion: r.to, FailedVersion: ev.Version, FailedType: ev.Type, Expected: expected, Observed: observed}
+		ProjectedVersion: r.to, FailedVersion: ev.Version, FailedEventID: ev.ID, FailedType: ev.Type, Expected: expected, Observed: observed}
 }

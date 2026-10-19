@@ -2055,3 +2055,80 @@ func TestRateKeyWidth_DistinctKeysAreNotDuplicates(t *testing.T) {
 		assert.NotEqual(t, "duplicate_value", e.Code, "unexpected duplicate for distinct keys: %v", e)
 	}
 }
+
+// --- Base rank ---
+
+func TestBaseRankWithNoStructureEntriesPasses(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[0].Qualification.Structures = nil
+
+	assert.Empty(t, validateBusinessRules(plan))
+}
+
+func TestBaseRankPerLegCapIsIgnored(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[0].Qualification.Structures[0].MaxGroupVolumePerLeg = 500
+
+	assert.Empty(t, validateBusinessRules(plan))
+}
+
+func TestBaseRankRequirementRejected(t *testing.T) {
+	const at = "/ranks/0/qualification"
+	tests := []struct {
+		name    string
+		mutate  func(r *RankDefinition)
+		path    string
+		message string
+	}{
+		{"personal volume", func(r *RankDefinition) { r.Qualification.Structures[0].PersonalVolume = 50 },
+			at + "/structures/0/personal_volume", `base rank "Associate" sets personal_volume 50 on structure "Primary"`},
+		{"group volume", func(r *RankDefinition) { r.Qualification.Structures[0].GroupVolume = 1000 },
+			at + "/structures/0/group_volume", `base rank "Associate" sets group_volume 1000 on structure "Primary"`},
+		{"retail volume", func(r *RankDefinition) { r.Qualification.Structures[0].MinRetailVolume = 10 },
+			at + "/structures/0/min_retail_volume", `base rank "Associate" sets min_retail_volume 10 on structure "Primary"`},
+		{"NaN personal volume", func(r *RankDefinition) { r.Qualification.Structures[0].PersonalVolume = math.NaN() },
+			at + "/structures/0/personal_volume", `base rank "Associate" sets personal_volume NaN on structure "Primary"`},
+		{"distributor count", func(r *RankDefinition) {
+			r.Qualification.Structures[0].DistributorCount = &DistributorCountRequirement{Count: 1, SearchMode: "any_level", TotalCount: 1}
+		}, at + "/structures/0/distributor_count", `base rank "Associate" sets distributor_count on structure "Primary"`},
+		{"leg quality", func(r *RankDefinition) {
+			r.Qualification.Structures[0].LegQuality = []LegQualityRequirement{
+				{Count: 1, Predicate: LegPredicate{Type: "contains_personal_volume", MinPersonalVolume: 100}},
+			}
+		}, at + "/structures/0/leg_quality", `base rank "Associate" sets leg_quality on structure "Primary"`},
+		{"required products", func(r *RankDefinition) { r.Qualification.RequiredProducts = []string{"starter-kit"} },
+			at + "/required_products", `base rank "Associate" requires products [starter-kit]`},
+		{"window", func(r *RankDefinition) {
+			r.Qualification.Window = &RankQualificationWindow{ThresholdRank: "Associate", QualifyingPeriods: 1, WindowPeriods: 1}
+		}, at + "/window", `base rank "Associate" has a window`},
+		{"tenure", func(r *RankDefinition) {
+			r.Qualification.Tenure = &TenureRequirement{ThresholdRank: "Associate", Periods: 1}
+		}, at + "/tenure", `base rank "Associate" has a tenure requirement`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := minimalPlan()
+			tt.mutate(&plan.Ranks[0])
+
+			errs := validateBusinessRules(plan)
+
+			require.Len(t, errs, 1, "errors: %v", errs)
+			assert.Equal(t, "base_rank_has_requirements", errs[0].Code)
+			assert.Equal(t, tt.path, errs[0].Path)
+			assert.Contains(t, errs[0].Message, tt.message)
+			assert.Equal(t, SeverityError, errs[0].Severity)
+		})
+	}
+}
+
+func TestBaseRankReportsEachRequirement(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[0].Qualification.Structures[0].PersonalVolume = 50
+	plan.Ranks[0].Qualification.Structures[0].GroupVolume = 1000
+
+	errs := validateBusinessRules(plan)
+
+	require.Len(t, errs, 2, "errors: %v", errs)
+	assert.Equal(t, "/ranks/0/qualification/structures/0/personal_volume", errs[0].Path)
+	assert.Equal(t, "/ranks/0/qualification/structures/0/group_volume", errs[1].Path)
+}

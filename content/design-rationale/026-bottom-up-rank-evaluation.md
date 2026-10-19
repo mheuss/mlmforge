@@ -45,8 +45,8 @@ Within one distributor, `evaluate_distributor` starts at the lowest rank
 without evaluating it. It then iterates the higher ranks lowest ordinal first
 and keeps the highest one that passes. A failed rank does not short-circuit,
 so a distributor who satisfies rank N+1 but not rank N still reaches N+1. A
-distributor in no registered tree is not evaluated and holds the lowest rank
-(HEU-761).
+distributor in none of the trees passed to `evaluate_ranks` is not evaluated
+and holds the lowest rank (HEU-761).
 
 ## The Reasoning
 

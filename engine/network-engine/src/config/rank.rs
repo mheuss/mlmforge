@@ -20,8 +20,7 @@ pub struct RankDefinition {
 
     /// Numeric position in the rank ladder. Higher is better.
     ///
-    /// Must be unique across all ranks. The engine evaluates ranks in
-    /// ascending ordinal order.
+    /// Must be unique across all ranks.
     pub ordinal: u16,
 
     /// Criteria the distributor must meet to achieve this rank.

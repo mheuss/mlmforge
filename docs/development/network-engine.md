@@ -388,7 +388,7 @@ Assert it explicitly in round-trip tests. HEU-534 shipped a matrix reload where 
 
 The `evaluate_ranks` worker handler registers tree navigators only for structures that some rank's `qualification.structures` names. A distributor in none of those trees is not evaluated. It holds the plan's lowest rank.
 
-So a plan whose ranks name no structure gives every distributor the lowest rank. No higher rank is reached. A test that needs a higher rank must name, in some rank's qualification, a structure the test creates and places the distributor in.
+So a plan whose ranks name no structure gives every distributor the lowest rank. No higher rank is reached. A test that needs a higher rank must create a structure and place the distributor in it. Some rank's qualification must name that structure.
 
 A distributor in no registered tree is never evaluated against a higher rank whose qualification names no structure. HEU-953 tracks it.
 
@@ -684,8 +684,9 @@ documents the failure mode.
   `GetByPeriod` fan-out (HEU-516).
 
 Missing rows mean "not evaluated for this period." Rows with `rank IS NULL`
-mean "evaluated, did not qualify" (Unranked). HEU-446 predicates rely on
-this distinction.
+hold an Unranked result. The engine returns one only for a plan with no
+ranks (HEU-761). HEU-446 predicates rely on the missing-versus-NULL
+distinction.
 
 ### Error contract on the engine client
 

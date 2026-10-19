@@ -167,6 +167,15 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      # A debug build fires debug_assert! too, so only a release run can tell
+      # these tests from their debug_assert! form. The count check fails the
+      # step if a rename leaves the filter matching nothing.
+      - name: Release-only assert tests
+        run: |
+          cargo test --release -p network-engine --lib panics_on_a_freed_slot 2>&1 \
+            | tee "$RUNNER_TEMP/release-assert.log"
+          grep 'test result: ok. 2 passed' "$RUNNER_TEMP/release-assert.log"
+
       - name: Format check
         run: cargo fmt --all --check
 

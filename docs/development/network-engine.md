@@ -685,8 +685,8 @@ documents the failure mode.
 
 Missing rows mean "not evaluated for this period." Rows with `rank IS NULL`
 hold an Unranked result. The engine returns one only for a plan with no
-ranks (HEU-761). HEU-446 predicates rely on the missing-versus-NULL
-distinction.
+ranks (HEU-761). The HEU-446 window and tenure gates treat both as below
+threshold.
 
 ### Error contract on the engine client
 

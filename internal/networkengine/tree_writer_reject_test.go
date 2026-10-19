@@ -24,7 +24,7 @@ func stuckPlacement(t *testing.T, env *writerEnv) platform.Event {
 		TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
 	})
 	w, engine := env.writer()
-	engine.failAdd[writerChild] = fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", writerOther)
+	engine.failAdd[writerChild] = fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", writerOther)
 	_, err := w.Place(context.Background(), placeRequest(testUserUUID(4), nil))
 	var failed *CatchUpFailedError
 	require.ErrorAs(t, err, &failed)
@@ -485,9 +485,12 @@ func TestTreeWriterReject_RejectsAPlacementWhoseRowStopsTheLoad(t *testing.T) {
 func TestTreeWriterReject_RejectsAPlacementTheEngineRefusesOnItsFirstDelivery(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
-	stuck := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
+	stuck := appendDirect(t, env.events, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: writerTree, UserID: writerChild, ParentID: writerRoot, SponsorID: writerOther,
+		TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
+	})
 	w, engine := env.writer()
-	engine.failAdd[writerChild] = fakeEngineError("SPONSOR_NOT_FOUND", "sponsor not found in tree")
+	engine.failAdd[writerChild] = fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", writerOther)
 
 	res, err := w.Reject(context.Background(), rejectRequest(stuck.ID))
 
@@ -696,7 +699,7 @@ func TestTreeWriterReject_RefusesALoadFailureTheTieRuleDoesNotAccept(t *testing.
 	}
 }
 
-func TestTreeWriterReject_AUnilevelFirstDeliveryRefusesThenTheLoadRuleRejects(t *testing.T) {
+func TestTreeWriterReject_AFirstRunWhoseRetryIsNotEvidenceCommitsTheRowThenTheLoadRuleRejects(t *testing.T) {
 	env := newWriterEnv()
 	ctx := context.Background()
 	mustAddRoot(t, env, treeTypeUnilevel)
@@ -705,7 +708,7 @@ func TestTreeWriterReject_AUnilevelFirstDeliveryRefusesThenTheLoadRuleRejects(t 
 		TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
 	})
 	first, engine := env.writer()
-	engine.failAdd[writerChild] = fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", writerOther)
+	engine.failAdd[writerChild] = fakeEngineError("INTERNAL_ERROR", "handler panicked")
 
 	_, err := first.Reject(ctx, rejectRequest(stuck.ID))
 
@@ -816,7 +819,7 @@ func TestTreeWriterReject_AFailedAppendLeavesTheOutcomeEmpty(t *testing.T) {
 		TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
 	})
 	trigger, engine := env.writer()
-	engine.failAdd[writerChild] = fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", writerOther)
+	engine.failAdd[writerChild] = fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", writerOther)
 	_, err := trigger.Place(context.Background(), placeRequest(testUserUUID(4), nil))
 	var failed *CatchUpFailedError
 	require.ErrorAs(t, err, &failed)
@@ -1158,9 +1161,7 @@ func TestTreeWriterReject_KeepsAReleaseFailureAlongsideTheRejection(t *testing.T
 	env := newWriterEnv()
 	stuck := stuckPlacement(t, env)
 	release := errors.New("pg_advisory_unlock returned false")
-	engine := newFakeWriterEngine()
-	engine.failAdd[writerChild] = fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", writerOther)
-	w := NewTreeWriter(env.events, env.store, env.snapshots, engine, releaseFailingLocker{err: release})
+	w := NewTreeWriter(env.events, env.store, env.snapshots, newFakeWriterEngine(), releaseFailingLocker{err: release})
 
 	res, err := w.Reject(context.Background(), rejectRequest(stuck.ID))
 

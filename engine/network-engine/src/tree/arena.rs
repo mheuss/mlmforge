@@ -501,7 +501,8 @@ impl Arena {
     /// Direct arena access by index.
     pub(crate) fn node(&self, idx: NodeIndex) -> &Node {
         let n = &self.nodes[idx.0];
-        debug_assert!(
+        // A hard assert on purpose: without it a release build returns a freed slot as a node with no edges.
+        assert!(
             n.user_id != uuid::Uuid::nil(),
             "accessed tombstoned slot at index {}",
             idx.0
@@ -511,7 +512,8 @@ impl Arena {
 
     /// Mutable arena access by index.
     pub(crate) fn node_mut(&mut self, idx: NodeIndex) -> &mut Node {
-        debug_assert!(
+        // A hard assert on purpose: without it a release build returns a freed slot as a node with no edges.
+        assert!(
             self.nodes[idx.0].user_id != uuid::Uuid::nil(),
             "accessed tombstoned slot at index {}",
             idx.0
@@ -1125,11 +1127,28 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "accessed tombstoned slot")]
+    fn node_panics_on_a_freed_slot() {
+        let mut arena = Arena::new();
+        let idx = arena.alloc_slot(make_node(test_uuid(1), None, 0));
+        arena.tombstone(idx);
+        let _ = arena.node(idx);
+    }
+
+    #[test]
+    #[should_panic(expected = "accessed tombstoned slot")]
+    fn node_mut_panics_on_a_freed_slot() {
+        let mut arena = Arena::new();
+        let idx = arena.alloc_slot(make_node(test_uuid(1), None, 0));
+        arena.tombstone(idx);
+        let _ = arena.node_mut(idx);
+    }
+
+    #[test]
     fn tombstone_clears_node() {
         let mut arena = Arena::new();
         let idx = arena.alloc_slot(make_node(test_uuid(1), None, 0));
         arena.tombstone(idx);
-        // Access the raw slot directly to avoid the debug_assert in node().
         assert_eq!(arena.nodes[idx.0].user_id, Uuid::nil());
     }
 

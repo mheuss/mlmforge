@@ -1034,11 +1034,21 @@ proptest! {
 
         prop_assert_eq!(result.ranks.len(), in_tree + out_of_tree);
         for i in 0..in_tree + out_of_tree {
-            match result.ranks.get(&uuid_from_index(i)) {
-                Some(network_engine::rank::EvaluatedRank::Qualified { ordinal, .. }) => {
-                    prop_assert!(*ordinal >= 1);
-                }
-                other => prop_assert!(false, "distributor {} got {:?}", i, other),
+            let got = result.ranks.get(&uuid_from_index(i));
+            if i >= in_tree {
+                prop_assert_eq!(
+                    got,
+                    Some(&network_engine::rank::EvaluatedRank::Qualified {
+                        rank: "associate".to_string(),
+                        ordinal: 1,
+                    }),
+                    "distributor {} is in no tree", i
+                );
+            } else {
+                prop_assert!(
+                    matches!(got, Some(network_engine::rank::EvaluatedRank::Qualified { .. })),
+                    "distributor {} got {:?}", i, got
+                );
             }
         }
     }

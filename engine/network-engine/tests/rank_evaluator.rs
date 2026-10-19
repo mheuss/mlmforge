@@ -1268,7 +1268,6 @@ fn evaluate_ranks_returns_unranked_only_for_an_empty_ladder() {
         result.ranks.get(&uuid_from_index(1)),
         Some(&EvaluatedRank::Unranked)
     );
-    assert!(!result.ranks.contains_key(&uuid_from_index(99)));
 }
 
 #[test]

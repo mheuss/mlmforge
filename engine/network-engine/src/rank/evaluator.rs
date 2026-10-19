@@ -81,7 +81,8 @@ pub(crate) fn evaluation_order_for_users(
 }
 
 /// Return one distributor's rank: the highest rank above the lowest that
-/// they satisfy, or the lowest rank when none does.
+/// they satisfy, the lowest rank when none does, or `Unranked` for an empty
+/// ladder.
 ///
 /// `ctx.ranks` MUST be sorted by ordinal ascending.
 pub(crate) fn evaluate_distributor(

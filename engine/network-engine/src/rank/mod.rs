@@ -33,7 +33,7 @@ pub fn evaluate_ranks(
         ranks_sorted.iter().map(|r| (*r).clone()).collect();
 
     // BR9 empty-axis guard: a time gate cannot be evaluated without an axis.
-    // If any rank declares a window or tenure requirement but the caller
+    // If any rank above the lowest declares a window or tenure requirement but the caller
     // supplied no history_window, fail loud rather than silently treating every
     // gate as unmet. The guard lives engine-side because the Go client does not
     // have the plan.
@@ -74,8 +74,7 @@ pub fn evaluate_ranks(
     };
     let mut already = iterate_to_fixpoint(&order, &ctx)?;
 
-    // A distributor in no registered tree is not evaluated and holds the
-    // lowest rank.
+    // Every input distributor the fixpoint did not rank holds the lowest rank.
     if let Some(base) = ranks_owned.first() {
         for user_id in &user_ids {
             already

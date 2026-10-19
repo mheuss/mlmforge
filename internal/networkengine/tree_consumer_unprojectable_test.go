@@ -85,3 +85,43 @@ func TestTreeConsumer_AFailedParentReadIsNotUnprojectable(t *testing.T) {
 	require.EqualError(t, err, "get parent node: connection reset by peer")
 	assert.NotErrorIs(t, err, ErrUnprojectableEvent)
 }
+
+func TestTreeConsumer_RefusesATreeTypeTheStreamDoesNotRecord(t *testing.T) {
+	unilevel := treeShape{treeType: treeTypeUnilevel}
+	matrix := treeShape{treeType: treeTypeMatrix, width: 2, spillover: "breadth_first"}
+	cases := []struct {
+		name      string
+		eventType string
+		stream    treeShape
+		payload   any
+		want      string
+	}{
+		{"a removal labelled binary on a unilevel stream", EventTypeNodeRemoved, unilevel,
+			NodeRemovedPayload{TreeID: "tree1", UserID: "user-child", TreeType: treeTypeBinary},
+			`node_removed for user-child in tree tree1 has tree_type "binary", and the stream records tree type unilevel`},
+		{"a removal labelled matrix on a unilevel stream", EventTypeNodeRemoved, unilevel,
+			NodeRemovedPayload{TreeID: "tree1", UserID: "user-child", TreeType: treeTypeMatrix, PruningMode: PruningPromoteEarliest},
+			`node_removed for user-child in tree tree1 has tree_type "matrix", and the stream records tree type unilevel`},
+		{"a removal with no tree type on a matrix stream", EventTypeNodeRemoved, matrix,
+			NodeRemovedPayload{TreeID: "tree1", UserID: "user-child"},
+			`node_removed for user-child in tree tree1 has no tree_type, and the stream records tree type matrix`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			inner := NewMemoryTreeStore()
+			require.NoError(t, inner.insertNode(ctx, makeNode("tree1", "user-root", 0, nil, ptr("user-root"), nil)))
+			require.NoError(t, inner.insertNode(ctx, makeNode("tree1", "user-child", 1, ptr("user-root"), ptr("user-root"), nil)))
+			store := &writeSpyStore{MemoryTreeStore: inner}
+			transport := newRecordingTransport()
+			consumer := NewTreeEventConsumer(getNodeFailingStore{store}, newEngineClientWithTransport(transport))
+
+			err := consumer.HandleEvent(ctx, c.stream, makeEvent(c.eventType, c.payload))
+
+			require.ErrorIs(t, err, ErrUnprojectableEvent)
+			assert.EqualError(t, err, c.want)
+			assert.Empty(t, transport.calls)
+			assert.Empty(t, store.writes)
+		})
+	}
+}

@@ -164,6 +164,7 @@ impl MatrixTree {
 
     /// Refuses a root this tree cannot take. Changes nothing.
     pub fn check_add_root(&self, user_id: Uuid) -> Result<(), TreeError> {
+        Arena::check_user_id(user_id)?;
         if self.arena.root.is_some() {
             return Err(TreeError::RootAlreadyExists);
         }
@@ -224,6 +225,7 @@ impl MatrixTree {
         parent_id: Uuid,
         position: u8,
     ) -> Result<(), TreeError> {
+        Arena::check_user_id(user_id)?;
         if self.arena.root.is_none() {
             return Err(TreeError::TreeEmpty);
         }
@@ -343,6 +345,7 @@ impl MatrixTree {
         sponsor_id: Uuid,
         enrolled_at: i64,
     ) -> Result<NodeIndex, TreeError> {
+        Arena::check_user_id(user_id)?;
         if self.arena.root.is_none() {
             return Err(TreeError::TreeEmpty);
         }
@@ -3003,6 +3006,43 @@ mod tests {
         assert_eq!(tree.validate_restored(), Ok(()));
         let sponsor = tree.get_sponsor(test_uuid(4)).unwrap().unwrap();
         assert_eq!(sponsor.user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn check_add_root_and_add_root_refuse_a_nil_user_id() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+
+        assert_eq!(tree.check_add_root(Uuid::nil()), Err(TreeError::NilUserId));
+        assert_eq!(tree.add_root(Uuid::nil(), 1000), Err(TreeError::NilUserId));
+        assert!(tree.arena.root.is_none());
+    }
+
+    #[test]
+    fn check_add_node_at_and_add_node_at_refuse_a_nil_user_id() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+
+        assert_eq!(
+            tree.check_add_node_at(Uuid::nil(), test_uuid(1), test_uuid(1), 0),
+            Err(TreeError::NilUserId)
+        );
+        assert_eq!(
+            tree.add_node_at(Uuid::nil(), test_uuid(1), test_uuid(1), 0, 2000),
+            Err(TreeError::NilUserId)
+        );
+        assert_eq!(tree.arena.node_count(), 1);
+    }
+
+    #[test]
+    fn add_node_refuses_a_nil_user_id() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+
+        assert_eq!(
+            tree.add_node(Uuid::nil(), test_uuid(1), 2000),
+            Err(TreeError::NilUserId)
+        );
+        assert_eq!(tree.arena.node_count(), 1);
     }
 
     #[test]

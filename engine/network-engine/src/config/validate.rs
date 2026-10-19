@@ -40,6 +40,7 @@ use super::commission::LevelCommissionConfig;
 use super::generation::GenerationCommissionConfig;
 use super::matrix::{MatrixStructureParams, SpilloverDirection};
 use super::payout::CapsConfig;
+use super::rank::{RankQualification, StructureQualification};
 use super::stairstep::{BreakawayConfig, MinOverride, OverrideMode, OverrideStrategy};
 use super::streamline::StreamlineCommissionConfig;
 use super::volume::VolumeConfig;
@@ -163,36 +164,51 @@ impl CompensationPlan {
             return Ok(());
         };
         let name = &base.name;
-        let q = &base.qualification;
         let refuse = |what: String| -> Result<(), String> {
             Err(format!(
                 "ranks: base rank '{name}' {what}; the lowest rank must require nothing"
             ))
         };
-        if !q.required_products.is_empty() {
-            return refuse(format!("requires products {:?}", q.required_products));
+        // Exhaustive on purpose: a new qualification field fails to compile
+        // here until someone decides whether the base rank may set it.
+        let RankQualification {
+            structures,
+            required_products,
+            window,
+            tenure,
+        } = &base.qualification;
+        if !required_products.is_empty() {
+            return refuse(format!("requires products {required_products:?}"));
         }
-        if q.window.is_some() {
+        if window.is_some() {
             return refuse("has a window".to_string());
         }
-        if q.tenure.is_some() {
+        if tenure.is_some() {
             return refuse("has a tenure requirement".to_string());
         }
-        for sq in &q.structures {
-            let structure = &sq.structure;
+        for StructureQualification {
+            structure,
+            personal_volume,
+            group_volume,
+            max_group_volume_per_leg: _,
+            min_retail_volume,
+            distributor_count,
+            leg_quality,
+        } in structures
+        {
             for (field, value) in [
-                ("personal_volume", sq.personal_volume),
-                ("group_volume", sq.group_volume),
-                ("min_retail_volume", sq.min_retail_volume),
+                ("personal_volume", personal_volume),
+                ("group_volume", group_volume),
+                ("min_retail_volume", min_retail_volume),
             ] {
-                if value != 0.0 {
+                if *value != 0.0 {
                     return refuse(format!("sets {field} {value} on structure '{structure}'"));
                 }
             }
-            if sq.distributor_count.is_some() {
+            if distributor_count.is_some() {
                 return refuse(format!("sets distributor_count on structure '{structure}'"));
             }
-            if !sq.leg_quality.is_empty() {
+            if !leg_quality.is_empty() {
                 return refuse(format!("sets leg_quality on structure '{structure}'"));
             }
         }
@@ -1171,6 +1187,39 @@ mod tests {
         let err = plan.validate().unwrap_err();
         assert!(
             err.contains("base rank 'associate'"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn plan_takes_the_first_of_tied_lowest_ordinals_as_the_base() {
+        let mut entry = zero_threshold("main");
+        entry.personal_volume = 50.0;
+
+        let mut second_tied = plan_with_two_ranks();
+        second_tied.ranks[1].ordinal = 1;
+        second_tied.ranks[1].qualification.structures = vec![entry.clone()];
+        assert!(second_tied.validate().is_ok());
+
+        let mut first_tied = plan_with_two_ranks();
+        first_tied.ranks[1].ordinal = 1;
+        first_tied.ranks[0].qualification.structures = vec![entry];
+        let err = first_tied.validate().unwrap_err();
+        assert!(
+            err.contains("base rank 'associate'"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn plan_rejects_a_requirement_on_any_base_rank_structure_entry() {
+        let mut plan = plan_with_two_ranks();
+        let mut second = zero_threshold("second");
+        second.personal_volume = 5.0;
+        plan.ranks[0].qualification.structures = vec![zero_threshold("main"), second];
+        let err = plan.validate().unwrap_err();
+        assert!(
+            err.contains("sets personal_volume 5 on structure 'second'"),
             "unexpected error: {err}"
         );
     }

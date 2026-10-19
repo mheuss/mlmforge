@@ -828,10 +828,8 @@ mod tests {
     }
 
     #[test]
-    fn stairstep_rejects_a_nan_personal_volume_before_group_volumes_are_summed() {
+    fn stairstep_rejects_a_nan_personal_volume_off_every_walked_upline() {
         // uuid(3) hangs off the root, away from the only source's upline.
-        // The group-volume sum still adds its personal volume to the root's
-        // group.
         let mut tree = build_chain(3);
         tree.add_node(uuid(3), uuid(0), uuid(0), 3).unwrap();
         let structure = test_stairstep_structure();

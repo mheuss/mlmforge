@@ -68,6 +68,7 @@ The schema and Go have distinct responsibilities. The schema validates structure
 | Cross-section dependencies | `pay_once_only` requires `track_achieved_rank: true` |
 | Referential integrity | `min_rank` references a rank with lower ordinal |
 | Ordering constraints | Ranks sorted by ordinal, tiers sorted by `min_active_legs` |
+| Base rank | The lowest rank sets no threshold above zero, no required products, no window and no tenure |
 | External lookups | Product IDs reference valid catalog products |
 | Semantic warnings | `payout_lag_days > 30`, `matrix width^height > 1M` |
 | Rate table completeness | Every defined rank should have a rate table entry |

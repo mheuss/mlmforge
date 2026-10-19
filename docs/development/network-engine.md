@@ -386,11 +386,11 @@ Assert it explicitly in round-trip tests. HEU-534 shipped a matrix reload where 
 
 ## Rank Evaluation: Empty `qualification.structures`
 
-The `evaluate_ranks` worker handler (`engine/network-engine-worker/src/handlers/rank.rs`) only registers tree navigators for structures referenced by at least one rank's `qualification.structures`. An empty list yields an empty navigator map, `evaluation_order_for_users` returns no users, and the result is `{"ranks": {}}`.
+The `evaluate_ranks` worker handler registers tree navigators only for structures that some rank's `qualification.structures` names. A distributor in none of those trees is not evaluated. It holds the plan's lowest rank.
 
-This trips up tests and ad-hoc verification that load a plan whose ranks have empty qualification (e.g., the existing `testPlanJSON` constant in Go integration tests). Workaround for tests: add at least one rank whose `qualification.structures` references a tree the test creates. The Task 23 integration test introduced a local `rankIntegrationPlanJSON` fixture for exactly this reason.
+So a plan whose ranks name no structure gives every distributor the lowest rank. No higher rank is reached. A test that needs a higher rank must name, in some rank's qualification, a structure the test creates and places the distributor in.
 
-A possible follow-up is to register every loaded structure in the navigator map, not just those referenced by qualifications, so empty-qualification ranks behave as "always pass." That requires product-team alignment on the intended semantics — the current behavior is a defensible reading too.
+A distributor in no registered tree is never evaluated against a higher rank whose qualification names no structure. HEU-953 tracks it.
 
 ## Contract-Test Harness: `setup_raw` for Byte-Sensitive Fixtures
 

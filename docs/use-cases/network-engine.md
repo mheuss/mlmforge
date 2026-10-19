@@ -193,7 +193,7 @@ emit_generation_earnings(&filtered, source, cfg, /* ... */, collector_id, &mut e
 let result = network_engine::rank::evaluate_ranks(&plan, &trees, &inputs)?;
 // result.ranks: BTreeMap<Uuid, EvaluatedRank>
 //   - Qualified { rank: "silver", ordinal: 2 }
-//   - Unranked
+//   - Unranked, only for a plan with no ranks
 
 // Go-side via EngineClient
 result, err := client.EvaluateRanks(ctx, networkengine.EvaluateRanksRequest{...})
@@ -208,9 +208,9 @@ result, err := client.EvaluateRanks(ctx, networkengine.EvaluateRanksRequest{...}
 - The predicate only inspects the user's own primitives (use a simpler top-down pass)
 - The result needs to depend on ancestors' evaluations (no current predicate reads upward, so the pattern does not serve this today — but the fixpoint `already` map does hold ancestor ranks, so downward-only walking is a predicate convention, not a loop limitation)
 
-**Notes:** The ladder-ascent semantics inside `evaluate_distributor` iterate every rank in ascending ordinal and pick the highest passing one. A failed rank does NOT short-circuit — higher ranks may still pass and be selected. This handles ladder gaps where a distributor satisfies rank N+1 but not rank N (e.g., missing a required product unique to N).
+**Notes:** The ladder-ascent semantics inside `evaluate_distributor` start at the lowest rank without evaluating it. They then iterate every higher rank in ascending ordinal and pick the highest passing one. A failed rank does NOT short-circuit — higher ranks may still pass and be selected. This handles ladder gaps where a distributor satisfies rank N+1 but not rank N (e.g., missing a required product unique to N).
 
-The handler at `engine/network-engine-worker/src/handlers/rank.rs` only registers tree navigators for structures referenced by at least one rank's `qualification.structures`. An empty list yields an empty result map — see the network-engine development note "Rank Evaluation: Empty `qualification.structures`" for the workaround pattern in tests.
+The worker handler registers tree navigators only for structures that some rank's `qualification.structures` names. A distributor in none of those trees is not evaluated and holds the lowest rank. The network-engine development note "Rank Evaluation: Empty `qualification.structures`" covers what that means for tests.
 
 ---
 

@@ -485,9 +485,12 @@ func TestTreeWriterReject_RejectsAPlacementWhoseRowStopsTheLoad(t *testing.T) {
 func TestTreeWriterReject_RejectsAPlacementTheEngineRefusesOnItsFirstDelivery(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
-	stuck := appendDirect(t, env.events, EventTypeNodePlaced, childPlacedPayload(writerChild))
+	stuck := appendDirect(t, env.events, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: writerTree, UserID: writerChild, ParentID: writerRoot, SponsorID: writerOther,
+		TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
+	})
 	w, engine := env.writer()
-	engine.failAdd[writerChild] = fakeEngineError("SPONSOR_NOT_FOUND", "sponsor not found in tree")
+	engine.failAdd[writerChild] = fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", writerOther)
 
 	res, err := w.Reject(context.Background(), rejectRequest(stuck.ID))
 

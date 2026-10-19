@@ -107,9 +107,8 @@ func checkNodePlacedShape(payload NodePlacedPayload) error {
 	return nil
 }
 
-// checkNodePlacedOnStream refuses a node_placed payload that disagrees with
-// the tree type its stream records at version 1, or whose shape the engine
-// cannot apply as written.
+// checkNodePlacedOnStream refuses a node_placed payload whose tree type is not
+// streamType, or whose shape checkNodePlacedShape refuses.
 func checkNodePlacedOnStream(p NodePlacedPayload, streamType string) error {
 	if p.TreeType != streamType {
 		return fmt.Errorf("node_placed for %s in tree %s has tree_type %q, and the stream records tree type %s",

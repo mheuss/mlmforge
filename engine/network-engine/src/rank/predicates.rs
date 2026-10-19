@@ -1038,9 +1038,8 @@ mod tests {
 
     #[test]
     fn leg_quality_meets_unranked_node_does_not_match() {
-        // An EvaluatedRank::Unranked entry means the node was evaluated but
-        // did not qualify for any rank. It must NOT satisfy a ContainsRank
-        // predicate — distinct from an absent node, but treated identically.
+        // An EvaluatedRank::Unranked entry must NOT satisfy a ContainsRank
+        // predicate.
         let mut tree = UnilevelTree::new();
         tree.add_root(uid(1), 0).unwrap();
         tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();

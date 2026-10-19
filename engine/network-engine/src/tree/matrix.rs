@@ -691,8 +691,8 @@ impl MatrixTree {
     /// Places a user from the holding tank into the tree at a specific
     /// parent and position.
     ///
-    /// Validates position, parent existence, slot availability, and that
-    /// the user is in the holding tank. Restores the sponsor link if the
+    /// Validates the user id, position, parent existence, slot availability,
+    /// and that the user is in the holding tank. Restores the sponsor link if the
     /// original sponsor still exists in the tree.
     pub fn place_from_tank(
         &mut self,
@@ -2347,6 +2347,7 @@ mod tests {
         });
         let json = serde_json::to_string(&crafted).unwrap();
         let mut tree: MatrixTree = serde_json::from_str(&json).unwrap();
+        assert_eq!(tree.validate_restored(), Ok(()));
 
         assert_eq!(
             tree.place_from_tank(Uuid::nil(), test_uuid(1), 0),

@@ -53,10 +53,6 @@ const (
 // For matrix and binary trees, Position is required. Unilevel events must
 // omit Position: unilevel trees have no slots. Placement is the producer's
 // decision (ADR-020); the consumer never lets the engine invent one.
-//
-// The consumer trusts TreeType. It has no registry, and no cheap worker
-// op, to verify the label against (HEU-554). A producer that mislabels a
-// tree's type re-opens the divergence this contract exists to close.
 type NodePlacedPayload struct {
 	TreeID     string    `json:"tree_id"`
 	UserID     string    `json:"user_id"`
@@ -109,6 +105,17 @@ func checkNodePlacedShape(payload NodePlacedPayload) error {
 			payload.UserID, payload.TreeID, payload.TreeType)
 	}
 	return nil
+}
+
+// checkNodePlacedOnStream refuses a node_placed payload that disagrees with
+// the tree type its stream records at version 1, or whose shape the engine
+// cannot apply as written.
+func checkNodePlacedOnStream(p NodePlacedPayload, streamType string) error {
+	if p.TreeType != streamType {
+		return fmt.Errorf("node_placed for %s in tree %s has tree_type %q, and the stream records tree type %s",
+			p.UserID, p.TreeID, p.TreeType, streamType)
+	}
+	return checkNodePlacedShape(p)
 }
 
 // NodeRemovedPayload is the event payload when a node is removed.

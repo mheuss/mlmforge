@@ -89,6 +89,7 @@ func TestTreeConsumer_AFailedParentReadIsNotUnprojectable(t *testing.T) {
 func TestTreeConsumer_RefusesATreeTypeTheStreamDoesNotRecord(t *testing.T) {
 	unilevel := treeShape{treeType: treeTypeUnilevel}
 	matrix := treeShape{treeType: treeTypeMatrix, width: 2, spillover: "breadth_first"}
+	binary := treeShape{treeType: treeTypeBinary}
 	cases := []struct {
 		name      string
 		eventType string
@@ -105,6 +106,18 @@ func TestTreeConsumer_RefusesATreeTypeTheStreamDoesNotRecord(t *testing.T) {
 		{"a removal with no tree type on a matrix stream", EventTypeNodeRemoved, matrix,
 			NodeRemovedPayload{TreeID: "tree1", UserID: "user-child"},
 			`node_removed for user-child in tree tree1 has no tree_type, and the stream records tree type matrix`},
+		{"a placement labelled binary on a unilevel stream", EventTypeNodePlaced, unilevel,
+			NodePlacedPayload{TreeID: "tree1", UserID: "user-new", ParentID: "user-root", SponsorID: "user-root",
+				Position: intPtr(0), TreeType: treeTypeBinary},
+			`node_placed for user-new in tree tree1 has tree_type "binary", and the stream records tree type unilevel`},
+		{"a placement labelled matrix on a unilevel stream", EventTypeNodePlaced, unilevel,
+			NodePlacedPayload{TreeID: "tree1", UserID: "user-new", ParentID: "user-root", SponsorID: "user-root",
+				Position: intPtr(0), TreeType: treeTypeMatrix},
+			`node_placed for user-new in tree tree1 has tree_type "matrix", and the stream records tree type unilevel`},
+		{"a placement labelled unilevel on a binary stream", EventTypeNodePlaced, binary,
+			NodePlacedPayload{TreeID: "tree1", UserID: "user-new", ParentID: "user-root", SponsorID: "user-root",
+				TreeType: treeTypeUnilevel},
+			`node_placed for user-new in tree tree1 has tree_type "unilevel", and the stream records tree type binary`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

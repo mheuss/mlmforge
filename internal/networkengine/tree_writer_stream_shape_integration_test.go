@@ -113,3 +113,22 @@ func TestTreeWriter_AForeignRemovalWithNoTreeTypeOnAMatrixStreamIsRefusedAndReje
 	assert.Nil(t, stamped, "the refused removal stamped a row")
 	assert.Equal(t, map[string]string{root: root, a: root, x: root}, activeSponsors(t, it.store, tree))
 }
+
+func TestTreeWriter_AForeignPlacementLabelledBinaryOnAUnilevelStreamIsRefusedAndRejectEventClearsIt(t *testing.T) {
+	it := newWriterIntegration(t)
+	ctx := context.Background()
+	tree, root, x, y := testTreeUUID(9423), testUserUUID(1), testUserUUID(7), testUserUUID(8)
+	it.addUnilevelRoot(t, tree, root)
+	foreign := appendForeign(t, it, tree, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: tree, UserID: x, ParentID: root, SponsorID: root, Position: intPtr(0), TreeType: treeTypeBinary,
+		EnrolledAt: writeTime.Add(time.Hour)})
+
+	refuseThenReject(t, it, foreign,
+		PlaceRequest{TreeID: tree, UserID: y, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(2 * time.Hour)},
+		LoadRequest{TreeID: tree, TreeType: treeTypeUnilevel})
+
+	row, err := it.store.GetNodeIncludingRemoved(ctx, tree, x)
+	require.NoError(t, err)
+	assert.Nil(t, row, "the refused placement left a row")
+	assert.Equal(t, map[string]string{root: root, y: root}, activeSponsors(t, it.store, tree))
+}

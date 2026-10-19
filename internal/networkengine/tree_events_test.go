@@ -105,8 +105,8 @@ func TestNodeRemovedShape_FollowsTheCompatibilityTable(t *testing.T) {
 		stream   string
 		treeType string
 		mode     PruningMode
-		consumer string
-		replay   string
+		shape    string
+		onStream string
 	}{
 		{"unilevel stream, no tree_type, no mode", treeTypeUnilevel, "", "", "", ""},
 		{"binary stream, no tree_type, no mode", treeTypeBinary, "", "", "", ""},
@@ -139,8 +139,8 @@ func TestNodeRemovedShape_FollowsTheCompatibilityTable(t *testing.T) {
 			p := NodeRemovedPayload{TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime,
 				TreeType: tc.treeType, PruningMode: tc.mode}
 
-			assertShapeVerdict(t, checkNodeRemovedShape(p), tc.consumer)
-			assertShapeVerdict(t, checkNodeRemovedOnStream(p, tc.stream), tc.replay)
+			assertShapeVerdict(t, checkNodeRemovedShape(p), tc.shape)
+			assertShapeVerdict(t, checkNodeRemovedOnStream(p, tc.stream), tc.onStream)
 		})
 	}
 }

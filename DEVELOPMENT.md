@@ -382,7 +382,7 @@ Amended 2026-10-14 by HEU-297: startup no longer bulk-loads the adjacency table.
 - Backward compat for callers that already supply `DistributorSnapshot.rank` directly is preserved. No commission flow is forced to use the new op.
 - Every plan's lowest rank requires nothing. It sets no threshold above zero, no required products, no window and no tenure. Go `validateRanks` and the engine's `CompensationPlan::validate` both refuse a plan that breaks this, and name the rank (HEU-761).
 - The evaluator never evaluates the lowest rank. Every distributor in the inputs holds at least that rank, including a distributor in no registered tree. `Unranked` is unreachable from `evaluate_ranks` for a plan with any rank. The variant stays, and Go keeps reading a nil history ordinal as Unranked.
-- The `DistributorSnapshot.rank` override path never carries "unranked". A caller builds each snapshot from the evaluated rank's name, and every evaluated distributor has one.
+- The `DistributorSnapshot.rank` override path never carries "unranked". A caller that builds commission snapshots from rank evaluation must use the evaluated rank's name. Every evaluated distributor has one.
 
 ---
 

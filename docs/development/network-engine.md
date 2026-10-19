@@ -534,6 +534,20 @@ between the builds. Otherwise the second build reuses the first artifact, the
 outputs are trivially identical, and the comparison proves nothing. This one is
 quiet: the check appears to pass.
 
+## Non-Finite Floats Do Not Reach The Engine Over The Wire
+
+The worker parses requests with serde_json without `arbitrary_precision`. Observed on a built worker on 2026-10-19 (HEU-709):
+
+- A `NaN` or `Infinity` literal is not JSON. The whole request line fails with `INVALID_REQUEST`, and the response `id` is empty.
+- `1e400` is JSON but overflows `f64`. The params fail with `INVALID_PARAMS` "number out of range".
+- `-1e-400` underflows to `-0.0` and parses.
+
+If the worker enables `arbitrary_precision` or another number feature, rerun these probes before relying on this section.
+
+So an engine guard against non-finite floats only ever sees negative values from Go. Test NaN and infinity through the library `calculate_*` functions, and the negative case through a contract fixture.
+
+`CalculationError` derives `PartialEq` and some variants carry an `f64`. NaN is not equal to itself, so `assert_eq!` can never match a variant holding NaN. Use `matches!` with `is_nan()`, or compare `to_bits()`.
+
 ## Worker Binary Freshness
 
 The Go integration suite fails if the Rust worker binary is older than a `.rs` file the binary is built from (`staleWorkerBinary` in `transport_test.go`, HEU-615). A stale binary used to be picked up silently, so a green `go test ./...` could mean the Rust half of the seam was never rebuilt.

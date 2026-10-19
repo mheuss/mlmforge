@@ -136,12 +136,11 @@ pub(crate) fn validate_snapshot_volumes(
 }
 
 /// Run the whole-map snapshot checks in a fixed order.
-///
-/// The rank check runs first, so an unknown rank surfaces ahead of a bad volume.
 pub(crate) fn validate_snapshots(
     plan: &CompensationPlan,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
 ) -> Result<(), CalculationError> {
+    // Rank first, so an unknown rank surfaces ahead of a bad volume.
     validate_snapshot_ranks(plan, snapshots)?;
     validate_snapshot_volumes(snapshots)
 }

@@ -660,7 +660,7 @@ pub fn calculate_stairstep(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
-    walk::validate_snapshot_ranks(plan, snapshots)?;
+    walk::validate_snapshots(plan, snapshots)?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let prep_result = prep(tree, plan, structure, snapshots, &rank_ordinals);
 
@@ -788,6 +788,83 @@ mod tests {
         assert_eq!(
             err,
             CalculationError::UnknownSnapshotRank(uuid(0), "diamond".to_string())
+        );
+    }
+
+    #[test]
+    fn calculate_stairstep_rejects_a_nan_personal_volume() {
+        let tree = build_chain(3);
+        let structure = test_stairstep_structure();
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("associate", f64::NAN));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                CalculationError::InvalidPersonalVolume(id, pv)
+                    if id == uuid(1) && pv.is_nan()
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn stairstep_rejects_a_nan_personal_volume_before_group_volumes_are_summed() {
+        // uuid(3) hangs off the root, away from the only source's upline.
+        // The group-volume sum still adds its personal volume to the root's
+        // group.
+        let mut tree = build_chain(3);
+        tree.add_node(uuid(3), uuid(0), uuid(0), 3).unwrap();
+        let structure = test_stairstep_structure();
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", f64::NAN));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(
+                err,
+                CalculationError::InvalidPersonalVolume(id, pv)
+                    if id == uuid(3) && pv.is_nan()
+            ),
+            "got {err:?}"
         );
     }
 

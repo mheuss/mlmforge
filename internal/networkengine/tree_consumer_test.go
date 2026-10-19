@@ -64,6 +64,11 @@ func makeEvent(eventType string, payload any) platform.Event {
 	}
 }
 
+// deliver hands ev to c.
+func deliver(ctx context.Context, c *TreeEventConsumer, ev platform.Event) error {
+	return c.HandleEvent(ctx, ev)
+}
+
 func TestTreeConsumer_HandleRootAdded(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()
@@ -78,7 +83,7 @@ func TestTreeConsumer_HandleRootAdded(t *testing.T) {
 	}
 	event := makeEvent(EventTypeRootAdded, payload)
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 	require.NoError(t, err)
 
 	// Verify store projection.
@@ -108,7 +113,7 @@ func TestTreeConsumer_RootAddedRejectsWrongStream(t *testing.T) {
 	event := makeEvent(EventTypeRootAdded, payload)
 	event.Stream = "tree-other"
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 	require.Error(t, err)
 	assert.EqualError(t, err,
 		`root_added for user-root in tree tree1 arrived on stream "tree-other", want "tree-tree1"`,
@@ -133,7 +138,7 @@ func TestTreeConsumer_RootAddedRejectsEmptyUserID(t *testing.T) {
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	})
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 	require.ErrorIs(t, err, ErrUnprojectableEvent)
 	assert.EqualError(t, err, "root_added in tree tree1 has an empty user_id")
 
@@ -163,7 +168,7 @@ func TestTreeConsumer_HandleNodePlaced(t *testing.T) {
 	}
 	event := makeEvent(EventTypeNodePlaced, payload)
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 	require.NoError(t, err)
 
 	// Verify store projection.
@@ -200,7 +205,7 @@ func TestTreeConsumer_LeavesStoreOwnedTimestampsUnset(t *testing.T) {
 			SponsorID:  "user-root",
 			EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		})
-		require.NoError(t, consumer.HandleEvent(context.Background(), event))
+		require.NoError(t, deliver(context.Background(), consumer, event))
 
 		require.Len(t, store.inserted, 1)
 		row := store.inserted[0]
@@ -223,7 +228,7 @@ func TestTreeConsumer_LeavesStoreOwnedTimestampsUnset(t *testing.T) {
 			TreeType:   treeTypeUnilevel,
 			EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 		})
-		require.NoError(t, consumer.HandleEvent(context.Background(), event))
+		require.NoError(t, deliver(context.Background(), consumer, event))
 
 		require.Len(t, store.inserted, 1)
 		row := store.inserted[0]
@@ -252,7 +257,7 @@ func TestTreeConsumer_NodePlacedRejectsWrongStream(t *testing.T) {
 	event := makeEvent(EventTypeNodePlaced, payload)
 	event.Stream = "tree-other"
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 	require.Error(t, err)
 	assert.EqualError(t, err,
 		`node_placed for user-child in tree tree1 arrived on stream "tree-other", want "tree-tree1"`,
@@ -279,7 +284,7 @@ func TestTreeConsumer_NodePlacedRejectsEmptyUserID(t *testing.T) {
 		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	})
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 	require.ErrorIs(t, err, ErrUnprojectableEvent)
 	assert.EqualError(t, err, "node_placed in tree tree1 has an empty user_id")
 
@@ -307,7 +312,7 @@ func TestTreeConsumer_HandleNodeRemoved(t *testing.T) {
 	}
 	event := makeEvent(EventTypeNodeRemoved, payload)
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 	require.NoError(t, err)
 
 	// Verify store projection (soft-deleted).
@@ -338,7 +343,7 @@ func TestTreeConsumer_NodeRemovedRejectsWrongStream(t *testing.T) {
 	event := makeEvent(EventTypeNodeRemoved, payload)
 	event.Stream = "tree-other"
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 	require.Error(t, err)
 	assert.EqualError(t, err,
 		`node_removed for user-leaf in tree tree1 arrived on stream "tree-other", want "tree-tree1"`,
@@ -368,7 +373,7 @@ func TestTreeConsumer_NodePlacedMissingParent(t *testing.T) {
 	}
 	event := makeEvent(EventTypeNodePlaced, payload)
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "parent node nonexistent-parent not found")
 	assert.Empty(t, transport.calls, "engine should not be called when parent is missing")
@@ -425,7 +430,7 @@ func TestTreeConsumer_NodePlacedGateRejections(t *testing.T) {
 				event.Stream = tc.stream
 			}
 
-			err := consumer.HandleEvent(context.Background(), event)
+			err := deliver(context.Background(), consumer, event)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.wantErr)
 			assert.Contains(t, err.Error(), payload.UserID, "error names the node")
@@ -471,7 +476,7 @@ func TestTreeConsumer_NodePlacedGateAccepts(t *testing.T) {
 				Position: tc.position, TreeType: tc.treeType,
 				EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 			}
-			require.NoError(t, consumer.HandleEvent(context.Background(), makeEvent(EventTypeNodePlaced, payload)))
+			require.NoError(t, deliver(context.Background(), consumer, makeEvent(EventTypeNodePlaced, payload)))
 
 			node, err := store.GetNode(context.Background(), "tree1", "user-child")
 			require.NoError(t, err)
@@ -500,7 +505,7 @@ func TestTreeConsumer_MatrixNodePlacedRoutesThroughAddNodeAt(t *testing.T) {
 		TreeType:   treeTypeMatrix,
 		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	}
-	require.NoError(t, consumer.HandleEvent(context.Background(), makeEvent(EventTypeNodePlaced, payload)))
+	require.NoError(t, deliver(context.Background(), consumer, makeEvent(EventTypeNodePlaced, payload)))
 
 	// Store projection carries the event's placement.
 	node, err := store.GetNode(context.Background(), "tree1", "user-child")
@@ -556,7 +561,7 @@ func TestTreeConsumer_UnilevelAndBinaryDispatchUnchanged(t *testing.T) {
 				Position: tc.position, TreeType: tc.treeType,
 				EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 			}
-			require.NoError(t, consumer.HandleEvent(context.Background(), makeEvent(EventTypeNodePlaced, payload)))
+			require.NoError(t, deliver(context.Background(), consumer, makeEvent(EventTypeNodePlaced, payload)))
 
 			require.Len(t, transport.calls, 1)
 			assert.Equal(t, "add_node", transport.calls[0].op)
@@ -591,7 +596,7 @@ func TestTreeConsumer_MatrixStoreProjectionPrecedesEngine(t *testing.T) {
 		Position: &pos, TreeType: treeTypeMatrix,
 		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	}
-	err := consumer.HandleEvent(context.Background(), makeEvent(EventTypeNodePlaced, payload))
+	err := deliver(context.Background(), consumer, makeEvent(EventTypeNodePlaced, payload))
 	require.Error(t, err, "engine failure surfaces after retries")
 
 	node, storeErr := store.GetNode(context.Background(), "tree1", "user-child")
@@ -629,7 +634,7 @@ func TestTreeConsumer_ContextCancellation(t *testing.T) {
 		cancel()
 	}()
 
-	err := consumer.HandleEvent(ctx, event)
+	err := deliver(ctx, consumer, event)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cancelled")
 
@@ -645,7 +650,7 @@ func TestTreeConsumer_UnknownEventType(t *testing.T) {
 
 	event := makeEvent("tree.unknown", map[string]string{"foo": "bar"})
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 	require.NoError(t, err, "unknown event types should be silently ignored")
 	assert.Empty(t, transport.calls)
 }
@@ -690,7 +695,7 @@ func TestTreeConsumer_EngineRetry(t *testing.T) {
 	}
 	event := makeEvent(EventTypeRootAdded, payload)
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 	require.NoError(t, err)
 
 	// Store should have been written (happens before engine call).
@@ -716,7 +721,7 @@ func TestTreeConsumer_EngineRetriesExhausted(t *testing.T) {
 	}
 	event := makeEvent(EventTypeRootAdded, payload)
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 	require.Error(t, err, "should return error when retries exhausted")
 
 	// Store should have been written despite engine failure.
@@ -744,7 +749,7 @@ func TestTreeConsumer_MalformedRootAdded(t *testing.T) {
 		Payload: json.RawMessage(`{not json}`),
 	}
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unmarshal root_added payload")
 	assert.Empty(t, transport.calls, "engine should not be called on bad payload")
@@ -764,7 +769,7 @@ func TestTreeConsumer_MalformedNodePlaced(t *testing.T) {
 		Payload: json.RawMessage(`{not json}`),
 	}
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unmarshal node_placed payload")
 	assert.Empty(t, transport.calls, "engine should not be called on bad payload")
@@ -784,7 +789,7 @@ func TestTreeConsumer_MalformedNodeRemoved(t *testing.T) {
 		Payload: json.RawMessage(`{not json}`),
 	}
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unmarshal node_removed payload")
 	assert.Empty(t, transport.calls, "engine should not be called on bad payload")
@@ -804,7 +809,7 @@ func TestTreeConsumer_NilPayload(t *testing.T) {
 		Payload: nil,
 	}
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unmarshal root_added payload")
 	assert.Empty(t, transport.calls, "engine should not be called on nil payload")
@@ -1510,7 +1515,7 @@ func TestHandleNodePlaced_ReconcileConverges(t *testing.T) {
 	}
 	c, _ := newReconcileConsumer(t, tr)
 
-	err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
+	err := deliver(context.Background(), c, makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
 
 	require.NoError(t, err, "the engine already holds exactly what was projected")
 	assert.Len(t, tr.mutationOps, 1, "converged does not retry")
@@ -1523,7 +1528,7 @@ func TestHandleNodePlaced_ReconcileDivergesOnADifferentPlacement(t *testing.T) {
 	}
 	c, _ := newReconcileConsumer(t, tr)
 
-	err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
+	err := deliver(context.Background(), c, makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), posUser, "the error names the user")
@@ -1540,7 +1545,7 @@ func TestHandleNodePlaced_ReconcileInconclusiveRetries(t *testing.T) {
 	}
 	c, _ := newReconcileConsumer(t, tr)
 
-	err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
+	err := deliver(context.Background(), c, makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
 
 	require.Error(t, err)
 	assert.Len(t, tr.mutationOps, c.maxRetries+1, "an inconclusive inspection retries")
@@ -1557,7 +1562,7 @@ func TestHandleNodePlaced_ReconcileSkipsOtherEngineErrors(t *testing.T) {
 	}
 	c, _ := newReconcileConsumer(t, tr)
 
-	err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
+	err := deliver(context.Background(), c, makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
 
 	require.Error(t, err)
 	assert.Len(t, tr.mutationOps, c.maxRetries+1)
@@ -1573,7 +1578,7 @@ func TestHandleNodePlaced_ReconcileCoversTheMatrixPath(t *testing.T) {
 	}
 	c, _ := newReconcileConsumer(t, tr)
 
-	err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodePlaced, placedPayload(treeTypeMatrix, intPtr(2))))
+	err := deliver(context.Background(), c, makeEvent(EventTypeNodePlaced, placedPayload(treeTypeMatrix, intPtr(2))))
 
 	require.NoError(t, err, "the matrix path reconciles too")
 	assert.Equal(t, []string{"add_node_at"}, tr.mutationOps)
@@ -1611,7 +1616,7 @@ func TestHandleRootAdded_ReconcileConverges(t *testing.T) {
 	}
 	c, store := newRootConsumer(tr)
 
-	err := c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload()))
+	err := deliver(context.Background(), c, makeEvent(EventTypeRootAdded, rootPayload()))
 
 	require.NoError(t, err)
 	assert.Len(t, tr.mutationOps, 1, "converged does not retry")
@@ -1627,7 +1632,7 @@ func TestHandleRootAdded_ReconcileCompensatesWhenTheUserIsNotTheRoot(t *testing.
 	}
 	c, store := newRootConsumer(tr)
 
-	err := c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload()))
+	err := deliver(context.Background(), c, makeEvent(EventTypeRootAdded, rootPayload()))
 
 	require.Error(t, err)
 	assert.Nil(t, activeRow(t, store, posUser), "the row this call inserted is undone")
@@ -1643,7 +1648,7 @@ func TestHandleRootAdded_ReconcileCompensatesWhenAnotherUserIsRoot(t *testing.T)
 	}
 	c, store := newRootConsumer(tr)
 
-	err := c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload()))
+	err := deliver(context.Background(), c, makeEvent(EventTypeRootAdded, rootPayload()))
 
 	require.Error(t, err)
 	assert.Nil(t, activeRow(t, store, posUser),
@@ -1660,7 +1665,7 @@ func TestHandleRootAdded_ReconcileKeepsTheRowWhenInspectionFails(t *testing.T) {
 	}
 	c, store := newRootConsumer(tr)
 
-	err := c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload()))
+	err := deliver(context.Background(), c, makeEvent(EventTypeRootAdded, rootPayload()))
 
 	require.Error(t, err)
 	assert.NotNil(t, activeRow(t, store, posUser), "a timeout is not evidence the root is wrong")
@@ -1674,7 +1679,7 @@ func TestHandleRootAdded_ReconcileSkipsOtherEngineErrors(t *testing.T) {
 	}
 	c, store := newRootConsumer(tr)
 
-	err := c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload()))
+	err := deliver(context.Background(), c, makeEvent(EventTypeRootAdded, rootPayload()))
 
 	require.Error(t, err)
 	assert.Equal(t, 0, tr.positionOps, "no inspection for an error reconcile cannot speak to")
@@ -1731,7 +1736,7 @@ func TestHandleRootAdded_ReconcileDivergesOnADifferentEnrolledAt(t *testing.T) {
 	}
 	c, store := newRootConsumer(tr)
 
-	err := c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload()))
+	err := deliver(context.Background(), c, makeEvent(EventTypeRootAdded, rootPayload()))
 
 	require.Error(t, err, "the engine's root enrolled at a different time is not this event's root")
 	assert.Nil(t, activeRow(t, store, posUser))
@@ -1760,7 +1765,7 @@ func TestHandleRootAdded_UncancelledPathsDoNotReadBack(t *testing.T) {
 		c := NewTreeEventConsumer(store, newEngineClientWithTransport(&reconcileTransport{}))
 		c.retryDelay = 0
 
-		require.NoError(t, c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload())))
+		require.NoError(t, deliver(context.Background(), c, makeEvent(EventTypeRootAdded, rootPayload())))
 	})
 
 	t.Run("the engine fails without a cancellation", func(t *testing.T) {
@@ -1769,7 +1774,7 @@ func TestHandleRootAdded_UncancelledPathsDoNotReadBack(t *testing.T) {
 		c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
 		c.retryDelay = 0
 
-		err := c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload()))
+		err := deliver(context.Background(), c, makeEvent(EventTypeRootAdded, rootPayload()))
 
 		require.Error(t, err)
 		assert.NotErrorIs(t, err, context.Canceled)
@@ -1786,7 +1791,7 @@ func TestHandleRootAdded_UncancelledPathsDoNotReadBack(t *testing.T) {
 		c := NewTreeEventConsumer(store, newEngineClientWithTransport(&reconcileTransport{}))
 		c.retryDelay = 0
 
-		require.ErrorIs(t, c.HandleEvent(ctx, makeEvent(EventTypeRootAdded, rootPayload())), ErrRootConflict)
+		require.ErrorIs(t, deliver(ctx, c, makeEvent(EventTypeRootAdded, rootPayload())), ErrRootConflict)
 	})
 }
 
@@ -1857,7 +1862,7 @@ func TestHandleRootAdded_CancelledInsertReportsTheRow(t *testing.T) {
 	// Held rather than inlined, so the assertion can name the event id the
 	// row carries.
 	event := makeEvent(EventTypeRootAdded, rootPayload())
-	err := c.HandleEvent(ctx, event)
+	err := deliver(ctx, c, event)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled, "the cancellation is still the cause")
@@ -1881,7 +1886,7 @@ func TestHandleRootAdded_ExpiredDeadlineReportsTheRow(t *testing.T) {
 	c.retryDelay = time.Minute
 
 	event := makeEvent(EventTypeRootAdded, rootPayload())
-	err := c.HandleEvent(ctx, event)
+	err := deliver(ctx, c, event)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.DeadlineExceeded, "the deadline is still the cause")
@@ -1903,7 +1908,7 @@ func TestHandleRootAdded_SecondRootRefusedBeforeTheEngine(t *testing.T) {
 	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
 	c.retryDelay = 0
 
-	err := c.HandleEvent(ctx, makeEvent(EventTypeRootAdded, rootPayload()))
+	err := deliver(ctx, c, makeEvent(EventTypeRootAdded, rootPayload()))
 
 	require.ErrorIs(t, err, ErrRootConflict)
 	assert.Empty(t, tr.mutationOps, "no engine call was made")
@@ -1941,7 +1946,7 @@ func TestHandleRootAdded_CompensationTouchesOnlyThisEventsRow(t *testing.T) {
 	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
 	c.retryDelay = 0
 
-	err := c.HandleEvent(ctx, makeEvent(EventTypeRootAdded, rootPayload()))
+	err := deliver(ctx, c, makeEvent(EventTypeRootAdded, rootPayload()))
 
 	require.Error(t, err)
 	assert.Equal(t, []string{posUser}, store.deleted, "only this event's user is compensated")
@@ -1965,7 +1970,7 @@ func TestHandleRootAdded_CompensatesOnceAcrossAttempts(t *testing.T) {
 	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
 	c.retryDelay = 0
 
-	err := c.HandleEvent(context.Background(), makeEvent(EventTypeRootAdded, rootPayload()))
+	err := deliver(context.Background(), c, makeEvent(EventTypeRootAdded, rootPayload()))
 
 	require.Error(t, err)
 	assert.Len(t, tr.mutationOps, 2, "the first failure retried, the second diverged")
@@ -1986,7 +1991,7 @@ func TestHandleRootAdded_CompensationSurvivesCancellation(t *testing.T) {
 	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
 	c.retryDelay = 0
 
-	err := c.HandleEvent(ctx, makeEvent(EventTypeRootAdded, rootPayload()))
+	err := deliver(ctx, c, makeEvent(EventTypeRootAdded, rootPayload()))
 
 	require.Error(t, err)
 	assert.Equal(t, []string{posUser}, store.attempts, "the compensation was attempted")
@@ -2026,7 +2031,7 @@ func TestHandleNodeRemoved_RefusesWhenOnlyAnUnstampedTombstoneExists(t *testing.
 	require.NotNil(t, tomb.RemovedAt)
 	event := makeEvent(EventTypeNodeRemoved, removedPayload())
 
-	err = c.HandleEvent(ctx, event)
+	err = deliver(ctx, c, event)
 
 	require.ErrorIs(t, err, ErrUnprojectableEvent)
 	assert.EqualError(t, err, "engine remove_node for "+posUser+" in tree tree1 returned USER_NOT_FOUND; no row carries removal event "+
@@ -2047,7 +2052,7 @@ func TestHandleNodeRemoved_ReconcileFailsWhenAnActiveRowRemains(t *testing.T) {
 	c, store := newRemovalConsumer(tr)
 	seedRemovable(t, store)
 
-	err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodeRemoved, removedPayload()))
+	err := deliver(context.Background(), c, makeEvent(EventTypeNodeRemoved, removedPayload()))
 
 	var target *RemovalNotProjectedError
 	require.ErrorAs(t, err, &target)
@@ -2070,7 +2075,7 @@ func TestHandleNodeRemoved_RefusesWhenOnlyAnotherRemovalsTombstoneExists(t *test
 	require.NotNil(t, tomb.RemovedAt)
 	event := makeEvent(EventTypeNodeRemoved, removedPayload())
 
-	err = c.HandleEvent(ctx, event)
+	err = deliver(ctx, c, event)
 
 	require.ErrorIs(t, err, ErrUnprojectableEvent)
 	assert.EqualError(t, err, "engine remove_node for "+posUser+" in tree tree1 returned USER_NOT_FOUND; no row carries removal event "+
@@ -2121,7 +2126,7 @@ func TestHandleNodeRemoved_ConvergesWhenTheUserReadFindsThisRemovalsStamp(t *tes
 			versionBefore, foundBefore, err := mem.ProjectedVersion(ctx, "tree1")
 			require.NoError(t, err)
 
-			err = c.HandleEvent(ctx, event)
+			err = deliver(ctx, c, event)
 
 			require.NoError(t, err)
 			assert.Len(t, tr.mutationOps, 1, "engine mutation calls")
@@ -2141,7 +2146,7 @@ func TestHandleNodeRemoved_RefusesWhenTheStoreHoldsNoRow(t *testing.T) {
 	c, store := newRemovalConsumer(tr)
 	event := makeEvent(EventTypeNodeRemoved, removedPayload())
 
-	err := c.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), c, event)
 
 	require.ErrorIs(t, err, ErrUnprojectableEvent)
 	assert.EqualError(t, err, "engine remove_node for "+posUser+" in tree tree1 returned USER_NOT_FOUND; no row carries removal event "+
@@ -2159,7 +2164,7 @@ func TestHandleNodeRemoved_ReconcileSkipsOtherEngineErrors(t *testing.T) {
 	c, store := newRemovalConsumer(tr)
 	seedRemovable(t, store)
 
-	err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodeRemoved, removedPayload()))
+	err := deliver(context.Background(), c, makeEvent(EventTypeNodeRemoved, removedPayload()))
 
 	require.Error(t, err)
 	assert.Len(t, tr.mutationOps, c.maxRetries+1, "an error reconcile cannot speak to still retries")
@@ -2172,7 +2177,7 @@ func TestHandleNodeRemoved_SucceedsAndWritesTheStore(t *testing.T) {
 	c, store := newRemovalConsumer(tr)
 	seedRemovable(t, store)
 
-	err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodeRemoved, removedPayload()))
+	err := deliver(context.Background(), c, makeEvent(EventTypeNodeRemoved, removedPayload()))
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{posUser}, store.responsors, "the store write still runs")
@@ -2185,7 +2190,7 @@ func TestHandleNodeRemoved_StampsTheTombstoneWithTheEventID(t *testing.T) {
 	seedRemovable(t, store)
 	event := makeEvent(EventTypeNodeRemoved, removedPayload())
 
-	require.NoError(t, c.HandleEvent(context.Background(), event))
+	require.NoError(t, deliver(context.Background(), c, event))
 
 	tomb, err := store.GetNodeIncludingRemoved(context.Background(), "tree1", posUser)
 	require.NoError(t, err)
@@ -2215,7 +2220,7 @@ func TestHandleNodeRemoved_ReconcileConvergesOnItsOwnTombstoneBehindALaterPlacem
 	require.NoError(t, stampRemoval(ctx, store.MemoryTreeStore, "tree1", posUser, event.ID, 1))
 	later := seedReplacement(t, store)
 
-	err := c.HandleEvent(ctx, event)
+	err := deliver(ctx, c, event)
 
 	require.NoError(t, err, "this removal's own tombstone is in the store")
 	assert.Empty(t, store.responsors, "the store write must not run a second time")
@@ -2235,7 +2240,7 @@ func TestHandleNodeRemoved_ReconcileFailsWhenOnlyAnEarlierRemovalsTombstoneExist
 	seedReplacement(t, store)
 	event := makeEvent(EventTypeNodeRemoved, removedPayload())
 
-	err := c.HandleEvent(ctx, event)
+	err := deliver(ctx, c, event)
 
 	var target *RemovalNotProjectedError
 	require.ErrorAs(t, err, &target)
@@ -2275,7 +2280,7 @@ func TestHandleNodeRemoved_ReconcileRetriesWhenAReadFails(t *testing.T) {
 			c := NewTreeEventConsumer(wrap(mem), newEngineClientWithTransport(tr))
 			c.retryDelay = 0
 
-			err := c.HandleEvent(context.Background(), makeEvent(EventTypeNodeRemoved, removedPayload()))
+			err := deliver(context.Background(), c, makeEvent(EventTypeNodeRemoved, removedPayload()))
 
 			require.Error(t, err)
 			var target *RemovalNotProjectedError
@@ -2298,7 +2303,7 @@ func TestHandleNodeRemoved_StoreWriteSurvivesCancellation(t *testing.T) {
 	c.retryDelay = 0
 	seedRemovable(t, store)
 
-	err := c.HandleEvent(ctx, makeEvent(EventTypeNodeRemoved, removedPayload()))
+	err := deliver(ctx, c, makeEvent(EventTypeNodeRemoved, removedPayload()))
 
 	require.NoError(t, err, "the removal completes even though the caller gave up")
 	assert.Equal(t, []string{posUser}, store.wroteResponsors, "the store write landed")
@@ -2359,7 +2364,7 @@ func TestHandleNodePlaced_ReplayedAfterRemoval(t *testing.T) {
 	removed := posEnrolled.Add(time.Hour)
 	seedRow(t, store, ev.ID, posUser, &removed)
 
-	err := c.HandleEvent(context.Background(), ev)
+	err := deliver(context.Background(), c, ev)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrReplayedPlacement)
@@ -2373,7 +2378,7 @@ func TestHandleNodePlaced_SkippedInsertOfThisEventsActiveRowReachesTheEngine(t *
 	ev := makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1)))
 	seedRow(t, store, ev.ID, posUser, nil)
 
-	err := c.HandleEvent(context.Background(), ev)
+	err := deliver(context.Background(), c, ev)
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"add_node"}, tr.mutationOps, "the lost-reply case still reaches the engine")
@@ -2387,7 +2392,7 @@ func TestHandleNodePlaced_SkippedInsertWithNoRowForThisUser(t *testing.T) {
 	ev := makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1)))
 	seedRow(t, store, ev.ID, posOther, nil)
 
-	err := c.HandleEvent(context.Background(), ev)
+	err := deliver(context.Background(), c, ev)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrReplayedPlacement)
@@ -2405,7 +2410,7 @@ func TestHandleNodePlaced_SupersededByALaterPlacement(t *testing.T) {
 	seedRow(t, store, ev.ID, posUser, &removed)
 	seedRow(t, store, supersedingEventID, posUser, nil)
 
-	err := c.HandleEvent(context.Background(), ev)
+	err := deliver(context.Background(), c, ev)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrReplayedPlacement)
@@ -2424,7 +2429,7 @@ func TestHandleNodePlaced_SupersededAndRemovedAgain(t *testing.T) {
 	seedRow(t, store, ev.ID, posUser, &early)
 	seedRow(t, store, supersedingEventID, posUser, &late)
 
-	err := c.HandleEvent(context.Background(), ev)
+	err := deliver(context.Background(), c, ev)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrReplayedPlacement)
@@ -2439,7 +2444,7 @@ func TestHandleRootAdded_ReplayedAfterRemoval(t *testing.T) {
 	removed := posEnrolled.Add(time.Hour)
 	seedRootRow(t, store, ev.ID, posUser, &removed)
 
-	err := c.HandleEvent(context.Background(), ev)
+	err := deliver(context.Background(), c, ev)
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrReplayedPlacement)
@@ -2453,7 +2458,7 @@ func TestHandleRootAdded_SkippedInsertOfThisEventsActiveRowReachesTheEngine(t *t
 	ev := makeEvent(EventTypeRootAdded, rootPayload())
 	seedRootRow(t, store, ev.ID, posUser, nil)
 
-	err := c.HandleEvent(context.Background(), ev)
+	err := deliver(context.Background(), c, ev)
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"add_root"}, tr.mutationOps, "the lost-reply case still reaches the engine")
@@ -2471,7 +2476,7 @@ func TestHandleRootAdded_ReplayKeepsTheStoredRowWhenTheEngineDisagrees(t *testin
 	ev := makeEvent(EventTypeRootAdded, rootPayload())
 	seedRootRow(t, store, ev.ID, posUser, nil)
 
-	err := c.HandleEvent(context.Background(), ev)
+	err := deliver(context.Background(), c, ev)
 
 	require.Error(t, err, "a disagreeing engine is still a divergence")
 	assert.NotNil(t, activeRow(t, store, posUser), "the stored row survives a replay this call did not insert")
@@ -2487,7 +2492,7 @@ func TestHandleNodePlaced_SkippedInsertReportsAFailedRead(t *testing.T) {
 	ev := makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1)))
 	seedRow(t, backing, ev.ID, posUser, nil)
 
-	err := c.HandleEvent(context.Background(), ev)
+	err := deliver(context.Background(), c, ev)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "read timed out", "the read failure reaches the caller")
@@ -2553,7 +2558,7 @@ func TestCheckReplayedInsert_MessageText(t *testing.T) {
 			ev := makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1)))
 			ev.ID = evID
 
-			err := c.HandleEvent(context.Background(), ev)
+			err := deliver(context.Background(), c, ev)
 
 			require.Error(t, err)
 			assert.Equal(t,
@@ -2583,7 +2588,7 @@ func TestCheckReplayedInsert_PostgresMessageText(t *testing.T) {
 	ev.ID = evID
 	ev.Stream = TreeStreamName(tree)
 
-	err := c.HandleEvent(ctx, ev)
+	err := deliver(ctx, c, ev)
 
 	require.Error(t, err)
 	assert.Equal(t,
@@ -2624,7 +2629,7 @@ func TestTreeConsumer_ARemovalTombstonesTheUserOnEveryTreeType(t *testing.T) {
 				TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime, TreeType: tc.treeType, PruningMode: tc.mode,
 			})
 
-			err := consumer.HandleEvent(ctx, event)
+			err := deliver(ctx, consumer, event)
 
 			require.NoError(t, err)
 			row, err := store.GetNode(ctx, writerTree, writerChild)
@@ -2661,7 +2666,7 @@ func TestTreeConsumer_RefusesARemovalWhoseShapeTheEngineCannotApply(t *testing.T
 				ptr(writerRoot), ptr(writerRoot), nil)))
 			consumer := NewTreeEventConsumer(store, engine)
 
-			err := consumer.HandleEvent(ctx, versionedEvent(t, writerTree, 3, EventTypeNodeRemoved, NodeRemovedPayload{
+			err := deliver(ctx, consumer, versionedEvent(t, writerTree, 3, EventTypeNodeRemoved, NodeRemovedPayload{
 				TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime, TreeType: tc.treeType, PruningMode: tc.mode,
 			}))
 
@@ -2733,7 +2738,7 @@ func TestTreeConsumer_AMatrixRemovalWhoseReplyWasLostRefusesAndWritesNothing(t *
 		UserID: writerChild, RemovedAt: writeTime, TreeType: treeTypeMatrix, PruningMode: PruningPromoteEarliest})
 	before := readProjectionState(t, inner, writerTree, writerRoot, writerChild)
 
-	err := consumer.HandleEvent(ctx, event)
+	err := deliver(ctx, consumer, event)
 
 	var notProjected *RemovalNotProjectedError
 	require.ErrorAs(t, err, &notProjected)

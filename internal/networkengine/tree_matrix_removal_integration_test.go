@@ -84,7 +84,7 @@ func newMatrixConsumerEnv(t *testing.T, tree string, width int) *matrixConsumerE
 func (e *matrixConsumerEnv) handle(t *testing.T, eventType string, payload any) {
 	t.Helper()
 	e.version++
-	require.NoError(t, e.consumer.HandleEvent(context.Background(), versionedEvent(t, e.tree, e.version, eventType, payload)),
+	require.NoError(t, deliver(context.Background(), e.consumer, versionedEvent(t, e.tree, e.version, eventType, payload)),
 		"event at version %d", e.version)
 }
 
@@ -107,10 +107,10 @@ func TestTreeConsumer_ARedeliveredHoldingTankRemovalConverges(t *testing.T) {
 	env.place(t, a, x, 0, 2*time.Hour)
 	removal := versionedEvent(t, env.tree, 4, EventTypeNodeRemoved, NodeRemovedPayload{TreeID: env.tree, UserID: x,
 		RemovedAt: writeTime, TreeType: treeTypeMatrix, PruningMode: PruningHoldingTank})
-	require.NoError(t, env.consumer.HandleEvent(context.Background(), removal))
+	require.NoError(t, deliver(context.Background(), env.consumer, removal))
 	before := readProjectionState(t, env.store, env.tree, root, x, a)
 
-	err := env.consumer.HandleEvent(context.Background(), removal)
+	err := deliver(context.Background(), env.consumer, removal)
 
 	require.NoError(t, err)
 	assert.Equal(t, before, readProjectionState(t, env.store, env.tree, root, x, a))
@@ -166,7 +166,7 @@ func TestTreeConsumer_ARedeliveredPlacementConvergesAfterAPromotionMovedItsNode_
 			SponsorID: a, Position: &one, TreeType: treeTypeMatrix, EnrolledAt: writeTime}),
 	}
 	for _, ev := range events {
-		require.NoError(t, consumer.HandleEvent(ctx, ev))
+		require.NoError(t, deliver(ctx, consumer, ev))
 	}
 	// Promote b into a's slot, then place a again at the root's slot 1, in the
 	// engine and the store alike.
@@ -178,7 +178,7 @@ func TestTreeConsumer_ARedeliveredPlacementConvergesAfterAPromotionMovedItsNode_
 	require.NoError(t, store.insertNode(ctx, TreeNodeRow{ID: uuid.NewString(), TreeID: tree, UserID: a,
 		ParentID: ptr(root), SponsorID: ptr(root), Position: intPtr(1), Depth: 1, EnrolledAt: writeTime}))
 
-	err = consumer.HandleEvent(ctx, events[2])
+	err = deliver(ctx, consumer, events[2])
 
 	require.NoError(t, err)
 	requireRowsMatchEngine(t, store, engine, tree)
@@ -367,7 +367,7 @@ func runSeededMatrixRemoval(t *testing.T, store TreeStore, engine *EngineClient,
 	version := int64(0)
 	handle := func(eventType string, payload any) {
 		version++
-		require.NoError(t, consumer.HandleEvent(ctx, versionedEvent(t, tree, version, eventType, payload)),
+		require.NoError(t, deliver(ctx, consumer, versionedEvent(t, tree, version, eventType, payload)),
 			"seed %d, event at version %d", seed, version)
 	}
 	spillover := "breadth_first"

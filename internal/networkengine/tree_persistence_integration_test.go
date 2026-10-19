@@ -87,7 +87,7 @@ func TestTreePersistence_FullWritePath(t *testing.T) {
 	}
 
 	event := appendTreeEvent(t, eventStore, TreeStreamName(treeID), 0, EventTypeRootAdded, rootPayload)
-	require.NoError(t, consumer.HandleEvent(ctx, event))
+	require.NoError(t, deliver(ctx, consumer, event))
 
 	// Verify node exists in table.
 	node, err := treeStore.GetNode(ctx, treeID, rootUserID)
@@ -119,7 +119,7 @@ func TestTreePersistence_PlaceAndRemove(t *testing.T) {
 		TreeID: treeID, UserID: rootID, SponsorID: rootID,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+	require.NoError(t, deliver(ctx, consumer, rootEvent))
 
 	// Place child.
 	childEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
@@ -127,7 +127,7 @@ func TestTreePersistence_PlaceAndRemove(t *testing.T) {
 		TreeType:   treeTypeUnilevel,
 		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, childEvent))
+	require.NoError(t, deliver(ctx, consumer, childEvent))
 
 	// Verify child in table and engine.
 	childNode, err := treeStore.GetNode(ctx, treeID, childID)
@@ -143,7 +143,7 @@ func TestTreePersistence_PlaceAndRemove(t *testing.T) {
 	removeEvent := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodeRemoved, NodeRemovedPayload{
 		TreeID: treeID, UserID: childID, RemovedAt: time.Now(),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, removeEvent))
+	require.NoError(t, deliver(ctx, consumer, removeEvent))
 
 	// Verify child is soft-deleted in table (has removed_at).
 	activeNode, err := treeStore.GetNode(ctx, treeID, childID)
@@ -177,21 +177,21 @@ func TestTreePersistence_BulkLoadMatchesEventPath(t *testing.T) {
 		TreeID: treeID, UserID: rootID, SponsorID: rootID,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+	require.NoError(t, deliver(ctx, consumer, rootEvent))
 
 	childEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
 		TreeID: treeID, UserID: childID, ParentID: rootID, SponsorID: rootID,
 		TreeType:   treeTypeUnilevel,
 		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, childEvent))
+	require.NoError(t, deliver(ctx, consumer, childEvent))
 
 	grandchildEvent := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodePlaced, NodePlacedPayload{
 		TreeID: treeID, UserID: grandchildID, ParentID: childID, SponsorID: childID,
 		TreeType:   treeTypeUnilevel,
 		EnrolledAt: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, grandchildEvent))
+	require.NoError(t, deliver(ctx, consumer, grandchildEvent))
 
 	// Capture positions from the event-built engine.
 	rootPos, err := engine.GetPosition(ctx, treeID, rootID)
@@ -255,7 +255,7 @@ func TestTreePersistence_EngineFailureRetry(t *testing.T) {
 		Payload: data,
 	}
 
-	err = consumer.HandleEvent(ctx, event)
+	err = deliver(ctx, consumer, event)
 	require.NoError(t, err)
 
 	// Verify store projection succeeded.
@@ -408,7 +408,7 @@ func TestTreePersistence_MatrixConsumerRoundTrip(t *testing.T) {
 	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
 		TreeID: treeID, UserID: u1, SponsorID: u1, EnrolledAt: base,
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+	require.NoError(t, deliver(ctx, consumer, rootEvent))
 
 	place := func(version int64, userID, parentID, sponsorID string, pos int, at time.Time) {
 		t.Helper()
@@ -416,7 +416,7 @@ func TestTreePersistence_MatrixConsumerRoundTrip(t *testing.T) {
 			TreeID: treeID, UserID: userID, ParentID: parentID, SponsorID: sponsorID,
 			Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: at,
 		})
-		require.NoError(t, consumer.HandleEvent(ctx, ev))
+		require.NoError(t, deliver(ctx, consumer, ev))
 	}
 
 	// u2 under the root at slot 0.
@@ -428,7 +428,7 @@ func TestTreePersistence_MatrixConsumerRoundTrip(t *testing.T) {
 		TreeID: treeID, UserID: testUserUUID(9), ParentID: u1, SponsorID: u1,
 		TreeType: treeTypeMatrix, EnrolledAt: base.Add(90 * time.Minute),
 	})
-	err := consumer.HandleEvent(ctx, badEvent)
+	err := deliver(ctx, consumer, badEvent)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "has no position")
 	assert.Contains(t, err.Error(), testUserUUID(9), "rejection names the poison event's user")
@@ -532,14 +532,14 @@ func TestTreePersistence_SlotConflictFailsCleanAndTreeReloads(t *testing.T) {
 	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
 		TreeID: treeID, UserID: u1, SponsorID: u1, EnrolledAt: base,
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+	require.NoError(t, deliver(ctx, consumer, rootEvent))
 
 	pos := 0
 	okEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
 		TreeID: treeID, UserID: u2, ParentID: u1, SponsorID: u1,
 		Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: base.Add(time.Hour),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, okEvent))
+	require.NoError(t, deliver(ctx, consumer, okEvent))
 
 	// u3 claims the slot u2 holds. The store insert dies on the partial
 	// unique index; the engine is never called for it.
@@ -547,7 +547,7 @@ func TestTreePersistence_SlotConflictFailsCleanAndTreeReloads(t *testing.T) {
 		TreeID: treeID, UserID: u3, ParentID: u1, SponsorID: u1,
 		Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: base.Add(2 * time.Hour),
 	})
-	err := consumer.HandleEvent(ctx, conflict)
+	err := deliver(ctx, consumer, conflict)
 	assert.ErrorIs(t, err, ErrSlotConflict)
 
 	rows, err := treeStore.GetByTree(ctx, treeID)
@@ -597,16 +597,16 @@ func TestTreePersistence_DuplicateDeliveryConverges(t *testing.T) {
 	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
 		TreeID: treeID, UserID: u1, SponsorID: u1, EnrolledAt: base,
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+	require.NoError(t, deliver(ctx, consumer, rootEvent))
 
 	pos := 0
 	okEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
 		TreeID: treeID, UserID: u2, ParentID: u1, SponsorID: u1,
 		Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: base.Add(time.Hour),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, okEvent))
+	require.NoError(t, deliver(ctx, consumer, okEvent))
 
-	require.NoError(t, consumer.HandleEvent(ctx, okEvent))
+	require.NoError(t, deliver(ctx, consumer, okEvent))
 
 	rows, err := treeStore.GetByTree(ctx, treeID)
 	require.NoError(t, err)
@@ -687,14 +687,14 @@ func TestTreePersistence_RemovedSponsorStillReloads(t *testing.T) {
 		TreeID: treeID, UserID: rootID, SponsorID: rootID,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+	require.NoError(t, deliver(ctx, consumer, rootEvent))
 
 	recruiterEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
 		TreeID: treeID, UserID: recruiterID, ParentID: rootID, SponsorID: rootID,
 		TreeType:   treeTypeUnilevel,
 		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, recruiterEvent))
+	require.NoError(t, deliver(ctx, consumer, recruiterEvent))
 
 	// Placed under the root so the recruiter stays childless and removable,
 	// sponsored by the recruiter so the stored edge outlives its target.
@@ -703,7 +703,7 @@ func TestTreePersistence_RemovedSponsorStillReloads(t *testing.T) {
 		TreeType:   treeTypeUnilevel,
 		EnrolledAt: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, recruitEvent))
+	require.NoError(t, deliver(ctx, consumer, recruitEvent))
 
 	stored, err := treeStore.GetNode(ctx, treeID, recruitID)
 	require.NoError(t, err)
@@ -715,7 +715,7 @@ func TestTreePersistence_RemovedSponsorStillReloads(t *testing.T) {
 	removeEvent := appendTreeEvent(t, eventStore, stream, 3, EventTypeNodeRemoved, NodeRemovedPayload{
 		TreeID: treeID, UserID: recruiterID, RemovedAt: time.Now(),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, removeEvent))
+	require.NoError(t, deliver(ctx, consumer, removeEvent))
 
 	after, err := treeStore.GetNode(ctx, treeID, recruitID)
 	require.NoError(t, err)
@@ -763,14 +763,14 @@ func TestTreePersistence_SupersededRedeliveryIsRefused(t *testing.T) {
 	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
 		TreeID: treeID, UserID: u1, SponsorID: u1, EnrolledAt: base,
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+	require.NoError(t, deliver(ctx, consumer, rootEvent))
 
 	pos := 0
 	okEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
 		TreeID: treeID, UserID: u2, ParentID: u1, SponsorID: u1,
 		Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: base.Add(time.Hour),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, okEvent))
+	require.NoError(t, deliver(ctx, consumer, okEvent))
 
 	require.NoError(t, tombstoneUser(ctx, treeStore, treeID, u2))
 	require.NoError(t, insertNode(ctx, treeStore.pool, TreeNodeRow{
@@ -787,7 +787,7 @@ func TestTreePersistence_SupersededRedeliveryIsRefused(t *testing.T) {
 	before, err := treeStore.GetByTree(ctx, treeID)
 	require.NoError(t, err)
 
-	rerr := consumer.HandleEvent(ctx, okEvent)
+	rerr := deliver(ctx, consumer, okEvent)
 	require.Error(t, rerr, "a superseded redelivery is refused")
 	assert.True(t,
 		errors.Is(rerr, ErrReplayedPlacement) ||
@@ -854,7 +854,7 @@ func TestTreePersistence_RedeliveryAfterPartialProjection(t *testing.T) {
 	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
 		TreeID: treeID, UserID: u1, SponsorID: u1, EnrolledAt: base,
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+	require.NoError(t, deliver(ctx, consumer, rootEvent))
 
 	// Slot 1 rather than 0: EnginePosition.Position's zero value is 0, so the
 	// closing assertion cannot fail on a consumer that drops the event's
@@ -865,7 +865,7 @@ func TestTreePersistence_RedeliveryAfterPartialProjection(t *testing.T) {
 		Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: base.Add(time.Hour),
 	})
 
-	require.Error(t, consumer.HandleEvent(ctx, placed), "the gated engine call fails")
+	require.Error(t, deliver(ctx, consumer, placed), "the gated engine call fails")
 	require.Positive(t, gate.forced.Load(), "the gate returned at least one refusal for add_node_at")
 
 	stored, err := treeStore.GetNode(ctx, treeID, u2)
@@ -876,7 +876,7 @@ func TestTreePersistence_RedeliveryAfterPartialProjection(t *testing.T) {
 		"the code lives in a field, not in the message text: %v", perr)
 
 	gate.gated.Store(false)
-	require.NoError(t, consumer.HandleEvent(ctx, placed), "the redelivery converges")
+	require.NoError(t, deliver(ctx, consumer, placed), "the redelivery converges")
 
 	rows, err := treeStore.GetByTree(ctx, treeID)
 	require.NoError(t, err)
@@ -912,20 +912,20 @@ func TestTreePersistence_ReplayedPlacementRefused(t *testing.T) {
 	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
 		TreeID: treeID, UserID: u1, SponsorID: u1, EnrolledAt: base,
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+	require.NoError(t, deliver(ctx, consumer, rootEvent))
 
 	placed := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
 		TreeID: treeID, UserID: u2, ParentID: u1, SponsorID: u1,
 		TreeType: treeTypeUnilevel, EnrolledAt: base.Add(time.Hour),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, placed))
+	require.NoError(t, deliver(ctx, consumer, placed))
 
 	removed := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodeRemoved, NodeRemovedPayload{
 		TreeID: treeID, UserID: u2, RemovedAt: base.Add(2 * time.Hour),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, removed))
+	require.NoError(t, deliver(ctx, consumer, removed))
 
-	err := consumer.HandleEvent(ctx, placed)
+	err := deliver(ctx, consumer, placed)
 
 	var refused *ProjectionRefusedError
 	require.ErrorAs(t, err, &refused)
@@ -963,19 +963,19 @@ func seedRecruiterAndRecruit(
 	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
 		TreeID: treeID, UserID: rootID, SponsorID: rootID, EnrolledAt: base,
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+	require.NoError(t, deliver(ctx, consumer, rootEvent))
 
 	recruiterEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
 		TreeID: treeID, UserID: recruiterID, ParentID: rootID, SponsorID: rootID,
 		TreeType: treeTypeUnilevel, EnrolledAt: base.Add(24 * time.Hour),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, recruiterEvent))
+	require.NoError(t, deliver(ctx, consumer, recruiterEvent))
 
 	recruitEvent := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodePlaced, NodePlacedPayload{
 		TreeID: treeID, UserID: recruitID, ParentID: rootID, SponsorID: recruiterID,
 		TreeType: treeTypeUnilevel, EnrolledAt: base.Add(48 * time.Hour),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, recruitEvent))
+	require.NoError(t, deliver(ctx, consumer, recruitEvent))
 	return 3
 }
 
@@ -997,7 +997,7 @@ func TestTreePersistence_RedeliveredRemovalConverges(t *testing.T) {
 	removeEvent := appendTreeEvent(t, eventStore, stream, next, EventTypeNodeRemoved, NodeRemovedPayload{
 		TreeID: treeID, UserID: recruiterID, RemovedAt: base.Add(72 * time.Hour),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, removeEvent))
+	require.NoError(t, deliver(ctx, consumer, removeEvent))
 
 	// Without this, a converged redelivery and a recruiter the store never
 	// held are indistinguishable from here.
@@ -1012,7 +1012,7 @@ func TestTreePersistence_RedeliveredRemovalConverges(t *testing.T) {
 	require.NotNil(t, first.SponsorID)
 	require.Equal(t, rootID, *first.SponsorID, "recruit sponsor_id after the first delivery")
 
-	require.NoError(t, consumer.HandleEvent(ctx, removeEvent),
+	require.NoError(t, deliver(ctx, consumer, removeEvent),
 		"second HandleEvent of the same node_removed event returned an error")
 
 	after, err := treeStore.GetNode(ctx, treeID, recruitID)
@@ -1045,7 +1045,7 @@ func TestTreePersistence_RedeliveredRemovalFailsWhenTheStoreNeverLanded(t *testi
 		TreeID: treeID, UserID: recruiterID, RemovedAt: base.Add(72 * time.Hour),
 	})
 
-	err = consumer.HandleEvent(ctx, removeEvent)
+	err = deliver(ctx, consumer, removeEvent)
 
 	var typed *RemovalNotProjectedError
 	require.ErrorAs(t, err, &typed)
@@ -1083,18 +1083,18 @@ func TestTreePersistence_RedeliveredRemovalAfterAFailedReplacement(t *testing.T)
 	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
 		TreeID: treeID, UserID: rootID, SponsorID: rootID, EnrolledAt: base,
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, rootEvent))
+	require.NoError(t, deliver(ctx, consumer, rootEvent))
 
 	e1 := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
 		TreeID: treeID, UserID: userID, ParentID: rootID, SponsorID: rootID,
 		TreeType: treeTypeUnilevel, EnrolledAt: base.Add(time.Hour),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, e1))
+	require.NoError(t, deliver(ctx, consumer, e1))
 
 	r1 := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodeRemoved, NodeRemovedPayload{
 		TreeID: treeID, UserID: userID, RemovedAt: base.Add(2 * time.Hour),
 	})
-	require.NoError(t, consumer.HandleEvent(ctx, r1))
+	require.NoError(t, deliver(ctx, consumer, r1))
 
 	tomb, err := treeStore.GetNodeIncludingRemoved(ctx, treeID, userID)
 	require.NoError(t, err)
@@ -1109,7 +1109,7 @@ func TestTreePersistence_RedeliveredRemovalAfterAFailedReplacement(t *testing.T)
 		TreeID: treeID, UserID: userID, ParentID: rootID, SponsorID: rootID,
 		TreeType: treeTypeUnilevel, EnrolledAt: base.Add(3 * time.Hour),
 	})
-	require.Error(t, consumer.HandleEvent(ctx, e2), "the gated engine call fails")
+	require.Error(t, deliver(ctx, consumer, e2), "the gated engine call fails")
 	require.Positive(t, gate.forced.Load(), "the gate returned at least one refusal for add_node")
 	gate.gated.Store(false)
 
@@ -1121,7 +1121,7 @@ func TestTreePersistence_RedeliveredRemovalAfterAFailedReplacement(t *testing.T)
 	require.True(t, isEngineCode(perr, engineCodeUserNotFound),
 		"engine GetPosition for the user after E2's failed delivery returned %v", perr)
 
-	require.NoError(t, consumer.HandleEvent(ctx, r1), "the redelivered removal")
+	require.NoError(t, deliver(ctx, consumer, r1), "the redelivered removal")
 
 	survivor, err := treeStore.GetNode(ctx, treeID, userID)
 	require.NoError(t, err)

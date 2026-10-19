@@ -511,7 +511,7 @@ func TestEngineCalls_ConsumerAndReplayLeaveTheSameEngineState(t *testing.T) {
 	require.NoError(t, consumed.CreateTree(context.Background(), writerTree, treeTypeUnilevel))
 	consumer := NewTreeEventConsumer(NewMemoryTreeStore(), consumed)
 	for _, ev := range stream {
-		require.NoError(t, consumer.HandleEvent(context.Background(), ev), "event at version %d", ev.Version)
+		require.NoError(t, deliver(context.Background(), consumer, ev), "event at version %d", ev.Version)
 	}
 	_, err := env.replay(1, int64(len(stream)))
 	require.NoError(t, err)

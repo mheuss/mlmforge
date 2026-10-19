@@ -57,7 +57,7 @@ func TestTreeConsumer_DeterministicRefusalsCarryErrUnprojectableEvent(t *testing
 				Version: 1, Payload: c.payload,
 			}
 
-			err := consumer.HandleEvent(context.Background(), event)
+			err := deliver(context.Background(), consumer, event)
 
 			require.ErrorIs(t, err, ErrUnprojectableEvent)
 			assert.Empty(t, transport.calls)
@@ -80,7 +80,7 @@ func TestTreeConsumer_AFailedParentReadIsNotUnprojectable(t *testing.T) {
 		TreeType: treeTypeUnilevel, EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	})
 
-	err := consumer.HandleEvent(context.Background(), event)
+	err := deliver(context.Background(), consumer, event)
 
 	require.EqualError(t, err, "get parent node: connection reset by peer")
 	assert.NotErrorIs(t, err, ErrUnprojectableEvent)

@@ -142,7 +142,7 @@ func TestTreeConsumer_ARemovalStillLandsTheRecruitsTheEngineMoved(t *testing.T) 
 	require.NoError(t, store.insertNode(ctx, makeNode("tree1", "user-leaf", 1, ptr("user-root"), ptr("user-root"), nil)))
 	require.NoError(t, store.insertNode(ctx, makeNode("tree1", "user-recruit", 1, ptr("user-root"), ptr("user-leaf"), nil)))
 
-	err := consumer.HandleEvent(ctx, makeEvent(EventTypeNodeRemoved, NodeRemovedPayload{
+	err := deliver(ctx, consumer, makeEvent(EventTypeNodeRemoved, NodeRemovedPayload{
 		TreeID: "tree1", UserID: "user-leaf", RemovedAt: time.Now(),
 	}))
 

@@ -483,6 +483,13 @@ mod tests {
     }
 
     #[test]
+    fn a_nil_user_id_maps_to_its_own_wire_code() {
+        let response = tree_error_to_response("req-1", TreeError::NilUserId);
+
+        assert_eq!(response.error.as_ref().unwrap().code, "NIL_USER_ID");
+    }
+
+    #[test]
     fn a_sponsor_cycle_reports_the_bound_it_exhausted() {
         let e = TreeError::SponsorCycle {
             user_id: Uuid::nil(),

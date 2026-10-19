@@ -512,6 +512,9 @@ impl StreamlineEngine {
         timestamp: i64,
         stream_id_override: Option<u32>,
     ) -> Result<AddMemberResult, StreamlineError> {
+        if user_id.is_nil() {
+            return Err(StreamlineError::NilUserId);
+        }
         if self.user_streams.contains_key(&user_id) {
             return Err(StreamlineError::MemberAlreadyExists(user_id));
         }
@@ -887,6 +890,35 @@ mod tests {
             .add_member(test_uuid(1), test_uuid(99), 1000, None)
             .unwrap();
         engine
+    }
+
+    #[test]
+    fn add_member_refuses_a_nil_user_id_on_an_empty_engine_and_changes_nothing() {
+        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        let before = serde_json::to_string(&engine).unwrap();
+        let owners_before = engine.stream_owners.clone();
+
+        assert!(matches!(
+            engine.add_member(Uuid::nil(), test_uuid(99), 1000, None),
+            Err(StreamlineError::NilUserId)
+        ));
+        assert_eq!(engine.stream_owners, owners_before);
+        assert!(engine.streams[&1].tree.user_ids().is_empty());
+        assert_eq!(serde_json::to_string(&engine).unwrap(), before);
+    }
+
+    #[test]
+    fn add_member_refuses_a_nil_user_id_on_a_seeded_engine_and_changes_nothing() {
+        let mut engine = seeded_streamline();
+        let before = serde_json::to_string(&engine).unwrap();
+        let owners_before = engine.stream_owners.clone();
+
+        assert!(matches!(
+            engine.add_member(Uuid::nil(), test_uuid(1), 2000, None),
+            Err(StreamlineError::NilUserId)
+        ));
+        assert_eq!(engine.stream_owners, owners_before);
+        assert_eq!(serde_json::to_string(&engine).unwrap(), before);
     }
 
     #[test]

@@ -1,0 +1,15 @@
+{
+    "description": "check_mutation refuses an add_node_at of a user in the matrix holding tank with the code add_node_at returns",
+    "setup": [
+        {"id": "s-1", "op": "create_tree", "params": {"structure": "test", "tree_type": "matrix", "width": 2, "spillover": "breadth_first"}},
+        {"id": "s-2", "op": "add_root", "params": {"structure": "test", "user_id": "00000000-0000-0000-0000-000000000001", "enrolled_at": 1000}},
+        {"id": "s-3", "op": "add_node_at", "params": {"structure": "test", "user_id": "00000000-0000-0000-0000-000000000002", "sponsor_id": "00000000-0000-0000-0000-000000000001", "parent_id": "00000000-0000-0000-0000-000000000001", "position": 0, "enrolled_at": 2000}},
+        {"id": "s-4", "op": "remove_node", "params": {"structure": "test", "user_id": "00000000-0000-0000-0000-000000000002", "pruning_mode": "holding_tank"}}
+    ],
+    "request": {
+        "id": "cm-ht",
+        "op": "check_mutation",
+        "params": {"structure": "test", "mutation": "add_node_at", "user_id": "00000000-0000-0000-0000-000000000002", "parent_id": "00000000-0000-0000-0000-000000000001", "sponsor_id": "00000000-0000-0000-0000-000000000001", "position": 0, "enrolled_at": 3000}
+    },
+    "expected_response": {"id": "cm-ht", "ok": false, "error": {"code": "USER_IN_HOLDING_TANK"}}
+}

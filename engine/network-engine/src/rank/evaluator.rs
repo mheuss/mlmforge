@@ -80,30 +80,27 @@ pub(crate) fn evaluation_order_for_users(
     order.into_iter().map(|(u, _)| u).collect()
 }
 
-/// Walk the rank ladder for one distributor and return their evaluated rank.
+/// Return one distributor's rank: the highest rank above the lowest that
+/// they satisfy, or the lowest rank when none does.
 ///
-/// `ctx.ranks` MUST be sorted by ordinal ascending. Iterates lowest to
-/// highest; the last passing rank is the result. A failed rank does NOT
-/// short-circuit — higher ranks may still pass and be selected. This handles
-/// ladder gaps where a distributor satisfies rank N+1 but not rank N (e.g.,
-/// missing a required product unique to N).
+/// `ctx.ranks` MUST be sorted by ordinal ascending.
 pub(crate) fn evaluate_distributor(
     user_id: Uuid,
     already: &HashMap<Uuid, EvaluatedRank>,
     ctx: &EvalCtx<'_, '_>,
 ) -> Result<EvaluatedRank, EvaluationError> {
-    let mut current: Option<(String, u16)> = None;
-    for rank in ctx.ranks {
+    let Some((base, higher)) = ctx.ranks.split_first() else {
+        return Ok(EvaluatedRank::Unranked);
+    };
+    let mut current = (base.name.clone(), base.ordinal);
+    for rank in higher {
         if satisfies(rank, user_id, already, ctx)? {
-            current = Some((rank.name.clone(), rank.ordinal));
+            current = (rank.name.clone(), rank.ordinal);
         }
     }
-    Ok(match current {
-        Some((name, ordinal)) => EvaluatedRank::Qualified {
-            rank: name,
-            ordinal,
-        },
-        None => EvaluatedRank::Unranked,
+    Ok(EvaluatedRank::Qualified {
+        rank: current.0,
+        ordinal: current.1,
     })
 }
 
@@ -394,7 +391,7 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_distributor_returns_unranked_when_no_rank_passes() {
+    fn evaluate_distributor_returns_the_base_rank_when_no_higher_rank_passes() {
         use crate::rank::types::{DistributorPrimitives, EvaluatedRank};
 
         let mut tree = UnilevelTree::new();
@@ -411,8 +408,12 @@ mod tests {
             active_products: vec![],
         };
 
-        let ranks = vec![linear_rank("silver", 2, "Test", 100.0)];
+        let ranks = vec![
+            linear_rank("associate", 1, "Test", 100.0),
+            linear_rank("silver", 2, "Test", 100.0),
+        ];
         let mut ordinals: HashMap<String, u16> = HashMap::new();
+        ordinals.insert("associate".to_string(), 1);
         ordinals.insert("silver".to_string(), 2);
 
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
@@ -430,7 +431,13 @@ mod tests {
         };
         let result = evaluate_distributor(Uuid::from_u128(1), &HashMap::new(), &ctx).unwrap();
 
-        assert_eq!(result, EvaluatedRank::Unranked);
+        assert_eq!(
+            result,
+            EvaluatedRank::Qualified {
+                rank: "associate".to_string(),
+                ordinal: 1
+            }
+        );
     }
 
     #[test]
@@ -673,8 +680,23 @@ mod tests {
             };
             let ranks = vec![
                 RankDefinition {
-                    name: "associate".to_string(),
+                    name: "base".to_string(),
                     ordinal: 1,
+                    qualification: RankQualification {
+                        structures: vec![StructureQualification {
+                            personal_volume: 0.0,
+                            ..sq(None)
+                        }],
+                        required_products: vec![],
+                        window: None,
+                        tenure: None,
+                    },
+                    qualified_structures: vec!["uni".to_string()],
+                    demotion_policy: DemotionPolicy::PromotionOnly,
+                },
+                RankDefinition {
+                    name: "associate".to_string(),
+                    ordinal: 2,
                     qualification: RankQualification {
                         structures: vec![sq(None)],
                         required_products: vec![],
@@ -686,7 +708,7 @@ mod tests {
                 },
                 RankDefinition {
                     name: "manager".to_string(),
-                    ordinal: 2,
+                    ordinal: 3,
                     qualification: RankQualification {
                         structures: vec![sq(Some(DistributorCountRequirement {
                             count: 1,

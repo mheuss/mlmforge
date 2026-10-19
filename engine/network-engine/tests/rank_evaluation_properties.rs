@@ -262,8 +262,8 @@ proptest! {
     /// `a` in `bin`. `manager_u` counts a `uni` downline and `manager_b`
     /// counts a `bin` downline, so `a`'s rank depends on `b`'s and `b`'s on
     /// `a`'s — a genuine cycle that no single evaluation order resolves. Every
-    /// rank requires PV >= 100, and PV is randomized across 0..400. A
-    /// distributor below the threshold is `Unranked`, so the cross-tree
+    /// rank above `base` requires PV >= 100, and PV is randomized across 0..400. A
+    /// distributor below the threshold holds only `base`, so the cross-tree
     /// distributor_count predicate genuinely flips between draws: some count a
     /// qualifying downline, others do not. For every draw `evaluate_ranks`
     /// must return Ok — it must never fail to converge.
@@ -326,9 +326,10 @@ proptest! {
 
         let mut plan = build_random_plan();
         plan.ranks = vec![
-            rank("associate", 1, "uni", 100.0, None),
-            rank("manager_u", 2, "uni", 100.0, Some(count_req())),
-            rank("manager_b", 3, "bin", 100.0, Some(count_req())),
+            rank("base", 1, "uni", 0.0, None),
+            rank("associate", 2, "uni", 100.0, None),
+            rank("manager_u", 3, "uni", 100.0, Some(count_req())),
+            rank("manager_b", 4, "bin", 100.0, Some(count_req())),
         ];
 
         let prim = |pv: u32| DistributorPrimitives {
@@ -370,55 +371,40 @@ fn prim(pv: f64) -> DistributorPrimitives {
     }
 }
 
-/// A two-rank plan on the "Test" structure: `base` (ordinal 1, PV >= `base_pv`)
-/// and `gated` (ordinal 2, PV >= 0) which additionally requires
-/// `gated_leg_quality`. Reuses `build_random_plan`'s structure config.
+/// A three-rank plan on the "Test" structure: `base` (ordinal 1, no
+/// requirement), `mid` (ordinal 2, PV >= `mid_pv`) and `gated` (ordinal 3,
+/// PV >= 0) which additionally requires `gated_leg_quality`.
 fn leg_quality_plan(
-    base_pv: f64,
+    mid_pv: f64,
     gated_leg_quality: Vec<LegQualityRequirement>,
 ) -> CompensationPlan {
+    let rank = |name: &str, ordinal: u16, pv: f64, leg_quality: Vec<LegQualityRequirement>| {
+        RankDefinition {
+            name: name.to_string(),
+            ordinal,
+            qualification: RankQualification {
+                structures: vec![StructureQualification {
+                    structure: "Test".to_string(),
+                    personal_volume: pv,
+                    group_volume: 0.0,
+                    max_group_volume_per_leg: f64::MAX,
+                    min_retail_volume: 0.0,
+                    distributor_count: None,
+                    leg_quality,
+                }],
+                required_products: vec![],
+                window: None,
+                tenure: None,
+            },
+            qualified_structures: vec!["Test".to_string()],
+            demotion_policy: DemotionPolicy::PromotionOnly,
+        }
+    };
     let mut plan = build_random_plan();
     plan.ranks = vec![
-        RankDefinition {
-            name: "base".to_string(),
-            ordinal: 1,
-            qualification: RankQualification {
-                structures: vec![StructureQualification {
-                    structure: "Test".to_string(),
-                    personal_volume: base_pv,
-                    group_volume: 0.0,
-                    max_group_volume_per_leg: f64::MAX,
-                    min_retail_volume: 0.0,
-                    distributor_count: None,
-                    leg_quality: vec![],
-                }],
-                required_products: vec![],
-                window: None,
-                tenure: None,
-            },
-            qualified_structures: vec!["Test".to_string()],
-            demotion_policy: DemotionPolicy::PromotionOnly,
-        },
-        RankDefinition {
-            name: "gated".to_string(),
-            ordinal: 2,
-            qualification: RankQualification {
-                structures: vec![StructureQualification {
-                    structure: "Test".to_string(),
-                    personal_volume: 0.0,
-                    group_volume: 0.0,
-                    max_group_volume_per_leg: f64::MAX,
-                    min_retail_volume: 0.0,
-                    distributor_count: None,
-                    leg_quality: gated_leg_quality,
-                }],
-                required_products: vec![],
-                window: None,
-                tenure: None,
-            },
-            qualified_structures: vec!["Test".to_string()],
-            demotion_policy: DemotionPolicy::PromotionOnly,
-        },
+        rank("base", 1, 0.0, vec![]),
+        rank("mid", 2, mid_pv, vec![]),
+        rank("gated", 3, 0.0, gated_leg_quality),
     ];
     plan
 }
@@ -478,7 +464,7 @@ proptest! {
         let expected = if qualifying_legs >= required as usize {
             "gated"
         } else {
-            "base"
+            "mid"
         };
         let subject_rank = match result.ranks.get(&uuid_from_index(0)) {
             Some(network_engine::rank::EvaluatedRank::Qualified { rank, .. }) => rank.as_str(),
@@ -494,7 +480,7 @@ proptest! {
 
 proptest! {
     /// Monotonicity of `ContainsRank` leg quality. Raising every child's PV
-    /// can only raise children into the `base` rank, never out of it, so it
+    /// can only raise children into the `mid` rank, never out of it, so it
     /// can only add qualifying legs — never remove them. The subject's
     /// evaluated rank must therefore never decrease. This is the per-predicate
     /// monotonicity that design-rationale 026 relies on for fixpoint
@@ -503,7 +489,7 @@ proptest! {
     fn leg_quality_is_monotone_in_descendant_rank(
         child_pvs in prop::collection::vec(0u32..250, 1..8usize),
         increase in 1u32..200,
-        base_threshold in 1u32..250,
+        mid_threshold in 1u32..250,
         required in 1u16..6,
     ) {
         let mut tree = UnilevelTree::new();
@@ -519,20 +505,20 @@ proptest! {
         let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
         nav.insert("Test".to_string(), &tree);
 
-        // `gated` needs `required` legs each containing a `base`-or-better
-        // node; a child reaches `base` once its PV clears `base_threshold`.
+        // `gated` needs `required` legs each containing a `mid`-or-better
+        // node; a child reaches `mid` once its PV clears `mid_threshold`.
         let plan = leg_quality_plan(
-            base_threshold as f64,
+            mid_threshold as f64,
             vec![LegQualityRequirement {
                 count: required,
                 predicate: LegPredicate::ContainsRank {
-                    min_rank: "base".to_string(),
+                    min_rank: "mid".to_string(),
                 },
             }],
         );
 
-        // The subject's PV clears any `base_threshold` draw, so the subject is
-        // always Qualified — only its leg structure varies between runs.
+        // The subject's PV clears any `mid_threshold` draw, so only its leg
+        // structure varies between runs.
         let subject_ordinal = |bump: u32| -> u16 {
             let mut distributors = HashMap::new();
             distributors.insert(uuid_from_index(0), prim(300.0));
@@ -1015,5 +1001,45 @@ proptest! {
             subject_ordinal(hi) >= subject_ordinal(lo),
             "extending the trailing consecutive run must not lower the subject's tenure rank",
         );
+    }
+}
+
+proptest! {
+    #[test]
+    fn every_input_distributor_holds_at_least_the_base_rank(
+        in_tree in 1..10usize,
+        out_of_tree in 0..5usize,
+        pv in 0u32..300,
+    ) {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uuid_from_index(0), 0).unwrap();
+        for i in 1..in_tree {
+            tree.add_node(uuid_from_index(i), uuid_from_index(i - 1), uuid_from_index(i - 1), i as i64).unwrap();
+        }
+        let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav.insert("Test".to_string(), &tree);
+
+        let mut distributors = HashMap::new();
+        for i in 0..in_tree + out_of_tree {
+            distributors.insert(uuid_from_index(i), prim(pv as f64));
+        }
+        let inputs = EvaluationInputs {
+            distributors,
+            volume_sources: vec![],
+            history_window: Vec::new(),
+            history: HashMap::new(),
+        };
+
+        let result = evaluate_ranks(&build_random_plan(), &nav, &inputs).unwrap();
+
+        prop_assert_eq!(result.ranks.len(), in_tree + out_of_tree);
+        for i in 0..in_tree + out_of_tree {
+            match result.ranks.get(&uuid_from_index(i)) {
+                Some(network_engine::rank::EvaluatedRank::Qualified { ordinal, .. }) => {
+                    prop_assert!(*ordinal >= 1);
+                }
+                other => prop_assert!(false, "distributor {} got {:?}", i, other),
+            }
+        }
     }
 }

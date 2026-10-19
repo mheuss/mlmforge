@@ -1835,10 +1835,9 @@ func TestEngineClient_EvaluateRanks_VariadicSignature_AcceptsWithPersistence(t *
 // rankIntegrationPlanJSON is a minimal compensation plan tailored for the
 // EvaluateRanks integration test. The "member" rank carries a trivial
 // structure qualification (personal_volume >= 0 on "Test"), so every
-// distributor present in the tree with primitives qualifies. The worker's
-// rank handler only registers a tree in the navigator map when at least
-// one rank's qualification references that structure, so an entirely
-// empty qualification would yield an empty ranks map.
+// distributor present in the tree with primitives qualifies.
+// "member" is the plan's only rank, so it is the base rank every
+// evaluated distributor holds.
 const rankIntegrationPlanJSON = `{
     "name": "Rank Integration Test Plan",
     "version": 2,

@@ -445,6 +445,7 @@ func TestPipelineRefusesBothPerLegCapsAtTheSchema(t *testing.T) {
 	require.Len(t, errs, 1, "errors: %v", errs)
 	assert.Equal(t, "schema_violation", errs[0].Code)
 	assert.Equal(t, "/ranks/3/qualification/structures/0", errs[0].Path)
+	assert.Equal(t, "max_group_volume_per_leg and max_group_volume_per_leg_fraction must not both be above 0", errs[0].Message)
 }
 
 func TestPipelineRefusesAPerLegCapFractionAboveOneAtTheSchema(t *testing.T) {

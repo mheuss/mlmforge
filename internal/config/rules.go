@@ -353,7 +353,7 @@ func validateRanks(plan *CompensationPlan, structs map[string]bool) []Validation
 				errs = append(errs, ValidationError{
 					Path:     capPath,
 					Code:     "cross_field_dependency",
-					Message:  fmt.Sprintf("rank %q max_group_volume_per_leg (%.0f) is at or above group_volume (%.0f)", r.Name, sq.MaxGroupVolumePerLeg, sq.GroupVolume),
+					Message:  fmt.Sprintf("rank %q structure %q max_group_volume_per_leg (%v) is at or above group_volume (%v)", r.Name, sq.Structure, sq.MaxGroupVolumePerLeg, sq.GroupVolume),
 					Severity: SeverityWarning,
 				})
 			}

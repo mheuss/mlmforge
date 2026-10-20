@@ -116,7 +116,7 @@ func TestRankQualificationStructureMustExist(t *testing.T) {
 }
 
 func TestPerLegCapAtOrAboveGroupVolumeWarns(t *testing.T) {
-	for _, perLegCap := range []float64{5000, 8000} {
+	for _, perLegCap := range []float64{5000, 8000, 5000.5} {
 		t.Run(fmt.Sprintf("cap %v", perLegCap), func(t *testing.T) {
 			plan := minimalPlan()
 			plan.Ranks[1].Qualification.Structures = []StructureQualification{
@@ -133,7 +133,7 @@ func TestPerLegCapAtOrAboveGroupVolumeWarns(t *testing.T) {
 			assert.Equal(t, "cross_field_dependency", errs[0].Code)
 			assert.Equal(t, SeverityWarning, errs[0].Severity)
 			assert.Equal(t, "/ranks/1/qualification/structures/0/max_group_volume_per_leg", errs[0].Path)
-			assert.Contains(t, errs[0].Message, "is at or above group_volume")
+			assert.Equal(t, fmt.Sprintf(`rank "Silver" structure "Primary" max_group_volume_per_leg (%v) is at or above group_volume (5000)`, perLegCap), errs[0].Message)
 		})
 	}
 }

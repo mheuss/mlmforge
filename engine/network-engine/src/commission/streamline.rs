@@ -1477,6 +1477,37 @@ mod tests {
         );
     }
 
+    /// Faults resolve per source in input order, not per check across the
+    /// slice. The first source's tree fault must beat the second source's NaN.
+    #[test]
+    fn faults_resolve_per_source_in_input_order() {
+        let (engine, plan, structure, snapshots) = validation_fixture();
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(99),
+                cv_amount: 100.0,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: f64::NAN,
+            },
+        ];
+
+        let result = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::SourceNotInTree(test_uuid(99))
+        );
+    }
+
     /// A missing snapshot is reported before any source's CV is checked.
     #[test]
     fn missing_snapshot_beats_an_invalid_cv() {

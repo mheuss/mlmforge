@@ -69,6 +69,19 @@ fn snapshots_json(rank: &str, ids: &[&str]) -> String {
     format!("{{{}}}", entries.join(","))
 }
 
+/// Asserts `resp` is the calculation refusal for `user_id` having no snapshot.
+fn assert_refuses_missing_snapshot(resp: &str, user_id: &str) {
+    let expected = format!("distributor {} has no snapshot", user_id);
+    assert!(
+        resp.contains(r#""ok":false"#)
+            && resp.contains("CALCULATION_ERROR")
+            && resp.contains(&expected),
+        "expected CALCULATION_ERROR containing {:?}, got: {}",
+        expected,
+        resp
+    );
+}
+
 #[test]
 fn ping_returns_protocol_version() {
     let mut child = common::spawn_worker();
@@ -1262,6 +1275,24 @@ fn calculate_unilevel_still_requires_snapshots() {
         "the error should be a missing-field error naming snapshots, got: {}",
         resp
     );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// A null snapshot map reads as empty, and a populated tree then refuses it.
+#[test]
+fn calculate_unilevel_refuses_null_snapshots_for_a_populated_tree() {
+    let mut worker = common::spawn_worker();
+    load_test_plan(&mut worker);
+    build_three_node_chain(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"u-null-snap","op":"calculate_unilevel","params":{{"structure":"{}","snapshots":null,"volume":[]}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert_refuses_missing_snapshot(&resp, ROOT);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();

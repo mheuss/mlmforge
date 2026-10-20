@@ -20,9 +20,8 @@ use super::{walk, walk_order};
 ///
 /// Returns `CalculationError` if a snapshot names a rank the plan does not
 /// define, if a snapshot's personal_volume is negative or not finite, if a
-/// volume source is not found in the tree or snapshot data, if an upline node
-/// the walk reaches has no snapshot, or if a volume source's cv_amount is
-/// negative or not finite.
+/// distributor in the tree has no snapshot, if a volume source is not found in
+/// the tree, or if a volume source's cv_amount is negative or not finite.
 pub fn calculate_unilevel(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -31,7 +30,7 @@ pub fn calculate_unilevel(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
-    walk::validate_snapshots(plan, snapshots, std::iter::empty())?;
+    walk::validate_snapshots(plan, snapshots, tree.user_ids())?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
 
@@ -46,9 +45,7 @@ pub fn calculate_unilevel(
     let compression = structure.compression.as_ref();
     let threshold_ordinal = walk::resolve_threshold_ordinal(compression, &rank_ordinals);
 
-    // Build pass-up context if configured. Use tree.user_ids() instead of
-    // snapshot keys so skip sets cover all distributors in the tree, including
-    // intermediate sponsors that may be missing from snapshots.
+    // Build pass-up context if configured.
     let pass_up_context = structure
         .pass_up
         .as_ref()
@@ -979,9 +976,7 @@ mod tests {
 
     #[test]
     fn missing_upline_snapshot_errors() {
-        // Pins the entry point, not the walk. Swallow the walk's error here,
-        // or default the missing snapshot before calling it, and the walk's
-        // own tests stay green while this one fails.
+        // Pins the entry point: a node with no snapshot is refused.
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
@@ -1024,7 +1019,47 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err(),
-            CalculationError::UplineNotInSnapshot(test_uuid(2))
+            CalculationError::DistributorNotInSnapshot(test_uuid(2))
+        );
+    }
+
+    /// Node 4 is a second frontline leg of node 1 and on no walked path.
+    #[test]
+    fn snapshot_omitted_off_every_walked_path_is_rejected() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+
+        let structure = test_structure(test_rate_table());
+        let plan = test_plan(default_eligibility());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::DistributorNotInSnapshot(test_uuid(4))
         );
     }
 
@@ -1202,11 +1237,10 @@ mod tests {
             &crate::test_support::test_plan_identity(),
         );
 
-        assert!(result.is_err());
-        assert!(matches!(
+        assert_eq!(
             result.unwrap_err(),
-            CalculationError::SourceNotInSnapshot(id) if id == test_uuid(1)
-        ));
+            CalculationError::DistributorNotInSnapshot(test_uuid(1))
+        );
     }
 
     /// Pins CV-before-tree, the half of `walk::validate_source`'s documented
@@ -2447,13 +2481,9 @@ mod tests {
     }
 
     #[test]
-    fn pass_up_works_with_missing_snapshot_for_sponsor() {
-        // Tree: S(1) -> A(2) -> R1(3, t=200)
-        // A has NO snapshot. Pass-up builds A's skip set from the tree
-        // structure (via user_ids()), not from the snapshot map, so A is
-        // skipped for R1's volume. That skip fires before the snapshot
-        // lookup, so A never reaches it and consumes no level. S earns at
-        // level 1. Move the lookup above the skip and this call errors.
+    fn pass_up_does_not_excuse_a_missing_sponsor_snapshot() {
+        // Tree: S(1) -> A(2) -> R1(3, t=200). A has no snapshot.
+        // Pass-up would skip A for R1's volume, but the request is refused first.
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap(); // S
         tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 100)
@@ -2487,24 +2517,11 @@ mod tests {
             &snapshots,
             &volume,
             &crate::test_support::test_plan_identity(),
-        )
-        .unwrap()
-        .earnings;
-
-        // A should not earn (no snapshot, and pass-up skips before lookup).
-        assert!(
-            result.iter().all(|e| e.earner_id != test_uuid(2)),
-            "A should not earn — skipped by pass-up before snapshot lookup"
         );
 
-        // S earns at level 1 (A was skipped without consuming a level).
-        let s_earning = result
-            .iter()
-            .find(|e| e.earner_id == test_uuid(1))
-            .expect("S should earn");
         assert_eq!(
-            s_earning.level, 1,
-            "S should earn at level 1 because pass-up skipped A without consuming a level"
+            result.unwrap_err(),
+            CalculationError::DistributorNotInSnapshot(test_uuid(2))
         );
     }
 }

@@ -2167,3 +2167,41 @@ func TestBaseRankIsTheFirstOfTiedLowestOrdinals(t *testing.T) {
 		assert.NotEqual(t, "base_rank_has_requirements", e.Code, "errors: %v", errs)
 	}
 }
+
+// --- Per-leg cap ---
+
+func TestOutOfRangePerLegCapRejected(t *testing.T) {
+	tests := []struct {
+		name    string
+		rank    int
+		value   float64
+		message string
+	}{
+		{"negative on a higher rank", 1, -1, `rank "Silver" structure "Primary" max_group_volume_per_leg must be finite and non-negative, got -1`},
+		{"NaN on a higher rank", 1, math.NaN(), `rank "Silver" structure "Primary" max_group_volume_per_leg must be finite and non-negative, got NaN`},
+		{"+Inf on a higher rank", 1, math.Inf(1), `rank "Silver" structure "Primary" max_group_volume_per_leg must be finite and non-negative, got +Inf`},
+		{"-Inf on a higher rank", 1, math.Inf(-1), `rank "Silver" structure "Primary" max_group_volume_per_leg must be finite and non-negative, got -Inf`},
+		{"negative on the base rank", 0, -1, `rank "Associate" structure "Primary" max_group_volume_per_leg must be finite and non-negative, got -1`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := minimalPlan()
+			plan.Ranks[tt.rank].Qualification.Structures[0].MaxGroupVolumePerLeg = tt.value
+
+			errs := validateBusinessRules(plan)
+
+			require.Len(t, errs, 1, "errors: %v", errs)
+			assert.Equal(t, "value_out_of_range", errs[0].Code)
+			assert.Equal(t, fmt.Sprintf("/ranks/%d/qualification/structures/0/max_group_volume_per_leg", tt.rank), errs[0].Path)
+			assert.Contains(t, errs[0].Message, tt.message)
+			assert.Equal(t, SeverityError, errs[0].Severity)
+		})
+	}
+}
+
+func TestZeroPerLegCapPasses(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Qualification.Structures[0].MaxGroupVolumePerLeg = 0
+
+	assert.Empty(t, validateBusinessRules(plan))
+}

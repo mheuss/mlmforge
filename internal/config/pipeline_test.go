@@ -506,6 +506,20 @@ func TestPipelineReportsOnlyATypeErrorForAMistypedCapBesideAFraction(t *testing.
 	assert.Equal(t, "/ranks/3/qualification/structures/0/max_group_volume_per_leg", errs[0].Path)
 }
 
+func TestPipelineReportsOnlyATypeErrorForAMistypedFractionBesideACap(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	doc := replaceInYAML(t, base, "max_group_volume_per_leg: 5000", "max_group_volume_per_leg: 5000\n          max_group_volume_per_leg_fraction: half")
+
+	_, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	require.Len(t, errs, 1, "errors: %v", errs)
+	assert.Equal(t, "schema_violation", errs[0].Code)
+	assert.Equal(t, "/ranks/3/qualification/structures/0/max_group_volume_per_leg_fraction", errs[0].Path)
+}
+
 func TestPipelineAcceptsAZeroCapBesideAPositiveFraction(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)

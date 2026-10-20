@@ -5235,7 +5235,6 @@ fn load_plan_accepts_a_rank_with_no_per_leg_cap() {
         ),
     );
     assert!(resp.contains(r#""ok":true"#), "add_node failed: {}", resp);
-    // CHILD's leg carries volume, so a cap read as zero would fail silver.
     let resp = common::send_receive(
         &mut child,
         &format!(

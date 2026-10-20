@@ -3577,8 +3577,7 @@ mod tests {
         assert!(!qualifies_for_tier(&entry, 2, &tier, &prep));
     }
 
-    /// Builds Walk 2's prep state by hand, so a test can reach a state the
-    /// public entry point refuses first.
+    /// Builds Walk 2's prep state directly, without the prep phase.
     fn handmade_prep(breakaway: Uuid, group_volume: f64, eligible: &[Uuid]) -> PrepResult {
         PrepResult {
             eligibility: eligible

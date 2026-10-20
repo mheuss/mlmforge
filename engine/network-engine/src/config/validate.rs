@@ -49,7 +49,7 @@ use super::{CompensationPlan, StructureConfig};
 
 // --- numeric helpers ------------------------------------------------------
 
-/// A commission percent expressed as a fraction: finite and within `[0, 1]`.
+/// A value that must be a fraction: finite and within `[0, 1]`.
 fn check_fraction(field: &str, v: f64) -> Result<(), String> {
     if !v.is_finite() || !(0.0..=1.0).contains(&v) {
         return Err(format!("{field} must be a fraction in [0.0, 1.0], got {v}"));
@@ -430,8 +430,8 @@ impl StreamlineCommissionConfig {
         // which is attacker-sized here.
         //
         // Duplicates are parity too, not an added rule. Go keys the table by
-        // string, so "1" and "01" are
-        // both valid keys naming level 1. A duplicate is representable in Go,
+        // string, and a key may carry leading zeros, so "1" and "01" are both
+        // valid keys naming level 1. A duplicate is representable in Go,
         // and Go rejects it through non_sequential_levels: the sorted list
         // becomes [1, 1, ...] and fails n != j+1 at index 1.
         //

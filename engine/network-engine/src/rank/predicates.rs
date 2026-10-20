@@ -739,6 +739,48 @@ mod tests {
     }
 
     #[test]
+    fn capped_gv_meets_ignores_upline_volume_and_own_cv() {
+        // Build chain: 1 -> 2 -> 3, evaluating 2.
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
+        tree.add_node(uid(3), uid(2), uid(2), 0).unwrap();
+        let idx = VolumeIndex::build(&[
+            VolumeSource {
+                source_id: uid(1),
+                cv_amount: 500.0,
+            },
+            VolumeSource {
+                source_id: uid(2),
+                cv_amount: 300.0,
+            },
+            VolumeSource {
+                source_id: uid(3),
+                cv_amount: 100.0,
+            },
+        ]);
+        let primitives = primitives_with_pv(50.0);
+
+        assert!(capped_gv_meets(150.0, None, uid(2), &tree, &idx, &primitives).unwrap());
+        assert!(!capped_gv_meets(150.01, None, uid(2), &tree, &idx, &primitives).unwrap());
+    }
+
+    #[test]
+    fn capped_gv_meets_fails_at_the_threshold_under_a_fraction_that_rounds_low() {
+        // Pins today's fail-closed result. HEU-966 tracks making the fraction match the fixed cap.
+        let (tree, idx) = root_with_legs(&[29000.0, 29000.0, 29000.0, 13000.0]);
+        let primitives = primitives_with_pv(0.0);
+        let fraction_cap = effective_leg_cap(&sq_with_caps(100000.0, 0.0, 0.29));
+
+        assert!(
+            capped_gv_meets(100000.0, Some(29000.0), uid(1), &tree, &idx, &primitives).unwrap()
+        );
+        assert!(
+            !capped_gv_meets(100000.0, fraction_cap, uid(1), &tree, &idx, &primitives).unwrap()
+        );
+    }
+
+    #[test]
     fn capped_gv_meets_fails_on_a_nan_leg_under_a_cap() {
         let (tree, idx) = root_with_legs(&[f64::NAN]);
         let primitives = primitives_with_pv(0.0);

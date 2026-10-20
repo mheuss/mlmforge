@@ -101,6 +101,7 @@ pub struct TenureRequirement {
 /// All criteria within a structure qualification are AND-combined.
 /// Failing any criterion fails the rank.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StructureQualification {
     /// The structure these criteria apply to. References a structure
     /// name defined in the plan.
@@ -114,15 +115,18 @@ pub struct StructureQualification {
     /// entire downline on this structure, excluding breakaway groups.
     pub group_volume: f64,
 
-    /// Maximum volume any single leg can contribute toward group volume.
-    ///
-    /// Prevents qualifying on one strong leg. Must be less than or
-    /// equal to `group_volume`. For example, if group_volume is 10,000
-    /// and this is 6,000, no single leg can contribute more than 60%.
+    /// Maximum volume any single leg contributes toward group volume.
     ///
     /// 0, or an absent field, means no cap.
     #[serde(default)]
     pub max_group_volume_per_leg: f64,
+
+    /// The per-leg cap as a fraction of group_volume, in [0, 1].
+    ///
+    /// 0, or an absent field, means no cap. Not set together with
+    /// max_group_volume_per_leg.
+    #[serde(default)]
+    pub max_group_volume_per_leg_fraction: f64,
 
     /// Minimum volume from retail customers specifically.
     ///
@@ -550,6 +554,50 @@ mod tests {
     }
 
     #[test]
+    fn structure_qualification_deserializes_the_per_leg_cap_fraction() {
+        let json = r#"{
+            "structure": "Primary",
+            "personal_volume": 100.0,
+            "group_volume": 5000.0,
+            "max_group_volume_per_leg_fraction": 0.6,
+            "min_retail_volume": 50.0,
+            "distributor_count": null
+        }"#;
+        let sq: StructureQualification = serde_json::from_str(json).unwrap();
+        assert_eq!(sq.max_group_volume_per_leg_fraction, 0.6);
+    }
+
+    #[test]
+    fn structure_qualification_per_leg_cap_fraction_defaults_to_zero_when_absent() {
+        let json = r#"{
+            "structure": "Primary",
+            "personal_volume": 100.0,
+            "group_volume": 5000.0,
+            "min_retail_volume": 50.0,
+            "distributor_count": null
+        }"#;
+        let sq: StructureQualification = serde_json::from_str(json).unwrap();
+        assert_eq!(sq.max_group_volume_per_leg_fraction, 0.0);
+    }
+
+    #[test]
+    fn structure_qualification_refuses_an_unknown_key() {
+        let json = r#"{
+            "structure": "Primary",
+            "personal_volume": 100.0,
+            "group_volume": 5000.0,
+            "min_retail_volume": 50.0,
+            "distributor_count": null,
+            "bogus_key": 1
+        }"#;
+        let err = serde_json::from_str::<StructureQualification>(json).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown field `bogus_key`"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn leg_quality_requirement_round_trips() {
         let json = r#"{"count": 12, "predicate": {"type": "contains_personal_volume", "min_personal_volume": 150.0}}"#;
         let req: LegQualityRequirement = serde_json::from_str(json).unwrap();
@@ -640,6 +688,7 @@ mod tests {
                     personal_volume: 200.0,
                     group_volume: 10000.0,
                     max_group_volume_per_leg: 6000.0,
+                    max_group_volume_per_leg_fraction: 0.0,
                     min_retail_volume: 100.0,
                     distributor_count: None,
                     leg_quality: vec![],

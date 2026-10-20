@@ -1108,6 +1108,7 @@ mod tests {
                     personal_volume: pv,
                     group_volume: gv,
                     max_group_volume_per_leg: gv * 10.0, // permissive
+                    max_group_volume_per_leg_fraction: 0.0,
                     min_retail_volume: 0.0,
                     distributor_count: None,
                     leg_quality: vec![],

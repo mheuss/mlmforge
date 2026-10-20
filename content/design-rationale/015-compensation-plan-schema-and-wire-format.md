@@ -73,7 +73,7 @@ The schema and Go have distinct responsibilities. The schema validates structure
 | Semantic warnings | `payout_lag_days > 30`, `matrix width^height > 1M`, `max_group_volume_per_leg >= group_volume` when `group_volume > 0` |
 | Rate table completeness | Every defined rank should have a rate table entry |
 
-When no leg's volume is negative, a per-leg cap at or above `group_volume` never binds. Go warns about such a fixed cap when `group_volume` is above 0, rather than refusing it.
+When no volume is negative, a per-leg cap at or above `group_volume` never binds. Go warns about such a fixed cap when `group_volume` is above 0, rather than refusing it.
 
 The schema catches structural mistakes immediately. Wrong type, missing field, bad enum value. Go catches logical mistakes that require understanding relationships between sections.
 

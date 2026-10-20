@@ -237,7 +237,7 @@ The worker handler registers tree navigators only for structures that a rank abo
 - A rank criterion is about the shape of individual legs, not the flat downline total
 - The criterion is "at least N legs that each satisfy a per-leg condition"
 
-**Notes:** `ContainsRank` reads each node's evaluated rank from the `already` map, so it depends on UC-NET-005's fixpoint rank evaluation having populated that map. An empty `leg_quality` is an exact no-op. It makes no tree calls, which preserves pre-feature behaviour (BR5). `ContainsRank`'s `min_rank` is validated in the Go layer (`validateRanks` in `rules.go`) for an undefined or non-lower-ordinal reference. `node_matches` raises `UnknownMinRank` as defense in depth. `capped_gv_meets` counts each such leg's CV toward group volume up to the structure's per-leg cap and adds personal volume uncapped (HEU-960).
+**Notes:** `ContainsRank` reads each node's evaluated rank from the `already` map, so it depends on UC-NET-005's fixpoint rank evaluation having populated that map. An empty `leg_quality` is an exact no-op. It makes no tree calls, which preserves pre-feature behaviour (BR5). `ContainsRank`'s `min_rank` is validated in the Go layer (`validateRanks` in `rules.go`) for an undefined or non-lower-ordinal reference. `node_matches` raises `UnknownMinRank` as defense in depth. `capped_gv_meets` counts each frontline leg's CV toward group volume up to the structure's per-leg cap and adds personal volume uncapped (HEU-960).
 
 ---
 

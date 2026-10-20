@@ -119,6 +119,8 @@ pub struct StructureQualification {
     /// Prevents qualifying on one strong leg. Must be less than or
     /// equal to `group_volume`. For example, if group_volume is 10,000
     /// and this is 6,000, no single leg can contribute more than 60%.
+    ///
+    /// 0, or an absent field, means no cap.
     #[serde(default)]
     pub max_group_volume_per_leg: f64,
 

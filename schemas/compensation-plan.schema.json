@@ -235,7 +235,7 @@
         "max_group_volume_per_leg": {
           "type": "number",
           "minimum": 0,
-          "description": "Prevents a single strong leg from carrying the entire requirement."
+          "description": "Prevents a single strong leg from carrying the entire requirement. 0, or an absent field, means no cap."
         },
         "min_retail_volume": {
           "type": "number",

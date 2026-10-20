@@ -168,10 +168,13 @@ func TestTreeWriter_ANilUserPlacementAnotherWriteDeliveredIsClearedByRejectEvent
 		EnrolledAt: writeTime.Add(time.Hour)})
 	placeX := PlaceRequest{TreeID: tree, UserID: x, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(2 * time.Hour)}
 	_, refusedErr := it.writer(t).Place(ctx, placeX)
-	require.ErrorContains(t, refusedErr, "NIL_USER_ID")
+	var caught *CatchUpFailedError
+	require.ErrorAs(t, refusedErr, &caught)
+	assert.Equal(t, stuck.ID, caught.EventID)
+	require.ErrorIs(t, refusedErr, ErrUnprojectableEvent)
 	stored, err := it.store.GetNodeIncludingRemoved(ctx, tree, nilUser)
 	require.NoError(t, err)
-	require.NotNil(t, stored, "the refused place projected no row for the nil user")
+	assert.Nil(t, stored, "expected no row for the nil user, found one")
 
 	rejected, err := it.writer(t).Reject(ctx, RejectRequest{TreeID: tree, EventID: stuck.ID, Reason: "nil user id"})
 

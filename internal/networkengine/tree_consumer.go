@@ -58,14 +58,6 @@ func checkStream(event platform.Event, eventName, treeID, userID string) error {
 	return nil
 }
 
-// checkUserID rejects an event that names no user.
-func checkUserID(eventName, treeID, userID string) error {
-	if userID == "" {
-		return fmt.Errorf("%s in tree %s has an empty user_id", eventName, treeID)
-	}
-	return nil
-}
-
 // checkReplayedInsert decides whether an add whose insert was skipped may
 // continue to its engine call.
 func (c *TreeEventConsumer) checkReplayedInsert(
@@ -107,7 +99,7 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 	if err := checkStream(event, "root_added", payload.TreeID, payload.UserID); err != nil {
 		return unprojectable(err)
 	}
-	if err := checkUserID("root_added", payload.TreeID, payload.UserID); err != nil {
+	if err := checkRootAddedIDs(payload); err != nil {
 		return unprojectable(err)
 	}
 
@@ -222,7 +214,7 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, shape treeShap
 	if err := checkStream(event, "node_placed", payload.TreeID, payload.UserID); err != nil {
 		return unprojectable(err)
 	}
-	if err := checkUserID("node_placed", payload.TreeID, payload.UserID); err != nil {
+	if err := checkNodePlacedIDs(payload); err != nil {
 		return unprojectable(err)
 	}
 	if err := checkNodePlacedOnStream(payload, shape.treeType); err != nil {
@@ -306,6 +298,9 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, shape treeSha
 	}
 
 	if err := checkStream(event, "node_removed", payload.TreeID, payload.UserID); err != nil {
+		return unprojectable(err)
+	}
+	if err := checkNodeRemovedIDs(payload); err != nil {
 		return unprojectable(err)
 	}
 	if err := checkNodeRemovedOnStream(payload, shape.treeType); err != nil {

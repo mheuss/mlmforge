@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/mlmforge/mlmforge/internal/platform"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -162,4 +163,85 @@ func TestTreeConsumer_ProjectsARemovalWithNoTreeTypeOnAStreamThatIsNotMatrix(t *
 			assert.NotNil(t, row.RemovedAt)
 		})
 	}
+}
+
+func TestTreeConsumer_RefusesAnIDThatIsNotCanonical(t *testing.T) {
+	nilID := uuid.Nil.String()
+	root := func(user, sponsor string) RootAddedPayload {
+		return RootAddedPayload{TreeID: "tree1", UserID: user, SponsorID: sponsor, TreeType: treeTypeUnilevel}
+	}
+	placed := func(user, parent, sponsor string) NodePlacedPayload {
+		return NodePlacedPayload{TreeID: "tree1", UserID: user, ParentID: parent, SponsorID: sponsor, TreeType: treeTypeUnilevel}
+	}
+	removed := func(user string) NodeRemovedPayload {
+		return NodeRemovedPayload{TreeID: "tree1", UserID: user, TreeType: treeTypeUnilevel}
+	}
+	cases := []struct {
+		name      string
+		eventType string
+		payload   any
+		want      string
+	}{
+		{"a root whose user is not a UUID", EventTypeRootAdded, root("nope", userRoot),
+			`root_added in tree tree1 has user_id "nope", which is not a canonical UUID`},
+		{"a root whose user is the nil UUID", EventTypeRootAdded, root(nilID, userRoot),
+			"root_added in tree tree1 has the nil UUID as user_id"},
+		{"a root whose sponsor is empty", EventTypeRootAdded, root(userRoot, ""),
+			`root_added in tree tree1 has sponsor_id "", which is not a canonical UUID`},
+		{"a root whose sponsor is uppercase", EventTypeRootAdded, root(userRoot, "AAAAAAAA-AAAA-AAAA-AAAA-000000000001"),
+			`root_added in tree tree1 has sponsor_id "AAAAAAAA-AAAA-AAAA-AAAA-000000000001", which is not a canonical UUID`},
+		{"a placement whose user is a urn", EventTypeNodePlaced, placed("urn:uuid:"+userNew, userRoot, userRoot),
+			`node_placed in tree tree1 has user_id "urn:uuid:` + userNew + `", which is not a canonical UUID`},
+		{"a placement whose parent is blank", EventTypeNodePlaced, placed(userNew, " ", userRoot),
+			`node_placed in tree tree1 has parent_id " ", which is not a canonical UUID`},
+		{"a placement whose parent is the nil UUID", EventTypeNodePlaced, placed(userNew, nilID, userRoot),
+			"node_placed in tree tree1 has the nil UUID as parent_id"},
+		{"a placement whose sponsor is braced", EventTypeNodePlaced, placed(userNew, userRoot, "{"+userRoot+"}"),
+			`node_placed in tree tree1 has sponsor_id "{` + userRoot + `}", which is not a canonical UUID`},
+		{"a placement whose sponsor is the nil UUID", EventTypeNodePlaced, placed(userNew, userRoot, nilID),
+			"node_placed in tree tree1 has the nil UUID as sponsor_id"},
+		{"a removal whose user is empty", EventTypeNodeRemoved, removed(""),
+			`node_removed in tree tree1 has user_id "", which is not a canonical UUID`},
+		{"a removal whose user is not a UUID", EventTypeNodeRemoved, removed("nope"),
+			`node_removed in tree tree1 has user_id "nope", which is not a canonical UUID`},
+		{"a removal whose user is the nil UUID", EventTypeNodeRemoved, removed(nilID),
+			"node_removed in tree tree1 has the nil UUID as user_id"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			inner := NewMemoryTreeStore()
+			require.NoError(t, inner.insertNode(ctx, makeNode("tree1", userRoot, 0, nil, ptr(userRoot), nil)))
+			store := &writeSpyStore{MemoryTreeStore: inner}
+			transport := newRecordingTransport()
+			consumer := NewTreeEventConsumer(getNodeFailingStore{store}, newEngineClientWithTransport(transport))
+
+			err := consumer.HandleEvent(ctx, treeShape{treeType: treeTypeUnilevel}, makeEvent(c.eventType, c.payload))
+
+			require.ErrorIs(t, err, ErrUnprojectableEvent)
+			assert.EqualError(t, err, c.want)
+			assert.Empty(t, transport.calls)
+			assert.Empty(t, store.writes)
+		})
+	}
+}
+
+func TestTreeConsumer_ProjectsARootWhoseSponsorIsTheNilUUID(t *testing.T) {
+	store := NewMemoryTreeStore()
+	transport := newRecordingTransport()
+	consumer := NewTreeEventConsumer(store, newEngineClientWithTransport(transport))
+	nilID := uuid.Nil.String()
+
+	err := deliver(context.Background(), consumer, makeEvent(EventTypeRootAdded, RootAddedPayload{
+		TreeID: "tree1", UserID: userRoot, SponsorID: nilID, TreeType: treeTypeUnilevel,
+		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}))
+
+	require.NoError(t, err)
+	row, err := store.GetNode(context.Background(), "tree1", userRoot)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, nilID, *row.SponsorID)
+	require.Len(t, transport.calls, 1)
+	assert.Equal(t, "add_root", transport.calls[0].op)
 }

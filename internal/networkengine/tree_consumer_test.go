@@ -156,7 +156,7 @@ func TestTreeConsumer_RootAddedRejectsEmptyUserID(t *testing.T) {
 
 	err := deliver(context.Background(), consumer, event)
 	require.ErrorIs(t, err, ErrUnprojectableEvent)
-	assert.EqualError(t, err, "root_added in tree tree1 has an empty user_id")
+	assert.EqualError(t, err, `root_added in tree tree1 has user_id "", which is not a canonical UUID`)
 
 	rows, storeErr := store.GetByTree(context.Background(), "tree1")
 	require.NoError(t, storeErr)
@@ -302,7 +302,7 @@ func TestTreeConsumer_NodePlacedRejectsEmptyUserID(t *testing.T) {
 
 	err := deliver(context.Background(), consumer, event)
 	require.ErrorIs(t, err, ErrUnprojectableEvent)
-	assert.EqualError(t, err, "node_placed in tree tree1 has an empty user_id")
+	assert.EqualError(t, err, `node_placed in tree tree1 has user_id "", which is not a canonical UUID`)
 
 	rows, storeErr := store.GetByTree(context.Background(), "tree1")
 	require.NoError(t, storeErr)

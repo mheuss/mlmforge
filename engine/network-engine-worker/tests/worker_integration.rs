@@ -4846,6 +4846,26 @@ fn calculate_streamline_still_requires_snapshots() {
     worker.wait().unwrap();
 }
 
+/// A null snapshot map reads as empty, and a populated engine then refuses it.
+#[test]
+fn calculate_streamline_refuses_null_snapshots_for_a_populated_engine() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
+    sl_add_member(&mut worker, "sl-m2", SL_USER2, SL_USER1, 1002);
+
+    let request = format!(
+        r#"{{"id":"sl-null-snap","op":"calculate_streamline","params":{{"structure":"{}","snapshots":null,"volume":[]}}}}"#,
+        SL_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert_refuses_missing_snapshot(&resp, SL_USER1);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// Omitting `volume` stays an error. The mirror of
 /// `calculate_streamline_still_requires_snapshots` — one guard per required
 /// field, so adding `default` to either one fails loudly.

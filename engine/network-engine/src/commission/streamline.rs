@@ -17,12 +17,11 @@ use super::{walk, walk_order};
 /// Calculate streamline commissions across all active streams.
 ///
 /// Rejects an invalid dynamic-compression config, a snapshot naming a rank the
-/// plan does not define, and a snapshot whose personal_volume is negative or
-/// not finite. Also rejects volume it cannot pay: a source with
-/// a non-finite or negative CV amount, a source held by no stream, or a source
-/// with no snapshot. An upline node the walk reaches with no snapshot is
-/// rejected too. A source held only by a frozen stream is accepted and
-/// earns nothing.
+/// plan does not define, a snapshot whose personal_volume is negative or not
+/// finite, and a stream member with no snapshot, frozen streams included. Also
+/// rejects volume it cannot pay: a source with a non-finite or negative CV
+/// amount, or a source held by no stream. A source held only by a frozen stream
+/// is accepted and earns nothing.
 ///
 /// Each unfrozen stream is walked independently. Dynamic compression
 /// thresholds gate per-level qualification by rank ordinal. Monoline
@@ -109,7 +108,7 @@ pub fn calculate_streamline(
         })
         .collect::<Result<_, _>>()?;
 
-    walk::validate_snapshots(plan, snapshots, std::iter::empty())?;
+    walk::validate_snapshots(plan, snapshots, engine.member_ids())?;
 
     let multiplier = structure
         .streamline_commission
@@ -1301,7 +1300,7 @@ mod tests {
     }
 
     #[test]
-    fn stream_member_with_no_snapshot_returns_source_not_in_snapshot() {
+    fn stream_member_with_no_snapshot_returns_distributor_not_in_snapshot() {
         let (engine, plan, structure, mut snapshots) = validation_fixture();
         snapshots.remove(&test_uuid(3));
         let volume = vec![VolumeSource {
@@ -1318,10 +1317,10 @@ mod tests {
             &crate::test_support::test_plan_identity(),
         );
 
-        assert!(matches!(
-            result,
-            Err(CalculationError::SourceNotInSnapshot(id)) if id == test_uuid(3)
-        ));
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::DistributorNotInSnapshot(test_uuid(3))
+        );
     }
 
     fn earnings_from_member_three(engine: &StreamlineEngine) -> Vec<(Uuid, Uuid, u8, f64)> {
@@ -1392,21 +1391,17 @@ mod tests {
         assert_eq!(earnings_from_member_three(&rebuilt), fresh_earnings);
     }
 
-    /// A source held only by a frozen stream, with no snapshot.
-    ///
-    /// It sits behind the walk, so the pre-loop is what has to reject it.
+    /// A member held only by a frozen stream still needs a snapshot, even with
+    /// no volume.
     #[test]
-    fn frozen_only_source_with_no_snapshot_returns_source_not_in_snapshot() {
+    fn frozen_stream_member_with_no_snapshot_is_rejected() {
         let (mut engine, plan, structure, mut snapshots) = validation_fixture();
         // Dropping the owner's allowance to 0 freezes every stream it owns.
         engine
             .update_stream_allowance(test_uuid(1), 0, 2000)
             .unwrap();
         snapshots.remove(&test_uuid(3));
-        let volume = vec![VolumeSource {
-            source_id: test_uuid(3),
-            cv_amount: 100.0,
-        }];
+        let volume: Vec<VolumeSource> = vec![];
 
         let result = calculate_streamline(
             &engine,
@@ -1417,10 +1412,10 @@ mod tests {
             &crate::test_support::test_plan_identity(),
         );
 
-        assert!(matches!(
-            result,
-            Err(CalculationError::SourceNotInSnapshot(id)) if id == test_uuid(3)
-        ));
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::DistributorNotInSnapshot(test_uuid(3))
+        );
     }
 
     /// A frozen-only source is valid input, not a caller mistake.
@@ -1455,10 +1450,8 @@ mod tests {
         );
     }
 
-    /// Pins that streamline propagates the shared walk's missing-upline error
-    /// rather than absorbing it. The omitted node is upline of the source, not
-    /// the source itself, so the pre-loop's source check cannot catch it.
-    /// Holds in every profile.
+    /// Pins that streamline refuses a member with no snapshot that sits upline
+    /// of the source.
     #[test]
     fn missing_upline_snapshot_errors() {
         let (engine, plan, structure, mut snapshots) = validation_fixture();
@@ -1480,15 +1473,13 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err(),
-            CalculationError::UplineNotInSnapshot(test_uuid(4))
+            CalculationError::DistributorNotInSnapshot(test_uuid(4))
         );
     }
 
-    /// Pins that faults resolve per source in input order, not per check across
-    /// the slice. An earlier source's missing snapshot must beat a later
-    /// source's NaN.
+    /// A missing snapshot is reported before any source's CV is checked.
     #[test]
-    fn earlier_missing_snapshot_beats_later_invalid_cv() {
+    fn missing_snapshot_beats_an_invalid_cv() {
         let (engine, plan, structure, mut snapshots) = validation_fixture();
         snapshots.remove(&test_uuid(3));
         let volume = vec![
@@ -1511,9 +1502,9 @@ mod tests {
             &crate::test_support::test_plan_identity(),
         );
 
-        assert!(matches!(
-            result,
-            Err(CalculationError::SourceNotInSnapshot(id)) if id == test_uuid(3)
-        ));
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::DistributorNotInSnapshot(test_uuid(3))
+        );
     }
 }

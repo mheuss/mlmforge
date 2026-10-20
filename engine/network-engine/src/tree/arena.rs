@@ -982,6 +982,11 @@ macro_rules! impl_arena_delegations {
                 self.arena.index.contains_key(&user_id)
             }
 
+            /// Returns every user ID in the tree.
+            pub fn user_ids(&self) -> Vec<Uuid> {
+                self.arena.index.keys().copied().collect()
+            }
+
             pub fn get_parent(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
                 let idx = self.arena.resolve(user_id)?;
                 match self.arena.node(idx).parent {

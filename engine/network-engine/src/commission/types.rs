@@ -105,6 +105,10 @@ pub enum CalculationError {
     #[error("upline node {0} has no snapshot")]
     UplineNotInSnapshot(Uuid),
 
+    /// A distributor the calculation requires has no snapshot.
+    #[error("distributor {0} has no snapshot")]
+    DistributorNotInSnapshot(Uuid),
+
     /// A snapshot names a rank the loaded plan does not define.
     #[error("snapshot for {0} names rank {1:?}; the loaded plan's rank ladder does not contain it")]
     UnknownSnapshotRank(Uuid, String),
@@ -724,5 +728,12 @@ mod tests {
         let id = uuid_from_index(2);
         let err = CalculationError::UplineNotInSnapshot(id);
         assert_eq!(err.to_string(), format!("upline node {id} has no snapshot"));
+    }
+
+    #[test]
+    fn distributor_not_in_snapshot_message_names_the_distributor() {
+        let id = uuid_from_index(4);
+        let err = CalculationError::DistributorNotInSnapshot(id);
+        assert_eq!(err.to_string(), format!("distributor {id} has no snapshot"));
     }
 }

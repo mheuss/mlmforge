@@ -1368,4 +1368,18 @@ mod tests {
             Err(TreeError::UserNotFound(test_uuid(9)))
         );
     }
+
+    #[test]
+    fn user_ids_lists_every_position() {
+        let mut tree = BinaryTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 1)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 2)
+            .unwrap();
+
+        let mut ids = tree.user_ids();
+        ids.sort();
+        assert_eq!(ids, vec![test_uuid(1), test_uuid(2), test_uuid(3)]);
+    }
 }

@@ -3401,4 +3401,16 @@ mod tests {
 
         assert!(result.relocated.is_empty());
     }
+
+    #[test]
+    fn user_ids_leaves_out_a_holding_tank_entry() {
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 1000).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 2000).unwrap();
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+        assert_eq!(tree.get_holding_tank(None).len(), 1);
+
+        assert_eq!(tree.user_ids(), vec![test_uuid(1)]);
+    }
 }

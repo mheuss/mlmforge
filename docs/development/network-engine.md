@@ -313,6 +313,8 @@ Three consuming sites, four `steps.push` calls. The loop tail is one site with t
 
 The walk can also fail. A node that reaches its snapshot lookup with no snapshot returns `UplineNotInSnapshot` and no walk is pushed for that source. Walks already pushed for earlier sources stay in the caller's collector, which the caller discards along with the error rather than handing to `walk_order::assemble`.
 
+The public calculators refuse a missing snapshot before the walk runs (HEU-731). So `UplineNotInSnapshot` reaches only a direct caller of the walk.
+
 The `index` on a pushed walk is a collector id, not a position. `walk_order::assemble` replaces it with the real index and remaps the earnings that reference it.
 
 Every caller of this walk passes a real collector. The throwaway-collector pattern belongs to the generation traversal in `generation.rs`, which has an uninstrumented `count_generations_upward` wrapper for stairstep Walk 2. Those earnings carry `walk: null`. That gap is deliberate, not a miss: design-rationale 029 excludes that traversal.
@@ -821,6 +823,11 @@ answer will now see an error. Nothing calls `CalculateGeneration` outside tests
 today, so the practical blast radius is zero — but HEU-556, HEU-46, and HEU-47
 wire these methods up, and they should expect the strict behavior.
 
+Since HEU-731 a source in the tree with no snapshot is refused earlier.
+The error is `DistributorNotInSnapshot`.
+The `SourceNotInSnapshot` described above reaches only a direct caller of the
+per-source check.
+
 `walk::validate_source` owns the check order, and a caller that hands it the
 source it is validating gets that order for free. Two calculators reproduce the
 order themselves instead. Binary never reaches it: it resolves an owner before
@@ -854,6 +861,11 @@ did.
 
 Same blast radius as the generation narrowing: nothing calls `CalculateStreamline`
 outside tests today.
+
+Since HEU-731 a stream member with no snapshot is refused earlier, frozen
+streams included. The error is `DistributorNotInSnapshot`.
+So the pre-loop's `SourceNotInSnapshot` reaches no caller of
+`calculate_streamline`.
 
 Still null-intolerant, tracked by HEU-632. These are nested or query-op
 collections the ticket deliberately stopped short of:

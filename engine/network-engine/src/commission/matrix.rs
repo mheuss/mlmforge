@@ -23,10 +23,9 @@ use super::{walk, walk_order};
 /// `spillover` disagrees with `structure.matrix_params` — checked before any
 /// other work, so it precedes volume/snapshot validation. Otherwise returns
 /// `CalculationError` if a snapshot names a rank the plan does not define, if
-/// a snapshot's `personal_volume` is negative or not finite, if a volume
-/// source is not found in the tree or snapshot data, if an upline node the
-/// walk reaches has no snapshot, or if a volume source has an invalid
-/// `cv_amount`.
+/// a snapshot's `personal_volume` is negative or not finite, if a placed node
+/// has no snapshot, if a volume source is not found in the tree, or if a volume
+/// source has an invalid `cv_amount`.
 pub fn calculate_matrix(
     tree: &MatrixTree,
     plan: &CompensationPlan,
@@ -50,7 +49,7 @@ pub fn calculate_matrix(
         });
     }
 
-    walk::validate_snapshots(plan, snapshots)?;
+    walk::validate_snapshots(plan, snapshots, tree.user_ids())?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
 
@@ -576,7 +575,8 @@ mod tests {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
         tree.add_root(test_uuid(0), 0).unwrap();
 
-        let snapshots = HashMap::new();
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
         let result = calculate_matrix(
             &tree,
             &plan,
@@ -598,7 +598,8 @@ mod tests {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
         tree.add_root(test_uuid(0), 0).unwrap();
 
-        let snapshots = HashMap::new();
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
         let volume = vec![VolumeSource {
             source_id: test_uuid(99),
             cv_amount: 100.0,
@@ -641,14 +642,48 @@ mod tests {
             &volume,
             &crate::test_support::test_plan_identity(),
         );
-        assert!(matches!(
-            result,
-            Err(CalculationError::SourceNotInSnapshot(_))
-        ));
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::DistributorNotInSnapshot(test_uuid(1))
+        );
     }
 
-    /// Pins that matrix propagates the shared walk's missing-upline error
-    /// rather than absorbing it. Holds in every profile.
+    /// A holding-tank entry is not placed, so it needs no snapshot.
+    #[test]
+    fn a_holding_tank_entry_needs_no_snapshot() {
+        let structure = test_matrix_structure(3, 9, 5);
+        let plan = test_plan(structure.clone());
+
+        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(0), 0).unwrap();
+        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
+        tree.remove_node(test_uuid(1), crate::tree::matrix::PruningMode::HoldingTank)
+            .unwrap();
+        assert!(
+            !tree.contains(test_uuid(1)),
+            "node 1 must have left the tree"
+        );
+        assert_eq!(
+            tree.get_holding_tank(None).len(),
+            1,
+            "node 1 must be in the tank"
+        );
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
+
+        let result = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &[],
+            &crate::test_support::test_plan_identity(),
+        );
+        assert!(result.is_ok(), "got {result:?}");
+    }
+
+    /// Pins that matrix refuses a placed node with no snapshot.
     #[test]
     fn missing_upline_snapshot_errors() {
         let structure = test_matrix_structure(3, 9, 5);
@@ -680,7 +715,7 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err(),
-            CalculationError::UplineNotInSnapshot(test_uuid(1))
+            CalculationError::DistributorNotInSnapshot(test_uuid(1))
         );
     }
 

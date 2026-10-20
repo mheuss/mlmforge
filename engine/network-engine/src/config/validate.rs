@@ -284,7 +284,14 @@ impl StructureConfig {
                 if let Some(level) = &c.level_commission {
                     level.validate()?;
                 }
-                Ok(())
+                if c.level_commissions_enabled && c.level_commission.is_none() {
+                    Err(
+                        "level_commissions_enabled is true and level_commission is null or absent"
+                            .to_string(),
+                    )
+                } else {
+                    Ok(())
+                }
             }
             StructureConfig::Streamline(c) => c.streamline_commission.validate(),
             StructureConfig::BoardPlan(c) => c.board_cycling.validate(),
@@ -581,7 +588,9 @@ mod tests {
         BreakawayGenerationConfig, BreakawayTier, FixedOverrideConfig, MultiTierConfig,
     };
     use crate::config::streamline::StreamlineLevel;
-    use crate::config::{StreamlineStructureConfig, UnilevelStructureConfig};
+    use crate::config::{
+        GenerationStructureConfig, StreamlineStructureConfig, UnilevelStructureConfig,
+    };
     use crate::test_support::build_test_plan;
 
     // --- numeric helpers ---
@@ -1009,6 +1018,68 @@ mod tests {
         let mut plan = build_test_plan(test_eligibility(), named_streamline("seed"), "seed");
         plan.structures = structures;
         plan
+    }
+
+    fn named_generation(
+        name: &str,
+        enabled: bool,
+        level: Option<LevelCommissionConfig>,
+    ) -> StructureConfig {
+        StructureConfig::Generation(GenerationStructureConfig {
+            name: name.to_string(),
+            level_commission: level,
+            compression: None,
+            generation_commission: generation_config(1),
+            level_commissions_enabled: enabled,
+        })
+    }
+
+    #[test]
+    fn plan_rejects_level_commissions_enabled_with_no_level_commission() {
+        let mut plan = plan_with_structures(vec![named_generation("gen", true, None)]);
+        assert_eq!(
+            plan.validate(),
+            Err(
+                "structure 'gen': level_commissions_enabled is true and level_commission is null or absent"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn plan_accepts_level_commissions_disabled_with_no_level_commission() {
+        let mut plan = plan_with_structures(vec![named_generation("gen", false, None)]);
+        assert_eq!(plan.validate(), Ok(()));
+    }
+
+    #[test]
+    fn plan_accepts_level_commissions_disabled_with_a_level_commission() {
+        let mut plan = plan_with_structures(vec![named_generation(
+            "gen",
+            false,
+            Some(level_config(0.40, None, 0.05)),
+        )]);
+        assert_eq!(plan.validate(), Ok(()));
+    }
+
+    #[test]
+    fn plan_rejects_an_invalid_level_commission_even_when_disabled() {
+        let mut plan = plan_with_structures(vec![named_generation(
+            "gen",
+            false,
+            Some(level_config(1.5, None, 0.05)),
+        )]);
+        assert!(plan.validate().is_err());
+    }
+
+    #[test]
+    fn plan_accepts_level_commissions_enabled_with_a_level_commission() {
+        let mut plan = plan_with_structures(vec![named_generation(
+            "gen",
+            true,
+            Some(level_config(0.40, None, 0.05)),
+        )]);
+        assert_eq!(plan.validate(), Ok(()));
     }
 
     #[test]

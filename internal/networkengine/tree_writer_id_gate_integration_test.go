@@ -54,7 +54,7 @@ func TestTreeWriterReject_ClearsAForeignEventWhoseIDIsNotCanonical(t *testing.T)
 			assert.ErrorIs(t, refusedErr, ErrUnprojectableEvent)
 			projected, _, err := it.store.ProjectedVersion(ctx, c.tree)
 			require.NoError(t, err)
-			assert.Equal(t, foreign.Version-1, projected, "projected version after the refused event was %d", projected)
+			assert.Equal(t, foreign.Version-1, projected)
 
 			rejected, err := it.writer(t).Reject(ctx, RejectRequest{TreeID: c.tree, EventID: foreign.ID, Reason: "id is not a canonical UUID"})
 

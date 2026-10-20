@@ -206,6 +206,8 @@ func TestTreeConsumer_RefusesAnIDThatIsNotCanonical(t *testing.T) {
 			`node_removed in tree tree1 has user_id "nope", which is not a canonical UUID`},
 		{"a removal whose user is the nil UUID", EventTypeNodeRemoved, removed(nilID),
 			"node_removed in tree tree1 has the nil UUID as user_id"},
+		{"a removal whose user is uppercase", EventTypeNodeRemoved, removed("BBBBBBBB-BBBB-BBBB-BBBB-000000000001"),
+			`node_removed in tree tree1 has user_id "BBBBBBBB-BBBB-BBBB-BBBB-000000000001", which is not a canonical UUID`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

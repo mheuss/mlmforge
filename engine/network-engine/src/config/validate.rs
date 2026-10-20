@@ -12,10 +12,11 @@
 //! Scope is deliberately the money-path invariants the calculators assume, not
 //! a field-by-field mirror of the JSON schema — that contract is HEU-513
 //! codegen territory. Concretely: commission percents in `[0, 1]`, CV-to-dollar
-//! multipliers finite and positive, per-period caps and per-leg rank caps finite and non-negative,
-//! breakaway tiers non-empty and `<= 255`, matrix parameters the engine can
-//! actually run (`width >= 2`, breadth-first spillover only), and structure
-//! names unique across the plan so name-based lookup is unambiguous.
+//! multipliers finite and positive, per-period caps and per-leg rank caps
+//! finite and non-negative, breakaway tiers non-empty and `<= 255`, matrix
+//! parameters the engine can actually run (`width >= 2`, breadth-first
+//! spillover only), and structure names unique across the plan so name-based
+//! lookup is unambiguous.
 //!
 //! Streamline `dynamic_compression` is checked too: non-empty, a contiguous
 //! ascending run from 1, and no longer than `commissionable_depth` (HEU-612).
@@ -1271,6 +1272,19 @@ mod tests {
             );
             assert!(err.contains(&want), "expected {want:?}, got: {err}");
         }
+    }
+
+    #[test]
+    fn plan_rejects_a_negative_per_leg_cap_on_a_later_structure_entry() {
+        let mut plan = plan_with_two_ranks();
+        let mut second = zero_threshold("second");
+        second.max_group_volume_per_leg = -1.0;
+        plan.ranks[1].qualification.structures = vec![zero_threshold("main"), second];
+        let err = plan.validate().unwrap_err();
+        assert!(
+            err.contains("rank 'gold' structure 'second' max_group_volume_per_leg must be finite and non-negative, got -1"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

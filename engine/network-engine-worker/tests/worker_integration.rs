@@ -5230,8 +5230,17 @@ fn load_plan_accepts_a_rank_with_no_per_leg_cap() {
     let resp = common::send_receive(
         &mut child,
         &format!(
-            r#"{{"id":"ev","op":"evaluate_ranks","params":{{"distributors":{{"{}":{{"personal_volume":60.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":[]}}}},"volume_sources":[]}}}}"#,
-            ROOT
+            r#"{{"id":"child","op":"add_node","params":{{"structure":"Test","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":200}}}}"#,
+            CHILD, ROOT, ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_node failed: {}", resp);
+    // CHILD's leg carries volume, so a cap read as zero would fail silver.
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"ev","op":"evaluate_ranks","params":{{"distributors":{{"{}":{{"personal_volume":60.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":[]}}}},"volume_sources":[{{"source_id":"{}","cv_amount":100.0}}]}}}}"#,
+            ROOT, CHILD
         ),
     );
     drop(child.stdin.take());

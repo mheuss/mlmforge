@@ -89,7 +89,8 @@ pub(crate) fn capped_gv_meets(
         for d in tree.get_downline(child.user_id, 0)? {
             leg += volume_index.cv_for(d.user_id);
         }
-        gv += cap.map_or(leg, |c| leg.min(c));
+        // Not f64::min: it would turn a NaN leg into the cap and pass the rank.
+        gv += cap.map_or(leg, |c| if leg > c { c } else { leg });
     }
     Ok(gv >= required)
 }
@@ -735,6 +736,14 @@ mod tests {
 
         let err = capped_gv_meets(0.0, None, uid(99), &tree, &idx, &primitives).unwrap_err();
         assert_eq!(err, TreeError::UserNotFound(uid(99)));
+    }
+
+    #[test]
+    fn capped_gv_meets_fails_on_a_nan_leg_under_a_cap() {
+        let (tree, idx) = root_with_legs(&[f64::NAN]);
+        let primitives = primitives_with_pv(0.0);
+
+        assert!(!capped_gv_meets(0.0, Some(100.0), uid(1), &tree, &idx, &primitives).unwrap());
     }
 
     proptest! {

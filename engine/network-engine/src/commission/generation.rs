@@ -1928,7 +1928,7 @@ mod calculate_tests {
     }
 
     /// Volume naming a source with no snapshot fails on the generation-only
-    /// path. `threshold_structure` leaves `level_commissions_enabled` false.
+    /// path.
     #[test]
     fn generation_only_rejects_volume_with_no_snapshot() {
         let tree = build_chain(3);

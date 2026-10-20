@@ -626,7 +626,7 @@ Do not reach for Go's `omitempty` on a required field to solve this. On its own 
 
 Widening `snapshots: null` to empty does not open a silent-zero path of its own. Since HEU-731 every calculator that takes a tree refuses a request unless every distributor it requires has a snapshot. For most structures that is each tree node. For binary it is the owner of each position. That check runs before any walk, so absence cannot reach an active-leg count, a group volume or a generation boundary set. The per-source checks described next and the walk's upline check stay in the code as defense in depth.
 
-Those per-source checks reject volume naming a source with no snapshot — `walk::validate_source` for the level-based walks, and `binary.rs` for pairing, which resolves the owner first and reports that UUID instead. Streamline runs the same rejection a second time, over all volume, before any stream is walked, because its per-stream filter would otherwise drop a source no walk reaches.
+Those per-source checks reject volume naming a source with no snapshot. `walk::validate_source` does this for the level-based walks. `binary.rs` does it for pairing. It resolves the owner first and reports that UUID instead. Streamline runs the same rejection a second time, over all volume, before any stream is walked. Its per-stream filter would otherwise drop a source no walk reaches.
 
 Still null-intolerant, tracked by HEU-632: `history`'s inner per-period map (a null there has no defined meaning — absent-key and `Some(None)` are the two documented states), `cycle_events[].new_boards`, and `board_compress_inactive`'s `member_ids`.
 

@@ -265,18 +265,8 @@ fn emit_generation_earnings(
 ///
 /// Returns `CalculationError` if a snapshot names a rank the plan does not
 /// define, if a snapshot's personal_volume is negative or not finite, if a
-/// volume source is not found in the tree or snapshot data, if an upline node
-/// the level walk reaches has no snapshot, or if a volume source has an
-/// invalid CV amount.
-///
-/// That upline-snapshot check covers only the nodes the level walk itself
-/// reaches. It is not a guarantee about this function. The generation
-/// traversal builds its boundary set from the snapshot map, so an omitted
-/// node is absent from that set and consumes no generation, which promotes
-/// the ancestors above it. That happens whenever the level walk does not
-/// reach the node: with `level_commissions_enabled` unset, with it set but
-/// `level_commission` null, or with the node deeper than the level walk's
-/// own depth. HEU-731 and HEU-728 track it.
+/// distributor in the tree has no snapshot, if a volume source is not found in
+/// the tree, or if a volume source has an invalid CV amount.
 pub fn calculate_generation(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -285,7 +275,7 @@ pub fn calculate_generation(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
-    walk::validate_snapshots(plan, snapshots, std::iter::empty())?;
+    walk::validate_snapshots(plan, snapshots, tree.user_ids())?;
     let gen_config = &structure.generation_commission;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
@@ -1469,13 +1459,10 @@ mod calculate_tests {
         assert_eq!(result[0].level, 1);
     }
 
-    /// Chain: 0(Dir) -> 1(no snapshot) -> 2(Dir) -> 3(leaf).
-    /// Node 1 has no snapshot entry. It cannot be in the boundary set
-    /// (no rank to evaluate) and cannot be eligible (no snapshot).
-    /// Node 2 is a boundary. Node 0 is a boundary. Node 2 earns gen 1,
-    /// node 0 earns gen 2.
+    /// Chain: 0(Dir) -> 1(no snapshot) -> 2(Dir) -> 3(leaf), level commissions
+    /// off. The request is refused, so node 0 earns nothing.
     #[test]
-    fn missing_snapshot_treated_as_ineligible() {
+    fn omitted_upline_snapshot_is_rejected_with_level_commissions_off() {
         let tree = build_chain(4);
         let plan = two_rank_plan();
         let rates = BTreeMap::from([(1, 0.10), (2, 0.06)]);
@@ -1492,7 +1479,7 @@ mod calculate_tests {
             cv_amount: 100.0,
         }];
 
-        let result = calculate_generation(
+        let err = calculate_generation(
             &tree,
             &plan,
             &structure,
@@ -1500,20 +1487,8 @@ mod calculate_tests {
             &volume,
             &crate::test_support::test_plan_identity(),
         )
-        .unwrap()
-        .earnings;
-
-        assert_eq!(result.len(), 2);
-        let earn_2 = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
-        assert_eq!(earn_2.level, 1);
-        assert_eq!(earn_2.rate, Some(0.10));
-
-        let earn_0 = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
-        assert_eq!(earn_0.level, 2);
-        assert_eq!(earn_0.rate, Some(0.06));
-
-        // Node 1 should not appear in results.
-        assert!(!result.iter().any(|e| e.earner_id == uuid(1)));
+        .expect_err("a chain with an omitted snapshot must be refused");
+        assert_eq!(err, CalculationError::DistributorNotInSnapshot(uuid(1)));
     }
 
     /// Source not in tree returns CalculationError::SourceNotInTree.
@@ -1870,10 +1845,7 @@ mod calculate_tests {
         assert!((root_gen.dollar_amount - 10.0).abs() < f64::EPSILON);
     }
 
-    /// Pins that generation propagates the shared walk's missing-upline error
-    /// rather than absorbing it. Reaching that walk needs
-    /// `level_commissions_enabled: true`; with it false this call succeeds and
-    /// silently skips the node, which HEU-728 tracks. Holds in every profile.
+    /// The same omission with level commissions on is refused the same way.
     #[test]
     fn missing_upline_snapshot_errors_with_level_commissions_on() {
         let tree = build_chain(3);
@@ -1915,7 +1887,7 @@ mod calculate_tests {
 
         assert_eq!(
             result.unwrap_err(),
-            CalculationError::UplineNotInSnapshot(uuid(1))
+            CalculationError::DistributorNotInSnapshot(uuid(1))
         );
     }
 
@@ -1955,28 +1927,18 @@ mod calculate_tests {
         assert_eq!(result[0].level, 1);
     }
 
-    /// Volume naming a source with no snapshot must fail loudly, on the
-    /// generation-only path too.
-    ///
-    /// Four sibling calculators inherit this guard from
-    /// `walk_level_commissions`; binary pairing has its own (`binary.rs:61`),
-    /// keyed on the resolved owner rather than the source. Generation reaches
-    /// that walk only when
-    /// `level_commissions_enabled`, so with level commissions off it needs its
-    /// own — without it the walk derives an empty `boundary_set` from the empty
-    /// snapshots, pays nobody, and returns `Ok(vec![])`. On a money path that
-    /// is a silent zero for a caller who lost their snapshot data.
-    ///
-    /// `threshold_structure` leaves `level_commissions_enabled` false, which is
-    /// what puts this test on the uncovered path.
+    /// Volume naming a source with no snapshot fails on the generation-only
+    /// path. `threshold_structure` leaves `level_commissions_enabled` false.
     #[test]
     fn generation_only_rejects_volume_with_no_snapshot() {
         let tree = build_chain(3);
         let plan = two_rank_plan();
         let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
 
-        // Deliberately empty: the source below is in the tree but not here.
-        let snapshots = HashMap::new();
+        // Every node but the source has a snapshot.
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), eligible_snapshot());
+        snapshots.insert(uuid(1), eligible_snapshot());
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
@@ -1992,7 +1954,7 @@ mod calculate_tests {
             &crate::test_support::test_plan_identity(),
         )
         .expect_err("volume naming a source with no snapshot must fail");
-        assert_eq!(err, CalculationError::SourceNotInSnapshot(uuid(2)));
+        assert_eq!(err, CalculationError::DistributorNotInSnapshot(uuid(2)));
     }
 
     /// The same guard on the `SameRank` boundary arm, which has its own
@@ -2004,7 +1966,10 @@ mod calculate_tests {
         let mut structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
         structure.generation_commission.boundary_mode = GenerationBoundaryMode::SameRank;
 
-        let snapshots = HashMap::new();
+        // Every node but the source has a snapshot.
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), eligible_snapshot());
+        snapshots.insert(uuid(1), eligible_snapshot());
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
@@ -2020,15 +1985,11 @@ mod calculate_tests {
             &crate::test_support::test_plan_identity(),
         )
         .expect_err("volume naming a source with no snapshot must fail");
-        assert_eq!(err, CalculationError::SourceNotInSnapshot(uuid(2)));
+        assert_eq!(err, CalculationError::DistributorNotInSnapshot(uuid(2)));
     }
 
-    /// The `ThresholdRank` early return fires before the per-source loop when
-    /// `boundary_rank` is missing from the plan's rank ladder. With level
-    /// commissions off, nothing else validates the volume on that path, so a
-    /// source with no snapshot slipped through as `Ok(vec![])` — the same
-    /// silent zero `generation_only_rejects_volume_with_no_snapshot` closes on
-    /// the normal path, left open on the misconfigured-plan one.
+    /// A source with no snapshot fails even when `boundary_rank` is missing
+    /// from the plan's rank ladder.
     #[test]
     fn generation_only_rejects_no_snapshot_when_boundary_rank_missing() {
         let tree = build_chain(3);
@@ -2037,7 +1998,10 @@ mod calculate_tests {
         // ThresholdRank arm takes its early return.
         let structure = threshold_structure("nonexistent_rank", 3, BTreeMap::from([(1, 0.10)]));
 
-        let snapshots = HashMap::new();
+        // Every node but the source has a snapshot.
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), eligible_snapshot());
+        snapshots.insert(uuid(1), eligible_snapshot());
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
@@ -2053,7 +2017,7 @@ mod calculate_tests {
             &crate::test_support::test_plan_identity(),
         )
         .expect_err("a source with no snapshot must fail even when boundary_rank is missing");
-        assert_eq!(err, CalculationError::SourceNotInSnapshot(uuid(2)));
+        assert_eq!(err, CalculationError::DistributorNotInSnapshot(uuid(2)));
     }
 
     /// Combined level + generation with an invalid generation boundary_rank.

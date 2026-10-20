@@ -1512,6 +1512,32 @@ fn calculate_generation_still_requires_snapshots() {
     worker.wait().unwrap();
 }
 
+/// A null snapshot map reads as empty, and a populated tree then refuses it.
+#[test]
+fn calculate_generation_refuses_null_snapshots_for_a_populated_tree() {
+    let mut worker = common::spawn_worker();
+    load_generation_test_plan(&mut worker);
+    create_tree(&mut worker, GEN_STRUCTURE);
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"g-null-snap-root","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            GEN_STRUCTURE, ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+
+    let request = format!(
+        r#"{{"id":"g-null-snap","op":"calculate_generation","params":{{"structure":"{}","snapshots":null,"volume":[]}}}}"#,
+        GEN_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert_refuses_missing_snapshot(&resp, ROOT);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// Omitting `volume` stays an error. The mirror of
 /// `calculate_generation_still_requires_snapshots` — one guard per required
 /// field, so adding `default` to either one fails loudly.

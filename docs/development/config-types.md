@@ -67,7 +67,7 @@ When you add a field to a Go config struct that gets serialized:
 2. Add a fixture exercising it to `internal/config/testdata/valid/`
 3. Register the fixture in the hardcoded lists. `TestSchemaValidatesAllValidFixtures` (`schema_test.go`) and `TestPipelineAllValidFixtures` (`pipeline_test.go`) both iterate explicit slices. Fixtures are not auto-discovered.
 
-The schema is what tells plan authors when they typo a field name. Missing the schema declaration means typos produce empty/default values silently. The Go and Rust layers won't catch them either — neither uses `additionalProperties: false` today.
+The schema is what tells plan authors when they typo a field name. Missing the schema declaration means typos produce empty/default values silently. The Go and Rust layers do not catch them either. The exception is `StructureQualification`. The schema closes it with `additionalProperties: false`, and Rust reads it with `deny_unknown_fields` (HEU-960).
 
 ### Invalid fixtures: mutate a valid one
 

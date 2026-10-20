@@ -89,7 +89,7 @@ pub(crate) fn capped_gv_meets(
         for d in tree.get_downline(child.user_id, 0)? {
             leg += volume_index.cv_for(d.user_id);
         }
-        // Not f64::min: it would turn a NaN leg into the cap and pass the rank.
+        // Not f64::min: it would count a NaN leg as the full cap and could pass the rank.
         gv += cap.map_or(leg, |c| if leg > c { c } else { leg });
     }
     Ok(gv >= required)

@@ -167,7 +167,7 @@ fn evaluate_ranks_gives_the_base_rank_without_evaluating_its_qualification() {
 }
 
 #[test]
-fn evaluate_ranks_omitting_primitives_treats_distributor_as_unranked() {
+fn evaluate_ranks_omitting_primitives_omits_distributor() {
     // Reproduces design risk #3 mitigation.
     let mut tree = UnilevelTree::new();
     tree.add_root(uuid_from_index(1), 0).unwrap();
@@ -1268,6 +1268,7 @@ fn evaluate_ranks_returns_unranked_only_for_an_empty_ladder() {
         result.ranks.get(&uuid_from_index(1)),
         Some(&EvaluatedRank::Unranked)
     );
+    assert!(!result.ranks.contains_key(&uuid_from_index(99)));
 }
 
 #[test]

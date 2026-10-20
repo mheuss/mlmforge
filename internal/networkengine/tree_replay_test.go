@@ -643,7 +643,7 @@ func TestReplayStream_RefusesAnIDThatIsNotCanonical(t *testing.T) {
 
 func TestReplayStream_RefusesARootWhoseSponsorIsNotCanonical(t *testing.T) {
 	events := platform.NewMemoryEventStore()
-	appendDirect(t, events, EventTypeRootAdded, RootAddedPayload{
+	bad := appendDirect(t, events, EventTypeRootAdded, RootAddedPayload{
 		TreeID: writerTree, UserID: writerRoot, SponsorID: "", EnrolledAt: writeTime, TreeType: treeTypeUnilevel,
 	})
 	engine := &stubMutator{}
@@ -652,7 +652,9 @@ func TestReplayStream_RefusesARootWhoseSponsorIsNotCanonical(t *testing.T) {
 
 	var replay *TreeReplayError
 	require.ErrorAs(t, err, &replay)
+	assert.Equal(t, TreeReplayStageReplay, replay.Stage)
 	assert.Equal(t, int64(1), replay.FailedVersion)
+	assert.True(t, sameUUID(bad.ID, replay.FailedEventID), "replay named event %q, not %s", replay.FailedEventID, bad.ID)
 	assert.EqualError(t, replay.Err, `root_added in tree `+writerTree+` has sponsor_id "", which is not a canonical UUID`)
 	assert.Zero(t, engine.totalCalls())
 }

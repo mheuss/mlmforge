@@ -1224,3 +1224,24 @@ func TestTreeWriterReject_AFailedDropIsNotEvidence(t *testing.T) {
 	assert.Empty(t, res.Outcome)
 	assert.Equal(t, before, streamEvents(t, env.events, TreeStreamName(writerTree)))
 }
+
+func TestTreeWriterReject_ClearsANilUserRowTheStoreAlreadyHolds(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	p := childPlacedPayload(uuid.Nil.String())
+	stuck := appendDirect(t, env.events, EventTypeNodePlaced, p)
+	parent, sponsor := p.ParentID, p.SponsorID
+	require.NoError(t, env.store.ProjectInsert(context.Background(), TreeNodeRow{
+		ID: stuck.ID, TreeID: writerTree, UserID: p.UserID, ParentID: &parent, SponsorID: &sponsor,
+		Depth: 1, EnrolledAt: writeTime,
+	}, stuck.Version))
+	w, _ := env.writer()
+
+	res, err := w.Reject(context.Background(), RejectRequest{TreeID: writerTree, EventID: stuck.ID, Reason: "nil user id"})
+
+	require.NoError(t, err)
+	require.Equal(t, RejectOutcomeRejected, res.Outcome, "the retry returned %v", res.RetryErr)
+	var rejected *TreeLoadRejectedError
+	require.ErrorAs(t, res.RetryErr, &rejected)
+	assert.Equal(t, TreeLoadDataInvalid, rejected.Kind)
+}

@@ -64,7 +64,7 @@ The Rust `Request` struct deserializes `params` as `Box<serde_json::value::RawVa
 
 ### Error Code Taxonomy
 
-The worker returns an error code in the `error.code` field. There are 47 of
+The worker returns an error code in the `error.code` field. There are 48 of
 them, grouped below by the area that raises them. Codes are shared across areas
 where the condition is the same, so each one is listed once.
 
@@ -75,7 +75,7 @@ which maps every `TreeError` variant, plus a few handler-level checks.
 |------|---------|
 | `STRUCTURE_NOT_FOUND` | Named structure does not exist in the loaded plan, or no tree has been created |
 | `USER_NOT_FOUND` | Referenced user does not exist in the tree |
-| `USER_ALREADY_EXISTS` | User already exists in the tree, or sits in a matrix tree's holding tank |
+| `USER_ALREADY_EXISTS` | User already exists in the tree |
 | `ROOT_ALREADY_EXISTS` | Tree already has a root node |
 | `POSITION_OCCUPIED` | Target position in the tree is already taken |
 | `INVALID_POSITION` | Position value is out of range for this tree type |
@@ -86,6 +86,7 @@ which maps every `TreeError` variant, plus a few handler-level checks.
 | `INVALID_WIDTH` | Configured matrix width is not valid |
 | `SPONSOR_NOT_FOUND` | Named sponsor does not exist. Also raised by board and streamline placement |
 | `USER_NOT_IN_HOLDING_TANK` | `place_from_tank` named a user who is not in the tank |
+| `USER_IN_HOLDING_TANK` | A matrix add or place named a user who is in the holding tank (HEU-930) |
 | `UNSUPPORTED_SPILLOVER` | The requested spillover strategy is not implemented for this tree type |
 | `SUBTREE_FULL` | Spillover found no open slot in the target subtree |
 | `SPONSORLESS_WITH_RECRUITS` | Cannot remove a node whose recruits outlive it when no sponsor of its own does. See [030](030-sponsor-continuity-on-removal.md) |

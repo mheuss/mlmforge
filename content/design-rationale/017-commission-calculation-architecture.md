@@ -76,7 +76,7 @@ This means compression behavior is tightly coupled to the walk loop. It has to b
 
 ### Strict on Caller-Supplied State
 
-Volume sources, their distributors, and every upline node the walk reaches must exist in the tree and in the snapshot map. A missing snapshot returns an error. So does a snapshot naming a rank the plan does not define, and a restored engine whose indexes disagree with the structures they index.
+Volume sources must exist in the tree. Every distributor in the tree must have a snapshot, whether or not a walk reaches it. A missing snapshot returns an error. So does a snapshot naming a rank the plan does not define, and a restored engine whose indexes disagree with the structures they index.
 
 Volume amounts are validated too: `cv_amount` must be finite and non-negative. NaN, positive infinity, negative infinity, and negative values all produce `InvalidCvAmount` errors. These are input integrity checks, not business rules. A non-finite CV amount is always a bug upstream.
 
@@ -84,9 +84,9 @@ Volume amounts are validated too: `cv_amount` must be finite and non-negative. N
 
 This decision was the reverse until 2026-09-10. Upline nodes missing from snapshots were treated as ineligible with no signal, on the grounds that missing upline data is a completeness issue rather than an integrity issue. That reasoning missed one thing. The snapshot map is a request parameter. Under compression a missing upline is skipped without consuming a level, so omitting one promotes every ancestor above it. Absence chosen by the caller and absence caused by a data gap are indistinguishable at the point of use. The engine cannot be lenient about one without being lenient about both.
 
-> Decided, and in force as of protocol 15. Every ticket that builds it has landed. This note stays a list of tickets rather than a description of behaviour.
+> Decided, and in force as of protocol 20. Every ticket that builds it has landed. This note stays a list of tickets rather than a description of behaviour.
 >
-> Six tickets build it and each carries its own protocol version. The version the worker reports tells you how far it has got. HEU-611 at 3, HEU-608 at 5, HEU-609 at 6, HEU-706 at 7, HEU-726 at 9 and HEU-709 at 15 have all landed. If another ticket joins this decision, it lands here with its own version. This note then goes back to naming what has not.
+> Seven tickets build it and each carries its own protocol version. The version the worker reports tells you how far it has got. HEU-611 at 3, HEU-608 at 5, HEU-609 at 6, HEU-706 at 7, HEU-726 at 9, HEU-709 at 15 and HEU-731 at 20 have all landed. If another ticket joins this decision, it lands here with its own version. This note then goes back to naming what has not.
 >
 > This note is deliberately a list of tickets rather than a description of current behaviour. The first version described the behaviour, and one third of it was false within eleven hours of being written and stamped as checked. A ticket landing is one word to delete here; a behaviour changing is a paragraph to re-verify.
 

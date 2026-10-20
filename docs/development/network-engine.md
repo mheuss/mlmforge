@@ -313,6 +313,8 @@ Three consuming sites, four `steps.push` calls. The loop tail is one site with t
 
 The walk can also fail. A node that reaches its snapshot lookup with no snapshot returns `UplineNotInSnapshot` and no walk is pushed for that source. Walks already pushed for earlier sources stay in the caller's collector, which the caller discards along with the error rather than handing to `walk_order::assemble`.
 
+The public calculators refuse a missing snapshot before the walk runs, so `UplineNotInSnapshot` reaches only a direct caller of the walk (HEU-731).
+
 The `index` on a pushed walk is a collector id, not a position. `walk_order::assemble` replaces it with the real index and remaps the earnings that reference it.
 
 Every caller of this walk passes a real collector. The throwaway-collector pattern belongs to the generation traversal in `generation.rs`, which has an uninstrumented `count_generations_upward` wrapper for stairstep Walk 2. Those earnings carry `walk: null`. That gap is deliberate, not a miss: design-rationale 029 excludes that traversal.
@@ -814,6 +816,10 @@ requests it used to answer with `Ok([])`.
   three checks now surface on this path, not just the snapshot one —
   `InvalidCvAmount` and `SourceNotInTree` existed before but sat below the
   early return.
+
+Since HEU-731 a source in the tree with no snapshot is refused earlier, as
+`DistributorNotInSnapshot`, so the `SourceNotInSnapshot` described above
+reaches only a direct caller of the per-source check.
 
 Both were silent zeros on a money path, which is why they were worth closing
 inside this ticket rather than after it. Callers that relied on the old lenient

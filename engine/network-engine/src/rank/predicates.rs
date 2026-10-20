@@ -735,6 +735,20 @@ mod tests {
         assert!(max_leg_gv_meets(0.0, uid(1), &tree, &idx).unwrap());
     }
 
+    #[test]
+    fn max_leg_gv_meets_fails_a_leg_with_volume_when_cap_is_negative() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
+        let sources = vec![VolumeSource {
+            source_id: uid(2),
+            cv_amount: 200.0,
+        }];
+        let idx = VolumeIndex::build(&sources);
+
+        assert!(!max_leg_gv_meets(-1.0, uid(1), &tree, &idx).unwrap());
+    }
+
     use crate::config::rank::{DistributorCountRequirement, SearchMode};
     use crate::rank::types::EvaluatedRank;
     use std::collections::HashMap;

@@ -261,8 +261,9 @@ pub struct GenerationStructureConfig {
     /// Optional level commission configuration.
     ///
     /// Some generation plans use only generation commissions. When
-    /// `level_commissions_enabled` is false, this field is ignored
-    /// even if present.
+    /// `level_commissions_enabled` is false, no level commissions are paid
+    /// from this field. It is required when `level_commissions_enabled` is
+    /// true.
     pub level_commission: Option<LevelCommissionConfig>,
 
     /// Optional compression removes unqualified distributors from the

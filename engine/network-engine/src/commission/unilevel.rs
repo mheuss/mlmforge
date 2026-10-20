@@ -20,9 +20,8 @@ use super::{walk, walk_order};
 ///
 /// Returns `CalculationError` if a snapshot names a rank the plan does not
 /// define, if a snapshot's personal_volume is negative or not finite, if a
-/// volume source is not found in the tree or snapshot data, if an upline node
-/// the walk reaches has no snapshot, or if a volume source's cv_amount is
-/// negative or not finite.
+/// distributor in the tree has no snapshot, if a volume source is not found in
+/// the tree, or if a volume source's cv_amount is negative or not finite.
 pub fn calculate_unilevel(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -31,7 +30,8 @@ pub fn calculate_unilevel(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
-    walk::validate_snapshots(plan, snapshots)?;
+    let member_ids = tree.user_ids();
+    walk::validate_snapshots(plan, snapshots, member_ids.iter().copied())?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
 
@@ -46,13 +46,10 @@ pub fn calculate_unilevel(
     let compression = structure.compression.as_ref();
     let threshold_ordinal = walk::resolve_threshold_ordinal(compression, &rank_ordinals);
 
-    // Build pass-up context if configured. Use tree.user_ids() instead of
-    // snapshot keys so skip sets cover all distributors in the tree, including
-    // intermediate sponsors that may be missing from snapshots.
     let pass_up_context = structure
         .pass_up
         .as_ref()
-        .map(|pu| walk::build_pass_up_context(tree, pu, &tree.user_ids()));
+        .map(|pu| walk::build_pass_up_context(tree, pu, &member_ids));
 
     let config = walk::LevelWalkConfig {
         max_depth: structure.level_commission.max_depth,
@@ -979,9 +976,7 @@ mod tests {
 
     #[test]
     fn missing_upline_snapshot_errors() {
-        // Pins the entry point, not the walk. Swallow the walk's error here,
-        // or default the missing snapshot before calling it, and the walk's
-        // own tests stay green while this one fails.
+        // Pins the entry point: a node with no snapshot is refused.
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
@@ -1024,7 +1019,140 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err(),
-            CalculationError::UplineNotInSnapshot(test_uuid(2))
+            CalculationError::DistributorNotInSnapshot(test_uuid(2))
+        );
+    }
+
+    /// Node 1 sponsors nodes 2 and 4, node 2 sponsors node 3, and node 3 is
+    /// the only volume source. Node 1 sits two levels above node 3 and reaches
+    /// depth 2 only with two active legs.
+    fn two_leg_depth_cap_case() -> (UnilevelTree, CompensationPlan, UnilevelStructureConfig) {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
+        tree.add_node(test_uuid(4), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+
+        let elig = CommissionEligibility {
+            minimum_pv: 100.0,
+            require_order_in_period: false,
+            eligible_statuses: vec!["active".to_string()],
+            active_leg_tiers: vec![
+                ActiveLegTier {
+                    min_active_legs: 1,
+                    max_commission_depth: 1,
+                },
+                ActiveLegTier {
+                    min_active_legs: 2,
+                    max_commission_depth: 2,
+                },
+            ],
+        };
+        (tree, test_plan(elig), test_structure(test_rate_table()))
+    }
+
+    /// With node 4's snapshot present, node 1 has two active legs and earns on
+    /// node 3's volume at level 2.
+    #[test]
+    fn two_active_legs_reach_depth_two() {
+        let (tree, plan, structure) = two_leg_depth_cap_case();
+
+        let mut snapshots = HashMap::new();
+        for id in 1..=4 {
+            snapshots.insert(test_uuid(id), eligible_snapshot());
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let earnings = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
+
+        assert!(
+            earnings
+                .iter()
+                .any(|e| e.earner_id == test_uuid(1) && e.level == 2),
+            "node 1 must earn at level 2, got {earnings:?}"
+        );
+    }
+
+    /// With node 4 present but below minimum PV, node 1 has one active leg,
+    /// is capped at depth 1, and earns nothing on node 3's volume.
+    #[test]
+    fn one_active_leg_caps_depth_at_one() {
+        let (tree, plan, structure) = two_leg_depth_cap_case();
+
+        let mut snapshots = HashMap::new();
+        for id in 1..=3 {
+            snapshots.insert(test_uuid(id), eligible_snapshot());
+        }
+        let mut below_minimum = eligible_snapshot();
+        below_minimum.personal_volume = 0.0;
+        snapshots.insert(test_uuid(4), below_minimum);
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let earnings = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
+
+        assert!(
+            earnings.iter().all(|e| e.earner_id != test_uuid(1)),
+            "node 1 must earn nothing, got {earnings:?}"
+        );
+    }
+
+    /// Node 4 is on no walked path. With its snapshot left out, the request is
+    /// refused and names node 4, rather than capping node 1 at depth 1.
+    #[test]
+    fn snapshot_omitted_off_every_walked_path_is_rejected() {
+        let (tree, plan, structure) = two_leg_depth_cap_case();
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(test_uuid(2), eligible_snapshot());
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::DistributorNotInSnapshot(test_uuid(4))
         );
     }
 
@@ -1202,11 +1330,10 @@ mod tests {
             &crate::test_support::test_plan_identity(),
         );
 
-        assert!(result.is_err());
-        assert!(matches!(
+        assert_eq!(
             result.unwrap_err(),
-            CalculationError::SourceNotInSnapshot(id) if id == test_uuid(1)
-        ));
+            CalculationError::DistributorNotInSnapshot(test_uuid(1))
+        );
     }
 
     /// Pins CV-before-tree, the half of `walk::validate_source`'s documented
@@ -1340,9 +1467,9 @@ mod tests {
         );
     }
 
-    /// Pins the rank check above the walk, where a missing upline snapshot is
-    /// reported. This input is bad on both counts: only the check order decides
-    /// which error surfaces. Holds in every profile.
+    /// Pins the rank check ahead of the snapshot coverage check. This input is
+    /// bad on both counts: only the check order decides which error surfaces.
+    /// Holds in every profile.
     #[test]
     fn unknown_rank_wins_over_a_missing_upline_snapshot() {
         let mut tree = UnilevelTree::new();
@@ -2447,13 +2574,9 @@ mod tests {
     }
 
     #[test]
-    fn pass_up_works_with_missing_snapshot_for_sponsor() {
-        // Tree: S(1) -> A(2) -> R1(3, t=200)
-        // A has NO snapshot. Pass-up builds A's skip set from the tree
-        // structure (via user_ids()), not from the snapshot map, so A is
-        // skipped for R1's volume. That skip fires before the snapshot
-        // lookup, so A never reaches it and consumes no level. S earns at
-        // level 1. Move the lookup above the skip and this call errors.
+    fn pass_up_does_not_excuse_a_missing_sponsor_snapshot() {
+        // Tree: S(1) -> A(2) -> R1(3, t=200).
+        // Pass-up would skip A for R1's volume, but the request is refused first.
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap(); // S
         tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 100)
@@ -2487,24 +2610,11 @@ mod tests {
             &snapshots,
             &volume,
             &crate::test_support::test_plan_identity(),
-        )
-        .unwrap()
-        .earnings;
-
-        // A should not earn (no snapshot, and pass-up skips before lookup).
-        assert!(
-            result.iter().all(|e| e.earner_id != test_uuid(2)),
-            "A should not earn — skipped by pass-up before snapshot lookup"
         );
 
-        // S earns at level 1 (A was skipped without consuming a level).
-        let s_earning = result
-            .iter()
-            .find(|e| e.earner_id == test_uuid(1))
-            .expect("S should earn");
         assert_eq!(
-            s_earning.level, 1,
-            "S should earn at level 1 because pass-up skipped A without consuming a level"
+            result.unwrap_err(),
+            CalculationError::DistributorNotInSnapshot(test_uuid(2))
         );
     }
 }

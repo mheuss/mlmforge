@@ -268,10 +268,10 @@ fn walk_overrides(
     prep: &PrepResult,
     rank_ordinals: &HashMap<&str, u16>,
     multiplier: f64,
-) -> Vec<CommissionEarning> {
+) -> Result<Vec<CommissionEarning>, CalculationError> {
     let breakaway_cfg = match &structure.breakaway {
         Some(b) => b,
-        None => return Vec::new(),
+        None => return Ok(Vec::new()),
     };
 
     match &breakaway_cfg.overrides {
@@ -279,7 +279,7 @@ fn walk_overrides(
             walk_single_overrides(tree, structure, snapshots, prep, rank_ordinals, multiplier)
         }
         crate::config::stairstep::OverrideStrategy::MultiTier(cfg) => {
-            walk_multi_tier_overrides(tree, cfg, prep, multiplier)
+            Ok(walk_multi_tier_overrides(tree, cfg, prep, multiplier))
         }
     }
 }
@@ -320,7 +320,7 @@ fn walk_single_overrides(
     prep: &PrepResult,
     rank_ordinals: &HashMap<&str, u16>,
     multiplier: f64,
-) -> Vec<CommissionEarning> {
+) -> Result<Vec<CommissionEarning>, CalculationError> {
     // broad_pct is read inside this function so the multi-tier dispatch
     // path does not carry it as an unused parameter. Walk 1
     // (walk_level_commissions) still consumes broad_pct via
@@ -388,7 +388,7 @@ fn walk_single_overrides(
 
         let breakaway_rank = match snapshots.get(&breakaway_id) {
             Some(s) => &s.rank,
-            None => continue,
+            None => return Err(CalculationError::DistributorNotInSnapshot(breakaway_id)),
         };
 
         if let (Some(gen_cfg), Some(override_candidates)) =
@@ -420,7 +420,7 @@ fn walk_single_overrides(
                     let ancestor_rank = snapshots
                         .get(&entry.earner_id)
                         .map(|s| s.rank.as_str())
-                        .unwrap_or("");
+                        .ok_or(CalculationError::UplineNotInSnapshot(entry.earner_id))?;
 
                     let (rate, dollar_amount) =
                         match resolve_gen1_payout(override_mode, ancestor_rank, breakaway_rank) {
@@ -483,7 +483,7 @@ fn walk_single_overrides(
 
                 let ancestor_rank = match snapshots.get(&node.user_id) {
                     Some(s) => s.rank.as_str(),
-                    None => continue,
+                    None => return Err(CalculationError::UplineNotInSnapshot(node.user_id)),
                 };
 
                 let pool = group_vol * broad_pct * multiplier;
@@ -516,7 +516,7 @@ fn walk_single_overrides(
         }
     }
 
-    earnings
+    Ok(earnings)
 }
 
 /// True if this ancestor qualifies as the earner for the given tier:
@@ -646,13 +646,8 @@ fn walk_multi_tier_overrides(
 ///
 /// Returns [`CalculationError`] if a snapshot names a rank the plan does not
 /// define, if a snapshot has a non-finite or negative personal_volume, if a
-/// volume source is not found in the tree or snapshot data, if an upline node
-/// Walk 1 reaches has no snapshot, or if a volume source has a non-finite or
-/// negative cv_amount.
-///
-/// Walk 2 makes no upline-snapshot check, and the breakaway set is built from
-/// the snapshot map, so omitting a snapshot anywhere in the tree can change
-/// who Walk 2 pays. HEU-727 and HEU-731 track it.
+/// distributor in the tree has no snapshot, if a volume source is not found in
+/// the tree, or if a volume source has a non-finite or negative cv_amount.
 pub fn calculate_stairstep(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -661,7 +656,7 @@ pub fn calculate_stairstep(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
-    walk::validate_snapshots(plan, snapshots)?;
+    walk::validate_snapshots(plan, snapshots, tree.user_ids())?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let prep_result = prep(tree, plan, structure, snapshots, &rank_ordinals);
 
@@ -732,7 +727,7 @@ pub fn calculate_stairstep(
         &prep_result,
         &rank_ordinals,
         multiplier,
-    );
+    )?;
     all_earnings.extend(override_earnings);
 
     Ok(walk_order::assemble(
@@ -1339,9 +1334,6 @@ mod tests {
     #[test]
     fn missing_snapshot_ancestor_errors() {
         // Tree: 0 -> 1 -> 2 -> 3, volume from node 3, node 1 has no snapshot.
-        // Converted rather than completed: the omission is the subject, so
-        // this asserts the error where it used to assert who earned.
-        // Stairstep's second walk is out of scope here — HEU-727.
         let tree = build_chain(4);
         let mut structure = test_stairstep_structure();
         structure.breakaway = None;
@@ -1369,7 +1361,73 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err(),
-            CalculationError::UplineNotInSnapshot(uuid(1))
+            CalculationError::DistributorNotInSnapshot(uuid(1))
+        );
+    }
+
+    /// Node 1 is the breakaway. Node 0, above it, has no snapshot.
+    #[test]
+    fn walk_two_ancestor_with_no_snapshot_is_rejected() {
+        let tree = build_chain(4);
+        let structure = test_stairstep_structure();
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 200.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", 300.0));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", 400.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::DistributorNotInSnapshot(uuid(0))
+        );
+    }
+
+    /// Node 4 sits in breakaway node 1's group but off the walked path.
+    #[test]
+    fn group_volume_member_with_no_snapshot_is_rejected() {
+        let mut tree = build_chain(4);
+        tree.add_node(uuid(4), uuid(1), uuid(1), 4).unwrap();
+        let structure = test_stairstep_structure();
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 200.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", 300.0));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", 400.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::DistributorNotInSnapshot(uuid(4))
         );
     }
 
@@ -3517,5 +3575,67 @@ mod tests {
         };
         let prep = qualifies_prep(known, true, 5);
         assert!(!qualifies_for_tier(&entry, 2, &tier, &prep));
+    }
+
+    /// Builds Walk 2's prep state directly, without the prep phase.
+    fn handmade_prep(breakaway: Uuid, group_volume: f64, eligible: &[Uuid]) -> PrepResult {
+        PrepResult {
+            eligibility: eligible
+                .iter()
+                .map(|id| {
+                    (
+                        *id,
+                        walk::EligibilityResult {
+                            eligible: true,
+                            max_earning_depth: None,
+                        },
+                    )
+                })
+                .collect(),
+            breakaways: HashSet::from([breakaway]),
+            group_volumes: HashMap::from([(breakaway, group_volume)]),
+            group_leaders: HashMap::new(),
+            first_line_split_outs: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn walk_two_refuses_a_breakaway_with_no_snapshot() {
+        let tree = build_chain(2);
+        let structure = test_stairstep_structure();
+        let snapshots = HashMap::from([(uuid(0), snapshot_with_rank("senior_director", 150.0))]);
+        let prep = handmade_prep(uuid(1), 900.0, &[uuid(0)]);
+
+        assert_eq!(
+            walk_overrides(
+                &tree,
+                &structure,
+                &snapshots,
+                &prep,
+                &test_rank_ordinals(),
+                1.0
+            ),
+            Err(CalculationError::DistributorNotInSnapshot(uuid(1)))
+        );
+    }
+
+    #[test]
+    fn walk_two_refuses_an_eligible_ancestor_with_no_snapshot() {
+        let tree = build_chain(2);
+        let structure = test_stairstep_structure();
+        let snapshots = HashMap::from([(uuid(1), snapshot_with_rank("director", 200.0))]);
+        let prep = handmade_prep(uuid(1), 900.0, &[uuid(0)]);
+
+        assert_eq!(
+            walk_overrides(
+                &tree,
+                &structure,
+                &snapshots,
+                &prep,
+                &test_rank_ordinals(),
+                1.0
+            ),
+            Err(CalculationError::UplineNotInSnapshot(uuid(0)))
+        );
     }
 }

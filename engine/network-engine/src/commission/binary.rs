@@ -176,9 +176,9 @@ fn apply_aggregate_cap(earnings: &mut [BinaryCommissionEarning], cap: f64) {
 ///
 /// Returns `CalculationError` if the cycle-step config is invalid, if a
 /// snapshot names a rank the plan does not define, if a snapshot's
-/// personal_volume is negative or not finite, if a volume source is not found
-/// in the tree or snapshot data, or if a volume source has an invalid
-/// cv_amount.
+/// personal_volume is negative or not finite, if the owner of any position in
+/// the tree has no snapshot, if a volume source is not found in the tree, or
+/// if a volume source has an invalid cv_amount.
 pub fn calculate_binary_pairing(
     tree: &BinaryTree,
     plan: &CompensationPlan,
@@ -220,7 +220,13 @@ pub fn calculate_binary_pairing(
     // Below the match on purpose. The Pairing arm's percent assert and the
     // CycleStep arm's config validation each stay first on their own path,
     // and the CycleStep arm has already returned by here.
-    walk::validate_snapshots(plan, snapshots)?;
+    walk::validate_snapshots(
+        plan,
+        snapshots,
+        tree.user_ids()
+            .into_iter()
+            .map(|position| resolve_owner(&position, ownership)),
+    )?;
 
     let multiplier = structure
         .binary_commission
@@ -395,7 +401,13 @@ fn calculate_binary_cycle_step(
         .validate()
         .map_err(CalculationError::ConfigError)?;
 
-    walk::validate_snapshots(plan, snapshots)?;
+    walk::validate_snapshots(
+        plan,
+        snapshots,
+        tree.user_ids()
+            .into_iter()
+            .map(|position| resolve_owner(&position, ownership)),
+    )?;
 
     // Phase 1: Prep (shared with pairing calculator)
     let volume_totals = aggregate_volume(tree, snapshots, volume, ownership)?;
@@ -1432,10 +1444,10 @@ mod tests {
             None,
         );
 
-        assert!(matches!(
-            result,
-            Err(CalculationError::SourceNotInSnapshot(_))
-        ));
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::DistributorNotInSnapshot(test_uuid(2))
+        );
     }
 
     #[test]
@@ -1625,13 +1637,12 @@ mod tests {
     }
 
     #[test]
-    fn distributor_in_tree_but_not_in_snapshot_treated_as_ineligible() {
+    fn distributor_in_tree_but_not_in_snapshot_is_rejected() {
         let tree = three_node_tree();
         let plan = test_plan(default_eligibility());
         let structure = test_binary_structure();
 
         // Only root has a snapshot. Children are in tree but not in snapshots.
-        // No volume sources reference missing-snapshot nodes, so no error.
         let mut snapshots = HashMap::new();
         snapshots.insert(test_uuid(1), eligible_snapshot());
 
@@ -1640,14 +1651,115 @@ mod tests {
             &plan,
             &structure,
             &snapshots,
-            &[], // No volume
+            &[],
             &HashMap::new(),
             None,
-        )
-        .unwrap();
+        );
 
-        // No volume, no earnings. Should not error.
-        assert!(result.earnings.is_empty());
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::DistributorNotInSnapshot(test_uuid(2))
+        );
+    }
+
+    #[test]
+    fn a_position_needs_its_owner_snapshot_not_its_own() {
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+        let owner = test_uuid(9);
+        let ownership = HashMap::from([(test_uuid(2), owner), (test_uuid(3), owner)]);
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(owner, eligible_snapshot());
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &[],
+            &HashMap::new(),
+            Some(&ownership),
+        );
+        assert!(result.is_ok(), "got {result:?}");
+    }
+
+    #[test]
+    fn a_missing_owner_snapshot_is_reported_under_the_owner_id() {
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+        let owner = test_uuid(9);
+        let ownership = HashMap::from([(test_uuid(2), owner), (test_uuid(3), owner)]);
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &[],
+            &HashMap::new(),
+            Some(&ownership),
+        );
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::DistributorNotInSnapshot(owner)
+        );
+    }
+
+    #[test]
+    fn cycle_step_refuses_a_position_owner_with_no_snapshot() {
+        let steps = vec![CycleStep {
+            threshold: 300.0,
+            amount: 25.0,
+        }];
+        let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+        let owner = test_uuid(9);
+        let ownership = HashMap::from([(test_uuid(2), owner), (test_uuid(3), owner)]);
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &[],
+            &HashMap::new(),
+            Some(&ownership),
+        );
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::DistributorNotInSnapshot(owner)
+        );
+    }
+
+    #[test]
+    fn aggregate_volume_rejects_a_source_whose_owner_has_no_snapshot() {
+        let tree = three_node_tree();
+        let owner = test_uuid(9);
+        let ownership = HashMap::from([(test_uuid(2), owner)]);
+        let snapshots = HashMap::from([
+            (test_uuid(1), eligible_snapshot()),
+            (test_uuid(2), eligible_snapshot()),
+        ]);
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: 500.0,
+        }];
+
+        assert_eq!(
+            aggregate_volume(&tree, &snapshots, &volume, Some(&ownership)),
+            Err(CalculationError::SourceNotInSnapshot(owner))
+        );
     }
 
     #[test]

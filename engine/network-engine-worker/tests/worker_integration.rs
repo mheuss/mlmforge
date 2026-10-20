@@ -55,6 +55,33 @@ fn build_three_node_chain(child: &mut std::process::Child) {
     assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
 }
 
+/// A snapshot map giving each of `ids` the same active snapshot at `rank`.
+fn snapshots_json(rank: &str, ids: &[&str]) -> String {
+    let entries: Vec<String> = ids
+        .iter()
+        .map(|id| {
+            format!(
+                r#""{}":{{"rank":"{}","personal_volume":100.0,"status":"active","has_order_in_period":true}}"#,
+                id, rank
+            )
+        })
+        .collect();
+    format!("{{{}}}", entries.join(","))
+}
+
+/// Asserts `resp` is the calculation refusal for `user_id` having no snapshot.
+fn assert_refuses_missing_snapshot(resp: &str, user_id: &str) {
+    let expected = format!("distributor {} has no snapshot", user_id);
+    assert!(
+        resp.contains(r#""ok":false"#)
+            && resp.contains("CALCULATION_ERROR")
+            && resp.contains(&expected),
+        "expected CALCULATION_ERROR containing {:?}, got: {}",
+        expected,
+        resp
+    );
+}
+
 #[test]
 fn ping_returns_protocol_version() {
     let mut child = common::spawn_worker();
@@ -63,7 +90,7 @@ fn ping_returns_protocol_version() {
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(parsed["id"], "1");
-    assert_eq!(parsed["result"]["protocol_version"], 19);
+    assert_eq!(parsed["result"]["protocol_version"], 20);
 
     drop(child.stdin.take());
     child.wait().unwrap();
@@ -1171,7 +1198,10 @@ fn calculate_unilevel_empty_volume_returns_empty_earnings() {
     load_test_plan(&mut worker);
     build_three_node_chain(&mut worker);
 
-    let params = r#"{"structure":"Test","snapshots":{},"volume":[]}"#;
+    let params = format!(
+        r#"{{"structure":"Test","snapshots":{},"volume":[]}}"#,
+        snapshots_json("member", &[ROOT, CHILD, GRANDCHILD])
+    );
     let request = format!(
         r#"{{"id":"calc-empty","op":"calculate_unilevel","params":{}}}"#,
         params
@@ -1191,25 +1221,25 @@ fn calculate_unilevel_empty_volume_returns_empty_earnings() {
     worker.wait().unwrap();
 }
 
-/// A nil Go collection marshals to `null`, not `{}` or `[]`, and both request
-/// collections must read that as empty rather than rejecting it. This is the
-/// shape of a first-period call.
+/// A nil Go collection marshals to `null`, not `{}` or `[]`, and a null
+/// `volume` must read as empty rather than being rejected.
 ///
 /// The Go twin is `TestEngineClient_CalculateUnilevel_NilCollections`.
 #[test]
-fn calculate_unilevel_accepts_null_collections() {
+fn calculate_unilevel_accepts_a_null_volume() {
     let mut worker = common::spawn_worker();
     load_test_plan(&mut worker);
     build_three_node_chain(&mut worker);
 
     let request = format!(
-        r#"{{"id":"u-null","op":"calculate_unilevel","params":{{"structure":"{}","snapshots":null,"volume":null}}}}"#,
-        TREE_NAME
+        r#"{{"id":"u-null","op":"calculate_unilevel","params":{{"structure":"{}","snapshots":{},"volume":null}}}}"#,
+        TREE_NAME,
+        snapshots_json("member", &[ROOT, CHILD, GRANDCHILD])
     );
     let resp = common::send_receive(&mut worker, &request);
     assert!(
         resp.contains(r#""ok":true"#),
-        "null collections must read as empty, got: {}",
+        "a null volume must read as empty, got: {}",
         resp
     );
     assert!(
@@ -1222,10 +1252,8 @@ fn calculate_unilevel_accepts_null_collections() {
     worker.wait().unwrap();
 }
 
-/// Omitting `snapshots` stays an error. The other half of
-/// `calculate_unilevel_accepts_null_collections`: widening null must not
-/// quietly widen absent, or a caller who forgets the field is paid zero
-/// instead of being told.
+/// Omitting `snapshots` stays an error. A null map reads as empty. An absent
+/// field does not.
 #[test]
 fn calculate_unilevel_still_requires_snapshots() {
     let mut worker = common::spawn_worker();
@@ -1247,6 +1275,24 @@ fn calculate_unilevel_still_requires_snapshots() {
         "the error should be a missing-field error naming snapshots, got: {}",
         resp
     );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// A null snapshot map reads as empty, and a populated tree then refuses it.
+#[test]
+fn calculate_unilevel_refuses_null_snapshots_for_a_populated_tree() {
+    let mut worker = common::spawn_worker();
+    load_test_plan(&mut worker);
+    build_three_node_chain(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"u-null-snap","op":"calculate_unilevel","params":{{"structure":"{}","snapshots":null,"volume":[]}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert_refuses_missing_snapshot(&resp, ROOT);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -1342,17 +1388,47 @@ fn load_generation_test_plan(worker: &mut std::process::Child) {
     );
 }
 
-/// A nil Go collection marshals to `null`, not `{}` or `[]`, and both request
-/// collections must read that as empty rather than rejecting it. This is the
-/// shape of a first-period call.
+/// A generation structure with level commissions on and no level config is
+/// refused at load.
+#[test]
+fn load_plan_refuses_level_commissions_enabled_with_no_level_commission() {
+    let mut worker = common::spawn_worker();
+    let mut plan: serde_json::Value = serde_json::from_str(GENERATION_TEST_PLAN_JSON)
+        .expect("generation fixture should be valid JSON");
+    let structure = plan["structures"]
+        .as_array_mut()
+        .expect("fixture should carry a structures array")
+        .iter_mut()
+        .find(|s| s["type"] == "generation")
+        .expect("fixture should carry a generation structure");
+    structure["config"]["level_commissions_enabled"] = serde_json::json!(true);
+    structure["config"]["level_commission"] = serde_json::Value::Null;
+
+    let resp = send_load_plan(&mut worker, &plan.to_string());
+    assert!(
+        resp.contains(r#""ok":false"#)
+            && resp.contains("INVALID_PLAN")
+            && resp.contains(
+                "level_commissions_enabled is true and level_commission is null or absent"
+            ),
+        "expected INVALID_PLAN naming the generation level config, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// A nil Go collection marshals to `null`, not `{}` or `[]`, and a null
+/// `volume` must read as empty rather than being rejected.
 ///
 /// The Go twin is `TestEngineClient_CalculateGeneration_NilCollections`.
 #[test]
-fn calculate_generation_accepts_null_collections() {
+fn calculate_generation_accepts_a_null_volume() {
     let mut worker = common::spawn_worker();
     load_generation_test_plan(&mut worker);
     create_tree(&mut worker, GEN_STRUCTURE);
-    // Populate the tree so the empty result is caused by the empty collections
+    // Populate the tree so the empty result is caused by the null volume
     // rather than by there being nobody to pay.
     let resp = common::send_receive(
         &mut worker,
@@ -1364,13 +1440,14 @@ fn calculate_generation_accepts_null_collections() {
     assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
 
     let request = format!(
-        r#"{{"id":"g-null","op":"calculate_generation","params":{{"structure":"{}","snapshots":null,"volume":null}}}}"#,
-        GEN_STRUCTURE
+        r#"{{"id":"g-null","op":"calculate_generation","params":{{"structure":"{}","snapshots":{},"volume":null}}}}"#,
+        GEN_STRUCTURE,
+        snapshots_json("Associate", &[ROOT])
     );
     let resp = common::send_receive(&mut worker, &request);
     assert!(
         resp.contains(r#""ok":true"#),
-        "null collections must read as empty, got: {}",
+        "a null volume must read as empty, got: {}",
         resp
     );
     assert!(
@@ -1383,24 +1460,8 @@ fn calculate_generation_accepts_null_collections() {
     worker.wait().unwrap();
 }
 
-/// Empty snapshots plus real volume is a caller bug, and it must be loud.
-///
-/// This is the half the null-widening does *not* cover. `snapshots:null` reads
-/// as empty, which is right when there is genuinely no volume — but if volume
-/// names a source, an empty snapshots map means the caller lost data, and
-/// paying nobody while reporting `ok` would hide it.
-///
-/// This fixture enables level commissions, so the rejection here comes from
-/// `walk_level_commissions` (`walk.rs`) — the guard four of the six inherit.
-/// Binary pairing reimplements it against the resolved owner. The
-/// generation-*only* path (level commissions off) had no such guard until this
-/// branch added one; that path is not reachable from this fixture, so it is
-/// pinned at the library level instead by
-/// `generation_only_rejects_volume_with_no_snapshot`.
-///
-/// What this test adds over those: it proves the worker surfaces the failure as
-/// `CALCULATION_ERROR` rather than swallowing it, which a library test cannot
-/// observe.
+/// Empty snapshots plus real volume is a caller bug, and it must be loud. The
+/// worker reports it as `CALCULATION_ERROR` naming the source.
 #[test]
 fn calculate_generation_rejects_volume_with_no_snapshot() {
     let mut worker = common::spawn_worker();
@@ -1438,10 +1499,8 @@ fn calculate_generation_rejects_volume_with_no_snapshot() {
     worker.wait().unwrap();
 }
 
-/// Omitting `snapshots` stays an error. The other half of
-/// `calculate_generation_accepts_null_collections`: widening null must not
-/// quietly widen absent, or a caller who forgets the field is paid zero
-/// instead of being told.
+/// Omitting `snapshots` stays an error. A null map reads as empty. An absent
+/// field does not.
 #[test]
 fn calculate_generation_still_requires_snapshots() {
     let mut worker = common::spawn_worker();
@@ -1463,6 +1522,32 @@ fn calculate_generation_still_requires_snapshots() {
         "the error should be a missing-field error naming snapshots, got: {}",
         resp
     );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// A null snapshot map reads as empty, and a populated tree then refuses it.
+#[test]
+fn calculate_generation_refuses_null_snapshots_for_a_populated_tree() {
+    let mut worker = common::spawn_worker();
+    load_generation_test_plan(&mut worker);
+    create_tree(&mut worker, GEN_STRUCTURE);
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"g-null-snap-root","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            GEN_STRUCTURE, ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+
+    let request = format!(
+        r#"{{"id":"g-null-snap","op":"calculate_generation","params":{{"structure":"{}","snapshots":null,"volume":[]}}}}"#,
+        GEN_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert_refuses_missing_snapshot(&resp, ROOT);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -2156,16 +2241,15 @@ fn calculate_binary_pairing_wrong_tree_type_returns_error() {
     worker.wait().unwrap();
 }
 
-/// A nil Go collection marshals to `null`, not `{}` or `[]`, and both required
-/// request collections must read that as empty rather than rejecting it. This
-/// is the shape of a first-period call.
+/// A nil Go collection marshals to `null`, not `{}` or `[]`, and a null
+/// `volume` must read as empty rather than being rejected.
 ///
 /// Binary's success shape differs from its siblings: it returns
 /// `{"earnings":[...],"carry_forward":{...}}`, not a bare array. And
 /// `carry_forward` is **not** empty here — `accumulate_leg_volumes` creates an
 /// entry per live node and the post-payout phase emits all of them, zero-valued
 /// rows included. So `build_binary_calc_tree`'s three nodes produce three zero
-/// entries even with empty collections. That is existing, correct behavior; do
+/// entries even with no volume. That is existing, correct behavior; do
 /// not "fix" the calculator to drop them.
 ///
 /// Asserted structurally rather than by string match, because `HashMap` key
@@ -2173,18 +2257,21 @@ fn calculate_binary_pairing_wrong_tree_type_returns_error() {
 ///
 /// The Go twin is `TestEngineClient_CalculateBinaryPairing_NilCollections`.
 #[test]
-fn calculate_binary_pairing_accepts_null_collections() {
+fn calculate_binary_pairing_accepts_a_null_volume() {
     let mut worker = common::spawn_worker();
     load_binary_test_plan(&mut worker);
     build_binary_calc_tree(&mut worker);
 
-    let request = r#"{"id":"bp-null","op":"calculate_binary_pairing","params":{"structure":"BinaryCalc","snapshots":null,"volume":null}}"#;
-    let resp = common::send_receive(&mut worker, request);
+    let request = format!(
+        r#"{{"id":"bp-null","op":"calculate_binary_pairing","params":{{"structure":"BinaryCalc","snapshots":{},"volume":null}}}}"#,
+        snapshots_json("associate", &[NODE_A, NODE_B, NODE_C])
+    );
+    let resp = common::send_receive(&mut worker, &request);
 
     let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
     assert!(
         parsed["ok"].as_bool().unwrap_or(false),
-        "null collections must read as empty, got: {}",
+        "a null volume must read as empty, got: {}",
         resp
     );
 
@@ -2209,10 +2296,8 @@ fn calculate_binary_pairing_accepts_null_collections() {
     worker.wait().unwrap();
 }
 
-/// Omitting `snapshots` stays an error. The other half of
-/// `calculate_binary_pairing_accepts_null_collections`: widening null must not
-/// quietly widen absent, or a caller who forgets the field is paid zero
-/// instead of being told.
+/// Omitting `snapshots` stays an error. A null map reads as empty. An absent
+/// field does not.
 #[test]
 fn calculate_binary_pairing_still_requires_snapshots() {
     let mut worker = common::spawn_worker();
@@ -2231,6 +2316,21 @@ fn calculate_binary_pairing_still_requires_snapshots() {
         "the error should be a missing-field error naming snapshots, got: {}",
         resp
     );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// A null snapshot map reads as empty, and a populated tree then refuses it.
+#[test]
+fn calculate_binary_pairing_refuses_null_snapshots_for_a_populated_tree() {
+    let mut worker = common::spawn_worker();
+    load_binary_test_plan(&mut worker);
+    build_binary_calc_tree(&mut worker);
+
+    let request = r#"{"id":"bp-null-snap","op":"calculate_binary_pairing","params":{"structure":"BinaryCalc","snapshots":null,"volume":[]}}"#;
+    let resp = common::send_receive(&mut worker, request);
+    assert_refuses_missing_snapshot(&resp, NODE_A);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -2275,8 +2375,11 @@ fn calculate_binary_pairing_accepts_null_carry_forward() {
     load_binary_test_plan(&mut worker);
     build_binary_calc_tree(&mut worker);
 
-    let request = r#"{"id":"bp-nullcarry","op":"calculate_binary_pairing","params":{"structure":"BinaryCalc","snapshots":{},"volume":[],"carry_forward":null}}"#;
-    let resp = common::send_receive(&mut worker, request);
+    let request = format!(
+        r#"{{"id":"bp-nullcarry","op":"calculate_binary_pairing","params":{{"structure":"BinaryCalc","snapshots":{},"volume":[],"carry_forward":null}}}}"#,
+        snapshots_json("associate", &[NODE_A, NODE_B, NODE_C])
+    );
+    let resp = common::send_receive(&mut worker, &request);
     assert!(
         resp.contains(r#""ok":true"#),
         "a null carry_forward must read as no carry, got: {}",
@@ -4709,16 +4812,15 @@ fn calculate_streamline_ignores_request_scoped_config() {
     worker.wait().unwrap();
 }
 
-/// A nil Go collection marshals to `null`, not `{}` or `[]`, and both request
-/// collections must read that as empty rather than rejecting it. This is the
-/// shape of a first-period call.
+/// A nil Go collection marshals to `null`, not `{}` or `[]`, and a null
+/// `volume` must read as empty rather than being rejected.
 ///
-/// The stream is populated, so an empty result is caused by the empty
-/// collections rather than by an empty structure.
+/// The stream is populated, so an empty result is caused by the null volume
+/// rather than by an empty structure.
 ///
 /// The Go twin is `TestEngineClient_CalculateStreamline_NilCollections`.
 #[test]
-fn calculate_streamline_accepts_null_collections() {
+fn calculate_streamline_accepts_a_null_volume() {
     let mut worker = common::spawn_worker();
     load_streamline_test_plan(&mut worker);
     create_streamline(&mut worker);
@@ -4726,13 +4828,14 @@ fn calculate_streamline_accepts_null_collections() {
     sl_add_member(&mut worker, "sl-m2", SL_USER2, SL_USER1, 1002);
 
     let request = format!(
-        r#"{{"id":"sl-null","op":"calculate_streamline","params":{{"structure":"{}","snapshots":null,"volume":null}}}}"#,
-        SL_STRUCTURE
+        r#"{{"id":"sl-null","op":"calculate_streamline","params":{{"structure":"{}","snapshots":{},"volume":null}}}}"#,
+        SL_STRUCTURE,
+        streamline_snapshots_json()
     );
     let resp = common::send_receive(&mut worker, &request);
     assert!(
         resp.contains(r#""ok":true"#),
-        "null collections must read as empty, got: {}",
+        "a null volume must read as empty, got: {}",
         resp
     );
     assert!(
@@ -4745,10 +4848,8 @@ fn calculate_streamline_accepts_null_collections() {
     worker.wait().unwrap();
 }
 
-/// Omitting `snapshots` stays an error. The other half of
-/// `calculate_streamline_accepts_null_collections`: widening null must not
-/// quietly widen absent, or a caller who forgets the field is paid zero instead
-/// of being told.
+/// Omitting `snapshots` stays an error. A null map reads as empty. An absent
+/// field does not.
 #[test]
 fn calculate_streamline_still_requires_snapshots() {
     let mut worker = common::spawn_worker();
@@ -4771,6 +4872,26 @@ fn calculate_streamline_still_requires_snapshots() {
         "the error should be a missing-field error naming snapshots, got: {}",
         resp
     );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// A null snapshot map reads as empty, and a populated engine then refuses it.
+#[test]
+fn calculate_streamline_refuses_null_snapshots_for_a_populated_engine() {
+    let mut worker = common::spawn_worker();
+    load_streamline_test_plan(&mut worker);
+    create_streamline(&mut worker);
+    sl_add_member(&mut worker, "sl-m1", SL_USER1, ROOT, 1001);
+    sl_add_member(&mut worker, "sl-m2", SL_USER2, SL_USER1, 1002);
+
+    let request = format!(
+        r#"{{"id":"sl-null-snap","op":"calculate_streamline","params":{{"structure":"{}","snapshots":null,"volume":[]}}}}"#,
+        SL_STRUCTURE
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert_refuses_missing_snapshot(&resp, SL_USER1);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -5856,17 +5977,16 @@ fn calculate_matrix_unknown_structure_returns_not_found() {
     worker.wait().unwrap();
 }
 
-/// A nil Go collection marshals to `null`, not `{}` or `[]`, and both request
-/// collections must read that as empty rather than rejecting it. This is the
-/// shape of a first-period call.
+/// A nil Go collection marshals to `null`, not `{}` or `[]`, and a null
+/// `volume` must read as empty rather than being rejected.
 ///
 /// The Go twin is `TestEngineClient_CalculateMatrix_NilCollections`.
 #[test]
-fn calculate_matrix_accepts_null_collections() {
+fn calculate_matrix_accepts_a_null_volume() {
     let mut worker = common::spawn_worker();
     load_matrix_test_plan(&mut worker);
     create_matrix_tree(&mut worker, TREE_NAME);
-    // Populate the tree so the empty result is caused by the empty collections
+    // Populate the tree so the empty result is caused by the null volume
     // rather than by there being nobody to pay.
     let resp = common::send_receive(
         &mut worker,
@@ -5878,13 +5998,14 @@ fn calculate_matrix_accepts_null_collections() {
     assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
 
     let request = format!(
-        r#"{{"id":"m-null","op":"calculate_matrix","params":{{"structure":"{}","snapshots":null,"volume":null}}}}"#,
-        TREE_NAME
+        r#"{{"id":"m-null","op":"calculate_matrix","params":{{"structure":"{}","snapshots":{},"volume":null}}}}"#,
+        TREE_NAME,
+        snapshots_json("member", &[ROOT])
     );
     let resp = common::send_receive(&mut worker, &request);
     assert!(
         resp.contains(r#""ok":true"#),
-        "null collections must read as empty, got: {}",
+        "a null volume must read as empty, got: {}",
         resp
     );
     assert!(
@@ -5897,10 +6018,8 @@ fn calculate_matrix_accepts_null_collections() {
     worker.wait().unwrap();
 }
 
-/// Omitting `snapshots` stays an error. The other half of
-/// `calculate_matrix_accepts_null_collections`: widening null must not quietly
-/// widen absent, or a caller who forgets the field is paid zero instead of
-/// being told.
+/// Omitting `snapshots` stays an error. A null map reads as empty. An absent
+/// field does not.
 #[test]
 fn calculate_matrix_still_requires_snapshots() {
     let mut worker = common::spawn_worker();
@@ -5922,6 +6041,32 @@ fn calculate_matrix_still_requires_snapshots() {
         "the error should be a missing-field error naming snapshots, got: {}",
         resp
     );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// A null snapshot map reads as empty, and a populated tree then refuses it.
+#[test]
+fn calculate_matrix_refuses_null_snapshots_for_a_populated_tree() {
+    let mut worker = common::spawn_worker();
+    load_matrix_test_plan(&mut worker);
+    create_matrix_tree(&mut worker, TREE_NAME);
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"m-null-snap-root","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+            TREE_NAME, ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+
+    let request = format!(
+        r#"{{"id":"m-null-snap","op":"calculate_matrix","params":{{"structure":"{}","snapshots":null,"volume":[]}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert_refuses_missing_snapshot(&resp, ROOT);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -6178,25 +6323,25 @@ fn calculate_stairstep_unknown_structure_returns_not_found() {
     worker.wait().unwrap();
 }
 
-/// A nil Go collection marshals to `null`, not `{}` or `[]`, and both request
-/// collections must read that as empty rather than rejecting it. This is the
-/// shape of a first-period call.
+/// A nil Go collection marshals to `null`, not `{}` or `[]`, and a null
+/// `volume` must read as empty rather than being rejected.
 ///
 /// The Go twin is `TestEngineClient_CalculateStairstep_NilCollections`.
 #[test]
-fn calculate_stairstep_accepts_null_collections() {
+fn calculate_stairstep_accepts_a_null_volume() {
     let mut worker = common::spawn_worker();
     load_stairstep_test_plan(&mut worker);
     build_three_node_chain(&mut worker);
 
     let request = format!(
-        r#"{{"id":"s-null","op":"calculate_stairstep","params":{{"structure":"{}","snapshots":null,"volume":null}}}}"#,
-        TREE_NAME
+        r#"{{"id":"s-null","op":"calculate_stairstep","params":{{"structure":"{}","snapshots":{},"volume":null}}}}"#,
+        TREE_NAME,
+        snapshots_json("member", &[ROOT, CHILD, GRANDCHILD])
     );
     let resp = common::send_receive(&mut worker, &request);
     assert!(
         resp.contains(r#""ok":true"#),
-        "null collections must read as empty, got: {}",
+        "a null volume must read as empty, got: {}",
         resp
     );
     assert!(
@@ -6209,10 +6354,8 @@ fn calculate_stairstep_accepts_null_collections() {
     worker.wait().unwrap();
 }
 
-/// Omitting `snapshots` stays an error. The other half of
-/// `calculate_stairstep_accepts_null_collections`: widening null must not
-/// quietly widen absent, or a caller who forgets the field is paid zero instead
-/// of being told.
+/// Omitting `snapshots` stays an error. A null map reads as empty. An absent
+/// field does not.
 #[test]
 fn calculate_stairstep_still_requires_snapshots() {
     let mut worker = common::spawn_worker();
@@ -6234,6 +6377,24 @@ fn calculate_stairstep_still_requires_snapshots() {
         "the error should be a missing-field error naming snapshots, got: {}",
         resp
     );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// A null snapshot map reads as empty, and a populated tree then refuses it.
+#[test]
+fn calculate_stairstep_refuses_null_snapshots_for_a_populated_tree() {
+    let mut worker = common::spawn_worker();
+    load_stairstep_test_plan(&mut worker);
+    build_three_node_chain(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"s-null-snap","op":"calculate_stairstep","params":{{"structure":"{}","snapshots":null,"volume":[]}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert_refuses_missing_snapshot(&resp, ROOT);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();

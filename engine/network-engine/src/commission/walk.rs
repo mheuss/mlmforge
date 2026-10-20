@@ -135,14 +135,33 @@ pub(crate) fn validate_snapshot_volumes(
     }
 }
 
-/// Run the whole-map snapshot checks in a fixed order.
+/// Reject a required user ID that has no snapshot.
+///
+/// On `Err`, the user ID is the lowest among the missing ones.
+pub(crate) fn validate_snapshot_coverage(
+    required: impl IntoIterator<Item = Uuid>,
+    snapshots: &HashMap<Uuid, DistributorSnapshot>,
+) -> Result<(), CalculationError> {
+    match required
+        .into_iter()
+        .filter(|id| !snapshots.contains_key(id))
+        .min()
+    {
+        Some(user_id) => Err(CalculationError::DistributorNotInSnapshot(user_id)),
+        None => Ok(()),
+    }
+}
+
+/// Run the snapshot checks in a fixed order.
 pub(crate) fn validate_snapshots(
     plan: &CompensationPlan,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
+    required: impl IntoIterator<Item = Uuid>,
 ) -> Result<(), CalculationError> {
     // Rank first, so an unknown rank surfaces ahead of a bad volume.
     validate_snapshot_ranks(plan, snapshots)?;
-    validate_snapshot_volumes(snapshots)
+    validate_snapshot_volumes(snapshots)?;
+    validate_snapshot_coverage(required, snapshots)
 }
 
 /// Resolve the SkipBelowRank threshold ordinal from compression config.
@@ -915,6 +934,55 @@ mod tests {
         );
     }
 
+    // --- validate_snapshot_coverage ---
+
+    #[test]
+    fn validate_snapshot_coverage_accepts_when_every_required_id_has_a_snapshot() {
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), snapshot_with_rank("associate"));
+        snapshots.insert(test_uuid(2), snapshot_with_rank("associate"));
+
+        assert_eq!(
+            validate_snapshot_coverage([test_uuid(1), test_uuid(2)], &snapshots),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn validate_snapshot_coverage_ignores_a_snapshot_no_id_requires() {
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), snapshot_with_rank("associate"));
+        snapshots.insert(test_uuid(9), snapshot_with_rank("associate"));
+
+        assert_eq!(
+            validate_snapshot_coverage([test_uuid(1)], &snapshots),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn validate_snapshot_coverage_reports_the_lowest_missing_user_id() {
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(2), snapshot_with_rank("associate"));
+
+        // Missing in the order 5, 1, 3: the lowest is neither first nor last.
+        assert_eq!(
+            validate_snapshot_coverage(
+                [test_uuid(5), test_uuid(2), test_uuid(1), test_uuid(3)],
+                &snapshots
+            ),
+            Err(CalculationError::DistributorNotInSnapshot(test_uuid(1)))
+        );
+    }
+
+    #[test]
+    fn validate_snapshot_coverage_accepts_an_empty_requirement() {
+        assert_eq!(
+            validate_snapshot_coverage(std::iter::empty(), &HashMap::new()),
+            Ok(())
+        );
+    }
+
     // --- validate_snapshots ---
 
     #[test]
@@ -927,7 +995,7 @@ mod tests {
         snapshots.insert(test_uuid(2), snapshot_with_rank("diamond"));
 
         assert_eq!(
-            validate_snapshots(&plan, &snapshots),
+            validate_snapshots(&plan, &snapshots, [test_uuid(1), test_uuid(2)]),
             Err(CalculationError::UnknownSnapshotRank(
                 test_uuid(2),
                 "diamond".to_string()
@@ -942,8 +1010,49 @@ mod tests {
         snapshots.insert(test_uuid(1), snapshot_with_pv(-2.0));
 
         assert_eq!(
-            validate_snapshots(&plan, &snapshots),
+            validate_snapshots(&plan, &snapshots, [test_uuid(1)]),
             Err(CalculationError::InvalidPersonalVolume(test_uuid(1), -2.0))
+        );
+    }
+
+    #[test]
+    fn validate_snapshots_reports_a_bad_volume_before_a_missing_snapshot() {
+        // The missing snapshot sits on the lower user ID, so only the check
+        // order can make the volume error win.
+        let plan = test_plan_with_ranks(&[("associate", 1)]);
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(2), snapshot_with_pv(-2.0));
+
+        assert_eq!(
+            validate_snapshots(&plan, &snapshots, [test_uuid(1), test_uuid(2)]),
+            Err(CalculationError::InvalidPersonalVolume(test_uuid(2), -2.0))
+        );
+    }
+
+    #[test]
+    fn validate_snapshots_rejects_a_missing_snapshot_when_ranks_and_volumes_pass() {
+        let plan = test_plan_with_ranks(&[("associate", 1)]);
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(2), snapshot_with_rank("associate"));
+
+        assert_eq!(
+            validate_snapshots(&plan, &snapshots, [test_uuid(1), test_uuid(2)]),
+            Err(CalculationError::DistributorNotInSnapshot(test_uuid(1)))
+        );
+    }
+
+    #[test]
+    fn validate_source_rejects_a_source_with_no_snapshot() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        let source = VolumeSource {
+            source_id: test_uuid(1),
+            cv_amount: 100.0,
+        };
+
+        assert_eq!(
+            validate_source(&tree, &HashMap::new(), &source).unwrap_err(),
+            CalculationError::SourceNotInSnapshot(test_uuid(1))
         );
     }
 

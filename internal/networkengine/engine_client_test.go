@@ -793,6 +793,19 @@ func TestNewCheckedClient_RefusesAVersion18Worker(t *testing.T) {
 	assert.True(t, mock.closed, "a rejected worker must be closed")
 }
 
+func TestNewCheckedClient_RefusesAVersion19Worker(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":19}`)}
+
+	client, err := newCheckedClient(context.Background(), mock)
+
+	var mismatch *ProtocolVersionMismatchError
+	require.ErrorAs(t, err, &mismatch)
+	assert.Nil(t, client)
+	assert.Equal(t, expectedProtocolVersion, mismatch.Expected)
+	assert.Equal(t, 19, mismatch.Reported)
+	assert.True(t, mock.closed, "a rejected worker must be closed")
+}
+
 // TestNewEngineClient_RejectsWorkerWithWrongVersion proves the PUBLIC
 // constructor performs the check.
 //
@@ -1578,8 +1591,10 @@ func TestEngineClient_CalculateUnilevel_EmptyVolume(t *testing.T) {
 
 	req := CalculateUnilevelRequest{
 		StructureName: "Test",
-		Snapshots:     map[string]DistributorSnapshotDTO{},
-		Volume:        []VolumeSourceDTO{},
+		Snapshots: map[string]DistributorSnapshotDTO{
+			rootID: {Rank: "member", PersonalVolume: 100.0, Status: "active", HasOrderInPeriod: true},
+		},
+		Volume: []VolumeSourceDTO{},
 	}
 
 	result, err := client.CalculateUnilevel(ctx, req)

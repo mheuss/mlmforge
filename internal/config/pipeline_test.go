@@ -402,3 +402,17 @@ func TestSchemaRejectsVersionOne(t *testing.T) {
 	require.Len(t, errs, 1, "a version 1 document must be rejected")
 	assert.Equal(t, "/version", errs[0].Path)
 }
+
+func TestPipelineRefusesANegativePerLegCapAtTheSchema(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	negative := replaceInYAML(t, base, "max_group_volume_per_leg: 5000", "max_group_volume_per_leg: -1")
+
+	_, errs, err := p.LoadAndValidate(negative)
+
+	require.NoError(t, err)
+	require.Len(t, errs, 1, "errors: %v", errs)
+	assert.Equal(t, "schema_violation", errs[0].Code)
+	assert.Equal(t, "/ranks/3/qualification/structures/0/max_group_volume_per_leg", errs[0].Path)
+}

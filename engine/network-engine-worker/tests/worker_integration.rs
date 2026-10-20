@@ -63,7 +63,7 @@ fn ping_returns_protocol_version() {
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(parsed["id"], "1");
-    assert_eq!(parsed["result"]["protocol_version"], 18);
+    assert_eq!(parsed["result"]["protocol_version"], 19);
 
     drop(child.stdin.take());
     child.wait().unwrap();
@@ -5199,6 +5199,53 @@ fn evaluate_ranks_finds_the_base_rank_by_ordinal_when_ranks_are_out_of_order() {
 
     let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
     assert_eq!(parsed["ok"].as_bool(), Some(true), "got: {}", parsed);
+    assert_eq!(
+        parsed["result"]["ranks"][ROOT],
+        serde_json::json!({"kind": "qualified", "rank": "silver", "ordinal": 2}),
+        "got: {}",
+        parsed
+    );
+}
+
+#[test]
+fn load_plan_accepts_a_rank_with_no_per_leg_cap() {
+    let mut child = common::spawn_worker();
+    let plan = RANK_TEST_PLAN_JSON.replace(r#""max_group_volume_per_leg": 1e12, "#, "");
+    assert!(
+        !plan.contains("max_group_volume_per_leg"),
+        "the plan still names the cap"
+    );
+
+    let resp = send_load_plan(&mut child, &plan);
+    assert!(resp.contains(r#""ok":true"#), "load_plan failed: {}", resp);
+    create_tree(&mut child, "Test");
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"root","op":"add_root","params":{{"structure":"Test","user_id":"{}","enrolled_at":100}}}}"#,
+            ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"child","op":"add_node","params":{{"structure":"Test","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":200}}}}"#,
+            CHILD, ROOT, ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_node failed: {}", resp);
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"ev","op":"evaluate_ranks","params":{{"distributors":{{"{}":{{"personal_volume":60.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":[]}}}},"volume_sources":[{{"source_id":"{}","cv_amount":100.0}}]}}}}"#,
+            ROOT, CHILD
+        ),
+    );
+    drop(child.stdin.take());
+    child.wait().unwrap();
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
     assert_eq!(
         parsed["result"]["ranks"][ROOT],
         serde_json::json!({"kind": "qualified", "rank": "silver", "ordinal": 2}),

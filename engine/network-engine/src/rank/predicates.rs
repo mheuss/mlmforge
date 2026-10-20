@@ -88,10 +88,7 @@ pub(crate) fn gv_meets(
     Ok(downline_cv + primitives.personal_volume >= required)
 }
 
-/// Pass when no first-level child's subtree CV exceeds `cap`.
-///
-/// For each direct child of `user_id`, sum CV across the child plus their
-/// downline. The maximum of those sums must be at most `cap`.
+/// Pass when `cap` is 0, or when no first-level child's subtree CV exceeds it.
 pub(crate) fn max_leg_gv_meets(
     cap: f64,
     user_id: Uuid,
@@ -110,7 +107,7 @@ pub(crate) fn max_leg_gv_meets(
             max_leg = leg_cv;
         }
     }
-    Ok(max_leg <= cap)
+    Ok(cap == 0.0 || max_leg <= cap)
 }
 
 /// Pass when the downline contains enough qualifying distributors per the
@@ -722,6 +719,34 @@ mod tests {
         let idx = VolumeIndex::build(&[]);
         // No legs means "max leg GV" = 0 ≤ any cap.
         assert!(max_leg_gv_meets(100.0, uid(1), &tree, &idx).unwrap());
+    }
+
+    #[test]
+    fn max_leg_gv_meets_passes_any_leg_when_cap_is_zero() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
+        let sources = vec![VolumeSource {
+            source_id: uid(2),
+            cv_amount: 200.0,
+        }];
+        let idx = VolumeIndex::build(&sources);
+
+        assert!(max_leg_gv_meets(0.0, uid(1), &tree, &idx).unwrap());
+    }
+
+    #[test]
+    fn max_leg_gv_meets_fails_a_leg_with_volume_when_cap_is_negative() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
+        let sources = vec![VolumeSource {
+            source_id: uid(2),
+            cv_amount: 200.0,
+        }];
+        let idx = VolumeIndex::build(&sources);
+
+        assert!(!max_leg_gv_meets(-1.0, uid(1), &tree, &idx).unwrap());
     }
 
     use crate::config::rank::{DistributorCountRequirement, SearchMode};

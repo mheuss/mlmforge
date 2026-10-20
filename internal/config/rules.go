@@ -339,8 +339,16 @@ func validateRanks(plan *CompensationPlan, structs map[string]bool) []Validation
 				})
 			}
 
-			// max_group_volume_per_leg must not exceed group_volume when both are set.
-			if sq.MaxGroupVolumePerLeg > 0 && sq.GroupVolume > 0 && sq.MaxGroupVolumePerLeg > sq.GroupVolume {
+			// max_group_volume_per_leg must be finite and non-negative, and must not
+			// exceed group_volume when both are set.
+			if sq.MaxGroupVolumePerLeg < 0 || math.IsNaN(sq.MaxGroupVolumePerLeg) || math.IsInf(sq.MaxGroupVolumePerLeg, 0) {
+				errs = append(errs, ValidationError{
+					Path:     fmt.Sprintf("/ranks/%d/qualification/structures/%d/max_group_volume_per_leg", i, j),
+					Code:     "value_out_of_range",
+					Message:  fmt.Sprintf("rank %q structure %q max_group_volume_per_leg must be finite and non-negative, got %v", r.Name, sq.Structure, sq.MaxGroupVolumePerLeg),
+					Severity: SeverityError,
+				})
+			} else if sq.MaxGroupVolumePerLeg > 0 && sq.GroupVolume > 0 && sq.MaxGroupVolumePerLeg > sq.GroupVolume {
 				errs = append(errs, ValidationError{
 					Path:     fmt.Sprintf("/ranks/%d/qualification/structures/%d/max_group_volume_per_leg", i, j),
 					Code:     "cross_field_dependency",

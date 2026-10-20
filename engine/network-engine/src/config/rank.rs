@@ -119,6 +119,9 @@ pub struct StructureQualification {
     /// Prevents qualifying on one strong leg. Must be less than or
     /// equal to `group_volume`. For example, if group_volume is 10,000
     /// and this is 6,000, no single leg can contribute more than 60%.
+    ///
+    /// 0, or an absent field, means no cap.
+    #[serde(default)]
     pub max_group_volume_per_leg: f64,
 
     /// Minimum volume from retail customers specifically.
@@ -531,6 +534,19 @@ mod tests {
         }"#;
         let sq: StructureQualification = serde_json::from_str(json).unwrap();
         assert!(sq.leg_quality.is_empty());
+    }
+
+    #[test]
+    fn structure_qualification_max_group_volume_per_leg_defaults_to_zero_when_absent() {
+        let json = r#"{
+            "structure": "Primary",
+            "personal_volume": 100.0,
+            "group_volume": 5000.0,
+            "min_retail_volume": 50.0,
+            "distributor_count": null
+        }"#;
+        let sq: StructureQualification = serde_json::from_str(json).unwrap();
+        assert_eq!(sq.max_group_volume_per_leg, 0.0);
     }
 
     #[test]

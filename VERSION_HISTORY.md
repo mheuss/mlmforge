@@ -76,7 +76,7 @@
 - PostgresEventStore.Append N+1 INSERT replaced with pgx.Batch for single round-trip
 - MemoryEventStore.ReadStream linear scan replaced with index-based slice
 - CI: Rust jobs now use `--workspace` flag. Added `golangci-lint` step with `.golangci.yml` config.
-- Every compensation plan's lowest rank requires nothing. Go validation and the engine's `load_plan` refuse a lowest rank that sets a personal, group or retail volume, a distributor count, leg quality, required products, a window or a tenure, and name the rank. The rank evaluator no longer evaluates the lowest rank. Every distributor in an `evaluate_ranks` request holds at least that rank, including one in no registered tree. `evaluate_ranks` returns `unranked` only for a plan with no ranks. Protocol 18. (HEU-761)
+- Every compensation plan's lowest rank requires nothing. Go validation and the engine's `load_plan` refuse a lowest rank that sets a nonzero personal, group or retail volume, a distributor count or leg quality. They also refuse required products, a window or a tenure. Both name the rank. The rank evaluator no longer evaluates the lowest rank. Every distributor in an `evaluate_ranks` request holds at least that rank, including one in no registered tree. `evaluate_ranks` returns `unranked` only for a plan with no ranks. Protocol 18. (HEU-761)
 
 ### Fixed
 - Production `unwrap()` in unilevel.rs replaced with `match` on `Option`

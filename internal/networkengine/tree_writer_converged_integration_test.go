@@ -180,6 +180,7 @@ func TestTreeWriter_ANilUserPlacementAnotherWriteDeliveredIsClearedByRejectEvent
 
 	require.NoError(t, err)
 	require.Equal(t, RejectOutcomeRejected, rejected.Outcome, "the retry returned %v", rejected.RetryErr)
+	assert.ErrorIs(t, rejected.RetryErr, ErrUnprojectableEvent)
 	assert.NoError(t, rejected.ProjectionErr)
 	_, err = it.writer(t).Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeUnilevel})
 	require.NoError(t, err, "the load after the rejection returned an error")

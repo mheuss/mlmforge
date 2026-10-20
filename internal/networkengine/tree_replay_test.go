@@ -604,6 +604,7 @@ func TestReplayStream_RefusesAnIDThatIsNotCanonical(t *testing.T) {
 	badSponsor := childPlacedPayload(writerChild)
 	badSponsor.SponsorID = "nope"
 	nilUser := childPlacedPayload(uuid.Nil.String())
+	upperUser := childPlacedPayload("BBBBBBBB-BBBB-BBBB-BBBB-000000000001")
 	cases := []struct {
 		name      string
 		eventType string
@@ -614,6 +615,8 @@ func TestReplayStream_RefusesAnIDThatIsNotCanonical(t *testing.T) {
 			`node_placed in tree ` + writerTree + ` has sponsor_id "nope", which is not a canonical UUID`},
 		{"a placement whose user is the nil UUID", EventTypeNodePlaced, nilUser,
 			`node_placed in tree ` + writerTree + ` has the nil UUID as user_id`},
+		{"a placement whose user is uppercase", EventTypeNodePlaced, upperUser,
+			`node_placed in tree ` + writerTree + ` has user_id "BBBBBBBB-BBBB-BBBB-BBBB-000000000001", which is not a canonical UUID`},
 		{"a removal whose user is empty", EventTypeNodeRemoved,
 			NodeRemovedPayload{TreeID: writerTree, UserID: "", RemovedAt: writeTime, TreeType: treeTypeUnilevel},
 			`node_removed in tree ` + writerTree + ` has user_id "", which is not a canonical UUID`},

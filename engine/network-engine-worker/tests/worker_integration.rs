@@ -2290,6 +2290,21 @@ fn calculate_binary_pairing_still_requires_snapshots() {
     worker.wait().unwrap();
 }
 
+/// A null snapshot map reads as empty, and a populated tree then refuses it.
+#[test]
+fn calculate_binary_pairing_refuses_null_snapshots_for_a_populated_tree() {
+    let mut worker = common::spawn_worker();
+    load_binary_test_plan(&mut worker);
+    build_binary_calc_tree(&mut worker);
+
+    let request = r#"{"id":"bp-null-snap","op":"calculate_binary_pairing","params":{"structure":"BinaryCalc","snapshots":null,"volume":[]}}"#;
+    let resp = common::send_receive(&mut worker, request);
+    assert_refuses_missing_snapshot(&resp, NODE_A);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// Omitting `volume` stays an error. The mirror of
 /// `calculate_binary_pairing_still_requires_snapshots` — one guard per required
 /// field, so adding `default` to either one fails loudly.

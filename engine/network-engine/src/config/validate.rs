@@ -286,7 +286,7 @@ impl StructureConfig {
                 }
                 if c.level_commissions_enabled && c.level_commission.is_none() {
                     Err(
-                        "level_commissions_enabled is true and level_commission is null"
+                        "level_commissions_enabled is true and level_commission is null or absent"
                             .to_string(),
                     )
                 } else {
@@ -1040,7 +1040,7 @@ mod tests {
         assert_eq!(
             plan.validate(),
             Err(
-                "structure 'gen': level_commissions_enabled is true and level_commission is null"
+                "structure 'gen': level_commissions_enabled is true and level_commission is null or absent"
                     .to_string()
             )
         );

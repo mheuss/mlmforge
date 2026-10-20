@@ -1408,7 +1408,9 @@ fn load_plan_refuses_level_commissions_enabled_with_no_level_commission() {
     assert!(
         resp.contains(r#""ok":false"#)
             && resp.contains("INVALID_PLAN")
-            && resp.contains("level_commissions_enabled is true and level_commission is null"),
+            && resp.contains(
+                "level_commissions_enabled is true and level_commission is null or absent"
+            ),
         "expected INVALID_PLAN naming the generation level config, got: {}",
         resp
     );

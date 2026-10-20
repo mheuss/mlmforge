@@ -254,6 +254,8 @@ func TestRejectionEvidence_RefusesAReplayFailureThatIsNotTheLastPlacementsRefusa
 		{"a drop-stage failure carrying a refusal code", placement, &TreeReplayError{TreeID: writerTree,
 			Stage: TreeReplayStageDrop, FailedVersion: placement.Version, FailedEventID: placement.ID,
 			FailedType: placement.Type, Err: fakeEngineError("POSITION_OCCUPIED", "refused")}},
+		{"a drop-stage failure wrapping a replay refusal of the placement", placement, &TreeReplayError{TreeID: writerTree,
+			Stage: TreeReplayStageDrop, Err: replayRefusal(placement, "POSITION_OCCUPIED")}},
 		{"a membership-stage failure naming the placement", placement, &TreeReplayError{TreeID: writerTree,
 			Stage: TreeReplayStageMembership, FailedVersion: placement.Version, FailedEventID: placement.ID,
 			FailedType: placement.Type, Err: fakeEngineError("POSITION_OCCUPIED", "refused")}},

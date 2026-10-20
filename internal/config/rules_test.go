@@ -67,6 +67,9 @@ func TestAscendingNegativeOrdinalsAreNotAnOrderingViolation(t *testing.T) {
 func TestRankOrdinalZeroAfterFirstFailsBothChecks(t *testing.T) {
 	plan := minimalPlan()
 	plan.Ranks[1].Ordinal = 0
+	// Ordinal 0 makes Silver the lowest rank; clear its thresholds so only
+	// the ordinal checks fire.
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{{Structure: "Primary"}}
 
 	errs := validateBusinessRules(plan)
 	require.Len(t, errs, 2)
@@ -515,6 +518,9 @@ func TestRankDescendingOrdinalRejected(t *testing.T) {
 	// Ordinal 2 then 1 (descending, not ascending).
 	plan.Ranks[0].Ordinal = 2
 	plan.Ranks[1].Ordinal = 1
+	// Ordinal 1 makes Silver the lowest rank; clear its thresholds so only
+	// the ordering check fires.
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{{Structure: "Primary"}}
 
 	errs := validateBusinessRules(plan)
 	require.Len(t, errs, 1)
@@ -2131,4 +2137,22 @@ func TestBaseRankReportsEachRequirement(t *testing.T) {
 	require.Len(t, errs, 2, "errors: %v", errs)
 	assert.Equal(t, "/ranks/0/qualification/structures/0/personal_volume", errs[0].Path)
 	assert.Equal(t, "/ranks/0/qualification/structures/0/group_volume", errs[1].Path)
+}
+
+func TestBaseRankIsTheLowestOrdinalWhenRanksAreOutOfOrder(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[0], plan.Ranks[1] = plan.Ranks[1], plan.Ranks[0]
+	plan.Ranks[1].Qualification.Structures[0].PersonalVolume = 50
+
+	errs := validateBusinessRules(plan)
+
+	var base []ValidationError
+	for _, e := range errs {
+		if e.Code == "base_rank_has_requirements" {
+			base = append(base, e)
+		}
+	}
+	require.Len(t, base, 1, "errors: %v", errs)
+	assert.Equal(t, "/ranks/1/qualification/structures/0/personal_volume", base[0].Path)
+	assert.Contains(t, base[0].Message, `base rank "Associate"`)
 }

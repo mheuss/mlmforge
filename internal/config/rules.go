@@ -458,12 +458,18 @@ func validateBaseRank(plan *CompensationPlan) []ValidationError {
 	if len(plan.Ranks) == 0 {
 		return nil
 	}
-	base := plan.Ranks[0]
+	baseIdx := 0
+	for i, r := range plan.Ranks {
+		if r.Ordinal < plan.Ranks[baseIdx].Ordinal {
+			baseIdx = i
+		}
+	}
+	base := plan.Ranks[baseIdx]
 	q := base.Qualification
 	var errs []ValidationError
 	refuse := func(path, what string) {
 		errs = append(errs, ValidationError{
-			Path:     "/ranks/0/qualification" + path,
+			Path:     fmt.Sprintf("/ranks/%d/qualification", baseIdx) + path,
 			Code:     "base_rank_has_requirements",
 			Message:  fmt.Sprintf("base rank %q %s; the lowest rank must require nothing", base.Name, what),
 			Severity: SeverityError,

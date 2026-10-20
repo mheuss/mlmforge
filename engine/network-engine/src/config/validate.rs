@@ -12,7 +12,7 @@
 //! Scope is deliberately the money-path invariants the calculators assume, not
 //! a field-by-field mirror of the JSON schema — that contract is HEU-513
 //! codegen territory. Concretely: commission percents in `[0, 1]`, CV-to-dollar
-//! multipliers finite and positive, per-period caps finite and non-negative,
+//! multipliers finite and positive, per-period caps and per-leg rank caps finite and non-negative,
 //! breakaway tiers non-empty and `<= 255`, matrix parameters the engine can
 //! actually run (`width >= 2`, breadth-first spillover only), and structure
 //! names unique across the plan so name-based lookup is unambiguous.
@@ -121,6 +121,7 @@ impl CompensationPlan {
         self.check_rank_ladder_non_empty()?;
         self.check_rank_name_and_ordinal_floor()?;
         self.check_base_rank_requires_nothing()?;
+        self.check_per_leg_caps()?;
         self.check_unique_structure_names()?;
         for structure in &mut self.structures {
             structure.validate()?;
@@ -210,6 +211,22 @@ impl CompensationPlan {
             }
             if !leg_quality.is_empty() {
                 return refuse(format!("sets leg_quality on structure '{structure}'"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Reject a per-leg cap that is negative or not finite, on any rank.
+    fn check_per_leg_caps(&self) -> Result<(), String> {
+        for rank in &self.ranks {
+            for sq in &rank.qualification.structures {
+                check_non_negative(
+                    &format!(
+                        "ranks: rank '{}' structure '{}' max_group_volume_per_leg",
+                        rank.name, sq.structure
+                    ),
+                    sq.max_group_volume_per_leg,
+                )?;
             }
         }
         Ok(())
@@ -1232,5 +1249,40 @@ mod tests {
         entry.personal_volume = 100.0;
         plan.ranks[0].qualification.structures = vec![entry];
         assert!(plan.validate().is_ok());
+    }
+
+    // --- per-leg cap ---
+
+    #[test]
+    fn plan_rejects_a_per_leg_cap_that_is_negative_or_not_finite() {
+        for (value, shown) in [
+            (-1.0, "-1"),
+            (f64::NAN, "NaN"),
+            (f64::INFINITY, "inf"),
+            (f64::NEG_INFINITY, "-inf"),
+        ] {
+            let mut plan = plan_with_two_ranks();
+            let mut entry = zero_threshold("main");
+            entry.max_group_volume_per_leg = value;
+            plan.ranks[1].qualification.structures = vec![entry];
+            let err = plan.validate().unwrap_err();
+            let want = format!(
+                "rank 'gold' structure 'main' max_group_volume_per_leg must be finite and non-negative, got {shown}"
+            );
+            assert!(err.contains(&want), "expected {want:?}, got: {err}");
+        }
+    }
+
+    #[test]
+    fn plan_rejects_a_negative_per_leg_cap_on_the_base_rank() {
+        let mut plan = plan_with_two_ranks();
+        let mut entry = zero_threshold("main");
+        entry.max_group_volume_per_leg = -1.0;
+        plan.ranks[0].qualification.structures = vec![entry];
+        let err = plan.validate().unwrap_err();
+        assert!(
+            err.contains("rank 'associate' structure 'main' max_group_volume_per_leg must be finite and non-negative, got -1"),
+            "unexpected error: {err}"
+        );
     }
 }

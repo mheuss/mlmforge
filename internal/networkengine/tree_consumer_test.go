@@ -44,6 +44,16 @@ func newRecordingTransport() *recordingTransport {
 	}
 }
 
+var (
+	userRoot      = testUserUUID(901)
+	userChild     = testUserUUID(902)
+	userNew       = testUserUUID(903)
+	userLeaf      = testUserUUID(904)
+	userSponsor   = testUserUUID(905)
+	userRecruit   = testUserUUID(906)
+	missingParent = testUserUUID(907)
+)
+
 // unitEventCounter gives every makeEvent a distinct ID. A fixed ID would
 // trip MemoryTreeStore's tree_nodes_pkey mirror the moment a test pushes
 // two events through one store.
@@ -83,8 +93,8 @@ func TestTreeConsumer_HandleRootAdded(t *testing.T) {
 
 	payload := RootAddedPayload{
 		TreeID:     "tree1",
-		UserID:     "user-root",
-		SponsorID:  "user-root",
+		UserID:     userRoot,
+		SponsorID:  userRoot,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
 	event := makeEvent(EventTypeRootAdded, payload)
@@ -93,7 +103,7 @@ func TestTreeConsumer_HandleRootAdded(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify store projection.
-	node, err := store.GetNode(context.Background(), "tree1", "user-root")
+	node, err := store.GetNode(context.Background(), "tree1", userRoot)
 	require.NoError(t, err)
 	require.NotNil(t, node)
 	assert.Equal(t, 0, node.Depth)
@@ -112,8 +122,8 @@ func TestTreeConsumer_RootAddedRejectsWrongStream(t *testing.T) {
 
 	payload := RootAddedPayload{
 		TreeID:     "tree1",
-		UserID:     "user-root",
-		SponsorID:  "user-root",
+		UserID:     userRoot,
+		SponsorID:  userRoot,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
 	event := makeEvent(EventTypeRootAdded, payload)
@@ -122,7 +132,7 @@ func TestTreeConsumer_RootAddedRejectsWrongStream(t *testing.T) {
 	err := deliver(context.Background(), consumer, event)
 	require.Error(t, err)
 	assert.EqualError(t, err,
-		`root_added for user-root in tree tree1 arrived on stream "tree-other", want "tree-tree1"`,
+		`root_added for `+userRoot+` in tree tree1 arrived on stream "tree-other", want "tree-tree1"`,
 		"the message names the event, the node, the tree, and both streams")
 
 	rows, storeErr := store.GetByTree(context.Background(), "tree1")
@@ -140,13 +150,13 @@ func TestTreeConsumer_RootAddedRejectsEmptyUserID(t *testing.T) {
 	event := makeEvent(EventTypeRootAdded, RootAddedPayload{
 		TreeID:     "tree1",
 		UserID:     "",
-		SponsorID:  "user-root",
+		SponsorID:  userRoot,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	})
 
 	err := deliver(context.Background(), consumer, event)
 	require.ErrorIs(t, err, ErrUnprojectableEvent)
-	assert.EqualError(t, err, "root_added in tree tree1 has an empty user_id")
+	assert.EqualError(t, err, `root_added in tree tree1 has user_id "", which is not a canonical UUID`)
 
 	rows, storeErr := store.GetByTree(context.Background(), "tree1")
 	require.NoError(t, storeErr)
@@ -161,14 +171,14 @@ func TestTreeConsumer_HandleNodePlaced(t *testing.T) {
 	consumer := NewTreeEventConsumer(store, engine)
 
 	// Set up parent in store so depth can be derived.
-	parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
+	parent := makeNode("tree1", userRoot, 0, nil, nil, nil)
 	require.NoError(t, store.insertNode(context.Background(), parent))
 
 	payload := NodePlacedPayload{
 		TreeID:     "tree1",
-		UserID:     "user-child",
-		ParentID:   "user-root",
-		SponsorID:  "user-root",
+		UserID:     userChild,
+		ParentID:   userRoot,
+		SponsorID:  userRoot,
 		TreeType:   treeTypeUnilevel,
 		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	}
@@ -178,10 +188,10 @@ func TestTreeConsumer_HandleNodePlaced(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify store projection.
-	node, err := store.GetNode(context.Background(), "tree1", "user-child")
+	node, err := store.GetNode(context.Background(), "tree1", userChild)
 	require.NoError(t, err)
 	require.NotNil(t, node)
-	assert.Equal(t, "user-root", *node.ParentID)
+	assert.Equal(t, userRoot, *node.ParentID)
 	assert.Equal(t, 1, node.Depth)
 
 	// Verify engine call (add_node).
@@ -207,8 +217,8 @@ func TestTreeConsumer_LeavesStoreOwnedTimestampsUnset(t *testing.T) {
 
 		event := makeEvent(EventTypeRootAdded, RootAddedPayload{
 			TreeID:     "tree1",
-			UserID:     "user-root",
-			SponsorID:  "user-root",
+			UserID:     userRoot,
+			SponsorID:  userRoot,
 			EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 		})
 		require.NoError(t, deliver(context.Background(), consumer, event))
@@ -222,15 +232,15 @@ func TestTreeConsumer_LeavesStoreOwnedTimestampsUnset(t *testing.T) {
 	t.Run("node_placed", func(t *testing.T) {
 		mem := NewMemoryTreeStore()
 		require.NoError(t, mem.insertNode(context.Background(),
-			makeNode("tree1", "user-root", 0, nil, nil, nil)))
+			makeNode("tree1", userRoot, 0, nil, nil, nil)))
 		store := &insertRecordingStore{TreeStore: mem}
 		consumer := NewTreeEventConsumer(store, newEngineClientWithTransport(newRecordingTransport()))
 
 		event := makeEvent(EventTypeNodePlaced, NodePlacedPayload{
 			TreeID:     "tree1",
-			UserID:     "user-child",
-			ParentID:   "user-root",
-			SponsorID:  "user-root",
+			UserID:     userChild,
+			ParentID:   userRoot,
+			SponsorID:  userRoot,
 			TreeType:   treeTypeUnilevel,
 			EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 		})
@@ -249,14 +259,14 @@ func TestTreeConsumer_NodePlacedRejectsWrongStream(t *testing.T) {
 	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 
-	parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
+	parent := makeNode("tree1", userRoot, 0, nil, nil, nil)
 	require.NoError(t, store.insertNode(context.Background(), parent))
 
 	payload := NodePlacedPayload{
 		TreeID:     "tree1",
-		UserID:     "user-child",
-		ParentID:   "user-root",
-		SponsorID:  "user-root",
+		UserID:     userChild,
+		ParentID:   userRoot,
+		SponsorID:  userRoot,
 		TreeType:   treeTypeUnilevel,
 		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	}
@@ -266,7 +276,7 @@ func TestTreeConsumer_NodePlacedRejectsWrongStream(t *testing.T) {
 	err := deliver(context.Background(), consumer, event)
 	require.Error(t, err)
 	assert.EqualError(t, err,
-		`node_placed for user-child in tree tree1 arrived on stream "tree-other", want "tree-tree1"`,
+		`node_placed for `+userChild+` in tree tree1 arrived on stream "tree-other", want "tree-tree1"`,
 		"the message names the event, the node, the tree, and both streams")
 
 	assert.Empty(t, transport.calls, "no engine call for a rejected event")
@@ -278,21 +288,21 @@ func TestTreeConsumer_NodePlacedRejectsEmptyUserID(t *testing.T) {
 	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 
-	parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
+	parent := makeNode("tree1", userRoot, 0, nil, nil, nil)
 	require.NoError(t, store.insertNode(context.Background(), parent))
 
 	event := makeEvent(EventTypeNodePlaced, NodePlacedPayload{
 		TreeID:     "tree1",
 		UserID:     "",
-		ParentID:   "user-root",
-		SponsorID:  "user-root",
+		ParentID:   userRoot,
+		SponsorID:  userRoot,
 		TreeType:   treeTypeUnilevel,
 		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	})
 
 	err := deliver(context.Background(), consumer, event)
 	require.ErrorIs(t, err, ErrUnprojectableEvent)
-	assert.EqualError(t, err, "node_placed in tree tree1 has an empty user_id")
+	assert.EqualError(t, err, `node_placed in tree tree1 has user_id "", which is not a canonical UUID`)
 
 	rows, storeErr := store.GetByTree(context.Background(), "tree1")
 	require.NoError(t, storeErr)
@@ -308,12 +318,12 @@ func TestTreeConsumer_HandleNodeRemoved(t *testing.T) {
 	consumer := NewTreeEventConsumer(store, engine)
 
 	// Insert node first.
-	node := makeNode("tree1", "user-leaf", 1, ptr("user-root"), ptr("user-root"), nil)
+	node := makeNode("tree1", userLeaf, 1, ptr(userRoot), ptr(userRoot), nil)
 	require.NoError(t, store.insertNode(context.Background(), node))
 
 	payload := NodeRemovedPayload{
 		TreeID:    "tree1",
-		UserID:    "user-leaf",
+		UserID:    userLeaf,
 		RemovedAt: time.Now(),
 	}
 	event := makeEvent(EventTypeNodeRemoved, payload)
@@ -322,7 +332,7 @@ func TestTreeConsumer_HandleNodeRemoved(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify store projection (soft-deleted).
-	got, err := store.GetNode(context.Background(), "tree1", "user-leaf")
+	got, err := store.GetNode(context.Background(), "tree1", userLeaf)
 	require.NoError(t, err)
 	assert.Nil(t, got, "node should be soft-deleted")
 
@@ -338,12 +348,12 @@ func TestTreeConsumer_NodeRemovedRejectsWrongStream(t *testing.T) {
 	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 
-	node := makeNode("tree1", "user-leaf", 1, ptr("user-root"), ptr("user-root"), nil)
+	node := makeNode("tree1", userLeaf, 1, ptr(userRoot), ptr(userRoot), nil)
 	require.NoError(t, store.insertNode(context.Background(), node))
 
 	payload := NodeRemovedPayload{
 		TreeID:    "tree1",
-		UserID:    "user-leaf",
+		UserID:    userLeaf,
 		RemovedAt: time.Now(),
 	}
 	event := makeEvent(EventTypeNodeRemoved, payload)
@@ -352,12 +362,12 @@ func TestTreeConsumer_NodeRemovedRejectsWrongStream(t *testing.T) {
 	err := deliver(context.Background(), consumer, event)
 	require.Error(t, err)
 	assert.EqualError(t, err,
-		`node_removed for user-leaf in tree tree1 arrived on stream "tree-other", want "tree-tree1"`,
+		`node_removed for `+userLeaf+` in tree tree1 arrived on stream "tree-other", want "tree-tree1"`,
 		"the message names the event, the node, the tree, and both streams")
 
 	assert.Empty(t, transport.calls, "no engine call for a rejected event")
 
-	got, storeErr := store.GetNode(context.Background(), "tree1", "user-leaf")
+	got, storeErr := store.GetNode(context.Background(), "tree1", userLeaf)
 	require.NoError(t, storeErr)
 	assert.NotNil(t, got, "the existing row must survive a rejected removal")
 }
@@ -371,9 +381,9 @@ func TestTreeConsumer_NodePlacedMissingParent(t *testing.T) {
 	// No parent in store — should error, not silently default to depth 0.
 	payload := NodePlacedPayload{
 		TreeID:     "tree1",
-		UserID:     "user-child",
-		ParentID:   "nonexistent-parent",
-		SponsorID:  "nonexistent-parent",
+		UserID:     userChild,
+		ParentID:   missingParent,
+		SponsorID:  missingParent,
 		TreeType:   treeTypeUnilevel,
 		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	}
@@ -381,7 +391,7 @@ func TestTreeConsumer_NodePlacedMissingParent(t *testing.T) {
 
 	err := deliver(context.Background(), consumer, event)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "parent node nonexistent-parent not found")
+	assert.Contains(t, err.Error(), "parent node "+missingParent+" not found")
 	assert.Empty(t, transport.calls, "engine should not be called when parent is missing")
 }
 
@@ -390,9 +400,9 @@ func TestTreeConsumer_NodePlacedGateRejections(t *testing.T) {
 		pos := 1
 		return NodePlacedPayload{
 			TreeID:     "tree1",
-			UserID:     "user-child",
-			ParentID:   "user-root",
-			SponsorID:  "user-root",
+			UserID:     userChild,
+			ParentID:   userRoot,
+			SponsorID:  userRoot,
 			Position:   &pos,
 			TreeType:   treeTypeMatrix,
 			EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
@@ -473,18 +483,18 @@ func TestTreeConsumer_NodePlacedGateAccepts(t *testing.T) {
 			engine := newEngineClientWithTransport(transport)
 			consumer := NewTreeEventConsumer(store, engine)
 
-			parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
+			parent := makeNode("tree1", userRoot, 0, nil, nil, nil)
 			require.NoError(t, store.insertNode(context.Background(), parent))
 
 			payload := NodePlacedPayload{
-				TreeID: "tree1", UserID: "user-child",
-				ParentID: "user-root", SponsorID: "user-root",
+				TreeID: "tree1", UserID: userChild,
+				ParentID: userRoot, SponsorID: userRoot,
 				Position: tc.position, TreeType: tc.treeType,
 				EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 			}
 			require.NoError(t, deliver(context.Background(), consumer, makeEvent(EventTypeNodePlaced, payload)))
 
-			node, err := store.GetNode(context.Background(), "tree1", "user-child")
+			node, err := store.GetNode(context.Background(), "tree1", userChild)
 			require.NoError(t, err)
 			require.NotNil(t, node, "accepted event projects to the store")
 			require.Len(t, transport.calls, 1, "accepted event reaches the engine")
@@ -498,15 +508,15 @@ func TestTreeConsumer_MatrixNodePlacedRoutesThroughAddNodeAt(t *testing.T) {
 	engine := newEngineClientWithTransport(transport)
 	consumer := NewTreeEventConsumer(store, engine)
 
-	parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
+	parent := makeNode("tree1", userRoot, 0, nil, nil, nil)
 	require.NoError(t, store.insertNode(context.Background(), parent))
 
 	pos := 2
 	payload := NodePlacedPayload{
 		TreeID:     "tree1",
-		UserID:     "user-child",
-		ParentID:   "user-root",
-		SponsorID:  "user-sponsor", // differs from parent so a transposition is visible
+		UserID:     userChild,
+		ParentID:   userRoot,
+		SponsorID:  userSponsor, // differs from parent so a transposition is visible
 		Position:   &pos,
 		TreeType:   treeTypeMatrix,
 		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
@@ -514,11 +524,11 @@ func TestTreeConsumer_MatrixNodePlacedRoutesThroughAddNodeAt(t *testing.T) {
 	require.NoError(t, deliver(context.Background(), consumer, makeEvent(EventTypeNodePlaced, payload)))
 
 	// Store projection carries the event's placement.
-	node, err := store.GetNode(context.Background(), "tree1", "user-child")
+	node, err := store.GetNode(context.Background(), "tree1", userChild)
 	require.NoError(t, err)
 	require.NotNil(t, node)
-	assert.Equal(t, "user-root", *node.ParentID)
-	assert.Equal(t, "user-sponsor", *node.SponsorID)
+	assert.Equal(t, userRoot, *node.ParentID)
+	assert.Equal(t, userSponsor, *node.SponsorID)
 	assert.Equal(t, 2, *node.Position)
 
 	// Engine got add_node_at with the same values, at the wire level.
@@ -530,9 +540,9 @@ func TestTreeConsumer_MatrixNodePlacedRoutesThroughAddNodeAt(t *testing.T) {
 	var params map[string]any
 	require.NoError(t, json.Unmarshal(transport.calls[0].params, &params))
 	assert.Equal(t, "tree1", params["structure"])
-	assert.Equal(t, "user-child", params["user_id"])
-	assert.Equal(t, "user-root", params["parent_id"])
-	assert.Equal(t, "user-sponsor", params["sponsor_id"])
+	assert.Equal(t, userChild, params["user_id"])
+	assert.Equal(t, userRoot, params["parent_id"])
+	assert.Equal(t, userSponsor, params["sponsor_id"])
 	assert.Equal(t, float64(2), params["position"])
 	assert.Equal(t, float64(payload.EnrolledAt.Unix()), params["enrolled_at"])
 }
@@ -554,7 +564,7 @@ func TestTreeConsumer_UnilevelAndBinaryDispatchUnchanged(t *testing.T) {
 			engine := newEngineClientWithTransport(transport)
 			consumer := NewTreeEventConsumer(store, engine)
 
-			parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
+			parent := makeNode("tree1", userRoot, 0, nil, nil, nil)
 			require.NoError(t, store.insertNode(context.Background(), parent))
 
 			// Sponsor differs from parent so a transposition at the AddNode
@@ -562,8 +572,8 @@ func TestTreeConsumer_UnilevelAndBinaryDispatchUnchanged(t *testing.T) {
 			// routing test. EngineClient pins its internal mapping; call
 			// sites need their own assertion (engine_client.go).
 			payload := NodePlacedPayload{
-				TreeID: "tree1", UserID: "user-child",
-				ParentID: "user-root", SponsorID: "user-sponsor",
+				TreeID: "tree1", UserID: userChild,
+				ParentID: userRoot, SponsorID: userSponsor,
 				Position: tc.position, TreeType: tc.treeType,
 				EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 			}
@@ -574,8 +584,8 @@ func TestTreeConsumer_UnilevelAndBinaryDispatchUnchanged(t *testing.T) {
 
 			var params map[string]any
 			require.NoError(t, json.Unmarshal(transport.calls[0].params, &params))
-			assert.Equal(t, "user-root", params["parent_id"])
-			assert.Equal(t, "user-sponsor", params["sponsor_id"])
+			assert.Equal(t, userRoot, params["parent_id"])
+			assert.Equal(t, userSponsor, params["sponsor_id"])
 			_, hasPosition := params["position"]
 			assert.Equal(t, tc.wantPosition, hasPosition)
 			if tc.wantPosition {
@@ -592,20 +602,20 @@ func TestTreeConsumer_MatrixStoreProjectionPrecedesEngine(t *testing.T) {
 	consumer := NewTreeEventConsumer(store, engine)
 	consumer.retryDelay = 0 // ordering is the behavior under test, not retry pacing
 
-	parent := makeNode("tree1", "user-root", 0, nil, nil, nil)
+	parent := makeNode("tree1", userRoot, 0, nil, nil, nil)
 	require.NoError(t, store.insertNode(context.Background(), parent))
 
 	pos := 0
 	payload := NodePlacedPayload{
-		TreeID: "tree1", UserID: "user-child",
-		ParentID: "user-root", SponsorID: "user-root",
+		TreeID: "tree1", UserID: userChild,
+		ParentID: userRoot, SponsorID: userRoot,
 		Position: &pos, TreeType: treeTypeMatrix,
 		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
 	}
 	err := deliver(context.Background(), consumer, makeEvent(EventTypeNodePlaced, payload))
 	require.Error(t, err, "engine failure surfaces after retries")
 
-	node, storeErr := store.GetNode(context.Background(), "tree1", "user-child")
+	node, storeErr := store.GetNode(context.Background(), "tree1", userChild)
 	require.NoError(t, storeErr)
 	require.NotNil(t, node, "store projection lands before the engine call (ADR-021)")
 
@@ -627,8 +637,8 @@ func TestTreeConsumer_ContextCancellation(t *testing.T) {
 
 	payload := RootAddedPayload{
 		TreeID:     "tree1",
-		UserID:     "user-root",
-		SponsorID:  "user-root",
+		UserID:     userRoot,
+		SponsorID:  userRoot,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
 	event := makeEvent(EventTypeRootAdded, payload)
@@ -695,8 +705,8 @@ func TestTreeConsumer_EngineRetry(t *testing.T) {
 
 	payload := RootAddedPayload{
 		TreeID:     "tree1",
-		UserID:     "user-root",
-		SponsorID:  "user-root",
+		UserID:     userRoot,
+		SponsorID:  userRoot,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
 	event := makeEvent(EventTypeRootAdded, payload)
@@ -705,7 +715,7 @@ func TestTreeConsumer_EngineRetry(t *testing.T) {
 	require.NoError(t, err)
 
 	// Store should have been written (happens before engine call).
-	node, err := store.GetNode(context.Background(), "tree1", "user-root")
+	node, err := store.GetNode(context.Background(), "tree1", userRoot)
 	require.NoError(t, err)
 	require.NotNil(t, node)
 
@@ -721,8 +731,8 @@ func TestTreeConsumer_EngineRetriesExhausted(t *testing.T) {
 
 	payload := RootAddedPayload{
 		TreeID:     "tree1",
-		UserID:     "user-root",
-		SponsorID:  "user-root",
+		UserID:     userRoot,
+		SponsorID:  userRoot,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
 	event := makeEvent(EventTypeRootAdded, payload)
@@ -731,7 +741,7 @@ func TestTreeConsumer_EngineRetriesExhausted(t *testing.T) {
 	require.Error(t, err, "should return error when retries exhausted")
 
 	// Store should have been written despite engine failure.
-	node, err := store.GetNode(context.Background(), "tree1", "user-root")
+	node, err := store.GetNode(context.Background(), "tree1", userRoot)
 	require.NoError(t, err)
 	require.NotNil(t, node, "store projection should succeed even when engine fails")
 

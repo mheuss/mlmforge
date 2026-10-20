@@ -147,6 +147,9 @@ func (r *replayer) call(ev platform.Event) (engineCall, string, error) {
 		if err := r.checkTree(ev, p.TreeID); err != nil {
 			return engineCall{}, "", err
 		}
+		if err := checkRootAddedIDs(p); err != nil {
+			return engineCall{}, "", r.failEvent(ev, err)
+		}
 		return rootAddedCall(p), p.UserID, nil
 	case EventTypeNodePlaced:
 		var p NodePlacedPayload
@@ -155,6 +158,9 @@ func (r *replayer) call(ev platform.Event) (engineCall, string, error) {
 		}
 		if err := r.checkTree(ev, p.TreeID); err != nil {
 			return engineCall{}, "", err
+		}
+		if err := checkNodePlacedIDs(p); err != nil {
+			return engineCall{}, "", r.failEvent(ev, err)
 		}
 		if p.TreeType != r.shape.treeType {
 			return engineCall{}, "", r.invariantAt(ev, "tree type "+r.shape.treeType, "tree type "+p.TreeType)
@@ -170,6 +176,9 @@ func (r *replayer) call(ev platform.Event) (engineCall, string, error) {
 		}
 		if err := r.checkTree(ev, p.TreeID); err != nil {
 			return engineCall{}, "", err
+		}
+		if err := checkNodeRemovedIDs(p); err != nil {
+			return engineCall{}, "", r.failEvent(ev, err)
 		}
 		if err := checkNodeRemovedOnStream(p, r.shape.treeType); err != nil {
 			return engineCall{}, "", r.failEvent(ev, err)

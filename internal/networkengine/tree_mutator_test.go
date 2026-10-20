@@ -147,8 +147,8 @@ func TestTreeMutator_ConsumerAcceptsInterface(t *testing.T) {
 
 	payload := RootAddedPayload{
 		TreeID:     "tree1",
-		UserID:     "user-root",
-		SponsorID:  "user-root",
+		UserID:     userRoot,
+		SponsorID:  userRoot,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
 	}
 	event := makeEvent(EventTypeRootAdded, payload)
@@ -156,7 +156,7 @@ func TestTreeMutator_ConsumerAcceptsInterface(t *testing.T) {
 	err := deliver(context.Background(), consumer, event)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"user-root"}, mutator.roots)
+	assert.Equal(t, []string{userRoot}, mutator.roots)
 	assert.Empty(t, mutator.nodes)
 	assert.Empty(t, mutator.removed)
 	assert.Empty(t, mutator.created)

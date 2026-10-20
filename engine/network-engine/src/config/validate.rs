@@ -430,8 +430,7 @@ impl StreamlineCommissionConfig {
         // which is attacker-sized here.
         //
         // Duplicates are parity too, not an added rule. Go keys the table by
-        // string, and the schema's propertyNames pattern on
-        // StreamlineCommission.dynamic_compression is ^0*(...), so "1" and "01" are
+        // string, so "1" and "01" are
         // both valid keys naming level 1. A duplicate is representable in Go,
         // and Go rejects it through non_sequential_levels: the sorted list
         // becomes [1, 1, ...] and fails n != j+1 at index 1.

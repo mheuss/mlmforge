@@ -221,8 +221,8 @@
       "not": {
         "required": ["max_group_volume_per_leg", "max_group_volume_per_leg_fraction"],
         "properties": {
-          "max_group_volume_per_leg": { "exclusiveMinimum": 0 },
-          "max_group_volume_per_leg_fraction": { "exclusiveMinimum": 0 }
+          "max_group_volume_per_leg": { "type": "number", "exclusiveMinimum": 0 },
+          "max_group_volume_per_leg_fraction": { "type": "number", "exclusiveMinimum": 0 }
         }
       },
       "properties": {

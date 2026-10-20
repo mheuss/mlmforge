@@ -1089,8 +1089,44 @@ mod tests {
         );
     }
 
+    /// With node 4 present but below minimum PV, node 1 has one active leg,
+    /// is capped at depth 1, and earns nothing on node 3's volume.
+    #[test]
+    fn one_active_leg_caps_depth_at_one() {
+        let (tree, plan, structure) = two_leg_depth_cap_case();
+
+        let mut snapshots = HashMap::new();
+        for id in 1..=3 {
+            snapshots.insert(test_uuid(id), eligible_snapshot());
+        }
+        let mut below_minimum = eligible_snapshot();
+        below_minimum.personal_volume = 0.0;
+        snapshots.insert(test_uuid(4), below_minimum);
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let earnings = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
+
+        assert!(
+            earnings.iter().all(|e| e.earner_id != test_uuid(1)),
+            "node 1 must earn nothing, got {earnings:?}"
+        );
+    }
+
     /// Node 4 is on no walked path. With its snapshot left out, the request is
-    /// refused and names node 4, rather than paying node 1 at depth 1.
+    /// refused and names node 4, rather than capping node 1 at depth 1.
     #[test]
     fn snapshot_omitted_off_every_walked_path_is_rejected() {
         let (tree, plan, structure) = two_leg_depth_cap_case();

@@ -1944,8 +1944,8 @@ mod calculate_tests {
     fn generation_only_level_disabled() {
         let tree = build_chain(3);
         let plan = two_rank_plan();
-        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
-        // level_commissions_enabled defaults to false in threshold_structure
+        let mut structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        structure.level_commissions_enabled = false;
 
         let mut snapshots = HashMap::new();
         snapshots.insert(uuid(0), director_snapshot());

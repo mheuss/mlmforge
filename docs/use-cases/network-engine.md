@@ -624,9 +624,9 @@ The `T: Default` widening is the caveat. On a collection, `default` reads as "em
 
 Do not reach for Go's `omitempty` on a required field to solve this. On its own it breaks the call: when the collection is empty the key vanishes, and a required field has no `default` to fall back on. Adding `default` to fix that is the actual hazard — a dropped field becomes indistinguishable from an empty one, which on a money path pays zero.
 
-Widening `snapshots: null` to empty does not open a silent-zero path of its own. Every calculator that reaches its walk rejects volume naming a source with no snapshot — `walk::validate_source` for the level-based walks, and `binary.rs` for pairing, which resolves the owner first and reports that UUID instead. Streamline runs the same rejection a second time, over all volume, before any stream is walked, because its per-stream filter would otherwise drop a source no walk reaches.
+Widening `snapshots: null` to empty does not open a silent-zero path of its own. Since HEU-731 every calculator that takes a tree refuses a request unless every distributor in the tree has a snapshot. That check runs before any walk, so absence cannot reach an active-leg count, a group volume or a generation boundary set. The per-source checks described next and the walk's upline check stay as defense in depth for code inside the engine that calls them directly.
 
-Since HEU-731 every calculator that takes a tree refuses a request unless every distributor in the tree has a snapshot. That check runs before any walk, so absence cannot reach an active-leg count, a group volume or a generation boundary set. The per-source and upline checks above stay as defence in depth for a library caller that skips it.
+Those per-source checks reject volume naming a source with no snapshot — `walk::validate_source` for the level-based walks, and `binary.rs` for pairing, which resolves the owner first and reports that UUID instead. Streamline runs the same rejection a second time, over all volume, before any stream is walked, because its per-stream filter would otherwise drop a source no walk reaches.
 
 Still null-intolerant, tracked by HEU-632: `history`'s inner per-period map (a null there has no defined meaning — absent-key and `Some(None)` are the two documented states), `cycle_events[].new_boards`, and `board_compress_inactive`'s `member_ids`.
 

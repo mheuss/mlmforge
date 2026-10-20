@@ -817,15 +817,15 @@ requests it used to answer with `Ok([])`.
   `InvalidCvAmount` and `SourceNotInTree` existed before but sat below the
   early return.
 
-Since HEU-731 a source in the tree with no snapshot is refused earlier, as
-`DistributorNotInSnapshot`, so the `SourceNotInSnapshot` described above
-reaches only a direct caller of the per-source check.
-
 Both were silent zeros on a money path, which is why they were worth closing
 inside this ticket rather than after it. Callers that relied on the old lenient
 answer will now see an error. Nothing calls `CalculateGeneration` outside tests
 today, so the practical blast radius is zero — but HEU-556, HEU-46, and HEU-47
 wire these methods up, and they should expect the strict behavior.
+
+Since HEU-731 a source in the tree with no snapshot is refused earlier, as
+`DistributorNotInSnapshot`, so the `SourceNotInSnapshot` described above
+reaches only a direct caller of the per-source check.
 
 `walk::validate_source` owns the check order, and a caller that hands it the
 source it is validating gets that order for free. Two calculators reproduce the
@@ -860,6 +860,10 @@ did.
 
 Same blast radius as the generation narrowing: nothing calls `CalculateStreamline`
 outside tests today.
+
+Since HEU-731 a stream member with no snapshot is refused earlier, as
+`DistributorNotInSnapshot`, frozen streams included. So the pre-loop's
+`SourceNotInSnapshot` reaches no caller of `calculate_streamline`.
 
 Still null-intolerant, tracked by HEU-632. These are nested or query-op
 collections the ticket deliberately stopped short of:

@@ -2156,3 +2156,14 @@ func TestBaseRankIsTheLowestOrdinalWhenRanksAreOutOfOrder(t *testing.T) {
 	assert.Equal(t, "/ranks/1/qualification/structures/0/personal_volume", base[0].Path)
 	assert.Contains(t, base[0].Message, `base rank "Associate"`)
 }
+
+func TestBaseRankIsTheFirstOfTiedLowestOrdinals(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Ordinal = 1
+
+	errs := validateBusinessRules(plan)
+
+	for _, e := range errs {
+		assert.NotEqual(t, "base_rank_has_requirements", e.Code, "errors: %v", errs)
+	}
+}

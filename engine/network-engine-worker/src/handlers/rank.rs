@@ -34,8 +34,8 @@ pub(crate) fn handle_evaluate_ranks(state: &WorkerState, request: &Request) -> R
     }
 
     // Build navigator map. Structures that don't expose TreeNavigator
-    // (board_plan, streamline) are not supported by HEU-443. If any rank
-    // references one, surface STRUCTURE_NOT_FOUND.
+    // (board_plan, streamline) are not supported by HEU-443. If a needed
+    // structure is one, or has no tree, surface STRUCTURE_NOT_FOUND.
     let mut navigators: HashMap<String, &dyn TreeNavigator> = HashMap::new();
     for structure_name in needed {
         match state

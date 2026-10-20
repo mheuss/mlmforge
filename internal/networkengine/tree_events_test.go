@@ -2,9 +2,11 @@ package networkengine
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -176,4 +178,84 @@ func assertShapeVerdict(t *testing.T, err error, want string) {
 		return
 	}
 	assert.ErrorContains(t, err, want)
+}
+
+func TestCheckCanonicalID(t *testing.T) {
+	refused := func(v string) string {
+		return fmt.Sprintf("root_added in tree t has user_id %q, which is not a canonical UUID", v)
+	}
+	cases := []struct {
+		name     string
+		value    string
+		allowNil bool
+		want     string
+	}{
+		{"a canonical UUID", testUserUUID(1), false, ""},
+		{"the nil UUID where nil is allowed", uuid.Nil.String(), true, ""},
+		{"the nil UUID where nil is refused", uuid.Nil.String(), false, "root_added in tree t has the nil UUID as user_id"},
+		{"an empty value", "", false, refused("")},
+		{"an empty value where nil is allowed", "", true, refused("")},
+		{"a blank value", " ", false, refused(" ")},
+		{"a value that is not a UUID", "nope", false, refused("nope")},
+		{"an uppercase UUID", "AAAAAAAA-AAAA-AAAA-AAAA-000000000001", false, refused("AAAAAAAA-AAAA-AAAA-AAAA-000000000001")},
+		{"a braced UUID", "{" + testUserUUID(1) + "}", false, refused("{" + testUserUUID(1) + "}")},
+		{"a urn UUID", "urn:uuid:" + testUserUUID(1), false, refused("urn:uuid:" + testUserUUID(1))},
+		{"a UUID with no hyphens", "00000000000000000000000000000001", false, refused("00000000000000000000000000000001")},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := checkCanonicalID("root_added", "t", "user_id", c.value, c.allowNil)
+
+			if c.want == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.EqualError(t, err, c.want)
+		})
+	}
+}
+
+func TestCheckEventIDs(t *testing.T) {
+	ok, nilID := testUserUUID(1), uuid.Nil.String()
+	root := func(user, sponsor string) func() error {
+		return func() error {
+			return checkRootAddedIDs(RootAddedPayload{TreeID: "t", UserID: user, SponsorID: sponsor})
+		}
+	}
+	placed := func(user, parent, sponsor string) func() error {
+		return func() error {
+			return checkNodePlacedIDs(NodePlacedPayload{TreeID: "t", UserID: user, ParentID: parent, SponsorID: sponsor})
+		}
+	}
+	removed := func(user string) func() error {
+		return func() error { return checkNodeRemovedIDs(NodeRemovedPayload{TreeID: "t", UserID: user}) }
+	}
+	cases := []struct {
+		name  string
+		check func() error
+		want  string
+	}{
+		{"a root_added with canonical IDs", root(ok, ok), ""},
+		{"a root_added whose sponsor is the nil UUID", root(ok, nilID), ""},
+		{"a root_added whose user is the nil UUID", root(nilID, ok), "root_added in tree t has the nil UUID as user_id"},
+		{"a root_added whose sponsor is empty", root(ok, ""), `root_added in tree t has sponsor_id "", which is not a canonical UUID`},
+		{"a node_placed with canonical IDs", placed(ok, ok, ok), ""},
+		{"a node_placed whose user is not a UUID", placed("nope", ok, ok), `node_placed in tree t has user_id "nope", which is not a canonical UUID`},
+		{"a node_placed whose parent is the nil UUID", placed(ok, nilID, ok), "node_placed in tree t has the nil UUID as parent_id"},
+		{"a node_placed whose sponsor is the nil UUID", placed(ok, ok, nilID), "node_placed in tree t has the nil UUID as sponsor_id"},
+		{"a node_removed with a canonical user", removed(ok), ""},
+		{"a node_removed whose user is empty", removed(""), `node_removed in tree t has user_id "", which is not a canonical UUID`},
+		{"a node_removed whose user is the nil UUID", removed(nilID), "node_removed in tree t has the nil UUID as user_id"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := c.check()
+
+			if c.want == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.EqualError(t, err, c.want)
+		})
+	}
 }

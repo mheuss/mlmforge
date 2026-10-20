@@ -4,7 +4,50 @@ import (
 	"fmt"
 	"math"
 	"time"
+
+	"github.com/google/uuid"
 )
+
+// checkCanonicalID refuses a value that is not a canonical UUID, and refuses
+// the nil UUID unless allowNil is set.
+func checkCanonicalID(eventName, treeID, field, value string, allowNil bool) error {
+	id, err := uuid.Parse(value)
+	if err != nil || id.String() != value {
+		return fmt.Errorf("%s in tree %s has %s %q, which is not a canonical UUID", eventName, treeID, field, value)
+	}
+	if id == uuid.Nil && !allowNil {
+		return fmt.Errorf("%s in tree %s has the nil UUID as %s", eventName, treeID, field)
+	}
+	return nil
+}
+
+// checkRootAddedIDs refuses a root_added whose user_id or sponsor_id is not a
+// canonical UUID, or whose user_id is the nil UUID.
+func checkRootAddedIDs(p RootAddedPayload) error {
+	if err := checkCanonicalID("root_added", p.TreeID, "user_id", p.UserID, false); err != nil {
+		return err
+	}
+	return checkCanonicalID("root_added", p.TreeID, "sponsor_id", p.SponsorID, true)
+}
+
+// checkNodePlacedIDs refuses a node_placed whose user_id, parent_id or
+// sponsor_id is not a canonical UUID, or is the nil UUID.
+func checkNodePlacedIDs(p NodePlacedPayload) error {
+	for _, f := range []struct{ name, value string }{
+		{"user_id", p.UserID}, {"parent_id", p.ParentID}, {"sponsor_id", p.SponsorID},
+	} {
+		if err := checkCanonicalID("node_placed", p.TreeID, f.name, f.value, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkNodeRemovedIDs refuses a node_removed whose user_id is not a canonical
+// UUID, or is the nil UUID.
+func checkNodeRemovedIDs(p NodeRemovedPayload) error {
+	return checkCanonicalID("node_removed", p.TreeID, "user_id", p.UserID, false)
+}
 
 // Tree event type constants for the EventStore type field.
 const (

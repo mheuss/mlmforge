@@ -135,21 +135,21 @@ func TestNodeRemovedCall_ReportsAHoldingTankRemovalsWholeSetAsRemoved(t *testing
 func TestTreeConsumer_ARemovalStillLandsTheRecruitsTheEngineMoved(t *testing.T) {
 	store := NewMemoryTreeStore()
 	transport := newRecordingTransport()
-	transport.response = json.RawMessage(`{"removed":true,"responsored":[{"user_id":"user-recruit","new_sponsor_id":"user-root"}]}`)
+	transport.response = json.RawMessage(`{"removed":true,"responsored":[{"user_id":"` + userRecruit + `","new_sponsor_id":"` + userRoot + `"}]}`)
 	consumer := NewTreeEventConsumer(store, newEngineClientWithTransport(transport))
 	ctx := context.Background()
-	require.NoError(t, store.insertNode(ctx, makeNode("tree1", "user-root", 0, nil, ptr("user-root"), nil)))
-	require.NoError(t, store.insertNode(ctx, makeNode("tree1", "user-leaf", 1, ptr("user-root"), ptr("user-root"), nil)))
-	require.NoError(t, store.insertNode(ctx, makeNode("tree1", "user-recruit", 1, ptr("user-root"), ptr("user-leaf"), nil)))
+	require.NoError(t, store.insertNode(ctx, makeNode("tree1", userRoot, 0, nil, ptr(userRoot), nil)))
+	require.NoError(t, store.insertNode(ctx, makeNode("tree1", userLeaf, 1, ptr(userRoot), ptr(userRoot), nil)))
+	require.NoError(t, store.insertNode(ctx, makeNode("tree1", userRecruit, 1, ptr(userRoot), ptr(userLeaf), nil)))
 
 	err := deliver(ctx, consumer, makeEvent(EventTypeNodeRemoved, NodeRemovedPayload{
-		TreeID: "tree1", UserID: "user-leaf", RemovedAt: time.Now(),
+		TreeID: "tree1", UserID: userLeaf, RemovedAt: time.Now(),
 	}))
 
 	require.NoError(t, err)
-	recruit, err := store.GetNode(ctx, "tree1", "user-recruit")
+	recruit, err := store.GetNode(ctx, "tree1", userRecruit)
 	require.NoError(t, err)
 	require.NotNil(t, recruit)
 	require.NotNil(t, recruit.SponsorID)
-	assert.Equal(t, "user-root", *recruit.SponsorID)
+	assert.Equal(t, userRoot, *recruit.SponsorID)
 }

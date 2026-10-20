@@ -1023,7 +1023,9 @@ mod tests {
         );
     }
 
-    /// Node 4 is a second frontline leg of node 1 and on no walked path.
+    /// Node 4 is a second frontline leg of node 1 and on no walked path. Node
+    /// 1 earns on node 3's volume at level 2 only with two active legs, so
+    /// leaving node 4 out would cap node 1's depth at 1.
     #[test]
     fn snapshot_omitted_off_every_walked_path_is_rejected() {
         let mut tree = UnilevelTree::new();
@@ -1035,8 +1037,23 @@ mod tests {
         tree.add_node(test_uuid(4), test_uuid(1), test_uuid(1), 0)
             .unwrap();
 
+        let elig = CommissionEligibility {
+            minimum_pv: 100.0,
+            require_order_in_period: false,
+            eligible_statuses: vec!["active".to_string()],
+            active_leg_tiers: vec![
+                ActiveLegTier {
+                    min_active_legs: 1,
+                    max_commission_depth: 1,
+                },
+                ActiveLegTier {
+                    min_active_legs: 2,
+                    max_commission_depth: 2,
+                },
+            ],
+        };
         let structure = test_structure(test_rate_table());
-        let plan = test_plan(default_eligibility());
+        let plan = test_plan_with_structure(elig, structure.clone());
 
         let mut snapshots = HashMap::new();
         snapshots.insert(test_uuid(1), eligible_snapshot());

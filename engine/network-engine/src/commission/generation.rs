@@ -266,7 +266,8 @@ fn emit_generation_earnings(
 /// Returns `CalculationError` if a snapshot names a rank the plan does not
 /// define, if a snapshot's personal_volume is negative or not finite, if a
 /// distributor in the tree has no snapshot, if a volume source is not found in
-/// the tree, or if a volume source has an invalid CV amount.
+/// the tree, if a volume source has an invalid CV amount, or if level
+/// commissions are enabled with no level commission config.
 pub fn calculate_generation(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -297,36 +298,40 @@ pub fn calculate_generation(
     // generation commissions on the same volume. Level earnings use
     // broad_commission_percent; generation earnings do not.
     if structure.level_commissions_enabled {
-        if let Some(ref lc) = structure.level_commission {
-            let lc_multiplier = lc
-                .volume_to_dollar_multiplier
-                .unwrap_or(plan.volume.volume_to_dollar_multiplier);
-            let threshold_ordinal =
-                walk::resolve_threshold_ordinal(structure.compression.as_ref(), &rank_ordinals);
+        let Some(ref lc) = structure.level_commission else {
+            return Err(CalculationError::ConfigError(
+                "generation level_commissions_enabled is true and level_commission is absent"
+                    .to_string(),
+            ));
+        };
+        let lc_multiplier = lc
+            .volume_to_dollar_multiplier
+            .unwrap_or(plan.volume.volume_to_dollar_multiplier);
+        let threshold_ordinal =
+            walk::resolve_threshold_ordinal(structure.compression.as_ref(), &rank_ordinals);
 
-            let level_config = walk::LevelWalkConfig {
-                max_depth: lc.max_depth,
-                broad_pct: lc.broad_commission_percent,
-                multiplier: lc_multiplier,
-                compression: structure.compression.as_ref(),
-                threshold_ordinal,
-                rank_ordinals: &rank_ordinals,
-                rate_table: &lc.rate_table,
-                pass_up: None,
-                dynamic_thresholds: None,
-            };
+        let level_config = walk::LevelWalkConfig {
+            max_depth: lc.max_depth,
+            broad_pct: lc.broad_commission_percent,
+            multiplier: lc_multiplier,
+            compression: structure.compression.as_ref(),
+            threshold_ordinal,
+            rank_ordinals: &rank_ordinals,
+            rate_table: &lc.rate_table,
+            pass_up: None,
+            dynamic_thresholds: None,
+        };
 
-            let level_earnings = walk::walk_level_commissions(
-                tree,
-                &level_config,
-                &eligibility_cache,
-                snapshots,
-                volume,
-                |_| false, // no breakaway boundaries in generation plans
-                &mut walks,
-            )?;
-            earnings.extend(level_earnings);
-        }
+        let level_earnings = walk::walk_level_commissions(
+            tree,
+            &level_config,
+            &eligibility_cache,
+            snapshots,
+            volume,
+            |_| false, // no breakaway boundaries in generation plans
+            &mut walks,
+        )?;
+        earnings.extend(level_earnings);
     }
 
     // Validate every source before any boundary logic, so a misconfigured
@@ -1845,7 +1850,8 @@ mod calculate_tests {
         assert!((root_gen.dollar_amount - 10.0).abs() < f64::EPSILON);
     }
 
-    /// The same omission with level commissions on is refused the same way.
+    /// Chain: 0(Dir) -> 1(no snapshot) -> 2(leaf), level commissions on. The
+    /// request is refused and names node 1.
     #[test]
     fn missing_upline_snapshot_errors_with_level_commissions_on() {
         let tree = build_chain(3);
@@ -1889,6 +1895,44 @@ mod calculate_tests {
             result.unwrap_err(),
             CalculationError::DistributorNotInSnapshot(uuid(1))
         );
+    }
+
+    /// Level commissions enabled with no level config is refused, not paid as
+    /// generation-only.
+    #[test]
+    fn level_commissions_enabled_with_no_level_config_is_rejected() {
+        let tree = build_chain(3);
+        let plan = two_rank_plan();
+        let mut structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        structure.level_commissions_enabled = true;
+        structure.level_commission = None;
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), director_snapshot());
+        snapshots.insert(uuid(1), eligible_snapshot());
+        snapshots.insert(uuid(2), eligible_snapshot());
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: 100.0,
+        }];
+
+        let err = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .expect_err("enabled level commissions with no level config must fail");
+
+        match err {
+            CalculationError::ConfigError(msg) => {
+                assert!(msg.contains("level_commission"), "wrong guard: {msg}")
+            }
+            other => panic!("expected ConfigError, got {other:?}"),
+        }
     }
 
     /// Same tree, but level_commissions_enabled = false.
@@ -1957,7 +2001,8 @@ mod calculate_tests {
         assert_eq!(err, CalculationError::DistributorNotInSnapshot(uuid(2)));
     }
 
-    /// The same refusal with the `SameRank` boundary mode.
+    /// Volume naming a source with no snapshot fails under the `SameRank`
+    /// boundary mode.
     #[test]
     fn generation_same_rank_rejects_volume_with_no_snapshot() {
         let tree = build_chain(3);

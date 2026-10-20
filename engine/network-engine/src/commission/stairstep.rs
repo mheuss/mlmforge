@@ -420,7 +420,7 @@ fn walk_single_overrides(
                     let ancestor_rank = snapshots
                         .get(&entry.earner_id)
                         .map(|s| s.rank.as_str())
-                        .unwrap_or("");
+                        .ok_or(CalculationError::UplineNotInSnapshot(entry.earner_id))?;
 
                     let (rate, dollar_amount) =
                         match resolve_gen1_payout(override_mode, ancestor_rank, breakaway_rank) {

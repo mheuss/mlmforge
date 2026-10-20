@@ -1732,6 +1732,8 @@ mod tests {
         for stream in engine.streams.values_mut() {
             stream.frozen = true;
         }
+        assert!(engine.stream_count() > 0);
+        assert_eq!(engine.active_streams().count(), 0);
 
         let mut ids: Vec<Uuid> = engine.member_ids().collect();
         ids.sort();

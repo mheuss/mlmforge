@@ -1,4 +1,4 @@
-//! Per-criterion predicate evaluators (PV, GV, max-leg-GV, retail, distributor count, products).
+//! Per-criterion predicate evaluators (PV, GV, retail, distributor count, products).
 
 use std::collections::HashMap;
 
@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::config::rank::{
     DistributorCountRequirement, LegPredicate, LegQualityRequirement, RankDefinition,
-    RankQualificationWindow, SearchMode, TenureRequirement,
+    RankQualificationWindow, SearchMode, StructureQualification, TenureRequirement,
 };
 use crate::rank::evaluator::{EvalCtx, VolumeIndex};
 use crate::rank::types::{DistributorPrimitives, EvaluatedRank, EvaluationError};
@@ -65,49 +65,33 @@ pub(crate) fn required_products_met(
         .any(|r| primitives.active_products.iter().any(|p| p == r))
 }
 
-/// Pass when group volume (downline CV + own PV) meets `required`.
-///
-/// "Group volume" follows the design: sum of `cv_amount` across the
-/// distributor's downline (any depth) plus the distributor's own
-/// `personal_volume` from primitives. The distributor's own CV from
-/// `volume_sources` is not added on top — `personal_volume` is the
-/// authoritative own contribution.
-pub(crate) fn gv_meets(
+/// Return the per-leg cap a structure sets, or None when it sets none.
+pub(crate) fn effective_leg_cap(sq: &StructureQualification) -> Option<f64> {
+    if sq.max_group_volume_per_leg > 0.0 {
+        return Some(sq.max_group_volume_per_leg);
+    }
+    let cap = sq.max_group_volume_per_leg_fraction * sq.group_volume;
+    (cap > 0.0).then_some(cap)
+}
+
+/// Pass when personal volume plus each first-level leg's CV, capped at `cap`, meets `required`.
+pub(crate) fn capped_gv_meets(
     required: f64,
+    cap: Option<f64>,
     user_id: Uuid,
     tree: &dyn TreeNavigator,
     volume_index: &VolumeIndex,
     primitives: &DistributorPrimitives,
 ) -> Result<bool, TreeError> {
-    // depth=0 is unbounded in TreeNavigator semantics.
-    let downline = tree.get_downline(user_id, 0)?;
-    let downline_cv: f64 = downline
-        .iter()
-        .map(|n| volume_index.cv_for(n.user_id))
-        .sum();
-    Ok(downline_cv + primitives.personal_volume >= required)
-}
-
-/// Pass when `cap` is 0, or when no first-level child's subtree CV exceeds it.
-pub(crate) fn max_leg_gv_meets(
-    cap: f64,
-    user_id: Uuid,
-    tree: &dyn TreeNavigator,
-    volume_index: &VolumeIndex,
-) -> Result<bool, TreeError> {
-    let children = tree.get_children(user_id)?;
-    let mut max_leg = 0.0_f64;
-    for child in children {
-        let mut leg_cv = volume_index.cv_for(child.user_id);
-        let descendants = tree.get_downline(child.user_id, 0)?;
-        for d in descendants {
-            leg_cv += volume_index.cv_for(d.user_id);
+    let mut gv = primitives.personal_volume;
+    for child in tree.get_children(user_id)? {
+        let mut leg = volume_index.cv_for(child.user_id);
+        for d in tree.get_downline(child.user_id, 0)? {
+            leg += volume_index.cv_for(d.user_id);
         }
-        if leg_cv > max_leg {
-            max_leg = leg_cv;
-        }
+        gv += cap.map_or(leg, |c| leg.min(c));
     }
-    Ok(cap == 0.0 || max_leg <= cap)
+    Ok(gv >= required)
 }
 
 /// Pass when the downline contains enough qualifying distributors per the
@@ -327,27 +311,13 @@ pub(crate) fn satisfies(
         if !retail_meets(sq.min_retail_volume, primitives) {
             return Ok(false);
         }
-        match gv_meets(
+        match capped_gv_meets(
             sq.group_volume,
+            effective_leg_cap(sq),
             user_id,
             *tree,
             ctx.volume_index,
             primitives,
-        ) {
-            Ok(true) => {}
-            Ok(false) => return Ok(false),
-            Err(_) => {
-                return Err(EvaluationError::DistributorNotInTree(
-                    user_id,
-                    sq.structure.clone(),
-                ));
-            }
-        }
-        match max_leg_gv_meets(
-            sq.max_group_volume_per_leg,
-            user_id,
-            *tree,
-            ctx.volume_index,
         ) {
             Ok(true) => {}
             Ok(false) => return Ok(false),
@@ -523,6 +493,7 @@ mod tests {
     use crate::rank::types::DistributorPrimitives;
     use crate::tree::error::TreeError;
     use crate::tree::unilevel::UnilevelTree;
+    use proptest::prelude::*;
     use uuid::Uuid;
 
     fn uid(i: u128) -> Uuid {
@@ -616,15 +587,69 @@ mod tests {
         ));
     }
 
+    /// A root `uid(1)` with one first-level child per entry in `legs`, each carrying that CV.
+    fn root_with_legs(legs: &[f64]) -> (UnilevelTree, VolumeIndex) {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        let mut sources = vec![];
+        for (i, cv) in legs.iter().enumerate() {
+            let child = uid(10 + i as u128);
+            tree.add_node(child, uid(1), uid(1), 0).unwrap();
+            sources.push(VolumeSource {
+                source_id: child,
+                cv_amount: *cv,
+            });
+        }
+        (tree, VolumeIndex::build(&sources))
+    }
+
+    fn sq_with_caps(group_volume: f64, cap: f64, fraction: f64) -> StructureQualification {
+        StructureQualification {
+            structure: "Test".to_string(),
+            personal_volume: 0.0,
+            group_volume,
+            max_group_volume_per_leg: cap,
+            max_group_volume_per_leg_fraction: fraction,
+            min_retail_volume: 0.0,
+            distributor_count: None,
+            leg_quality: vec![],
+        }
+    }
+
     #[test]
-    fn gv_meets_sums_downline_cv_plus_own_pv() {
+    fn effective_leg_cap_returns_the_fixed_cap_when_set() {
+        assert_eq!(
+            effective_leg_cap(&sq_with_caps(10000.0, 6000.0, 0.0)),
+            Some(6000.0)
+        );
+    }
+
+    #[test]
+    fn effective_leg_cap_returns_the_fraction_of_group_volume() {
+        assert_eq!(
+            effective_leg_cap(&sq_with_caps(10000.0, 0.0, 0.6)),
+            Some(6000.0)
+        );
+    }
+
+    #[test]
+    fn effective_leg_cap_returns_none_for_a_fraction_with_zero_group_volume() {
+        assert_eq!(effective_leg_cap(&sq_with_caps(0.0, 0.0, 0.5)), None);
+    }
+
+    #[test]
+    fn effective_leg_cap_returns_none_when_neither_cap_is_set() {
+        assert_eq!(effective_leg_cap(&sq_with_caps(10000.0, 0.0, 0.0)), None);
+    }
+
+    #[test]
+    fn capped_gv_meets_sums_downline_cv_plus_own_pv_with_no_cap() {
         // Build chain: 1 -> 2 -> 3
         let mut tree = UnilevelTree::new();
         tree.add_root(uid(1), 0).unwrap();
         tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
         tree.add_node(uid(3), uid(2), uid(2), 0).unwrap();
-
-        let sources = vec![
+        let idx = VolumeIndex::build(&[
             VolumeSource {
                 source_id: uid(2),
                 cv_amount: 100.0,
@@ -633,120 +658,138 @@ mod tests {
                 source_id: uid(3),
                 cv_amount: 200.0,
             },
-        ];
-        let idx = VolumeIndex::build(&sources);
+        ]);
+        let primitives = primitives_with_pv(50.0);
 
-        // Distributor 1's GV = downline CV (100 + 200) + own PV (50) = 350.
-        let primitives = DistributorPrimitives {
-            personal_volume: 50.0,
-            retail_volume: 0.0,
-            status: "active".to_string(),
-            has_order_in_period: true,
-            active_products: vec![],
-        };
-
-        assert!(gv_meets(350.0, uid(1), &tree, &idx, &primitives).unwrap());
-        assert!(!gv_meets(350.01, uid(1), &tree, &idx, &primitives).unwrap());
+        assert!(capped_gv_meets(350.0, None, uid(1), &tree, &idx, &primitives).unwrap());
+        assert!(!capped_gv_meets(350.01, None, uid(1), &tree, &idx, &primitives).unwrap());
     }
 
     #[test]
-    fn gv_meets_errors_when_distributor_missing_from_tree() {
-        let tree = UnilevelTree::new();
-        let idx = VolumeIndex::build(&[]);
+    fn capped_gv_meets_counts_a_strong_leg_up_to_the_cap() {
+        let (tree, idx) = root_with_legs(&[7000.0, 4000.0]);
         let primitives = primitives_with_pv(0.0);
 
-        let err = gv_meets(0.0, uid(99), &tree, &idx, &primitives).unwrap_err();
-        // We don't pin the structure name here; the caller does. The error
-        // surfaces from get_downline as a TreeError. Predicates return
-        // Result<bool, TreeError>.
-        assert_eq!(err, TreeError::UserNotFound(uid(99)));
+        assert!(capped_gv_meets(10000.0, Some(6000.0), uid(1), &tree, &idx, &primitives).unwrap());
+        assert!(!capped_gv_meets(10000.0, Some(5000.0), uid(1), &tree, &idx, &primitives).unwrap());
     }
 
     #[test]
-    fn max_leg_gv_meets_passes_when_no_leg_exceeds_cap() {
-        // Root with two first-level children, each subtree CV totaling 100, cap 150.
+    fn capped_gv_meets_caps_every_leg() {
+        let (tree, idx) = root_with_legs(&[300.0, 400.0, 500.0]);
+        let primitives = primitives_with_pv(0.0);
+
+        assert!(capped_gv_meets(600.0, Some(200.0), uid(1), &tree, &idx, &primitives).unwrap());
+        assert!(!capped_gv_meets(600.01, Some(200.0), uid(1), &tree, &idx, &primitives).unwrap());
+    }
+
+    #[test]
+    fn capped_gv_meets_caps_a_leg_subtree_as_a_whole() {
         let mut tree = UnilevelTree::new();
         tree.add_root(uid(1), 0).unwrap();
         tree.add_node(uid(2), uid(1), uid(1), 0).unwrap(); // leg A
         tree.add_node(uid(3), uid(1), uid(1), 0).unwrap(); // leg B
         tree.add_node(uid(4), uid(2), uid(2), 0).unwrap(); // child of leg A
-
-        let sources = vec![
+        let idx = VolumeIndex::build(&[
             VolumeSource {
                 source_id: uid(2),
                 cv_amount: 50.0,
             },
             VolumeSource {
                 source_id: uid(4),
-                cv_amount: 50.0,
-            }, // leg A subtotal: 100
+                cv_amount: 150.0,
+            }, // leg A: 200, capped to 120
             VolumeSource {
                 source_id: uid(3),
                 cv_amount: 100.0,
-            }, // leg B subtotal: 100
-        ];
-        let idx = VolumeIndex::build(&sources);
+            }, // leg B: 100
+        ]);
+        let primitives = primitives_with_pv(0.0);
 
-        assert!(max_leg_gv_meets(150.0, uid(1), &tree, &idx).unwrap());
+        assert!(capped_gv_meets(220.0, Some(120.0), uid(1), &tree, &idx, &primitives).unwrap());
+        assert!(!capped_gv_meets(220.01, Some(120.0), uid(1), &tree, &idx, &primitives).unwrap());
     }
 
     #[test]
-    fn max_leg_gv_meets_fails_when_a_leg_exceeds_cap() {
-        let mut tree = UnilevelTree::new();
-        tree.add_root(uid(1), 0).unwrap();
-        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
-        tree.add_node(uid(3), uid(1), uid(1), 0).unwrap();
+    fn capped_gv_meets_does_not_cap_personal_volume() {
+        let (tree, idx) = root_with_legs(&[500.0]);
+        let primitives = primitives_with_pv(900.0);
 
-        let sources = vec![
-            VolumeSource {
-                source_id: uid(2),
-                cv_amount: 200.0,
-            }, // leg A: 200
-            VolumeSource {
-                source_id: uid(3),
-                cv_amount: 50.0,
-            }, // leg B: 50
-        ];
-        let idx = VolumeIndex::build(&sources);
-
-        assert!(!max_leg_gv_meets(150.0, uid(1), &tree, &idx).unwrap());
+        assert!(capped_gv_meets(1000.0, Some(100.0), uid(1), &tree, &idx, &primitives).unwrap());
+        assert!(!capped_gv_meets(1000.01, Some(100.0), uid(1), &tree, &idx, &primitives).unwrap());
     }
 
     #[test]
-    fn max_leg_gv_meets_passes_for_distributor_with_no_children() {
-        let mut tree = UnilevelTree::new();
-        tree.add_root(uid(1), 0).unwrap();
+    fn capped_gv_meets_passes_on_personal_volume_with_no_children() {
+        let (tree, idx) = root_with_legs(&[]);
+        let primitives = primitives_with_pv(100.0);
+
+        assert!(capped_gv_meets(100.0, Some(50.0), uid(1), &tree, &idx, &primitives).unwrap());
+    }
+
+    #[test]
+    fn capped_gv_meets_errors_when_distributor_missing_from_tree() {
+        let tree = UnilevelTree::new();
         let idx = VolumeIndex::build(&[]);
-        // No legs means "max leg GV" = 0 ≤ any cap.
-        assert!(max_leg_gv_meets(100.0, uid(1), &tree, &idx).unwrap());
+        let primitives = primitives_with_pv(0.0);
+
+        let err = capped_gv_meets(0.0, None, uid(99), &tree, &idx, &primitives).unwrap_err();
+        assert_eq!(err, TreeError::UserNotFound(uid(99)));
     }
 
-    #[test]
-    fn max_leg_gv_meets_passes_any_leg_when_cap_is_zero() {
-        let mut tree = UnilevelTree::new();
-        tree.add_root(uid(1), 0).unwrap();
-        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
-        let sources = vec![VolumeSource {
-            source_id: uid(2),
-            cv_amount: 200.0,
-        }];
-        let idx = VolumeIndex::build(&sources);
+    proptest! {
+        /// Capped group volume equals personal volume plus each leg's CV capped, summed as integers.
+        #[test]
+        fn prop_capped_gv_matches_an_integer_oracle(
+            pv in 0u32..1_000,
+            legs in proptest::collection::vec(0u32..10_000, 0..6),
+            cap in proptest::option::of(1u32..10_000),
+            required in 0u32..40_000,
+        ) {
+            let leg_cvs: Vec<f64> = legs.iter().map(|&v| f64::from(v)).collect();
+            let (tree, idx) = root_with_legs(&leg_cvs);
+            let oracle = u64::from(pv)
+                + legs
+                    .iter()
+                    .map(|&v| u64::from(cap.map_or(v, |c| v.min(c))))
+                    .sum::<u64>();
+            let got = capped_gv_meets(
+                f64::from(required),
+                cap.map(f64::from),
+                uid(1),
+                &tree,
+                &idx,
+                &primitives_with_pv(f64::from(pv)),
+            )
+            .unwrap();
+            prop_assert_eq!(got, oracle >= u64::from(required));
+        }
 
-        assert!(max_leg_gv_meets(0.0, uid(1), &tree, &idx).unwrap());
-    }
-
-    #[test]
-    fn max_leg_gv_meets_fails_a_leg_with_volume_when_cap_is_negative() {
-        let mut tree = UnilevelTree::new();
-        tree.add_root(uid(1), 0).unwrap();
-        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
-        let sources = vec![VolumeSource {
-            source_id: uid(2),
-            cv_amount: 200.0,
-        }];
-        let idx = VolumeIndex::build(&sources);
-
-        assert!(!max_leg_gv_meets(-1.0, uid(1), &tree, &idx).unwrap());
+        /// Raising the cap never turns a pass into a fail.
+        #[test]
+        fn prop_capped_gv_is_monotone_in_the_cap(
+            legs in proptest::collection::vec(0u32..10_000, 0..6),
+            low in 1u32..10_000,
+            raise in 0u32..10_000,
+            required in 0u32..40_000,
+        ) {
+            let leg_cvs: Vec<f64> = legs.iter().map(|&v| f64::from(v)).collect();
+            let (tree, idx) = root_with_legs(&leg_cvs);
+            let primitives = primitives_with_pv(0.0);
+            let required = f64::from(required);
+            let low_pass =
+                capped_gv_meets(required, Some(f64::from(low)), uid(1), &tree, &idx, &primitives).unwrap();
+            let high_pass = capped_gv_meets(
+                required,
+                Some(f64::from(low + raise)),
+                uid(1),
+                &tree,
+                &idx,
+                &primitives,
+            )
+            .unwrap();
+            prop_assert!(!low_pass || high_pass);
+        }
     }
 
     use crate::config::rank::{DistributorCountRequirement, SearchMode};
@@ -1198,6 +1241,46 @@ mod tests {
         };
 
         assert!(!satisfies(&rank, uid(1), &already, &ctx).unwrap());
+    }
+
+    #[test]
+    fn satisfies_counts_a_strong_leg_up_to_the_per_leg_cap() {
+        let (tree, idx) = root_with_legs(&[7000.0, 4000.0]);
+        let mut nav_map: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+        nav_map.insert("Test".to_string(), &tree);
+        let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
+        distributors.insert(uid(1), primitives_with_pv(0.0));
+        let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
+        let ordinals: HashMap<String, u16> = HashMap::new();
+        let ranks: Vec<RankDefinition> = vec![];
+        let window: Vec<String> = vec![];
+        let history = HashMap::new();
+        let ctx = EvalCtx {
+            distributors: &distributors,
+            ranks: &ranks,
+            trees: &nav_map,
+            volume_index: &idx,
+            rank_ordinals: &ordinals,
+            history_window: &window,
+            history: &history,
+        };
+
+        for (cap, fraction, qualifies) in [
+            (6000.0, 0.0, true),
+            (5000.0, 0.0, false),
+            (0.0, 0.6, true),
+            (0.0, 0.5, false),
+        ] {
+            let mut rank = rank_with_pv_and_gv("silver", 2, "Test", 0.0, 10000.0);
+            let sq = &mut rank.qualification.structures[0];
+            sq.max_group_volume_per_leg = cap;
+            sq.max_group_volume_per_leg_fraction = fraction;
+            assert_eq!(
+                satisfies(&rank, uid(1), &already, &ctx).unwrap(),
+                qualifies,
+                "cap {cap}, fraction {fraction}"
+            );
+        }
     }
 
     #[test]

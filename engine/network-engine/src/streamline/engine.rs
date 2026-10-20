@@ -290,6 +290,11 @@ impl StreamlineEngine {
         self.user_streams.contains_key(&user_id)
     }
 
+    /// Returns every user with a position in any stream, frozen streams included.
+    pub fn member_ids(&self) -> impl Iterator<Item = Uuid> + '_ {
+        self.user_streams.keys().copied()
+    }
+
     /// Returns the stream IDs a member has positions on.
     pub fn get_member_streams(&self, user_id: Uuid) -> Option<&Vec<u32>> {
         self.user_streams.get(&user_id)
@@ -1716,5 +1721,20 @@ mod tests {
         assert_eq!(info.streams.len(), 1);
         assert_eq!(info.streams[0].stream_id, 1);
         assert_eq!(info.streams[0].position, 1);
+    }
+
+    #[test]
+    fn member_ids_includes_members_of_a_frozen_stream() {
+        let mut engine = seeded_streamline();
+        engine
+            .add_member(test_uuid(2), test_uuid(1), 1001, None)
+            .unwrap();
+        for stream in engine.streams.values_mut() {
+            stream.frozen = true;
+        }
+
+        let mut ids: Vec<Uuid> = engine.member_ids().collect();
+        ids.sort();
+        assert_eq!(ids, vec![test_uuid(1), test_uuid(2)]);
     }
 }

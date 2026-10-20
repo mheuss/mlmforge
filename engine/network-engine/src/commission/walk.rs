@@ -152,7 +152,7 @@ pub(crate) fn validate_snapshot_coverage(
     }
 }
 
-/// Run the whole-map snapshot checks in a fixed order.
+/// Run the snapshot checks in a fixed order.
 pub(crate) fn validate_snapshots(
     plan: &CompensationPlan,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
@@ -964,12 +964,11 @@ mod tests {
     fn validate_snapshot_coverage_reports_the_lowest_missing_user_id() {
         let mut snapshots = HashMap::new();
         snapshots.insert(test_uuid(2), snapshot_with_rank("associate"));
-        snapshots.insert(test_uuid(4), snapshot_with_rank("associate"));
 
-        // The lowest missing ID comes last, so a first-match search names 3.
+        // Missing in the order 5, 1, 3: the lowest is neither first nor last.
         assert_eq!(
             validate_snapshot_coverage(
-                [test_uuid(4), test_uuid(3), test_uuid(2), test_uuid(1)],
+                [test_uuid(5), test_uuid(2), test_uuid(1), test_uuid(3)],
                 &snapshots
             ),
             Err(CalculationError::DistributorNotInSnapshot(test_uuid(1)))

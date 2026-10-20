@@ -82,13 +82,14 @@ type TenureRequirement struct {
 
 // StructureQualification holds qualification requirements for a specific structure.
 type StructureQualification struct {
-	Structure            string                       `yaml:"structure" json:"structure"`
-	PersonalVolume       float64                      `yaml:"personal_volume" json:"personal_volume"`
-	GroupVolume          float64                      `yaml:"group_volume" json:"group_volume"`
-	MaxGroupVolumePerLeg float64                      `yaml:"max_group_volume_per_leg" json:"max_group_volume_per_leg"`
-	MinRetailVolume      float64                      `yaml:"min_retail_volume" json:"min_retail_volume"`
-	DistributorCount     *DistributorCountRequirement `yaml:"distributor_count" json:"distributor_count"`
-	LegQuality           []LegQualityRequirement      `yaml:"leg_quality,omitempty" json:"leg_quality,omitempty"`
+	Structure                    string                       `yaml:"structure" json:"structure"`
+	PersonalVolume               float64                      `yaml:"personal_volume" json:"personal_volume"`
+	GroupVolume                  float64                      `yaml:"group_volume" json:"group_volume"`
+	MaxGroupVolumePerLeg         float64                      `yaml:"max_group_volume_per_leg" json:"max_group_volume_per_leg"`
+	MaxGroupVolumePerLegFraction float64                      `yaml:"max_group_volume_per_leg_fraction,omitempty" json:"max_group_volume_per_leg_fraction,omitempty"`
+	MinRetailVolume              float64                      `yaml:"min_retail_volume" json:"min_retail_volume"`
+	DistributorCount             *DistributorCountRequirement `yaml:"distributor_count" json:"distributor_count"`
+	LegQuality                   []LegQualityRequirement      `yaml:"leg_quality,omitempty" json:"leg_quality,omitempty"`
 }
 
 // DistributorCountRequirement defines distributor count requirements per leg.

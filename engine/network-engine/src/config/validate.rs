@@ -218,17 +218,24 @@ impl CompensationPlan {
         Ok(())
     }
 
-    /// Reject a per-leg cap that is negative or not finite, on any rank.
+    /// Reject a per-leg cap or cap fraction out of range, or both caps set, on any rank.
     fn check_per_leg_caps(&self) -> Result<(), String> {
         for rank in &self.ranks {
             for sq in &rank.qualification.structures {
+                let at = format!("ranks: rank '{}' structure '{}'", rank.name, sq.structure);
                 check_non_negative(
-                    &format!(
-                        "ranks: rank '{}' structure '{}' max_group_volume_per_leg",
-                        rank.name, sq.structure
-                    ),
+                    &format!("{at} max_group_volume_per_leg"),
                     sq.max_group_volume_per_leg,
                 )?;
+                check_fraction(
+                    &format!("{at} max_group_volume_per_leg_fraction"),
+                    sq.max_group_volume_per_leg_fraction,
+                )?;
+                if sq.max_group_volume_per_leg > 0.0 && sq.max_group_volume_per_leg_fraction > 0.0 {
+                    return Err(format!(
+                        "{at} sets both max_group_volume_per_leg and max_group_volume_per_leg_fraction"
+                    ));
+                }
             }
         }
         Ok(())
@@ -1298,6 +1305,60 @@ mod tests {
         let err = plan.validate().unwrap_err();
         assert!(
             err.contains("rank 'associate' structure 'main' max_group_volume_per_leg must be finite and non-negative, got -1"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn plan_rejects_a_per_leg_cap_fraction_outside_zero_to_one_or_not_finite() {
+        for (value, shown) in [
+            (-0.1, "-0.1"),
+            (1.1, "1.1"),
+            (f64::NAN, "NaN"),
+            (f64::INFINITY, "inf"),
+        ] {
+            let mut plan = plan_with_two_ranks();
+            let mut entry = zero_threshold("main");
+            entry.max_group_volume_per_leg_fraction = value;
+            plan.ranks[1].qualification.structures = vec![entry];
+            let err = plan.validate().unwrap_err();
+            let want = format!(
+                "rank 'gold' structure 'main' max_group_volume_per_leg_fraction must be a fraction in [0.0, 1.0], got {shown}"
+            );
+            assert!(err.contains(&want), "expected {want:?}, got: {err}");
+        }
+    }
+
+    #[test]
+    fn plan_accepts_a_per_leg_cap_fraction_from_zero_to_one() {
+        for value in [0.0, 0.6, 1.0] {
+            let mut plan = plan_with_two_ranks();
+            let mut entry = zero_threshold("main");
+            entry.max_group_volume_per_leg_fraction = value;
+            plan.ranks[1].qualification.structures = vec![entry];
+            assert!(plan.validate().is_ok(), "fraction {value} was refused");
+        }
+    }
+
+    #[test]
+    fn plan_accepts_a_per_leg_cap_fraction_on_the_base_rank() {
+        let mut plan = plan_with_two_ranks();
+        let mut entry = zero_threshold("main");
+        entry.max_group_volume_per_leg_fraction = 0.5;
+        plan.ranks[0].qualification.structures = vec![entry];
+        assert!(plan.validate().is_ok());
+    }
+
+    #[test]
+    fn plan_rejects_both_per_leg_caps_set() {
+        let mut plan = plan_with_two_ranks();
+        let mut entry = zero_threshold("main");
+        entry.max_group_volume_per_leg = 6000.0;
+        entry.max_group_volume_per_leg_fraction = 0.6;
+        plan.ranks[1].qualification.structures = vec![entry];
+        let err = plan.validate().unwrap_err();
+        assert!(
+            err.contains("rank 'gold' structure 'main' sets both max_group_volume_per_leg and max_group_volume_per_leg_fraction"),
             "unexpected error: {err}"
         );
     }

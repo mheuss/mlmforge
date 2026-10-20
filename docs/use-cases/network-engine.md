@@ -210,7 +210,7 @@ result, err := client.EvaluateRanks(ctx, networkengine.EvaluateRanksRequest{...}
 
 **Notes:** The ladder-ascent semantics inside `evaluate_distributor` start at the lowest rank without evaluating it. They then iterate every higher rank in ascending ordinal and pick the highest passing one. A failed rank does NOT short-circuit. Higher ranks may still pass and be selected. This handles ladder gaps where a distributor satisfies rank N+1 but not rank N (e.g., missing a required product unique to N).
 
-The worker handler registers tree navigators only for structures that some rank's `qualification.structures` names. A distributor in none of those trees is not evaluated and holds the lowest rank. The network-engine development note "Rank Evaluation: Empty `qualification.structures`" covers what that means for tests.
+The worker handler registers tree navigators only for structures that a rank above the lowest names in its `qualification.structures`. A distributor in none of those trees is not evaluated and holds the lowest rank. The network-engine development note "Rank Evaluation: Empty `qualification.structures`" covers what that means for tests.
 
 ---
 

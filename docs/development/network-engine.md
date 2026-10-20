@@ -386,9 +386,9 @@ Assert it explicitly in round-trip tests. HEU-534 shipped a matrix reload where 
 
 ## Rank Evaluation: Empty `qualification.structures`
 
-The `evaluate_ranks` worker handler registers tree navigators only for structures that some rank's `qualification.structures` names. A distributor in none of those trees is not evaluated. It holds the plan's lowest rank.
+The `evaluate_ranks` worker handler registers tree navigators only for structures that a rank above the lowest names in its `qualification.structures`. The lowest rank's structures are not read, so a structure only it names needs no tree. A distributor in none of the registered trees is not evaluated. It holds the plan's lowest rank.
 
-So a plan whose ranks name no structure gives every distributor the lowest rank. No higher rank is reached. A test that needs a higher rank must create a structure and place the distributor in it. Some rank's qualification must name that structure.
+So a plan whose higher ranks name no structure gives every distributor the lowest rank. No higher rank is reached. A test that needs a higher rank must create a structure and place the distributor in it. A rank above the lowest must name that structure.
 
 A distributor in no registered tree is never evaluated against a higher rank whose qualification names no structure. HEU-953 tracks it.
 

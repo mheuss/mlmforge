@@ -5106,6 +5106,70 @@ fn load_plan_refuses_a_base_rank_with_a_requirement() {
     child.wait().unwrap();
 }
 
+/// `RANK_TEST_PLAN_JSON` with a second unilevel structure "Other" that only
+/// the base rank's qualification names.
+fn base_only_structure_plan() -> String {
+    let mut plan: serde_json::Value = serde_json::from_str(RANK_TEST_PLAN_JSON).unwrap();
+    let mut other = plan["structures"][0].clone();
+    other["config"]["name"] = serde_json::json!("Other");
+    plan["structures"].as_array_mut().unwrap().push(other);
+    plan["ranks"][0]["qualification"]["structures"][0]["structure"] = serde_json::json!("Other");
+    plan.to_string()
+}
+
+/// Loads `base_only_structure_plan`, creates `trees`, adds each `(tree, user)`
+/// root, and evaluates ROOT and CHILD at PV 0.
+fn evaluate_with_base_only_structure(trees: &[&str], roots: &[(&str, &str)]) -> serde_json::Value {
+    let mut child = common::spawn_worker();
+    let resp = send_load_plan(&mut child, &base_only_structure_plan());
+    assert!(resp.contains(r#""ok":true"#), "load_plan failed: {}", resp);
+    for tree in trees {
+        create_tree(&mut child, tree);
+    }
+    for (tree, user) in roots {
+        let resp = common::send_receive(
+            &mut child,
+            &format!(
+                r#"{{"id":"root","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+                tree, user
+            ),
+        );
+        assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+    }
+    let primitives = r#"{"personal_volume":0.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":[]}"#;
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"ev","op":"evaluate_ranks","params":{{"distributors":{{"{}":{},"{}":{}}},"volume_sources":[]}}}}"#,
+            ROOT, primitives, CHILD, primitives
+        ),
+    );
+    drop(child.stdin.take());
+    child.wait().unwrap();
+    serde_json::from_str(&resp).unwrap()
+}
+
+#[test]
+fn evaluate_ranks_ignores_a_structure_only_the_base_rank_names() {
+    let parsed = evaluate_with_base_only_structure(&["Test"], &[("Test", ROOT)]);
+
+    assert_eq!(parsed["ok"].as_bool(), Some(true), "got: {}", parsed);
+    let base = serde_json::json!({"kind": "qualified", "rank": "associate", "ordinal": 1});
+    assert_eq!(parsed["result"]["ranks"][ROOT], base, "got: {}", parsed);
+    assert_eq!(parsed["result"]["ranks"][CHILD], base, "got: {}", parsed);
+}
+
+#[test]
+fn evaluate_ranks_gives_the_base_rank_to_a_distributor_only_in_a_base_only_structure() {
+    let parsed =
+        evaluate_with_base_only_structure(&["Test", "Other"], &[("Test", ROOT), ("Other", CHILD)]);
+
+    assert_eq!(parsed["ok"].as_bool(), Some(true), "got: {}", parsed);
+    let base = serde_json::json!({"kind": "qualified", "rank": "associate", "ordinal": 1});
+    assert_eq!(parsed["result"]["ranks"][ROOT], base, "got: {}", parsed);
+    assert_eq!(parsed["result"]["ranks"][CHILD], base, "got: {}", parsed);
+}
+
 /// Minimal plan for windowed-gate tests. Two ranks on structure "Test":
 /// - `associate` (ordinal 1): PV >= 0 — serves as `threshold_rank` for the window.
 /// - `silver` (ordinal 2): PV >= 0 + window gate (2-of-3 periods at >= associate).

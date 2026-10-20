@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
+use network_engine::config::rank::RankDefinition;
 use network_engine::rank::{EvaluationInputs, evaluate_ranks};
 use network_engine::tree::navigator::TreeNavigator;
 
@@ -18,12 +19,15 @@ pub(crate) fn handle_evaluate_ranks(state: &WorkerState, request: &Request) -> R
         Err(e) => return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string()),
     };
 
-    // Collect every structure name referenced by any rank's qualification.
-    // BTreeSet for deterministic iteration order so STRUCTURE_NOT_FOUND
-    // errors surface the same missing structure across runs (test stability,
-    // reproducible failures).
+    // Collect every structure name referenced by a rank above the lowest.
+    // The stable sort keeps the first of tied lowest ordinals as the one
+    // skipped. BTreeSet for deterministic iteration order so
+    // STRUCTURE_NOT_FOUND errors surface the same missing structure across
+    // runs (test stability, reproducible failures).
+    let mut ladder: Vec<&RankDefinition> = plan.ranks.iter().collect();
+    ladder.sort_by_key(|r| r.ordinal);
     let mut needed: BTreeSet<&str> = BTreeSet::new();
-    for rank in &plan.ranks {
+    for rank in ladder.iter().skip(1) {
         for sq in &rank.qualification.structures {
             needed.insert(sq.structure.as_str());
         }

@@ -30,7 +30,8 @@ pub fn calculate_unilevel(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
-    walk::validate_snapshots(plan, snapshots, tree.user_ids())?;
+    let member_ids = tree.user_ids();
+    walk::validate_snapshots(plan, snapshots, member_ids.iter().copied())?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
 
@@ -45,11 +46,10 @@ pub fn calculate_unilevel(
     let compression = structure.compression.as_ref();
     let threshold_ordinal = walk::resolve_threshold_ordinal(compression, &rank_ordinals);
 
-    // Build pass-up context if configured.
     let pass_up_context = structure
         .pass_up
         .as_ref()
-        .map(|pu| walk::build_pass_up_context(tree, pu, &tree.user_ids()));
+        .map(|pu| walk::build_pass_up_context(tree, pu, &member_ids));
 
     let config = walk::LevelWalkConfig {
         max_depth: structure.level_commission.max_depth,
@@ -1374,9 +1374,9 @@ mod tests {
         );
     }
 
-    /// Pins the rank check above the walk, where a missing upline snapshot is
-    /// reported. This input is bad on both counts: only the check order decides
-    /// which error surfaces. Holds in every profile.
+    /// Pins the rank check ahead of the snapshot coverage check. This input is
+    /// bad on both counts: only the check order decides which error surfaces.
+    /// Holds in every profile.
     #[test]
     fn unknown_rank_wins_over_a_missing_upline_snapshot() {
         let mut tree = UnilevelTree::new();
@@ -2482,7 +2482,7 @@ mod tests {
 
     #[test]
     fn pass_up_does_not_excuse_a_missing_sponsor_snapshot() {
-        // Tree: S(1) -> A(2) -> R1(3, t=200). A has no snapshot.
+        // Tree: S(1) -> A(2) -> R1(3, t=200).
         // Pass-up would skip A for R1's volume, but the request is refused first.
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap(); // S

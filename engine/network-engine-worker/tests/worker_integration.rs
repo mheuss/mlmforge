@@ -1429,24 +1429,8 @@ fn calculate_generation_accepts_a_null_volume() {
     worker.wait().unwrap();
 }
 
-/// Empty snapshots plus real volume is a caller bug, and it must be loud.
-///
-/// This is the half the null-widening does *not* cover. `snapshots:null` reads
-/// as empty, which is right when there is genuinely no volume — but if volume
-/// names a source, an empty snapshots map means the caller lost data, and
-/// paying nobody while reporting `ok` would hide it.
-///
-/// This fixture enables level commissions, so the rejection here comes from
-/// `walk_level_commissions` (`walk.rs`) — the guard four of the six inherit.
-/// Binary pairing reimplements it against the resolved owner. The
-/// generation-*only* path (level commissions off) had no such guard until this
-/// branch added one; that path is not reachable from this fixture, so it is
-/// pinned at the library level instead by
-/// `generation_only_rejects_volume_with_no_snapshot`.
-///
-/// What this test adds over those: it proves the worker surfaces the failure as
-/// `CALCULATION_ERROR` rather than swallowing it, which a library test cannot
-/// observe.
+/// Empty snapshots plus real volume is a caller bug, and it must be loud. The
+/// worker reports it as `CALCULATION_ERROR` naming the source.
 #[test]
 fn calculate_generation_rejects_volume_with_no_snapshot() {
     let mut worker = common::spawn_worker();

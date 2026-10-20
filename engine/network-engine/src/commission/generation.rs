@@ -1957,8 +1957,7 @@ mod calculate_tests {
         assert_eq!(err, CalculationError::DistributorNotInSnapshot(uuid(2)));
     }
 
-    /// The same guard on the `SameRank` boundary arm, which has its own
-    /// source-validation loop.
+    /// The same refusal with the `SameRank` boundary mode.
     #[test]
     fn generation_same_rank_rejects_volume_with_no_snapshot() {
         let tree = build_chain(3);

@@ -109,7 +109,7 @@ pub fn calculate_streamline(
         })
         .collect::<Result<_, _>>()?;
 
-    walk::validate_snapshots(plan, snapshots)?;
+    walk::validate_snapshots(plan, snapshots, std::iter::empty())?;
 
     let multiplier = structure
         .streamline_commission

@@ -50,7 +50,7 @@ pub fn calculate_matrix(
         });
     }
 
-    walk::validate_snapshots(plan, snapshots)?;
+    walk::validate_snapshots(plan, snapshots, std::iter::empty())?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
 

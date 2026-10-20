@@ -220,7 +220,7 @@ pub fn calculate_binary_pairing(
     // Below the match on purpose. The Pairing arm's percent assert and the
     // CycleStep arm's config validation each stay first on their own path,
     // and the CycleStep arm has already returned by here.
-    walk::validate_snapshots(plan, snapshots)?;
+    walk::validate_snapshots(plan, snapshots, std::iter::empty())?;
 
     let multiplier = structure
         .binary_commission
@@ -395,7 +395,7 @@ fn calculate_binary_cycle_step(
         .validate()
         .map_err(CalculationError::ConfigError)?;
 
-    walk::validate_snapshots(plan, snapshots)?;
+    walk::validate_snapshots(plan, snapshots, std::iter::empty())?;
 
     // Phase 1: Prep (shared with pairing calculator)
     let volume_totals = aggregate_volume(tree, snapshots, volume, ownership)?;

@@ -31,7 +31,7 @@ pub fn calculate_unilevel(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
-    walk::validate_snapshots(plan, snapshots)?;
+    walk::validate_snapshots(plan, snapshots, std::iter::empty())?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
 

@@ -285,7 +285,7 @@ pub fn calculate_generation(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
-    walk::validate_snapshots(plan, snapshots)?;
+    walk::validate_snapshots(plan, snapshots, std::iter::empty())?;
     let gen_config = &structure.generation_commission;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);

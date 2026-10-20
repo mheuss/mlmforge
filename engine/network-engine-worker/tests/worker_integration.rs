@@ -1388,6 +1388,35 @@ fn load_generation_test_plan(worker: &mut std::process::Child) {
     );
 }
 
+/// A generation structure with level commissions on and no level config is
+/// refused at load.
+#[test]
+fn load_plan_refuses_level_commissions_enabled_with_no_level_commission() {
+    let mut worker = common::spawn_worker();
+    let mut plan: serde_json::Value = serde_json::from_str(GENERATION_TEST_PLAN_JSON)
+        .expect("generation fixture should be valid JSON");
+    let structure = plan["structures"]
+        .as_array_mut()
+        .expect("fixture should carry a structures array")
+        .iter_mut()
+        .find(|s| s["type"] == "generation")
+        .expect("fixture should carry a generation structure");
+    structure["config"]["level_commissions_enabled"] = serde_json::json!(true);
+    structure["config"]["level_commission"] = serde_json::Value::Null;
+
+    let resp = send_load_plan(&mut worker, &plan.to_string());
+    assert!(
+        resp.contains(r#""ok":false"#)
+            && resp.contains("INVALID_PLAN")
+            && resp.contains("level_commissions_enabled is true and level_commission is null"),
+        "expected INVALID_PLAN naming the generation level config, got: {}",
+        resp
+    );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// A nil Go collection marshals to `null`, not `{}` or `[]`, and a null
 /// `volume` must read as empty rather than being rejected.
 ///

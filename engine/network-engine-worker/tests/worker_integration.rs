@@ -63,7 +63,7 @@ fn ping_returns_protocol_version() {
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(parsed["id"], "1");
-    assert_eq!(parsed["result"]["protocol_version"], 17);
+    assert_eq!(parsed["result"]["protocol_version"], 18);
 
     drop(child.stdin.take());
     child.wait().unwrap();
@@ -4931,10 +4931,9 @@ fn calculate_streamline_unknown_structure_returns_not_found() {
     worker.wait().unwrap();
 }
 
-/// Minimal plan used by `evaluate_ranks` integration tests. The single rank
-/// "associate" requires PV=50 inside structure "Test", so a distributor with
-/// PV=0 falls through to `Unranked`. The plan is shared by the happy-path
-/// test and the STRUCTURE_NOT_FOUND error-path test.
+/// Minimal plan for `evaluate_ranks` integration tests. The base rank
+/// "associate" requires nothing. "silver" requires PV=50 inside structure
+/// "Test".
 const RANK_TEST_PLAN_JSON: &str = r#"{
     "name": "RankTest",
     "version": 2,
@@ -4954,6 +4953,10 @@ const RANK_TEST_PLAN_JSON: &str = r#"{
     "volume": {"inhibit_signup_volume": false, "base_currency": "USD", "volume_to_dollar_multiplier": 1.0, "deduct_qualifying_volume": false},
     "ranks": [
         {"name": "associate", "ordinal": 1,
+         "qualification": {"structures": [{"structure": "Test", "personal_volume": 0.0, "group_volume": 0.0, "max_group_volume_per_leg": 1e12, "min_retail_volume": 0.0, "distributor_count": null}], "required_products": []},
+         "qualified_structures": ["Test"],
+         "demotion_policy": "promotion_only"},
+        {"name": "silver", "ordinal": 2,
          "qualification": {"structures": [{"structure": "Test", "personal_volume": 50.0, "group_volume": 0.0, "max_group_volume_per_leg": 1e12, "min_retail_volume": 0.0, "distributor_count": null}], "required_products": []},
          "qualified_structures": ["Test"],
          "demotion_policy": "promotion_only"}
@@ -4968,7 +4971,7 @@ const RANK_TEST_PLAN_JSON: &str = r#"{
 }"#;
 
 #[test]
-fn evaluate_ranks_returns_unranked_for_zero_pv_distributor() {
+fn evaluate_ranks_returns_the_base_rank_for_a_zero_pv_distributor() {
     let mut child = common::spawn_worker();
 
     // The wire protocol sends one JSON object per line. Minify the plan JSON
@@ -5012,8 +5015,9 @@ fn evaluate_ranks_returns_unranked_for_zero_pv_distributor() {
         resp
     );
     assert_eq!(
-        parsed["result"]["ranks"][ROOT]["kind"], "unranked",
-        "expected unranked result for ROOT, got: {}",
+        parsed["result"]["ranks"][ROOT],
+        serde_json::json!({"kind": "qualified", "rank": "associate", "ordinal": 1}),
+        "expected the base rank for ROOT, got: {}",
         resp
     );
 
@@ -5073,6 +5077,134 @@ fn evaluate_ranks_returns_structure_not_found_when_tree_missing() {
 
     drop(child.stdin.take());
     child.wait().unwrap();
+}
+
+#[test]
+fn load_plan_refuses_a_base_rank_with_a_requirement() {
+    let mut child = common::spawn_worker();
+    let plan =
+        RANK_TEST_PLAN_JSON.replacen(r#""personal_volume": 0.0"#, r#""personal_volume": 50.0"#, 1);
+
+    let resp = send_load_plan(&mut child, &plan);
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(
+        parsed["ok"].as_bool(),
+        Some(false),
+        "expected ok=false, got: {}",
+        resp
+    );
+    assert_eq!(parsed["error"]["code"], "INVALID_PLAN", "got: {}", resp);
+    let message = parsed["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains("base rank 'associate' sets personal_volume 50 on structure 'Test'"),
+        "unexpected message: {}",
+        message
+    );
+
+    drop(child.stdin.take());
+    child.wait().unwrap();
+}
+
+/// `RANK_TEST_PLAN_JSON` with a second unilevel structure "Other" that only
+/// the base rank's qualification names.
+fn base_only_structure_plan() -> String {
+    let mut plan: serde_json::Value = serde_json::from_str(RANK_TEST_PLAN_JSON).unwrap();
+    let mut other = plan["structures"][0].clone();
+    other["config"]["name"] = serde_json::json!("Other");
+    plan["structures"].as_array_mut().unwrap().push(other);
+    plan["ranks"][0]["qualification"]["structures"][0]["structure"] = serde_json::json!("Other");
+    plan.to_string()
+}
+
+/// Loads `base_only_structure_plan`, creates `trees`, adds each `(tree, user)`
+/// root, and evaluates ROOT and CHILD at PV 0.
+fn evaluate_with_base_only_structure(trees: &[&str], roots: &[(&str, &str)]) -> serde_json::Value {
+    let mut child = common::spawn_worker();
+    let resp = send_load_plan(&mut child, &base_only_structure_plan());
+    assert!(resp.contains(r#""ok":true"#), "load_plan failed: {}", resp);
+    for tree in trees {
+        create_tree(&mut child, tree);
+    }
+    for (tree, user) in roots {
+        let resp = common::send_receive(
+            &mut child,
+            &format!(
+                r#"{{"id":"root","op":"add_root","params":{{"structure":"{}","user_id":"{}","enrolled_at":100}}}}"#,
+                tree, user
+            ),
+        );
+        assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+    }
+    let primitives = r#"{"personal_volume":0.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":[]}"#;
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"ev","op":"evaluate_ranks","params":{{"distributors":{{"{}":{},"{}":{}}},"volume_sources":[]}}}}"#,
+            ROOT, primitives, CHILD, primitives
+        ),
+    );
+    drop(child.stdin.take());
+    child.wait().unwrap();
+    serde_json::from_str(&resp).unwrap()
+}
+
+#[test]
+fn evaluate_ranks_ignores_a_structure_only_the_base_rank_names() {
+    let parsed = evaluate_with_base_only_structure(&["Test"], &[("Test", ROOT)]);
+
+    assert_eq!(parsed["ok"].as_bool(), Some(true), "got: {}", parsed);
+    let base = serde_json::json!({"kind": "qualified", "rank": "associate", "ordinal": 1});
+    assert_eq!(parsed["result"]["ranks"][ROOT], base, "got: {}", parsed);
+    assert_eq!(parsed["result"]["ranks"][CHILD], base, "got: {}", parsed);
+}
+
+#[test]
+fn evaluate_ranks_gives_the_base_rank_to_a_distributor_only_in_a_base_only_structure() {
+    let parsed =
+        evaluate_with_base_only_structure(&["Test", "Other"], &[("Test", ROOT), ("Other", CHILD)]);
+
+    assert_eq!(parsed["ok"].as_bool(), Some(true), "got: {}", parsed);
+    let base = serde_json::json!({"kind": "qualified", "rank": "associate", "ordinal": 1});
+    assert_eq!(parsed["result"]["ranks"][ROOT], base, "got: {}", parsed);
+    assert_eq!(parsed["result"]["ranks"][CHILD], base, "got: {}", parsed);
+}
+
+#[test]
+fn evaluate_ranks_finds_the_base_rank_by_ordinal_when_ranks_are_out_of_order() {
+    let mut plan: serde_json::Value = serde_json::from_str(&base_only_structure_plan()).unwrap();
+    plan["ranks"].as_array_mut().unwrap().reverse();
+    let mut child = common::spawn_worker();
+    let resp = send_load_plan(&mut child, &plan.to_string());
+    assert!(resp.contains(r#""ok":true"#), "load_plan failed: {}", resp);
+    create_tree(&mut child, "Test");
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"root","op":"add_root","params":{{"structure":"Test","user_id":"{}","enrolled_at":100}}}}"#,
+            ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
+
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"ev","op":"evaluate_ranks","params":{{"distributors":{{"{}":{{"personal_volume":60.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":[]}}}},"volume_sources":[]}}}}"#,
+            ROOT
+        ),
+    );
+    drop(child.stdin.take());
+    child.wait().unwrap();
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(parsed["ok"].as_bool(), Some(true), "got: {}", parsed);
+    assert_eq!(
+        parsed["result"]["ranks"][ROOT],
+        serde_json::json!({"kind": "qualified", "rank": "silver", "ordinal": 2}),
+        "got: {}",
+        parsed
+    );
 }
 
 /// Minimal plan for windowed-gate tests. Two ranks on structure "Test":
@@ -5267,8 +5399,9 @@ fn evaluate_ranks_accepts_null_nested_and_history() {
         resp
     );
     assert_eq!(
-        parsed["result"]["ranks"][ROOT]["kind"], "unranked",
-        "a zero-PV distributor should still evaluate to unranked, got: {}",
+        parsed["result"]["ranks"][ROOT],
+        serde_json::json!({"kind": "qualified", "rank": "associate", "ordinal": 1}),
+        "a zero-PV distributor should still hold the base rank, got: {}",
         resp
     );
 

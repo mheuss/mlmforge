@@ -82,7 +82,8 @@ pub struct CompensationPlan {
     /// Rank ladder, shared across all structures.
     ///
     /// A distributor holds one rank that may qualify them for commissions
-    /// on multiple structures. Ranks are evaluated lowest-to-highest ordinal.
+    /// on multiple structures. Ranks are ordered by ordinal. The lowest is
+    /// the base rank.
     pub ranks: Vec<RankDefinition>,
 
     /// Whether to track highest-ever rank.

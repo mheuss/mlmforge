@@ -458,7 +458,7 @@ type EvaluateRanksRequest struct {
 	// Omitted when empty (omitempty) so callers without history data stay backward-compatible.
 	HistoryWindow []string `json:"history_window,omitempty"`
 	// History maps distributor UUID strings to per-period rank ordinals.
-	// A nil *uint16 value marshals to JSON null, representing "Unranked" (evaluated, did not qualify).
+	// A nil *uint16 value marshals to JSON null, representing "Unranked".
 	History map[string]map[string]*uint16 `json:"history,omitempty"`
 }
 

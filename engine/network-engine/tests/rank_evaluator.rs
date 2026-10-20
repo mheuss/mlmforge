@@ -136,13 +136,11 @@ fn evaluate_ranks_returns_per_distributor_rank() {
 }
 
 #[test]
-fn evaluate_ranks_returns_unranked_for_distributor_below_lowest_tier() {
-    // Reproduces business requirement #3.
+fn evaluate_ranks_gives_the_base_rank_without_evaluating_its_qualification() {
     let mut tree = UnilevelTree::new();
     tree.add_root(uuid_from_index(1), 0).unwrap();
 
     let mut plan = linear_plan();
-    // Make the lowest rank require PV > 0.
     plan.ranks[0].qualification.structures[0].personal_volume = 50.0;
 
     let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
@@ -161,12 +159,15 @@ fn evaluate_ranks_returns_unranked_for_distributor_below_lowest_tier() {
     let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
     assert_eq!(
         result.ranks.get(&uuid_from_index(1)),
-        Some(&EvaluatedRank::Unranked)
+        Some(&EvaluatedRank::Qualified {
+            rank: "associate".to_string(),
+            ordinal: 1
+        })
     );
 }
 
 #[test]
-fn evaluate_ranks_omitting_primitives_treats_distributor_as_unranked() {
+fn evaluate_ranks_omitting_primitives_omits_distributor() {
     // Reproduces design risk #3 mitigation.
     let mut tree = UnilevelTree::new();
     tree.add_root(uuid_from_index(1), 0).unwrap();
@@ -227,7 +228,7 @@ fn evaluate_ranks_errors_on_unknown_structure() {
     assert_eq!(
         err,
         EvaluationError::UnknownStructure {
-            rank: "associate".to_string(),
+            rank: "silver".to_string(),
             structure: "Test".to_string(),
         }
     );
@@ -330,7 +331,7 @@ fn evaluate_ranks_errors_on_unknown_min_rank() {
 /// PV >= 100 (requirement 2). Leg quality is the sole differentiator.
 #[test]
 fn evaluate_ranks_with_populated_leg_quality_gates_rank() {
-    // Build the plan: associate (ord 1, PV >= 50) and silver (ord 2, PV >= 50)
+    // Build the plan: associate (ord 1, no requirement) and silver (ord 2, PV >= 50)
     // with two AND-combined leg_quality requirements on silver.
     let mut plan = network_engine::test_support::build_test_plan(
         network_engine::config::eligibility::CommissionEligibility {
@@ -359,7 +360,7 @@ fn evaluate_ranks_with_populated_leg_quality_gates_rank() {
             qualification: RankQualification {
                 structures: vec![StructureQualification {
                     structure: "Test".to_string(),
-                    personal_volume: 50.0,
+                    personal_volume: 0.0,
                     group_volume: 0.0,
                     max_group_volume_per_leg: f64::MAX,
                     min_retail_volume: 0.0,
@@ -808,7 +809,7 @@ fn evaluate_ranks_resolves_recursive_leg_quality_ladder() {
         "Test",
     );
 
-    // Each rank requires PV >= 50 plus the given leg-quality rules.
+    // Each rank requires PV >= 50 plus the given leg-quality rules. The base's PV floor is cleared below.
     let rank = |name: &str, ordinal: u16, leg_quality: Vec<LegQualityRequirement>| RankDefinition {
         name: name.to_string(),
         ordinal,
@@ -843,6 +844,7 @@ fn evaluate_ranks_resolves_recursive_leg_quality_ladder() {
         rank("director", 2, legs_containing("manager")),
         rank("president", 3, legs_containing("director")),
     ];
+    plan.ranks[0].qualification.structures[0].personal_volume = 0.0;
 
     // president(1) -> director(2), director(3); each director -> two managers.
     let mut tree = UnilevelTree::new();
@@ -1197,6 +1199,113 @@ fn evaluate_ranks_applies_tenure_rank_when_history_window_supplied() {
         Some(&EvaluatedRank::Qualified {
             rank: "QD".to_string(),
             ordinal: 2,
+        })
+    );
+}
+
+#[test]
+fn evaluate_ranks_gives_the_base_rank_to_a_distributor_in_no_tree() {
+    let mut tree = UnilevelTree::new();
+    tree.add_root(uuid_from_index(1), 0).unwrap();
+
+    let plan = linear_plan();
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &tree);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(250.0));
+    distributors.insert(uuid_from_index(99), primitives(0.0));
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+    assert_eq!(
+        result.ranks.get(&uuid_from_index(1)),
+        Some(&EvaluatedRank::Qualified {
+            rank: "silver".to_string(),
+            ordinal: 2
+        })
+    );
+    assert_eq!(
+        result.ranks.get(&uuid_from_index(99)),
+        Some(&EvaluatedRank::Qualified {
+            rank: "associate".to_string(),
+            ordinal: 1
+        })
+    );
+}
+
+#[test]
+fn evaluate_ranks_returns_unranked_only_for_an_empty_ladder() {
+    let mut tree = UnilevelTree::new();
+    tree.add_root(uuid_from_index(1), 0).unwrap();
+
+    let mut plan = linear_plan();
+    plan.ranks = vec![];
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &tree);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(0.0));
+    distributors.insert(uuid_from_index(99), primitives(0.0));
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+    assert_eq!(
+        result.ranks.get(&uuid_from_index(1)),
+        Some(&EvaluatedRank::Unranked)
+    );
+    assert!(!result.ranks.contains_key(&uuid_from_index(99)));
+}
+
+#[test]
+fn evaluate_ranks_ignores_a_time_gate_on_the_base_rank() {
+    let mut tree = UnilevelTree::new();
+    tree.add_root(uuid_from_index(1), 0).unwrap();
+
+    let mut plan = linear_plan();
+    plan.ranks[0].qualification.window = Some(RankQualificationWindow {
+        threshold_rank: "associate".to_string(),
+        qualifying_periods: 1,
+        window_periods: 1,
+    });
+    plan.ranks[0].qualification.tenure = Some(TenureRequirement {
+        threshold_rank: "associate".to_string(),
+        periods: 1,
+    });
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &tree);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(0.0));
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+    assert_eq!(
+        result.ranks.get(&uuid_from_index(1)),
+        Some(&EvaluatedRank::Qualified {
+            rank: "associate".to_string(),
+            ordinal: 1
         })
     );
 }

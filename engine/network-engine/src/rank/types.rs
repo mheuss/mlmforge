@@ -68,7 +68,7 @@ pub enum EvaluatedRank {
     /// Distributor qualifies for this named rank.
     Qualified { rank: String, ordinal: u16 },
 
-    /// Distributor does not qualify for any rank in the ladder.
+    /// Distributor holds no rank.
     Unranked,
 }
 

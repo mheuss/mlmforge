@@ -17,15 +17,8 @@ use crate::tree::navigator::TreeNavigator;
 
 use self::evaluator::{EvalCtx, VolumeIndex, evaluation_order_for_users, iterate_to_fixpoint};
 
-/// Evaluate the qualified rank for every distributor in `inputs` that also
-/// appears in at least one tree.
-///
-/// Iterates evaluation to a fixpoint so descendants are resolved before the
-/// ancestors that count them, across any number of structure trees. Each
-/// distributor ascends the rank ladder lowest-ordinal-first; the highest
-/// passing rank wins. Distributors omitted from `inputs.distributors`, and
-/// distributors not present in any tree, are not in the result and do not
-/// contribute to ancestors' counts.
+/// Evaluate the rank of every distributor in `inputs` against the plan's
+/// rank ladder.
 pub fn evaluate_ranks(
     plan: &CompensationPlan,
     trees: &HashMap<String, &dyn TreeNavigator>,
@@ -40,13 +33,14 @@ pub fn evaluate_ranks(
         ranks_sorted.iter().map(|r| (*r).clone()).collect();
 
     // BR9 empty-axis guard: a time gate cannot be evaluated without an axis.
-    // If any rank declares a window or tenure requirement but the caller
+    // If any rank above the lowest declares a window or tenure requirement but the caller
     // supplied no history_window, fail loud rather than silently treating every
     // gate as unmet. The guard lives engine-side because the Go client does not
     // have the plan.
     if inputs.history_window.is_empty() {
         if let Some(r) = ranks_owned
             .iter()
+            .skip(1)
             .find(|r| r.qualification.window.is_some() || r.qualification.tenure.is_some())
         {
             return Err(EvaluationError::TimeGateWithoutHistory {
@@ -78,7 +72,19 @@ pub fn evaluate_ranks(
         history_window: &inputs.history_window,
         history: &inputs.history,
     };
-    let already = iterate_to_fixpoint(&order, &ctx)?;
+    let mut already = iterate_to_fixpoint(&order, &ctx)?;
+
+    // Every input distributor the fixpoint did not rank holds the lowest rank.
+    if let Some(base) = ranks_owned.first() {
+        for user_id in &user_ids {
+            already
+                .entry(*user_id)
+                .or_insert_with(|| EvaluatedRank::Qualified {
+                    rank: base.name.clone(),
+                    ordinal: base.ordinal,
+                });
+        }
+    }
 
     // Move into a BTreeMap so the result serializes with sorted keys.
     let ranks: std::collections::BTreeMap<Uuid, EvaluatedRank> = already.into_iter().collect();

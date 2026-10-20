@@ -449,6 +449,62 @@ func validateRanks(plan *CompensationPlan, structs map[string]bool) []Validation
 		}
 	}
 
+	errs = append(errs, validateBaseRank(plan)...)
+	return errs
+}
+
+// validateBaseRank checks that the lowest rank sets no qualification requirement.
+func validateBaseRank(plan *CompensationPlan) []ValidationError {
+	if len(plan.Ranks) == 0 {
+		return nil
+	}
+	baseIdx := 0
+	for i, r := range plan.Ranks {
+		if r.Ordinal < plan.Ranks[baseIdx].Ordinal {
+			baseIdx = i
+		}
+	}
+	base := plan.Ranks[baseIdx]
+	q := base.Qualification
+	var errs []ValidationError
+	refuse := func(path, what string) {
+		errs = append(errs, ValidationError{
+			Path:     fmt.Sprintf("/ranks/%d/qualification", baseIdx) + path,
+			Code:     "base_rank_has_requirements",
+			Message:  fmt.Sprintf("base rank %q %s; the lowest rank must require nothing", base.Name, what),
+			Severity: SeverityError,
+		})
+	}
+	if len(q.RequiredProducts) > 0 {
+		refuse("/required_products", fmt.Sprintf("requires products %v", q.RequiredProducts))
+	}
+	if q.Window != nil {
+		refuse("/window", "has a window")
+	}
+	if q.Tenure != nil {
+		refuse("/tenure", "has a tenure requirement")
+	}
+	for j, sq := range q.Structures {
+		at := fmt.Sprintf("/structures/%d", j)
+		for _, f := range []struct {
+			name  string
+			value float64
+		}{
+			{"personal_volume", sq.PersonalVolume},
+			{"group_volume", sq.GroupVolume},
+			{"min_retail_volume", sq.MinRetailVolume},
+		} {
+			if f.value != 0 {
+				refuse(at+"/"+f.name, fmt.Sprintf("sets %s %v on structure %q", f.name, f.value, sq.Structure))
+			}
+		}
+		if sq.DistributorCount != nil {
+			refuse(at+"/distributor_count", fmt.Sprintf("sets distributor_count on structure %q", sq.Structure))
+		}
+		if len(sq.LegQuality) > 0 {
+			refuse(at+"/leg_quality", fmt.Sprintf("sets leg_quality on structure %q", sq.Structure))
+		}
+	}
 	return errs
 }
 

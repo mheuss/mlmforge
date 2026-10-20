@@ -193,7 +193,7 @@ emit_generation_earnings(&filtered, source, cfg, /* ... */, collector_id, &mut e
 let result = network_engine::rank::evaluate_ranks(&plan, &trees, &inputs)?;
 // result.ranks: BTreeMap<Uuid, EvaluatedRank>
 //   - Qualified { rank: "silver", ordinal: 2 }
-//   - Unranked
+//   - Unranked, only for a plan with no ranks
 
 // Go-side via EngineClient
 result, err := client.EvaluateRanks(ctx, networkengine.EvaluateRanksRequest{...})
@@ -208,9 +208,9 @@ result, err := client.EvaluateRanks(ctx, networkengine.EvaluateRanksRequest{...}
 - The predicate only inspects the user's own primitives (use a simpler top-down pass)
 - The result needs to depend on ancestors' evaluations (no current predicate reads upward, so the pattern does not serve this today — but the fixpoint `already` map does hold ancestor ranks, so downward-only walking is a predicate convention, not a loop limitation)
 
-**Notes:** The ladder-ascent semantics inside `evaluate_distributor` iterate every rank in ascending ordinal and pick the highest passing one. A failed rank does NOT short-circuit — higher ranks may still pass and be selected. This handles ladder gaps where a distributor satisfies rank N+1 but not rank N (e.g., missing a required product unique to N).
+**Notes:** The ladder-ascent semantics inside `evaluate_distributor` start at the lowest rank without evaluating it. They then iterate every higher rank in ascending ordinal and pick the highest passing one. A failed rank does NOT short-circuit. Higher ranks may still pass and be selected. This handles ladder gaps where a distributor satisfies rank N+1 but not rank N (e.g., missing a required product unique to N).
 
-The handler at `engine/network-engine-worker/src/handlers/rank.rs` only registers tree navigators for structures referenced by at least one rank's `qualification.structures`. An empty list yields an empty result map — see the network-engine development note "Rank Evaluation: Empty `qualification.structures`" for the workaround pattern in tests.
+The worker handler registers tree navigators only for structures that a rank above the lowest names in its `qualification.structures`. A distributor in none of those trees is not evaluated and holds the lowest rank. The network-engine development note "Rank Evaluation: Empty `qualification.structures`" covers what that means for tests.
 
 ---
 
@@ -335,7 +335,7 @@ result, err := client.EvaluateRanks(ctx, req,
     networkengine.WithPersistence("2026-05", store))
 ```
 
-**Notes:** `period_id` is opaque and compared lexicographically. Callers must zero-pad so widths sort correctly. Missing rows mean "not evaluated"; rows with `rank IS NULL` mean "evaluated, did not qualify" (Unranked). On store-write failure the engine result is still returned alongside a wrapped error (NFR4: prior period rows survive). The `qualificationHistoryCopySource` is the reference adapter for future bulk-write callers in this codebase. HEU-516 added `GetByUsersAndPeriodRange`, a batched read that returns a distributor set's rows across a period range in one index-served query.
+**Notes:** `period_id` is opaque and compared lexicographically. Callers must zero-pad so widths sort correctly. Missing rows mean "not evaluated". Rows with `rank IS NULL` hold an Unranked result, which the engine returns only for a plan with no ranks (HEU-761). On store-write failure the engine result is still returned alongside a wrapped error (NFR4: prior period rows survive). The `qualificationHistoryCopySource` is the reference adapter for future bulk-write callers in this codebase. HEU-516 added `GetByUsersAndPeriodRange`, a batched read that returns a distributor set's rows across a period range in one index-served query.
 
 ---
 

@@ -39,8 +39,7 @@ type QualificationHistoryRow struct {
 // Mixed widths like "2026-1" vs "2026-10" sort incorrectly.
 //
 // Read semantics: a missing row means "not evaluated for this period." An
-// explicit row with a NULL rank means "evaluated, did not qualify"
-// (Unranked). Consumers (HEU-446) rely on this distinction.
+// explicit row with a NULL rank holds an Unranked result.
 type QualificationHistoryStore interface {
 	// SaveResult replaces all rows for periodID with entries, atomically.
 	// Prior rows for periodID not present in entries are removed (BR5).

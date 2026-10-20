@@ -12,11 +12,7 @@ use crate::serde_helpers::null_as_empty;
 /// holds one rank that may qualify them for commissions on multiple
 /// structures.
 ///
-/// Ranks are evaluated lowest-to-highest ordinal. Failing rank N does
-/// not short-circuit — higher ranks may still pass. The highest passing
-/// rank wins, which preserves ladder-gap semantics where a distributor
-/// satisfies rank N+1 but not rank N (e.g., missing a required product
-/// unique to N).
+/// Ranks are ordered by ordinal. The lowest is the base rank.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RankDefinition {
     /// Human-readable rank name. Must be unique within the plan.
@@ -24,8 +20,7 @@ pub struct RankDefinition {
 
     /// Numeric position in the rank ladder. Higher is better.
     ///
-    /// Must be unique across all ranks. The engine evaluates ranks in
-    /// ascending ordinal order.
+    /// Must be unique across all ranks.
     pub ordinal: u16,
 
     /// Criteria the distributor must meet to achieve this rank.

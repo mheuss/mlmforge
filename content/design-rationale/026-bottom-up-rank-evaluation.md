@@ -41,10 +41,12 @@ circular dependency, and no pass order resolves it.
 - The result is moved into a `BTreeMap<Uuid, EvaluatedRank>` so serialization
   emits user-id keys in a fixed order.
 
-Within one distributor, `evaluate_distributor` ascends the rank ladder. It
-iterates ranks lowest ordinal first and keeps the highest one that passes. A
-failed rank does not short-circuit, so a distributor who satisfies rank N+1 but
-not rank N still reaches N+1.
+Within one distributor, `evaluate_distributor` starts at the lowest rank
+without evaluating it. It then iterates the higher ranks lowest ordinal first
+and keeps the highest one that passes. A failed rank does not short-circuit,
+so a distributor who satisfies rank N+1 but not rank N still reaches N+1. A
+distributor in none of the trees passed to `evaluate_ranks` is not evaluated
+and holds the lowest rank (HEU-761).
 
 ## The Reasoning
 

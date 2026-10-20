@@ -94,6 +94,44 @@ func TestQualificationHistoryPersistence_EndToEnd(t *testing.T) {
 	assert.Equal(t, "2026-06", childRows[0].PeriodID)
 }
 
+func TestQualificationHistoryPersistence_PersistsTheBaseRankForADistributorInNoTree(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	pool := pgContainer.NewPool(t)
+	store := NewPostgresQualificationHistoryStore(pool)
+
+	client, err := NewEngineClient(context.Background(), findWorkerBinary(t))
+	require.NoError(t, err)
+	defer func() { _ = client.Stop() }()
+
+	ctx := context.Background()
+	rootID := "00000000-0000-0000-0000-000000000001"
+	outsiderID := "00000000-0000-0000-0000-000000000099"
+
+	require.NoError(t, client.LoadPlan(ctx, json.RawMessage(rankIntegrationPlanJSON)))
+	require.NoError(t, client.CreateTree(ctx, structureName, "unilevel"))
+	require.NoError(t, client.AddRoot(ctx, structureName, rootID, 100))
+
+	primitives := DistributorPrimitivesDTO{PersonalVolume: 0.0, Status: "active", ActiveProducts: []string{}}
+	req := EvaluateRanksRequest{
+		Distributors:  map[string]DistributorPrimitivesDTO{rootID: primitives, outsiderID: primitives},
+		VolumeSources: []VolumeSourceDTO{},
+	}
+
+	result, err := client.EvaluateRanks(ctx, req, WithPersistence("2026-05", store))
+
+	require.NoError(t, err)
+	require.Contains(t, result.Ranks, outsiderID)
+	assert.Equal(t, "qualified", result.Ranks[outsiderID].Kind)
+	assert.Equal(t, "member", result.Ranks[outsiderID].Rank)
+	rows, err := store.GetByUserAndPeriodRange(ctx, mustParseUUID(t, outsiderID), "2026-05", "2026-05")
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.NotNil(t, rows[0].Rank)
+	assert.Equal(t, "member", *rows[0].Rank)
+}
+
 func TestQualificationHistoryPersistence_NoOptionLeavesStoreEmpty(t *testing.T) {
 	if pgContainer == nil {
 		t.Skip("Postgres container not available")

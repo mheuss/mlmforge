@@ -1063,6 +1063,16 @@ mod tests {
     }
 
     #[test]
+    fn plan_rejects_an_invalid_level_commission_even_when_disabled() {
+        let mut plan = plan_with_structures(vec![named_generation(
+            "gen",
+            false,
+            Some(level_config(1.5, None, 0.05)),
+        )]);
+        assert!(plan.validate().is_err());
+    }
+
+    #[test]
     fn plan_accepts_level_commissions_enabled_with_a_level_commission() {
         let mut plan = plan_with_structures(vec![named_generation(
             "gen",

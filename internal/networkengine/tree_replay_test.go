@@ -599,3 +599,74 @@ func TestReplayStream_RefusesANodeRemovedItsStreamDisagreesWith(t *testing.T) {
 		})
 	}
 }
+
+func TestReplayStream_RefusesAnIDThatIsNotCanonical(t *testing.T) {
+	badSponsor := childPlacedPayload(writerChild)
+	badSponsor.SponsorID = "nope"
+	nilUser := childPlacedPayload(uuid.Nil.String())
+	cases := []struct {
+		name      string
+		eventType string
+		payload   any
+		want      string
+	}{
+		{"a placement whose sponsor is not a UUID", EventTypeNodePlaced, badSponsor,
+			`node_placed in tree ` + writerTree + ` has sponsor_id "nope", which is not a canonical UUID`},
+		{"a placement whose user is the nil UUID", EventTypeNodePlaced, nilUser,
+			`node_placed in tree ` + writerTree + ` has the nil UUID as user_id`},
+		{"a removal whose user is empty", EventTypeNodeRemoved,
+			NodeRemovedPayload{TreeID: writerTree, UserID: "", RemovedAt: writeTime, TreeType: treeTypeUnilevel},
+			`node_removed in tree ` + writerTree + ` has user_id "", which is not a canonical UUID`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			events := platform.NewMemoryEventStore()
+			appendDirect(t, events, EventTypeRootAdded, RootAddedPayload{
+				TreeID: writerTree, UserID: writerRoot, SponsorID: writerRoot, EnrolledAt: writeTime, TreeType: treeTypeUnilevel,
+			})
+			bad := appendDirect(t, events, c.eventType, c.payload)
+			engine := &stubMutator{}
+
+			_, err := replayStream(context.Background(), events, engine, writerTree, unilevelShape, 1, 2)
+
+			var replay *TreeReplayError
+			require.ErrorAs(t, err, &replay)
+			assert.Equal(t, TreeReplayStageReplay, replay.Stage)
+			assert.Equal(t, int64(2), replay.FailedVersion)
+			assert.True(t, sameUUID(bad.ID, replay.FailedEventID), "replay named event %q, not %s", replay.FailedEventID, bad.ID)
+			assert.EqualError(t, replay.Err, c.want)
+			assert.Equal(t, []string{writerRoot}, engine.roots)
+			assert.Equal(t, 1, engine.totalCalls(), "engine calls beyond the root's add_root")
+		})
+	}
+}
+
+func TestReplayStream_RefusesARootWhoseSponsorIsNotCanonical(t *testing.T) {
+	events := platform.NewMemoryEventStore()
+	appendDirect(t, events, EventTypeRootAdded, RootAddedPayload{
+		TreeID: writerTree, UserID: writerRoot, SponsorID: "", EnrolledAt: writeTime, TreeType: treeTypeUnilevel,
+	})
+	engine := &stubMutator{}
+
+	_, err := replayStream(context.Background(), events, engine, writerTree, unilevelShape, 1, 1)
+
+	var replay *TreeReplayError
+	require.ErrorAs(t, err, &replay)
+	assert.Equal(t, int64(1), replay.FailedVersion)
+	assert.EqualError(t, replay.Err, `root_added in tree `+writerTree+` has sponsor_id "", which is not a canonical UUID`)
+	assert.Zero(t, engine.totalCalls())
+}
+
+func TestReplayStream_AppliesARootWhoseSponsorIsTheNilUUID(t *testing.T) {
+	events := platform.NewMemoryEventStore()
+	appendDirect(t, events, EventTypeRootAdded, RootAddedPayload{
+		TreeID: writerTree, UserID: writerRoot, SponsorID: uuid.Nil.String(), EnrolledAt: writeTime, TreeType: treeTypeUnilevel,
+	})
+	engine := &stubMutator{}
+
+	res, err := replayStream(context.Background(), events, engine, writerTree, unilevelShape, 1, 1)
+
+	require.NoError(t, err)
+	assert.Equal(t, replayResult{reached: 1, root: writerRoot}, res)
+	assert.Equal(t, []string{writerRoot}, engine.roots)
+}

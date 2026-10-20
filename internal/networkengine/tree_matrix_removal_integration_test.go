@@ -437,7 +437,7 @@ func TestTreeWriter_RefusesToPlaceAUserInTheHoldingTank(t *testing.T) {
 
 	var engineErr *EngineError
 	require.ErrorAs(t, err, &engineErr)
-	assert.Equal(t, "USER_ALREADY_EXISTS", engineErr.Code)
+	assert.Equal(t, "USER_IN_HOLDING_TANK", engineErr.Code)
 	assert.Contains(t, engineErr.Message, "holding tank")
 	stored, err := it.events.ReadStream(ctx, TreeStreamName(tree), 1, 0)
 	require.NoError(t, err)

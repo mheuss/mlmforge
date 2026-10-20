@@ -1050,6 +1050,7 @@ A wrapper with `Unwrap() []error`, or a `fmt.Errorf` with two `%w`, exposes both
 - HEU-297 found this the hard way. A fence refusal was wrapped beside the failed build so the operator would see both. `rejectionEvidence` then found the build's preflight `TreeLoadRejectedError` inside the wrapper and counted it as evidence. `Reject` appended a rejection through the fence.
 - Before adding a wrapper that carries a second error, list every `errors.As` dispatch the chain can reach. For the load error types, today that means `rejectionEvidence`, `treeLoadRetryable` and `treeLoadFailureMessage`. Confirm each one handles the wrapper on purpose.
 - A wrapper that carries a build failure is never reject evidence. `rejectionEvidence` gives each such type its own early "no evidence" return, with a test. `RefusedAfterFailedBuildError` and the drop-stage `TreeReplayError` have one.
+- One replay-stage `TreeReplayError` is evidence. It is replay refusing the stream's last event with a code in `rejectionRefusalCodes`, when that event is a `node_placed` (HEU-930). The rule reads the outermost `TreeReplayError`. A drop-stage wrapper around a replay refusal is therefore never evidence. A rejection tombstones the row that placement committed. A removal is excluded, because a rejection cannot undo a removal the store applied.
 
 ### A `json.RawMessage` parameter fails before the worker sees it
 
@@ -1532,4 +1533,4 @@ Each step is one set-based statement, to keep a large removal inside the store's
 
 The store does not show the holding tank. The engine rebuilt by replay or from a snapshot does.
 
-The engine refuses to place a user who is in the holding tank. `add_root`, `add_node`, `add_node_at` and a `check_mutation` for `add_root` or `add_node_at` answer `USER_ALREADY_EXISTS`. `place_from_tank` is the only way out of the tank, and the event path has no event for it.
+The engine refuses to place a user who is in the holding tank. `add_root`, `add_node`, `add_node_at` and a `check_mutation` for `add_root` or `add_node_at` answer `USER_IN_HOLDING_TANK` (HEU-930). `place_from_tank` is the only way out of the tank, and the event path has no event for it.

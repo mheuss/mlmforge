@@ -490,3 +490,29 @@ func TestPipelineAcceptsBothPerLegCapsAtZero(t *testing.T) {
 	require.Empty(t, errs)
 	require.NotNil(t, jsonBytes)
 }
+
+func TestPipelineAcceptsAZeroCapBesideAPositiveFraction(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	doc := replaceInYAML(t, base, "max_group_volume_per_leg: 5000", "max_group_volume_per_leg: 0\n          max_group_volume_per_leg_fraction: 0.5")
+
+	jsonBytes, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	require.Empty(t, errs)
+	require.NotNil(t, jsonBytes)
+}
+
+func TestPipelineAcceptsAZeroFractionBesideAPositiveCap(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	doc := replaceInYAML(t, base, "max_group_volume_per_leg: 5000", "max_group_volume_per_leg: 5000\n          max_group_volume_per_leg_fraction: 0")
+
+	jsonBytes, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	require.Empty(t, errs)
+	require.NotNil(t, jsonBytes)
+}

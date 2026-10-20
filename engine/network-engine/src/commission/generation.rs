@@ -1929,14 +1929,17 @@ mod calculate_tests {
 
         match err {
             CalculationError::ConfigError(msg) => {
-                assert!(msg.contains("level_commission"), "wrong guard: {msg}")
+                assert!(
+                    msg.contains("level_commission is absent"),
+                    "wrong guard: {msg}"
+                )
             }
             other => panic!("expected ConfigError, got {other:?}"),
         }
     }
 
-    /// Same tree, but level_commissions_enabled = false.
-    /// Only generation earnings should appear.
+    /// Chain 0(Dir) -> 1 -> 2, volume from node 2, level commissions off.
+    /// Only node 0's generation 1 earning appears.
     #[test]
     fn generation_only_level_disabled() {
         let tree = build_chain(3);

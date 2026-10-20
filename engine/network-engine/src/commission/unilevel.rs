@@ -1023,11 +1023,10 @@ mod tests {
         );
     }
 
-    /// Node 4 is a second frontline leg of node 1 and on no walked path. Node
-    /// 1 earns on node 3's volume at level 2 only with two active legs, so
-    /// leaving node 4 out would cap node 1's depth at 1.
-    #[test]
-    fn snapshot_omitted_off_every_walked_path_is_rejected() {
+    /// Node 1 sponsors nodes 2 and 4, node 2 sponsors node 3, and node 3 is
+    /// the only volume source. Node 1 sits two levels above node 3 and reaches
+    /// depth 2 only with two active legs.
+    fn two_leg_depth_cap_case() -> (UnilevelTree, CompensationPlan, UnilevelStructureConfig) {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
@@ -1052,8 +1051,49 @@ mod tests {
                 },
             ],
         };
-        let structure = test_structure(test_rate_table());
-        let plan = test_plan_with_structure(elig, structure.clone());
+        (tree, test_plan(elig), test_structure(test_rate_table()))
+    }
+
+    /// With node 4's snapshot present, node 1 has two active legs and earns on
+    /// node 3's volume at level 2.
+    #[test]
+    fn two_active_legs_reach_depth_two() {
+        let (tree, plan, structure) = two_leg_depth_cap_case();
+
+        let mut snapshots = HashMap::new();
+        for id in 1..=4 {
+            snapshots.insert(test_uuid(id), eligible_snapshot());
+        }
+
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let earnings = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
+
+        assert!(
+            earnings
+                .iter()
+                .any(|e| e.earner_id == test_uuid(1) && e.level == 2),
+            "node 1 must earn at level 2, got {earnings:?}"
+        );
+    }
+
+    /// Node 4 is on no walked path. With its snapshot left out, the request is
+    /// refused and names node 4, rather than paying node 1 at depth 1.
+    #[test]
+    fn snapshot_omitted_off_every_walked_path_is_rejected() {
+        let (tree, plan, structure) = two_leg_depth_cap_case();
 
         let mut snapshots = HashMap::new();
         snapshots.insert(test_uuid(1), eligible_snapshot());

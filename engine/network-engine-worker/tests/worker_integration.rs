@@ -6290,6 +6290,24 @@ fn calculate_stairstep_still_requires_snapshots() {
     worker.wait().unwrap();
 }
 
+/// A null snapshot map reads as empty, and a populated tree then refuses it.
+#[test]
+fn calculate_stairstep_refuses_null_snapshots_for_a_populated_tree() {
+    let mut worker = common::spawn_worker();
+    load_stairstep_test_plan(&mut worker);
+    build_three_node_chain(&mut worker);
+
+    let request = format!(
+        r#"{{"id":"s-null-snap","op":"calculate_stairstep","params":{{"structure":"{}","snapshots":null,"volume":[]}}}}"#,
+        TREE_NAME
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    assert_refuses_missing_snapshot(&resp, ROOT);
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// Omitting `volume` stays an error. The mirror of
 /// `calculate_stairstep_still_requires_snapshots` — one guard per required
 /// field, so adding `default` to either one fails loudly.

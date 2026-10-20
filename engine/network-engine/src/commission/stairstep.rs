@@ -646,13 +646,8 @@ fn walk_multi_tier_overrides(
 ///
 /// Returns [`CalculationError`] if a snapshot names a rank the plan does not
 /// define, if a snapshot has a non-finite or negative personal_volume, if a
-/// volume source is not found in the tree or snapshot data, if an upline node
-/// Walk 1 reaches has no snapshot, or if a volume source has a non-finite or
-/// negative cv_amount.
-///
-/// Walk 2 makes no upline-snapshot check, and the breakaway set is built from
-/// the snapshot map, so omitting a snapshot anywhere in the tree can change
-/// who Walk 2 pays. HEU-727 and HEU-731 track it.
+/// distributor in the tree has no snapshot, if a volume source is not found in
+/// the tree, or if a volume source has a non-finite or negative cv_amount.
 pub fn calculate_stairstep(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -661,7 +656,7 @@ pub fn calculate_stairstep(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
-    walk::validate_snapshots(plan, snapshots, std::iter::empty())?;
+    walk::validate_snapshots(plan, snapshots, tree.user_ids())?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let prep_result = prep(tree, plan, structure, snapshots, &rank_ordinals);
 
@@ -1339,9 +1334,6 @@ mod tests {
     #[test]
     fn missing_snapshot_ancestor_errors() {
         // Tree: 0 -> 1 -> 2 -> 3, volume from node 3, node 1 has no snapshot.
-        // Converted rather than completed: the omission is the subject, so
-        // this asserts the error where it used to assert who earned.
-        // Stairstep's second walk is out of scope here — HEU-727.
         let tree = build_chain(4);
         let mut structure = test_stairstep_structure();
         structure.breakaway = None;
@@ -1369,7 +1361,73 @@ mod tests {
 
         assert_eq!(
             result.unwrap_err(),
-            CalculationError::UplineNotInSnapshot(uuid(1))
+            CalculationError::DistributorNotInSnapshot(uuid(1))
+        );
+    }
+
+    /// Node 1 is the breakaway. Node 0, above it, has no snapshot.
+    #[test]
+    fn walk_two_ancestor_with_no_snapshot_is_rejected() {
+        let tree = build_chain(4);
+        let structure = test_stairstep_structure();
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 200.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", 300.0));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", 400.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::DistributorNotInSnapshot(uuid(0))
+        );
+    }
+
+    /// Node 4 sits in breakaway node 1's group but off the walked path.
+    #[test]
+    fn group_volume_member_with_no_snapshot_is_rejected() {
+        let mut tree = build_chain(4);
+        tree.add_node(uuid(4), uuid(1), uuid(1), 4).unwrap();
+        let structure = test_stairstep_structure();
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", 200.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", 300.0));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", 400.0));
+
+        let volume = vec![VolumeSource {
+            source_id: uuid(3),
+            cv_amount: 100.0,
+        }];
+
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        );
+
+        assert_eq!(
+            result.unwrap_err(),
+            CalculationError::DistributorNotInSnapshot(uuid(4))
         );
     }
 

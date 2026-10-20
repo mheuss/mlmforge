@@ -55,7 +55,7 @@ fn build_three_node_chain(child: &mut std::process::Child) {
     assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
 }
 
-/// A snapshot map giving each of `ids` the same eligible snapshot at `rank`.
+/// A snapshot map giving each of `ids` the same active snapshot at `rank`.
 fn snapshots_json(rank: &str, ids: &[&str]) -> String {
     let entries: Vec<String> = ids
         .iter()
@@ -1366,7 +1366,7 @@ fn calculate_generation_accepts_a_null_volume() {
     let mut worker = common::spawn_worker();
     load_generation_test_plan(&mut worker);
     create_tree(&mut worker, GEN_STRUCTURE);
-    // Populate the tree so the empty result is caused by the empty collections
+    // Populate the tree so the empty result is caused by the null volume
     // rather than by there being nobody to pay.
     let resp = common::send_receive(
         &mut worker,
@@ -4728,8 +4728,8 @@ fn calculate_streamline_ignores_request_scoped_config() {
 /// A nil Go collection marshals to `null`, not `{}` or `[]`, and a null
 /// `volume` must read as empty rather than being rejected.
 ///
-/// The stream is populated, so an empty result is caused by the empty
-/// collections rather than by an empty structure.
+/// The stream is populated, so an empty result is caused by the null volume
+/// rather than by an empty structure.
 ///
 /// The Go twin is `TestEngineClient_CalculateStreamline_NilCollections`.
 #[test]
@@ -5879,7 +5879,7 @@ fn calculate_matrix_accepts_a_null_volume() {
     let mut worker = common::spawn_worker();
     load_matrix_test_plan(&mut worker);
     create_matrix_tree(&mut worker, TREE_NAME);
-    // Populate the tree so the empty result is caused by the empty collections
+    // Populate the tree so the empty result is caused by the null volume
     // rather than by there being nobody to pay.
     let resp = common::send_receive(
         &mut worker,

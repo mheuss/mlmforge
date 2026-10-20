@@ -76,7 +76,7 @@ This means compression behavior is tightly coupled to the walk loop. It has to b
 
 ### Strict on Caller-Supplied State
 
-Volume sources must exist in the tree. Every distributor in the tree must have a snapshot, whether or not a walk reaches it. A missing snapshot returns an error. So does a snapshot naming a rank the plan does not define, and a restored engine whose indexes disagree with the structures they index.
+Volume sources must exist in the tree. Every distributor the calculation requires must have a snapshot, whether or not a walk reaches it. For most structures that is each tree node. For binary it is the owner of each position. A missing snapshot returns an error. So does a snapshot naming a rank the plan does not define, and a restored engine whose indexes disagree with the structures they index.
 
 Volume amounts are validated too: `cv_amount` must be finite and non-negative. NaN, positive infinity, negative infinity, and negative values all produce `InvalidCvAmount` errors. These are input integrity checks, not business rules. A non-finite CV amount is always a bug upstream.
 

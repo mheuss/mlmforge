@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// tankedPlacement builds a width-2 matrix tree, removes a into the holding
-// tank, and appends a foreign placement of a at version 4.
+// tankedPlacement ends the tree's stream with a foreign placement of a tanked
+// user a.
 func tankedPlacement(t *testing.T, it *writerIntegration, tree, root, a string) (platform.Event, LoadRequest) {
 	t.Helper()
 	ctx := context.Background()
@@ -47,7 +47,7 @@ func placeAfterRejecting(t *testing.T, it *writerIntegration, tree, root, a, b s
 	require.NoError(t, err)
 	row, err := it.store.GetNode(ctx, tree, a)
 	require.NoError(t, err)
-	assert.Nil(t, row, "the rejected placement left an active row for a")
+	assert.Nil(t, row, "expected no active row for a, found one")
 }
 
 func TestTreeWriterReject_ClearsATankedUsersPlacementItDeliversFirst(t *testing.T) {
@@ -81,7 +81,7 @@ func TestTreeWriterReject_ClearsATankedUsersPlacementAWriteDeliveredFirst(t *tes
 	require.Equal(t, "USER_IN_HOLDING_TANK", engineErr.Code)
 	projected, _, err := it.store.ProjectedVersion(ctx, tree)
 	require.NoError(t, err)
-	require.Equal(t, foreign.Version, projected, "the write did not commit the placement before the engine refused it")
+	require.Equal(t, foreign.Version, projected, "projected version after the refused write was %d, expected %d", projected, foreign.Version)
 
 	rejected, err := it.writer(t).Reject(ctx, RejectRequest{TreeID: tree, EventID: foreign.ID, Reason: "the user is in the holding tank"})
 

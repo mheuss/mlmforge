@@ -1049,7 +1049,7 @@ A wrapper with `Unwrap() []error`, or a `fmt.Errorf` with two `%w`, exposes both
 - HEU-297 found this the hard way. A fence refusal was wrapped beside the failed build so the operator would see both. `rejectionEvidence` then found the build's preflight `TreeLoadRejectedError` inside the wrapper and counted it as evidence. `Reject` appended a rejection through the fence.
 - Before adding a wrapper that carries a second error, list every `errors.As` dispatch the chain can reach. For the load error types, today that means `rejectionEvidence`, `treeLoadRetryable` and `treeLoadFailureMessage`. Confirm each one handles the wrapper on purpose.
 - A wrapper that carries a build failure is never reject evidence. `rejectionEvidence` gives each such type its own early "no evidence" return, with a test. `RefusedAfterFailedBuildError` and the drop-stage `TreeReplayError` have one.
-- One replay-stage `TreeReplayError` is evidence: replay refusing the stream's last event, a `node_placed`, with a code in `rejectionRefusalCodes` (HEU-930). A rejection tombstones the row that placement committed. A removal is excluded, because a rejection cannot undo a removal the store applied.
+- One replay-stage `TreeReplayError` is evidence. It is replay refusing the stream's last event with a code in `rejectionRefusalCodes`, when that event is a `node_placed` (HEU-930). A rejection tombstones the row that placement committed. A removal is excluded, because a rejection cannot undo a removal the store applied.
 
 ### A `json.RawMessage` parameter fails before the worker sees it
 

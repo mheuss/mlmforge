@@ -576,7 +576,8 @@ mod tests {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
         tree.add_root(test_uuid(0), 0).unwrap();
 
-        let snapshots = HashMap::new();
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
         let result = calculate_matrix(
             &tree,
             &plan,
@@ -598,7 +599,8 @@ mod tests {
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
         tree.add_root(test_uuid(0), 0).unwrap();
 
-        let snapshots = HashMap::new();
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(0), eligible_snapshot());
         let volume = vec![VolumeSource {
             source_id: test_uuid(99),
             cv_amount: 100.0,

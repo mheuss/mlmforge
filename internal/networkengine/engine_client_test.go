@@ -1578,8 +1578,10 @@ func TestEngineClient_CalculateUnilevel_EmptyVolume(t *testing.T) {
 
 	req := CalculateUnilevelRequest{
 		StructureName: "Test",
-		Snapshots:     map[string]DistributorSnapshotDTO{},
-		Volume:        []VolumeSourceDTO{},
+		Snapshots: map[string]DistributorSnapshotDTO{
+			rootID: {Rank: "member", PersonalVolume: 100.0, Status: "active", HasOrderInPeriod: true},
+		},
+		Volume: []VolumeSourceDTO{},
 	}
 
 	result, err := client.CalculateUnilevel(ctx, req)

@@ -747,7 +747,7 @@ mod tests {
         let err = one.floor_div(crate::decimal::Dec::ZERO).unwrap_err();
         assert_eq!(
             CalculationError::from(err).to_string(),
-            "cannot floor-divide 1 and 0: the divisor is zero"
+            "cannot floor-divide 1 by 0: the divisor is zero"
         );
     }
 }

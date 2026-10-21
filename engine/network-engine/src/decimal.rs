@@ -49,12 +49,22 @@ pub enum NumericErrorKind {
 
 /// An arithmetic operation that has no exact result the engine can hold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
-#[error("cannot {op} {lhs} and {rhs}: {kind}")]
+#[error("cannot {op} {lhs} {} {rhs}: {kind}", .op.joiner())]
 pub struct NumericError {
     pub op: NumericOp,
     pub lhs: Dec,
     pub rhs: Dec,
     pub kind: NumericErrorKind,
+}
+
+impl NumericOp {
+    /// The word between the operands in an error message.
+    fn joiner(&self) -> &'static str {
+        match self {
+            NumericOp::DivRatio | NumericOp::FloorDiv => "by",
+            _ => "and",
+        }
+    }
 }
 
 impl fmt::Display for NumericOp {

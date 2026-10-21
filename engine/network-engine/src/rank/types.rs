@@ -380,7 +380,7 @@ mod tests {
         let err = one.div_ratio(crate::decimal::Dec::ZERO).unwrap_err();
         assert_eq!(
             EvaluationError::from(err).to_string(),
-            "cannot divide 1 and 0: the divisor is zero"
+            "cannot divide 1 by 0: the divisor is zero"
         );
     }
 }

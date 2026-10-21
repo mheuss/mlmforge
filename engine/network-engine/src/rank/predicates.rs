@@ -71,9 +71,8 @@ pub(crate) fn effective_leg_cap(sq: &StructureQualification) -> Option<f64> {
         return Some(sq.max_group_volume_per_leg);
     }
     let raw = sq.max_group_volume_per_leg_fraction * sq.group_volume;
-    // Round to 1e-6 only within float noise: the f64 product can land a few ulps off the
-    // cap the fraction names. A larger difference is a real decimal, so keep the raw product.
-    // That also keeps a cap that would round to 0 or overflow, because None means uncapped.
+    // Snap to 1e-6 only when that moves the product by float noise. Otherwise keep the raw
+    // product, so a real seventh decimal, a cap near 0 or a huge cap keeps its value.
     let snapped = (raw * 1e6).round() / 1e6;
     let cap = if (snapped - raw).abs() <= 8.0 * f64::EPSILON * raw.abs() {
         snapped

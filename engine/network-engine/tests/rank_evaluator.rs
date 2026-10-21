@@ -10,9 +10,13 @@ use network_engine::rank::{
     DistributorPrimitives, EvaluatedRank, EvaluationError, EvaluationInputs, evaluate_ranks,
     structures_above_lowest_rank,
 };
+use network_engine::tree::error::TreeError;
 use network_engine::tree::navigator::TreeNavigator;
+use network_engine::tree::node::Node;
 use network_engine::tree::unilevel::UnilevelTree;
+use network_engine::types::TreePosition;
 use std::collections::{BTreeSet, HashMap};
+use uuid::Uuid;
 
 fn primitives(pv: f64) -> DistributorPrimitives {
     DistributorPrimitives {
@@ -282,8 +286,59 @@ fn evaluate_ranks_refuses_an_omitted_leg() {
     );
 }
 
-/// Nodes 3 and 2 are both left out, and node 3 is placed first. The refusal
-/// names node 2, the lower ID.
+/// A unilevel tree whose `user_ids` lists members in descending ID order.
+struct DescendingIds(UnilevelTree);
+
+impl TreeNavigator for DescendingIds {
+    fn contains(&self, user_id: Uuid) -> bool {
+        self.0.contains(user_id)
+    }
+    fn get_parent(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
+        self.0.get_parent(user_id)
+    }
+    fn get_children(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
+        self.0.get_children(user_id)
+    }
+    fn get_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+        self.0.get_upline(user_id, depth)
+    }
+    fn get_downline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+        self.0.get_downline(user_id, depth)
+    }
+    fn get_position(&self, user_id: Uuid) -> Result<TreePosition, TreeError> {
+        self.0.get_position(user_id)
+    }
+    fn get_branch(&self, user_id: Uuid, position: usize) -> Result<Vec<&Node>, TreeError> {
+        self.0.get_branch(user_id, position)
+    }
+    fn count_downline(&self, user_id: Uuid, depth: u32) -> Result<usize, TreeError> {
+        self.0.count_downline(user_id, depth)
+    }
+    fn count_branch(&self, user_id: Uuid, position: usize) -> Result<usize, TreeError> {
+        self.0.count_branch(user_id, position)
+    }
+    fn is_descendant_of(&self, user_id: Uuid, ancestor_id: Uuid) -> Result<bool, TreeError> {
+        self.0.is_descendant_of(user_id, ancestor_id)
+    }
+    fn get_sponsor(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
+        self.0.get_sponsor(user_id)
+    }
+    fn get_sponsor_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+        self.0.get_sponsor_upline(user_id, depth)
+    }
+    fn get_sponsored(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
+        self.0.get_sponsored(user_id)
+    }
+    fn user_ids(&self) -> Vec<Uuid> {
+        let mut ids = self.0.user_ids();
+        ids.sort();
+        ids.reverse();
+        ids
+    }
+}
+
+/// Nodes 3 and 2 are both left out, and the tree lists node 3 first. The
+/// refusal names node 2, the lower ID.
 #[test]
 fn evaluate_ranks_names_the_lowest_missing_distributor() {
     let mut tree = UnilevelTree::new();
@@ -302,6 +357,12 @@ fn evaluate_ranks_names_the_lowest_missing_distributor() {
         0,
     )
     .unwrap();
+    let tree = DescendingIds(tree);
+    assert_eq!(
+        tree.user_ids()[0],
+        uuid_from_index(3),
+        "node 3 must be listed first"
+    );
 
     let plan = linear_plan();
 

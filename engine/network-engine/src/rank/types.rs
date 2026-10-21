@@ -210,6 +210,15 @@ mod tests {
     }
 
     #[test]
+    fn distributor_not_in_inputs_displays_the_id() {
+        let id = Uuid::from_u128(2);
+        assert_eq!(
+            EvaluationError::DistributorNotInInputs(id).to_string(),
+            format!("distributor {id} has no rank inputs")
+        );
+    }
+
+    #[test]
     fn time_gate_without_history_displays_context() {
         let err = EvaluationError::TimeGateWithoutHistory { rank: "QD".into() };
         assert_eq!(

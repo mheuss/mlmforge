@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"path/filepath"
@@ -321,7 +322,7 @@ func sendRawLine(t *testing.T, transport *StdioTransport, line string) string {
 }
 
 // assertJSONFieldEqual compares a single field between expected and actual
-// response maps using JSON equality.
+// response maps.
 func assertJSONFieldEqual(t *testing.T, fixture, field string, expected, actual map[string]json.RawMessage) {
 	t.Helper()
 
@@ -731,6 +732,7 @@ func TestCheckExpectedErrorCodeIsOptional(t *testing.T) {
 	assert.Error(t, checkExpectedError("fx", expected, actual),
 		"the message check must still bite when no code is asserted")
 }
+
 func TestDecimalJSONEqualComparesNumbersByValue(t *testing.T) {
 	assert.NoError(t, decimalJSONEqual(`{"a":2.0,"b":[1,0.50]}`, `{"b":[1.00,0.5],"a":2}`))
 }
@@ -751,8 +753,28 @@ func TestDecimalJSONEqualReportsAMissingKey(t *testing.T) {
 	assert.Contains(t, err.Error(), "/b")
 }
 
+func TestDecimalJSONEqualReportsTheFirstDifference(t *testing.T) {
+	cases := map[[2]string]string{
+		{`{"a":1}`, `{"a":1,"b":2}`}:                   "/b: unexpected key",
+		{`{"a":[1,2]}`, `{"a":[1]}`}:                   "/a: expected an array of 2, got an array of 1",
+		{`{"a":[{"b":1}]}`, `{"a":[{"b":2}]}`}:         "/a/0/b: expected 1, got 2",
+		{`{"a":2}`, `{"a":"2"}`}:                       `/a: expected the number 2, got the string "2"`,
+		{`"x"`, `"y"`}:                                 `(root): expected the string "x", got the string "y"`,
+		{`{"a":1e99999999999}`, `{"a":1e99999999999}`}: "/a: expected number 1e99999999999 does not parse",
+	}
+	for docs, want := range cases {
+		err := decimalJSONEqual(docs[0], docs[1])
+		require.Error(t, err, docs)
+		assert.Contains(t, err.Error(), want, docs)
+	}
+}
+
+func TestDecimalJSONEqualRefusesInputAfterTheFirstValue(t *testing.T) {
+	assert.Error(t, decimalJSONEqual(`{"a":1}`, `{"a":1} {"b":2}`))
+}
+
 // decimalJSONEqual compares two JSON documents, treating numbers as exact
-// decimals. It returns the JSON Pointer of the first difference.
+// decimals.
 func decimalJSONEqual(expected, actual string) error {
 	exp, err := decodeUseNumber(expected)
 	if err != nil {
@@ -769,8 +791,36 @@ func decodeUseNumber(s string) (any, error) {
 	d := json.NewDecoder(strings.NewReader(s))
 	d.UseNumber()
 	var v any
-	err := d.Decode(&v)
-	return v, err
+	if err := d.Decode(&v); err != nil {
+		return nil, err
+	}
+	if _, err := d.Token(); err != io.EOF {
+		return nil, fmt.Errorf("found more input after the first JSON value")
+	}
+	return v, nil
+}
+
+// pointer names the root explicitly, since its JSON Pointer is empty.
+func pointer(path string) string {
+	if path == "" {
+		return "(root)"
+	}
+	return path
+}
+
+func describeJSON(v any) string {
+	switch v := v.(type) {
+	case json.Number:
+		return "the number " + v.String()
+	case string:
+		return fmt.Sprintf("the string %q", v)
+	case map[string]any:
+		return "an object"
+	case []any:
+		return fmt.Sprintf("an array of %d", len(v))
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 func compareJSON(path string, exp, act any) error {
@@ -778,18 +828,24 @@ func compareJSON(path string, exp, act any) error {
 	case json.Number:
 		a, ok := act.(json.Number)
 		if !ok {
-			return fmt.Errorf("%s: expected the number %s, got %v", path, e, act)
+			return fmt.Errorf("%s: expected %s, got %s", pointer(path), describeJSON(exp), describeJSON(act))
 		}
-		ed, err1 := decimal.NewFromString(e.String())
-		ad, err2 := decimal.NewFromString(a.String())
-		if err1 != nil || err2 != nil || !ed.Equal(ad) {
-			return fmt.Errorf("%s: expected %s, got %s", path, e, a)
+		ed, err := decimal.NewFromString(e.String())
+		if err != nil {
+			return fmt.Errorf("%s: expected number %s does not parse: %w", pointer(path), e, err)
+		}
+		ad, err := decimal.NewFromString(a.String())
+		if err != nil {
+			return fmt.Errorf("%s: actual number %s does not parse: %w", pointer(path), a, err)
+		}
+		if !ed.Equal(ad) {
+			return fmt.Errorf("%s: expected %s, got %s", pointer(path), e, a)
 		}
 		return nil
 	case map[string]any:
 		a, ok := act.(map[string]any)
 		if !ok {
-			return fmt.Errorf("%s: expected an object, got %v", path, act)
+			return fmt.Errorf("%s: expected an object, got %s", pointer(path), describeJSON(act))
 		}
 		for _, k := range slices.Sorted(maps.Keys(e)) {
 			av, present := a[k]
@@ -809,7 +865,7 @@ func compareJSON(path string, exp, act any) error {
 	case []any:
 		a, ok := act.([]any)
 		if !ok || len(a) != len(e) {
-			return fmt.Errorf("%s: expected an array of %d, got %v", path, len(e), act)
+			return fmt.Errorf("%s: expected %s, got %s", pointer(path), describeJSON(exp), describeJSON(act))
 		}
 		for i := range e {
 			if err := compareJSON(fmt.Sprintf("%s/%d", path, i), e[i], a[i]); err != nil {
@@ -819,7 +875,7 @@ func compareJSON(path string, exp, act any) error {
 		return nil
 	default:
 		if !reflect.DeepEqual(exp, act) {
-			return fmt.Errorf("%s: expected %v, got %v", path, exp, act)
+			return fmt.Errorf("%s: expected %s, got %s", pointer(path), describeJSON(exp), describeJSON(act))
 		}
 		return nil
 	}

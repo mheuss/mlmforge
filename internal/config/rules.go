@@ -120,8 +120,7 @@ func getRateTable(commission Commission) map[string]map[string]dec.Amount {
 }
 
 // validateU8MapKeys appends an error for each key of a level/depth-keyed rate
-// map that is not representable as a u8 (0-255). The engine reads these keys
-// as u8, so a key like "300" would otherwise pass here and fail opaquely there.
+// map that is not representable as a u8 (0-255).
 func validateU8MapKeys(m map[string]dec.Amount, path string) []ValidationError {
 	var errs []ValidationError
 
@@ -182,9 +181,8 @@ func validateRateTableU8Keys(rt map[string]map[string]dec.Amount, path string) [
 }
 
 // validateRateKeyWidths checks that every level/depth-keyed rate map uses keys
-// representable as a u8 (0-255), the byte-width contract on the map key. An
-// out-of-range key would otherwise pass here and fail opaquely in the engine.
-// Rank-name-keyed maps (rank_rates, amounts) are not checked.
+// representable as a u8 (0-255). Rank-name-keyed maps (rank_rates, amounts) are
+// not checked.
 func validateRateKeyWidths(plan *CompensationPlan) []ValidationError {
 	var errs []ValidationError
 

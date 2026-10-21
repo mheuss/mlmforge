@@ -293,6 +293,67 @@ impl Dec {
     pub fn sum<I: IntoIterator<Item = Dec>>(values: I) -> Result<Dec, NumericError> {
         values.into_iter().try_fold(Dec::ZERO, Dec::try_add)
     }
+
+    /// E1 and E2: rust_decimal 1.43's `checked_div`, the nearest-even value a
+    /// 96-bit coefficient holds at scale 28 or below.
+    pub fn div_ratio(self, rhs: impl Into<Dec>) -> Result<Dec, NumericError> {
+        let rhs = rhs.into();
+        if rhs.is_zero() {
+            return Err(self.error(NumericOp::DivRatio, rhs, NumericErrorKind::DivisionByZero));
+        }
+        self.0
+            .checked_div(rhs.0)
+            .map(Dec)
+            .ok_or_else(|| self.error(NumericOp::DivRatio, rhs, NumericErrorKind::Overflow))
+    }
+
+    /// E3: `self × b ÷ c`, truncated toward zero at `scale` decimal places.
+    pub fn mul_div_trunc(
+        self,
+        b: impl Into<Dec>,
+        c: impl Into<Dec>,
+        scale: u32,
+    ) -> Result<Dec, NumericError> {
+        let (b, c) = (b.into(), c.into());
+        let op = NumericOp::MulDivTrunc { divisor: c, scale };
+        if c.is_zero() {
+            return Err(self.error(op, b, NumericErrorKind::DivisionByZero));
+        }
+        if scale > MAX_SCALE {
+            return Err(self.error(op, b, NumericErrorKind::Precision));
+        }
+        let ((ma, sa), (mb, sb), (mc, sc)) = (wide(self.0), wide(b.0), wide(c.0));
+        let shift = i64::from(sc + scale) - i64::from(sa + sb);
+        let (num, den) = if shift >= 0 {
+            (ma * mb * pow10(shift as u32), mc)
+        } else {
+            (ma * mb, mc * pow10(shift.unsigned_abs() as u32))
+        };
+        fit(num / den, scale)
+            .map(Dec)
+            .map_err(|kind| self.error(op, b, kind))
+    }
+
+    /// E4: `self ÷ rhs`, rounded down to an integer.
+    pub fn floor_div(self, rhs: impl Into<Dec>) -> Result<Dec, NumericError> {
+        let rhs = rhs.into();
+        if rhs.is_zero() {
+            return Err(self.error(NumericOp::FloorDiv, rhs, NumericErrorKind::DivisionByZero));
+        }
+        let ((ma, sa), (mb, sb)) = (wide(self.0), wide(rhs.0));
+        let (num, den) = if sb >= sa {
+            (ma * pow10(sb - sa), mb)
+        } else {
+            (ma, mb * pow10(sa - sb))
+        };
+        let mut q = num / den;
+        if !(num % den).is_zero() && (num.is_negative() != den.is_negative()) {
+            q -= I512::ONE;
+        }
+        fit(q, 0)
+            .map(Dec)
+            .map_err(|kind| self.error(NumericOp::FloorDiv, rhs, kind))
+    }
 }
 
 impl AuthoredDec {
@@ -754,6 +815,104 @@ mod tests {
                     Err(e) => prop_assert!(exceeds_the_decimal_range(&exact), "refused {:?} but {} fits", e, exact),
                 }
             }
+        }
+    }
+
+    #[test]
+    fn div_ratio_follows_checked_div() {
+        assert_eq!(
+            d("1").div_ratio(d("3")).unwrap().to_string(),
+            "0.3333333333333333333333333333"
+        );
+        assert_eq!(
+            d("1").div_ratio(d("30")).unwrap().to_string(),
+            "0.0333333333333333333333333333"
+        );
+        assert_eq!(
+            d("10000").div_ratio(d("3")).unwrap().to_string(),
+            "3333.3333333333333333333333333"
+        );
+        assert_eq!(
+            d("1")
+                .div_ratio(d("3000000000000000000000000000"))
+                .unwrap()
+                .to_string(),
+            "0.0000000000000000000000000003"
+        );
+    }
+
+    #[test]
+    fn each_division_refuses_a_zero_divisor() {
+        for err in [
+            d("1").div_ratio(Dec::ZERO).unwrap_err(),
+            d("1").mul_div_trunc(d("2"), Dec::ZERO, 13).unwrap_err(),
+            d("1").floor_div(Dec::ZERO).unwrap_err(),
+        ] {
+            assert_eq!(err.kind, NumericErrorKind::DivisionByZero);
+        }
+    }
+
+    #[test]
+    fn mul_div_trunc_truncates_at_the_requested_scale() {
+        assert_eq!(
+            d("1").mul_div_trunc(d("2"), d("3"), 13).unwrap(),
+            d("0.6666666666666")
+        );
+        assert_eq!(
+            d("2").mul_div_trunc(d("2"), d("3"), 13).unwrap(),
+            d("1.3333333333333")
+        );
+    }
+
+    #[test]
+    fn a_share_at_the_envelope_edge_fits_at_scale_13() {
+        let cap = d("999999999999999.99");
+        let share = d("1").mul_div_trunc(cap, d("3"), 13).unwrap();
+        assert_eq!(share, d("333333333333333.33"));
+    }
+
+    #[test]
+    fn mul_div_trunc_refuses_a_scale_past_28_without_a_panic() {
+        for scale in [29, 512, u32::MAX] {
+            let err = d("1").mul_div_trunc(d("2"), d("3"), scale).unwrap_err();
+            assert_eq!(err.kind, NumericErrorKind::Precision);
+        }
+    }
+
+    #[test]
+    fn floor_div_rounds_down() {
+        assert_eq!(d("7").floor_div(d("2")).unwrap(), d("3"));
+        assert_eq!(d("30.30").floor_div(d("10.10")).unwrap(), d("3"));
+        assert_eq!(d("0.3").floor_div(d("0.1")).unwrap(), d("3"));
+        assert_eq!(d("-7").floor_div(d("2")).unwrap(), d("-4"));
+    }
+
+    proptest! {
+        #[test]
+        fn mul_div_trunc_back_multiplies_within_one_unit(
+            earning in 0i64..100_000_000_000_000_000,
+            rest in 0i64..100_000_000_000_000_000,
+            cap in 0i64..99_999_999_999_999_999,
+        ) {
+            let a = Dec(Decimal::new(earning, 2));
+            let c = Dec(Decimal::new(earning + rest + 1, 2));
+            let b = Dec(Decimal::new(cap, 2));
+            let q = a.mul_div_trunc(b, c, 13).unwrap();
+            let unit = BigDecimal::new(1.into(), 13);
+            let product = big(a) * big(b);
+            prop_assert!(big(q) * big(c) <= product);
+            prop_assert!((big(q) + unit) * big(c) > product);
+        }
+
+        #[test]
+        fn floor_div_back_multiplies_within_one(
+            matched in 0i64..100_000_000_000,
+            highest in 1i64..10_000_000,
+        ) {
+            let (a, b) = (Dec(Decimal::new(matched, 2)), Dec(Decimal::new(highest, 2)));
+            let q = a.floor_div(b).unwrap();
+            prop_assert!(big(q) * big(b) <= big(a));
+            prop_assert!((big(q) + BigDecimal::from(1)) * big(b) > big(a));
         }
     }
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/shopspring/decimal"
+	"gopkg.in/yaml.v3"
 )
 
 // Amount is an exact decimal that crosses JSON as a bare number.
@@ -76,7 +77,7 @@ func (a *Amount) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// UnmarshalText reads a YAML scalar's text.
+// UnmarshalText reads decimal text.
 func (a *Amount) UnmarshalText(text []byte) error {
 	parsed, err := Parse(string(text))
 	if err != nil {
@@ -84,6 +85,29 @@ func (a *Amount) UnmarshalText(text []byte) error {
 	}
 	*a = parsed
 	return nil
+}
+
+// UnmarshalYAML reads a YAML int or float scalar and refuses any other node.
+func (a *Amount) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind != yaml.ScalarNode || (n.ShortTag() != "!!int" && n.ShortTag() != "!!float") {
+		return fmt.Errorf("decimal: line %d: want a YAML number, got a %s node tagged %s", n.Line, kindName(n.Kind), n.ShortTag())
+	}
+	return a.UnmarshalText([]byte(n.Value))
+}
+
+func kindName(k yaml.Kind) string {
+	switch k {
+	case yaml.ScalarNode:
+		return "scalar"
+	case yaml.MappingNode:
+		return "mapping"
+	case yaml.SequenceNode:
+		return "sequence"
+	case yaml.AliasNode:
+		return "alias"
+	default:
+		return "document"
+	}
 }
 
 // Scan reads decimal text from a database and refuses any other type.
@@ -125,12 +149,12 @@ func (a *Amount) GobDecode(data []byte) error {
 	return a.UnmarshalText(data)
 }
 
-// DecodeSpanner refuses every value. Amount is not read from Spanner.
+// DecodeSpanner refuses every value.
 func (a *Amount) DecodeSpanner(value any) error {
 	return fmt.Errorf("decimal: Amount does not decode from Spanner, got %T", value)
 }
 
-// UnmarshalBSONValue refuses every value. Amount is not read from BSON.
+// UnmarshalBSONValue refuses every value.
 func (a *Amount) UnmarshalBSONValue(typ byte, _ []byte) error {
 	return fmt.Errorf("decimal: Amount does not decode from BSON, got type 0x%02x", typ)
 }

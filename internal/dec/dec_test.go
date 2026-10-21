@@ -139,3 +139,18 @@ func TestUnusedDecodersRefuse(t *testing.T) {
 	assert.Error(t, a.DecodeSpanner("1.5"))
 	assert.Error(t, a.UnmarshalBSONValue(0x01, []byte{0, 0, 0, 0, 0, 0, 0xf8, 0x3f}))
 }
+
+func TestAmountReadsOnlyANumericYAMLScalar(t *testing.T) {
+	type box struct {
+		A Amount `yaml:"a"`
+	}
+	for _, src := range []string{"a: {decimal: 1e999}\n", "a: {decimal: 1.5}\n", "a: [1]\n", "a: \"2\"\n", "a: !!str 3\n"} {
+		var b box
+		assert.Error(t, yaml.Unmarshal([]byte(src), &b), src)
+	}
+	var b box
+	require.NoError(t, yaml.Unmarshal([]byte("a: 1.25\n"), &b))
+	assert.Equal(t, "1.25", b.A.String())
+	require.NoError(t, yaml.Unmarshal([]byte("a: 7\n"), &b))
+	assert.Equal(t, "7", b.A.String())
+}

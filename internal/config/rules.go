@@ -116,10 +116,8 @@ func getRateTable(commission Commission) map[string]map[string]dec.Amount {
 }
 
 // validateU8MapKeys appends an error for each key of a level/depth-keyed rate
-// map that is not representable as a Rust u8 (0-255). These maps are Go
-// map[string]dec.Amount but Rust BTreeMap<u8, f64>; a key like "300" passes Go
-// untyped and dies opaquely at Rust serde. See docs/development/config-types.md
-// "Cross-layer enforcement of byte-width caps".
+// map that is not representable as a u8 (0-255). The engine reads these keys
+// as u8, so a key like "300" would otherwise pass here and fail opaquely there.
 func validateU8MapKeys(m map[string]dec.Amount, path string) []ValidationError {
 	var errs []ValidationError
 
@@ -180,11 +178,9 @@ func validateRateTableU8Keys(rt map[string]map[string]dec.Amount, path string) [
 }
 
 // validateRateKeyWidths checks that every level/depth-keyed rate map uses keys
-// representable as a Rust u8 (0-255). Bonus and per-structure commission rate
-// maps are Go map[string]dec.Amount (or nested) but Rust BTreeMap<u8, f64>, so an
-// out-of-range key passes Go untyped and fails opaquely at the Rust serde
-// boundary. This mirrors the byte-width contract on the map KEY. Rank-name-keyed
-// maps (rank_rates, amounts) are String on both sides and are not checked.
+// representable as a u8 (0-255), the byte-width contract on the map key. An
+// out-of-range key would otherwise pass here and fail opaquely in the engine.
+// Rank-name-keyed maps (rank_rates, amounts) are not checked.
 func validateRateKeyWidths(plan *CompensationPlan) []ValidationError {
 	var errs []ValidationError
 

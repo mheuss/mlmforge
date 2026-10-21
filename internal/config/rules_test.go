@@ -1270,10 +1270,8 @@ func TestValidation_StreamlineAdditionalPerRankMustExist(t *testing.T) {
 }
 
 // TestRateKeyWidth_RejectsKeysOverU8 verifies the u8 key-width guard on every
-// level/depth-keyed rate map (HEU-513 Part B). These maps are Go
-// map[string]float64 but Rust BTreeMap<u8, f64>; a key over 255 passes Go and
-// dies opaquely at Rust serde. Each case sets one out-of-range key and expects
-// an invalid_value error at the exact offending path.
+// level/depth-keyed rate map (HEU-513 Part B). Each case sets one key over 255
+// and expects an invalid_value error at the exact offending path.
 func TestRateKeyWidth_RejectsKeysOverU8(t *testing.T) {
 	cases := []struct {
 		name     string

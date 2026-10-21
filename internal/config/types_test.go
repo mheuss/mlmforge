@@ -893,6 +893,16 @@ func TestResolveCommissionsNilCommissionReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "no commission block")
 }
 
+func TestResolveCommissionsNullCommissionReturnsError(t *testing.T) {
+	for _, src := range []string{"commission: null\n", "commission: ~\n", "commission:\n"} {
+		var s StructureConfig
+		require.NoError(t, yaml.Unmarshal([]byte("name: Empty\ntype: unilevel\n"+src), &s))
+		err := resolveCommissions(&CompensationPlan{Structures: []StructureConfig{s}})
+		require.Error(t, err, src)
+		assert.Contains(t, err.Error(), "no commission block", src)
+	}
+}
+
 // TestResolveCommissionsBoardPlan verifies that resolveCommissions correctly
 // decodes a board plan commission block with board cycling config.
 func TestResolveCommissionsBoardPlan(t *testing.T) {
@@ -1310,6 +1320,7 @@ func TestRankQualification_ParsesTenure(t *testing.T) {
 	assert.Equal(t, "Director", q.Tenure.ThresholdRank)
 	assert.Equal(t, uint8(12), q.Tenure.Periods)
 }
+
 func TestResolveCommissionsKeepsEveryDigitOfACommissionValue(t *testing.T) {
 	var s StructureConfig
 	require.NoError(t, yaml.Unmarshal([]byte(`
@@ -1327,6 +1338,7 @@ commission:
 
 	require.NoError(t, resolveCommissions(plan))
 
-	c := plan.Structures[0].resolvedCommission.(*UnilevelCommission)
+	c, ok := plan.Structures[0].resolvedCommission.(*UnilevelCommission)
+	require.True(t, ok, "resolvedCommission is %T", plan.Structures[0].resolvedCommission)
 	assert.Equal(t, "1234567.1234567891", c.VolumeToDollarMultiplier.String())
 }

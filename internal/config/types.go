@@ -699,7 +699,7 @@ type MatrixPlacementConfig struct {
 func resolveCommissions(plan *CompensationPlan) error {
 	for i := range plan.Structures {
 		s := &plan.Structures[i]
-		if s.CommissionRaw.Kind == 0 {
+		if s.CommissionRaw.Kind == 0 || s.CommissionRaw.ShortTag() == "!!null" {
 			return fmt.Errorf("structure %q has no commission block", s.Name)
 		}
 		var err error

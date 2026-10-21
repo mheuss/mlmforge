@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -242,10 +243,12 @@ func TestTranslateCarriesThePerLegCapFraction(t *testing.T) {
 	out, err := translateToEngine(plan)
 	require.NoError(t, err)
 
+	d := json.NewDecoder(bytes.NewReader(out))
+	d.UseNumber()
 	var doc map[string]any
-	require.NoError(t, json.Unmarshal(out, &doc))
+	require.NoError(t, d.Decode(&doc))
 	sq := doc["ranks"].([]any)[1].(map[string]any)["qualification"].(map[string]any)["structures"].([]any)[0].(map[string]any)
-	assert.Equal(t, 0.6, sq["max_group_volume_per_leg_fraction"])
+	assert.Equal(t, json.Number("0.6"), sq["max_group_volume_per_leg_fraction"])
 }
 
 func TestTranslateOmitsAZeroPerLegCapFraction(t *testing.T) {

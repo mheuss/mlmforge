@@ -137,6 +137,7 @@ mod tests {
     use super::*;
     use crate::commission::test_helpers::uuid_from_index as uuid;
     use crate::commission::types::WalkStop;
+    use crate::d;
 
     fn walk_with(
         collector_id: u32,
@@ -161,7 +162,7 @@ mod tests {
         (0..n)
             .map(|i| VolumeSource {
                 source_id: uuid(i),
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             })
             .collect()
     }
@@ -240,11 +241,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: uuid(9),
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             },
             VolumeSource {
                 source_id: uuid(2),
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             },
         ];
         let mut walks = vec![
@@ -267,11 +268,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: uuid(1),
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             },
             VolumeSource {
                 source_id: uuid(1),
-                cv_amount: 50.0,
+                cv_amount: d!(50.0),
             },
         ];
         let mut walks = vec![

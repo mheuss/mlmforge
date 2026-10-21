@@ -85,6 +85,8 @@ pub fn calculate_unilevel(
 
 #[cfg(test)]
 mod tests {
+    use crate::d;
+    use crate::test_support::like;
     // Result-shape coverage for the calculators lives here rather than being
     // repeated five times: the assembly is shared through walk_order::assemble,
     // so a break in it breaks all five the same way.
@@ -102,7 +104,7 @@ mod tests {
 
     fn default_eligibility() -> CommissionEligibility {
         CommissionEligibility {
-            minimum_pv: 100.0,
+            minimum_pv: d!(100.0),
             require_order_in_period: false,
             eligible_statuses: vec!["active".to_string()],
             active_leg_tiers: vec![],
@@ -112,7 +114,7 @@ mod tests {
     fn eligible_snapshot() -> DistributorSnapshot {
         DistributorSnapshot {
             rank: "silver".to_string(),
-            personal_volume: 150.0,
+            personal_volume: d!(150.0),
             status: "active".to_string(),
             has_order_in_period: true,
         }
@@ -122,17 +124,17 @@ mod tests {
         let mut table = BTreeMap::new();
 
         let mut associate = BTreeMap::new();
-        associate.insert(1, 0.05);
-        associate.insert(2, 0.04);
-        associate.insert(3, 0.03);
+        associate.insert(1, d!(0.05));
+        associate.insert(2, d!(0.04));
+        associate.insert(3, d!(0.03));
         table.insert("associate".to_string(), associate);
 
         let mut silver = BTreeMap::new();
-        silver.insert(1, 0.07);
-        silver.insert(2, 0.06);
-        silver.insert(3, 0.05);
-        silver.insert(4, 0.04);
-        silver.insert(5, 0.03);
+        silver.insert(1, d!(0.07));
+        silver.insert(2, d!(0.06));
+        silver.insert(3, d!(0.05));
+        silver.insert(4, d!(0.04));
+        silver.insert(5, d!(0.03));
         table.insert("silver".to_string(), silver);
 
         table
@@ -142,7 +144,7 @@ mod tests {
         UnilevelStructureConfig {
             name: "Test Unilevel".to_string(),
             level_commission: LevelCommissionConfig {
-                broad_commission_percent: 0.40,
+                broad_commission_percent: d!(0.40),
                 volume_to_dollar_multiplier: None,
                 max_depth: 5,
                 rate_table,
@@ -232,7 +234,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let identity = crate::test_support::test_plan_identity();
@@ -275,7 +277,7 @@ mod tests {
     fn eligible_at_exact_minimum_pv() {
         let elig = default_eligibility(); // minimum_pv = 100.0
         let snap = DistributorSnapshot {
-            personal_volume: 100.0,
+            personal_volume: d!(100.0),
             ..eligible_snapshot()
         };
         assert!(is_eligible(&snap, &elig));
@@ -285,7 +287,7 @@ mod tests {
     fn ineligible_below_minimum_pv() {
         let elig = default_eligibility();
         let snap = DistributorSnapshot {
-            personal_volume: 50.0,
+            personal_volume: d!(50.0),
             ..eligible_snapshot()
         };
         assert!(!is_eligible(&snap, &elig));
@@ -376,7 +378,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -395,13 +397,13 @@ mod tests {
         // mid(2) is associate at level 1: 100 * 0.40 * 1.0 * 0.05 = 2.0
         let mid_earning = result.iter().find(|e| e.earner_id == test_uuid(2)).unwrap();
         assert_eq!(mid_earning.level, 1);
-        assert_eq!(mid_earning.rate, Some(0.05));
+        assert_eq!(mid_earning.rate, Some(d!(0.05)));
         assert!((mid_earning.dollar_amount - 2.0).abs() < f64::EPSILON);
 
         // root(1) is silver at level 2: 100 * 0.40 * 1.0 * 0.06 = 2.4
         let root_earning = result.iter().find(|e| e.earner_id == test_uuid(1)).unwrap();
         assert_eq!(root_earning.level, 2);
-        assert_eq!(root_earning.rate, Some(0.06));
+        assert_eq!(root_earning.rate, Some(d!(0.06)));
         assert!((root_earning.dollar_amount - 2.4).abs() < f64::EPSILON);
     }
 
@@ -436,7 +438,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -475,7 +477,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_unilevel(
@@ -516,7 +518,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_unilevel(
@@ -569,7 +571,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(5),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -617,7 +619,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(4),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -645,8 +647,8 @@ mod tests {
             .unwrap();
 
         let mut structure = test_structure(test_rate_table());
-        structure.level_commission.broad_commission_percent = 0.50;
-        structure.level_commission.volume_to_dollar_multiplier = Some(0.80);
+        structure.level_commission.broad_commission_percent = d!(0.50);
+        structure.level_commission.volume_to_dollar_multiplier = Some(d!(0.80));
         let plan = test_plan(default_eligibility());
 
         let mut snapshots = HashMap::new();
@@ -661,7 +663,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 200.0,
+            cv_amount: d!(200.0),
         }];
 
         let result = calculate_unilevel(
@@ -691,7 +693,7 @@ mod tests {
         let mut structure = test_structure(test_rate_table());
         structure.level_commission.volume_to_dollar_multiplier = None; // fallback
         let mut plan = test_plan(default_eligibility());
-        plan.volume.volume_to_dollar_multiplier = 0.75;
+        plan.volume.volume_to_dollar_multiplier = d!(0.75);
 
         let mut snapshots = HashMap::new();
         snapshots.insert(
@@ -705,7 +707,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -757,7 +759,7 @@ mod tests {
         snapshots.insert(
             test_uuid(2),
             DistributorSnapshot {
-                personal_volume: 0.0, // ineligible
+                personal_volume: d!(0.0), // ineligible
                 ..eligible_snapshot()
             },
         );
@@ -765,7 +767,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -823,7 +825,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -878,7 +880,7 @@ mod tests {
 
             let volume = vec![VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             }];
 
             calculate_unilevel(
@@ -900,7 +902,7 @@ mod tests {
                 .find(|e| e.earner_id == test_uuid(1))
                 .unwrap_or_else(|| panic!("mid={mid_rank:?} root did not earn: {earnings:?}"));
             assert_eq!(root.level, 2, "mid={mid_rank:?}");
-            assert_eq!(root.rate, Some(0.06), "mid={mid_rank:?}");
+            assert_eq!(root.rate, Some(d!(0.06)), "mid={mid_rank:?}");
             assert!(
                 (root.dollar_amount - 2.40).abs() < 1e-9,
                 "mid={mid_rank:?} paid {}",
@@ -947,7 +949,7 @@ mod tests {
         snapshots.insert(
             test_uuid(2),
             DistributorSnapshot {
-                personal_volume: 0.0, // ineligible
+                personal_volume: d!(0.0), // ineligible
                 ..eligible_snapshot()
             },
         );
@@ -955,7 +957,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -1005,7 +1007,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -1037,7 +1039,7 @@ mod tests {
             .unwrap();
 
         let elig = CommissionEligibility {
-            minimum_pv: 100.0,
+            minimum_pv: d!(100.0),
             require_order_in_period: false,
             eligible_statuses: vec!["active".to_string()],
             active_leg_tiers: vec![
@@ -1067,7 +1069,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let earnings = calculate_unilevel(
@@ -1100,12 +1102,12 @@ mod tests {
             snapshots.insert(test_uuid(id), eligible_snapshot());
         }
         let mut below_minimum = eligible_snapshot();
-        below_minimum.personal_volume = 0.0;
+        below_minimum.personal_volume = d!(0.0);
         snapshots.insert(test_uuid(4), below_minimum);
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let earnings = calculate_unilevel(
@@ -1138,7 +1140,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -1177,7 +1179,7 @@ mod tests {
             .unwrap();
 
         let elig = CommissionEligibility {
-            minimum_pv: 100.0,
+            minimum_pv: d!(100.0),
             require_order_in_period: false,
             eligible_statuses: vec!["active".to_string()],
             active_leg_tiers: vec![ActiveLegTier {
@@ -1201,7 +1203,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(5),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -1235,7 +1237,7 @@ mod tests {
             .unwrap();
 
         let elig = CommissionEligibility {
-            minimum_pv: 100.0,
+            minimum_pv: d!(100.0),
             require_order_in_period: false,
             eligible_statuses: vec!["active".to_string()],
             active_leg_tiers: vec![ActiveLegTier {
@@ -1259,7 +1261,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(5),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -1288,7 +1290,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(99),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -1318,7 +1320,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -1355,7 +1357,7 @@ mod tests {
         // Not in the tree, and not in snapshots either.
         let volume = vec![VolumeSource {
             source_id: test_uuid(99),
-            cv_amount: -50.0,
+            cv_amount: d!(-50.0),
         }];
 
         let result = calculate_unilevel(
@@ -1392,7 +1394,7 @@ mod tests {
 
         let mut structure = test_structure(test_rate_table());
         // Deliberately out of range. This value is the discriminator, not a typo.
-        structure.level_commission.broad_commission_percent = 1.5;
+        structure.level_commission.broad_commission_percent = d!(1.5);
         let plan = test_plan(default_eligibility());
 
         let mut snapshots = HashMap::new();
@@ -1406,7 +1408,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -1449,7 +1451,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -1495,7 +1497,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -1534,7 +1536,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: -50.0,
+            cv_amount: d!(-50.0),
         }];
 
         let result = calculate_unilevel(
@@ -1564,7 +1566,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: -50.0,
+            cv_amount: d!(-50.0),
         }];
 
         let result = calculate_unilevel(
@@ -1715,7 +1717,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -1758,11 +1760,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 200.0,
+                cv_amount: d!(200.0),
             },
         ];
 
@@ -1829,27 +1831,27 @@ mod tests {
 
         let mut rate_table = BTreeMap::new();
         let mut associate_rates = BTreeMap::new();
-        associate_rates.insert(1, 0.05);
-        associate_rates.insert(2, 0.04);
-        associate_rates.insert(3, 0.03);
+        associate_rates.insert(1, d!(0.05));
+        associate_rates.insert(2, d!(0.04));
+        associate_rates.insert(3, d!(0.03));
         rate_table.insert("associate".to_string(), associate_rates);
 
         let mut silver_rates = BTreeMap::new();
-        silver_rates.insert(1, 0.07);
-        silver_rates.insert(2, 0.06);
-        silver_rates.insert(3, 0.05);
-        silver_rates.insert(4, 0.04);
-        silver_rates.insert(5, 0.03);
+        silver_rates.insert(1, d!(0.07));
+        silver_rates.insert(2, d!(0.06));
+        silver_rates.insert(3, d!(0.05));
+        silver_rates.insert(4, d!(0.04));
+        silver_rates.insert(5, d!(0.03));
         rate_table.insert("silver".to_string(), silver_rates);
 
         let mut gold_rates = BTreeMap::new();
-        gold_rates.insert(1, 0.08);
-        gold_rates.insert(2, 0.07);
-        gold_rates.insert(3, 0.06);
-        gold_rates.insert(4, 0.05);
-        gold_rates.insert(5, 0.04);
-        gold_rates.insert(6, 0.03);
-        gold_rates.insert(7, 0.02);
+        gold_rates.insert(1, d!(0.08));
+        gold_rates.insert(2, d!(0.07));
+        gold_rates.insert(3, d!(0.06));
+        gold_rates.insert(4, d!(0.05));
+        gold_rates.insert(5, d!(0.04));
+        gold_rates.insert(6, d!(0.03));
+        gold_rates.insert(7, d!(0.02));
         rate_table.insert("gold".to_string(), gold_rates);
 
         let structure = test_structure(rate_table);
@@ -1903,7 +1905,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(7),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -1958,14 +1960,14 @@ mod tests {
         snapshots.insert(
             test_uuid(2),
             DistributorSnapshot {
-                personal_volume: 0.0, // ineligible, but still a valid source
+                personal_volume: d!(0.0), // ineligible, but still a valid source
                 ..eligible_snapshot()
             },
         );
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -2006,7 +2008,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 0.0,
+            cv_amount: d!(0.0),
         }];
 
         let result = calculate_unilevel(
@@ -2022,7 +2024,10 @@ mod tests {
 
         // cv_amount=0.0 is valid but produces no earnings (rate * 0 = 0, filtered out).
         assert!(
-            result.is_empty() || result.iter().all(|e| e.dollar_amount == 0.0),
+            result.is_empty()
+                || result
+                    .iter()
+                    .all(|e| e.dollar_amount == like(&e.dollar_amount, "0.0")),
             "zero CV should produce zero or empty earnings"
         );
     }
@@ -2032,11 +2037,11 @@ mod tests {
     fn pass_up_rate_table() -> BTreeMap<String, BTreeMap<u8, f64>> {
         let mut table = BTreeMap::new();
         let mut silver = BTreeMap::new();
-        silver.insert(1, 0.05);
-        silver.insert(2, 0.04);
-        silver.insert(3, 0.03);
-        silver.insert(4, 0.02);
-        silver.insert(5, 0.01);
+        silver.insert(1, d!(0.05));
+        silver.insert(2, d!(0.04));
+        silver.insert(3, d!(0.03));
+        silver.insert(4, d!(0.02));
+        silver.insert(5, d!(0.01));
         table.insert("silver".to_string(), silver);
         table
     }
@@ -2048,7 +2053,7 @@ mod tests {
         UnilevelStructureConfig {
             name: "Test".to_string(),
             level_commission: LevelCommissionConfig {
-                broad_commission_percent: 0.40,
+                broad_commission_percent: d!(0.40),
                 volume_to_dollar_multiplier: None,
                 max_depth: 5,
                 rate_table,
@@ -2090,7 +2095,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3), // R1
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -2150,7 +2155,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(5), // R3
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -2218,7 +2223,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(4), // D1
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -2292,7 +2297,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(4), // D1
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -2364,7 +2369,7 @@ mod tests {
         snapshots.insert(
             test_uuid(2),
             DistributorSnapshot {
-                personal_volume: 0.0, // B: ineligible (below min PV 100)
+                personal_volume: d!(0.0), // B: ineligible (below min PV 100)
                 ..eligible_snapshot()
             },
         );
@@ -2373,7 +2378,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(4), // R1
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -2420,7 +2425,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3), // R1
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -2485,7 +2490,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(4), // R1a
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -2542,7 +2547,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(
@@ -2600,7 +2605,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3), // R1
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_unilevel(

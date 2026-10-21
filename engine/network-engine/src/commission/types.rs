@@ -402,6 +402,7 @@ pub struct CommissionCalculationResult {
 mod tests {
     use super::*;
     use crate::commission::test_helpers::uuid_from_index;
+    use crate::d;
 
     #[test]
     fn walk_serializes_with_absent_optional_context() {
@@ -513,9 +514,9 @@ mod tests {
             earner_id: uuid_from_index(1),
             source_id: uuid_from_index(2),
             level: 1,
-            rate: Some(0.05),
-            cv_amount: 100.0,
-            dollar_amount: 5.0,
+            rate: Some(d!(0.05)),
+            cv_amount: d!(100.0),
+            dollar_amount: d!(5.0),
             walk: None,
         };
         let json = serde_json::to_value(&earning).expect("serialize earning");
@@ -545,8 +546,8 @@ mod tests {
             source_id: uuid_from_index(2),
             level: 1,
             rate: None,
-            cv_amount: 100.0,
-            dollar_amount: 5.0,
+            cv_amount: d!(100.0),
+            dollar_amount: d!(5.0),
             walk: None,
         };
         let json = serde_json::to_value(&earning).expect("serialize earning");
@@ -560,7 +561,7 @@ mod tests {
         );
 
         let rated = CommissionEarning {
-            rate: Some(0.05),
+            rate: Some(d!(0.05)),
             ..earning
         };
         let json = serde_json::to_value(&rated).expect("serialize earning");

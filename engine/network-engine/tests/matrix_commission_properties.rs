@@ -1,6 +1,6 @@
 mod common;
 use common::{
-    build_matrix_plan, build_matrix_plan_with_eligibility, build_two_rank_matrix_plan,
+    build_matrix_plan, build_matrix_plan_with_eligibility, build_two_rank_matrix_plan, cents,
     member_snapshot, uuid_from_index,
 };
 
@@ -10,6 +10,7 @@ use network_engine::commission::{
 use network_engine::config::commission::{CompressionConfig, CompressionMode};
 use network_engine::config::eligibility::CommissionEligibility;
 use network_engine::config::matrix::SpilloverDirection;
+use network_engine::d;
 use network_engine::tree::matrix::MatrixTree;
 use proptest::prelude::*;
 use std::collections::HashMap;
@@ -42,7 +43,7 @@ proptest! {
         let source_idx = tree_size - 1;
         let volume = vec![VolumeSource {
             source_id: uuid_from_index(source_idx),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
@@ -59,12 +60,12 @@ proptest! {
     /// Dollar amount matches the formula exactly.
     #[test]
     fn dollar_amount_matches_formula(
-        cv in 1.0..10000.0f64,
+        cv in cents(100, 1_000_000),
     ) {
         let (plan, structure) = build_matrix_plan(3, 9, 5);
         let broad_pct = structure.level_commission.broad_commission_percent;
         let multiplier = plan.volume.volume_to_dollar_multiplier;
-        let rate = 0.05;
+        let rate: f64 = d!(0.05);
 
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
         tree.add_root(uuid_from_index(0), 0).unwrap();
@@ -107,7 +108,7 @@ proptest! {
         // Use stricter eligibility (min PV 50) so nodes with PV 0 are
         // actually ineligible and SkipInactive compression fires.
         let eligibility = CommissionEligibility {
-            minimum_pv: 50.0,
+            minimum_pv: d!(50.0),
             require_order_in_period: false,
             eligible_statuses: vec![],
             active_leg_tiers: vec![],
@@ -130,7 +131,7 @@ proptest! {
             snapshots.insert(
                 uuid_from_index(i),
                 network_engine::commission::DistributorSnapshot {
-                    personal_volume: if i % 2 == 0 { 100.0 } else { 0.0 },
+                    personal_volume: if i % 2 == 0 { d!(100.0) } else { d!(0.0) },
                     ..member_snapshot()
                 },
             );
@@ -139,7 +140,7 @@ proptest! {
         let source_idx = tree_size - 1;
         let volume = vec![VolumeSource {
             source_id: uuid_from_index(source_idx),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
@@ -158,7 +159,7 @@ proptest! {
     #[test]
     fn all_earnings_non_negative(
         tree_size in 2..30usize,
-        cv in 0.0..10000.0f64,
+        cv in cents(0, 1_000_000),
     ) {
         let (plan, structure) = build_matrix_plan(3, 9, 5);
 
@@ -212,7 +213,7 @@ proptest! {
                 uuid_from_index(i),
                 DistributorSnapshot {
                     rank: "member".to_string(),
-                    personal_volume: 100.0,
+                    personal_volume: d!(100.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
@@ -222,7 +223,7 @@ proptest! {
         let source_idx = tree_size - 1;
         let volume = vec![VolumeSource {
             source_id: uuid_from_index(source_idx),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
@@ -244,12 +245,12 @@ proptest! {
     #[test]
     fn total_payout_bounded(
         tree_size in 2..30usize,
-        cv in 1.0..10000.0f64,
+        cv in cents(100, 1_000_000),
     ) {
         let (plan, structure) = build_matrix_plan(3, 9, 5);
         let broad_pct = structure.level_commission.broad_commission_percent;
         let multiplier = plan.volume.volume_to_dollar_multiplier;
-        let max_rate = 0.05;
+        let max_rate: f64 = d!(0.05);
         let effective_depth = structure.level_commission.max_depth
             .min(structure.matrix_params.height);
 
@@ -265,7 +266,7 @@ proptest! {
                 uuid_from_index(i),
                 DistributorSnapshot {
                     rank: "member".to_string(),
-                    personal_volume: 100.0,
+                    personal_volume: d!(100.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
@@ -310,7 +311,7 @@ proptest! {
 
         let volume = vec![VolumeSource {
             source_id: uuid_from_index(1),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity());
@@ -344,7 +345,7 @@ fn single_node_no_earnings() {
         uuid_from_index(0),
         DistributorSnapshot {
             rank: "member".to_string(),
-            personal_volume: 100.0,
+            personal_volume: d!(100.0),
             status: "active".to_string(),
             has_order_in_period: true,
         },
@@ -352,7 +353,7 @@ fn single_node_no_earnings() {
 
     let volume = vec![VolumeSource {
         source_id: uuid_from_index(0),
-        cv_amount: 100.0,
+        cv_amount: d!(100.0),
     }];
 
     let result = calculate_matrix(
@@ -376,7 +377,7 @@ fn single_node_no_earnings() {
 #[test]
 fn skip_below_rank_skips_low_rank_nodes() {
     let eligibility = CommissionEligibility {
-        minimum_pv: 0.0,
+        minimum_pv: d!(0.0),
         require_order_in_period: false,
         eligible_statuses: vec![],
         active_leg_tiers: vec![],
@@ -402,7 +403,7 @@ fn skip_below_rank_skips_low_rank_nodes() {
         uuid_from_index(0),
         DistributorSnapshot {
             rank: "silver".to_string(),
-            personal_volume: 100.0,
+            personal_volume: d!(100.0),
             status: "active".to_string(),
             has_order_in_period: true,
         },
@@ -411,7 +412,7 @@ fn skip_below_rank_skips_low_rank_nodes() {
         uuid_from_index(1),
         DistributorSnapshot {
             rank: "associate".to_string(), // below threshold
-            personal_volume: 100.0,
+            personal_volume: d!(100.0),
             status: "active".to_string(),
             has_order_in_period: true,
         },
@@ -420,7 +421,7 @@ fn skip_below_rank_skips_low_rank_nodes() {
         uuid_from_index(2),
         DistributorSnapshot {
             rank: "silver".to_string(),
-            personal_volume: 100.0,
+            personal_volume: d!(100.0),
             status: "active".to_string(),
             has_order_in_period: true,
         },
@@ -429,7 +430,7 @@ fn skip_below_rank_skips_low_rank_nodes() {
         uuid_from_index(3),
         DistributorSnapshot {
             rank: "silver".to_string(),
-            personal_volume: 100.0,
+            personal_volume: d!(100.0),
             status: "active".to_string(),
             has_order_in_period: true,
         },
@@ -437,7 +438,7 @@ fn skip_below_rank_skips_low_rank_nodes() {
 
     let volume = vec![VolumeSource {
         source_id: uuid_from_index(3),
-        cv_amount: 100.0,
+        cv_amount: d!(100.0),
     }];
 
     let result = calculate_matrix(
@@ -485,7 +486,7 @@ fn active_leg_tiers_use_sponsor_not_placement() {
     use network_engine::config::eligibility::ActiveLegTier;
 
     let eligibility = CommissionEligibility {
-        minimum_pv: 10.0,
+        minimum_pv: d!(10.0),
         require_order_in_period: false,
         eligible_statuses: vec![],
         active_leg_tiers: vec![
@@ -528,7 +529,7 @@ fn active_leg_tiers_use_sponsor_not_placement() {
             uuid_from_index(i),
             DistributorSnapshot {
                 rank: "member".to_string(),
-                personal_volume: 100.0,
+                personal_volume: d!(100.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
             },
@@ -537,7 +538,7 @@ fn active_leg_tiers_use_sponsor_not_placement() {
 
     let volume = vec![VolumeSource {
         source_id: uuid_from_index(5), // E
-        cv_amount: 100.0,
+        cv_amount: d!(100.0),
     }];
 
     let result = calculate_matrix(

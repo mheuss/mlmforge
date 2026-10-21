@@ -1,14 +1,15 @@
 mod common;
 use common::{
     build_two_rank_unilevel_plan, build_unilevel_plan, build_unilevel_plan_with_eligibility,
-    build_unilevel_plan_with_pass_up, member_snapshot, permissive_eligibility, uuid_from_index,
-    walk_order_fingerprint,
+    build_unilevel_plan_with_pass_up, cents, member_snapshot, permissive_eligibility,
+    uuid_from_index, walk_order_fingerprint,
 };
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_unilevel};
 use network_engine::config::PassUpConfig;
 use network_engine::config::commission::{CompressionConfig, CompressionMode};
 use network_engine::config::eligibility::{ActiveLegTier, CommissionEligibility};
+use network_engine::d;
 use network_engine::tree::unilevel::UnilevelTree;
 use proptest::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -62,7 +63,7 @@ proptest! {
         // Volume from the deepest node
         let volume = vec![VolumeSource {
             source_id: uuid_from_index(tree_size - 1),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result =
@@ -85,12 +86,12 @@ proptest! {
     /// The CV amount is randomized to cover a wide range of inputs.
     #[test]
     fn dollar_amount_matches_formula(
-        cv in 1.0..10000.0f64,
+        cv in cents(100, 1_000_000),
     ) {
         let (plan, structure) = build_unilevel_plan(3);
         let broad_pct = structure.level_commission.broad_commission_percent;
         let multiplier = plan.volume.volume_to_dollar_multiplier;
-        let rate = 0.05; // all levels use 0.05
+        let rate: f64 = d!(0.05); // all levels use 0.05
 
         let mut tree = UnilevelTree::new();
         tree.add_root(uuid_from_index(0), 0).unwrap();
@@ -135,7 +136,7 @@ proptest! {
         tree_size in 5..30usize,
         max_depth in 3..10u8,
     ) {
-        let (plan, mut structure) = build_test_plan_with_min_pv(max_depth, 50.0);
+        let (plan, mut structure) = build_test_plan_with_min_pv(max_depth, d!(50.0));
         structure.compression = Some(CompressionConfig {
             enabled: true,
             mode: CompressionMode::SkipInactive,
@@ -155,7 +156,7 @@ proptest! {
                 uuid_from_index(i),
                 network_engine::commission::DistributorSnapshot {
                     // Alternate: even nodes eligible, odd nodes ineligible
-                    personal_volume: if i % 2 == 0 { 100.0 } else { 0.0 },
+                    personal_volume: if i % 2 == 0 { d!(100.0) } else { d!(0.0) },
                     ..member_snapshot()
                 },
             );
@@ -164,7 +165,7 @@ proptest! {
         let source_idx = tree_size - 1;
         let volume = vec![VolumeSource {
             source_id: uuid_from_index(source_idx),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result =
@@ -191,7 +192,7 @@ proptest! {
         tree_size in 5..30usize,
         max_depth in 3..10u8,
     ) {
-        let (plan, structure_no_compress) = build_test_plan_with_min_pv(max_depth, 50.0);
+        let (plan, structure_no_compress) = build_test_plan_with_min_pv(max_depth, d!(50.0));
         let mut structure_compress = structure_no_compress.clone();
         structure_compress.compression = Some(CompressionConfig {
             enabled: true,
@@ -212,7 +213,7 @@ proptest! {
                 uuid_from_index(i),
                 DistributorSnapshot {
                     rank: "member".to_string(),
-                    personal_volume: if i % 2 == 0 { 100.0 } else { 0.0 },
+                    personal_volume: if i % 2 == 0 { d!(100.0) } else { d!(0.0) },
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
@@ -222,7 +223,7 @@ proptest! {
         let source_idx = tree_size - 1;
         let volume = vec![VolumeSource {
             source_id: uuid_from_index(source_idx),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let without =
@@ -277,7 +278,7 @@ proptest! {
                 DistributorSnapshot {
                     // Alternate: even=silver (qualifies), odd=associate (compressed)
                     rank: if i % 2 == 0 { "silver".to_string() } else { "associate".to_string() },
-                    personal_volume: 100.0,
+                    personal_volume: d!(100.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
@@ -287,7 +288,7 @@ proptest! {
         let source_idx = tree_size - 1;
         let volume = vec![VolumeSource {
             source_id: uuid_from_index(source_idx),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result =
@@ -333,7 +334,7 @@ proptest! {
                 uuid_from_index(i),
                 DistributorSnapshot {
                     rank: if i % 2 == 0 { "silver".to_string() } else { "associate".to_string() },
-                    personal_volume: 100.0,
+                    personal_volume: d!(100.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
@@ -343,7 +344,7 @@ proptest! {
         let source_idx = tree_size - 1;
         let volume = vec![VolumeSource {
             source_id: uuid_from_index(source_idx),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let without =
@@ -391,7 +392,7 @@ proptest! {
                 uuid_from_index(i),
                 DistributorSnapshot {
                     rank: if i % 2 == 0 { "silver".to_string() } else { "associate".to_string() },
-                    personal_volume: 100.0,
+                    personal_volume: d!(100.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
@@ -401,7 +402,7 @@ proptest! {
         let source_idx = tree_size - 1;
         let volume = vec![VolumeSource {
             source_id: uuid_from_index(source_idx),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result =
@@ -434,7 +435,7 @@ proptest! {
         let tier_depth: u16 = 2;
 
         let eligibility = CommissionEligibility {
-            minimum_pv: 0.0,
+            minimum_pv: d!(0.0),
             require_order_in_period: false,
             eligible_statuses: vec![],
             active_leg_tiers: vec![
@@ -461,7 +462,7 @@ proptest! {
                 uuid_from_index(i),
                 DistributorSnapshot {
                     rank: "member".to_string(),
-                    personal_volume: 100.0,
+                    personal_volume: d!(100.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
@@ -471,7 +472,7 @@ proptest! {
         let source_idx = chain_len - 1;
         let volume = vec![VolumeSource {
             source_id: uuid_from_index(source_idx),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result =
@@ -494,7 +495,7 @@ proptest! {
     /// has no upline to pay.
     #[test]
     fn single_node_tree_no_earnings(
-        cv in 1.0..10000.0f64,
+        cv in cents(100, 1_000_000),
     ) {
         let (plan, structure) = build_unilevel_plan(5);
         let mut tree = UnilevelTree::new();
@@ -505,7 +506,7 @@ proptest! {
             uuid_from_index(0),
             DistributorSnapshot {
                 rank: "member".to_string(),
-                personal_volume: 100.0,
+                personal_volume: d!(100.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
             },
@@ -529,7 +530,7 @@ proptest! {
     /// a child pays only the root at level 1. No deeper earnings.
     #[test]
     fn root_with_children_only_level_one(
-        cv in 1.0..10000.0f64,
+        cv in cents(100, 1_000_000),
         num_children in 1..10usize,
     ) {
         let (plan, structure) = build_unilevel_plan(5);
@@ -547,7 +548,7 @@ proptest! {
                 uuid_from_index(i),
                 DistributorSnapshot {
                     rank: "member".to_string(),
-                    personal_volume: 100.0,
+                    personal_volume: d!(100.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
@@ -605,7 +606,7 @@ proptest! {
                 uuid_from_index(i),
                 DistributorSnapshot {
                     rank: "member".to_string(),
-                    personal_volume: 100.0,
+                    personal_volume: d!(100.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
@@ -616,7 +617,7 @@ proptest! {
         let source_idx = tree_size - 1;
         let volume = vec![VolumeSource {
             source_id: uuid_from_index(source_idx),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result =
@@ -693,7 +694,7 @@ proptest! {
                 uuid_from_index(i),
                 DistributorSnapshot {
                     rank: "member".to_string(),
-                    personal_volume: 100.0,
+                    personal_volume: d!(100.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
@@ -703,7 +704,7 @@ proptest! {
         let source_idx = tree_size - 1;
         let volume = vec![VolumeSource {
             source_id: uuid_from_index(source_idx),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result =
@@ -766,7 +767,7 @@ proptest! {
                 uuid_from_index(i),
                 DistributorSnapshot {
                     rank: "member".to_string(),
-                    personal_volume: 100.0,
+                    personal_volume: d!(100.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
@@ -776,7 +777,7 @@ proptest! {
         let source_idx = tree_size - 1;
         let volume = vec![VolumeSource {
             source_id: uuid_from_index(source_idx),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result_with =
@@ -857,7 +858,7 @@ proptest! {
                 uuid_from_index(id),
                 DistributorSnapshot {
                     rank: "member".to_string(),
-                    personal_volume: 100.0,
+                    personal_volume: d!(100.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
@@ -868,7 +869,7 @@ proptest! {
         let source_idx = total_nodes - 1;
         let volume = vec![VolumeSource {
             source_id: uuid_from_index(source_idx),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result =
@@ -934,7 +935,7 @@ proptest! {
 fn active_leg_tiers_no_match_uses_config_depth() {
     let max_depth: u8 = 5;
     let eligibility = CommissionEligibility {
-        minimum_pv: 0.0,
+        minimum_pv: d!(0.0),
         require_order_in_period: false,
         eligible_statuses: vec![],
         active_leg_tiers: vec![ActiveLegTier {
@@ -970,7 +971,7 @@ fn active_leg_tiers_no_match_uses_config_depth() {
             uuid_from_index(i),
             DistributorSnapshot {
                 rank: "member".to_string(),
-                personal_volume: 100.0,
+                personal_volume: d!(100.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
             },
@@ -979,7 +980,7 @@ fn active_leg_tiers_no_match_uses_config_depth() {
 
     let volume = vec![VolumeSource {
         source_id: uuid_from_index(2),
-        cv_amount: 100.0,
+        cv_amount: d!(100.0),
     }];
 
     let result = calculate_unilevel(
@@ -1008,7 +1009,7 @@ fn active_leg_tiers_no_match_uses_config_depth() {
 fn active_leg_tiers_more_legs_earn_deeper() {
     let max_depth: u8 = 10;
     let eligibility = CommissionEligibility {
-        minimum_pv: 0.0,
+        minimum_pv: d!(0.0),
         require_order_in_period: false,
         eligible_statuses: vec![],
         active_leg_tiers: vec![
@@ -1065,7 +1066,7 @@ fn active_leg_tiers_more_legs_earn_deeper() {
             uuid_from_index(i),
             DistributorSnapshot {
                 rank: "member".to_string(),
-                personal_volume: 100.0,
+                personal_volume: d!(100.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
             },
@@ -1074,7 +1075,7 @@ fn active_leg_tiers_more_legs_earn_deeper() {
 
     let volume = vec![VolumeSource {
         source_id: uuid_from_index(4),
-        cv_amount: 100.0,
+        cv_amount: d!(100.0),
     }];
 
     let result = calculate_unilevel(
@@ -1179,7 +1180,7 @@ proptest! {
         // Several sources, so there is a real order to get wrong. One source
         // yields one walk, which sorts correctly by accident.
         let volume: Vec<VolumeSource> = (1..tree_size)
-            .map(|i| VolumeSource { source_id: uuid_from_index(i), cv_amount: 100.0 })
+            .map(|i| VolumeSource { source_id: uuid_from_index(i), cv_amount: d!(100.0) })
             .collect();
 
         let identity = network_engine::test_support::test_plan_identity();

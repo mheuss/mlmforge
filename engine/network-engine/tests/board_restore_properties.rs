@@ -3,6 +3,7 @@ mod common;
 use common::uuid_from_index;
 use network_engine::board_plan::BoardPlanEngine;
 use network_engine::config::board_plan::{BoardPlanConfig, ReEntryPosition};
+use network_engine::d;
 use proptest::prelude::*;
 use std::num::NonZeroU32;
 use uuid::Uuid;
@@ -48,7 +49,7 @@ fn full_boards(engine: &BoardPlanEngine) -> Vec<Uuid> {
 
 fn board_config(cascade: u32, re_entry: bool, sponsor_board: bool) -> BoardPlanConfig {
     BoardPlanConfig {
-        cycle_commission: 500.0,
+        cycle_commission: d!(500.0),
         re_entry_enabled: re_entry,
         re_entry_position: if sponsor_board {
             ReEntryPosition::SponsorBoard
@@ -134,7 +135,7 @@ proptest! {
         width in 2u8..4,
         height in 1u8..3,
         cascade in prop_oneof![3 => Just(1u32), 1 => 2u32..4],
-        re_entry in prop::bool::weighted(0.8),
+        re_entry in prop::bool::weighted(d!(0.8)),
         sponsor_board in any::<bool>(),
         ops in prop::collection::vec((0u8..5, 0usize..64, 0usize..64), 1..120),
     ) {

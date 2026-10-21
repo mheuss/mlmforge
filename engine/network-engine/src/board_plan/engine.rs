@@ -898,6 +898,7 @@ impl BoardPlanEngine {
 
 #[cfg(test)]
 mod tests {
+    use crate::{assert_d, d};
     use std::num::NonZeroU32;
 
     use super::*;
@@ -1754,7 +1755,7 @@ mod tests {
     /// Creates a standard BoardPlanConfig for testing.
     fn test_config() -> BoardPlanConfig {
         BoardPlanConfig {
-            cycle_commission: 500.0,
+            cycle_commission: d!(500.0),
             re_entry_enabled: true,
             re_entry_position: ReEntryPosition::Bottom,
             max_cycles_per_period: 4,
@@ -1961,7 +1962,7 @@ mod tests {
     /// Creates a BoardPlanConfig with SponsorBoard re-entry.
     fn test_config_sponsor_board() -> BoardPlanConfig {
         BoardPlanConfig {
-            cycle_commission: 500.0,
+            cycle_commission: d!(500.0),
             re_entry_enabled: true,
             re_entry_position: ReEntryPosition::SponsorBoard,
             max_cycles_per_period: 4,
@@ -2410,7 +2411,7 @@ mod tests {
     /// Creates a config with re-entry disabled.
     fn test_config_no_reentry() -> BoardPlanConfig {
         BoardPlanConfig {
-            cycle_commission: 500.0,
+            cycle_commission: d!(500.0),
             re_entry_enabled: false,
             re_entry_position: ReEntryPosition::Bottom,
             max_cycles_per_period: 4,
@@ -2663,7 +2664,7 @@ mod tests {
         // 2x1 board: 3 positions, cycles fast.
         // max_cascade_depth=1 limits chained cycles from a single add.
         let config = BoardPlanConfig {
-            cycle_commission: 500.0,
+            cycle_commission: d!(500.0),
             re_entry_enabled: true,
             re_entry_position: ReEntryPosition::Bottom,
             max_cycles_per_period: 4,
@@ -3311,8 +3312,9 @@ mod tests {
         );
 
         for earning in &result.earnings {
-            assert_eq!(
-                earning.dollar_amount, 500.0,
+            assert_d!(
+                earning.dollar_amount,
+                500.0,
                 "each earning should match cycle_commission"
             );
             assert!(

@@ -16,6 +16,7 @@ use network_engine::config::{
     BinaryStructureConfig, CompensationPlan, StairstepStructureConfig, StructureConfig,
     UnilevelStructureConfig,
 };
+use network_engine::d;
 use network_engine::test_support::{FromLiteral, build_test_plan, make_rank};
 #[allow(unused_imports)]
 pub use network_engine::test_support::{member_snapshot, snapshot_with_rank, uuid_from_index};
@@ -48,7 +49,7 @@ pub fn build_base_plan(
 /// eligible_statuses (all statuses accepted).
 pub fn permissive_eligibility() -> CommissionEligibility {
     CommissionEligibility {
-        minimum_pv: 0.0,
+        minimum_pv: d!(0.0),
         require_order_in_period: false,
         eligible_statuses: vec![],
         active_leg_tiers: vec![],
@@ -75,14 +76,14 @@ pub fn build_unilevel_plan_with_eligibility(
     let mut rate_table = BTreeMap::new();
     let mut rates = BTreeMap::new();
     for level in 1..=max_depth {
-        rates.insert(level, 0.05);
+        rates.insert(level, d!(0.05));
     }
     rate_table.insert("member".to_string(), rates);
 
     let structure = UnilevelStructureConfig {
         name: "Test".to_string(),
         level_commission: LevelCommissionConfig {
-            broad_commission_percent: 0.40,
+            broad_commission_percent: d!(0.40),
             volume_to_dollar_multiplier: None,
             max_depth,
             rate_table,
@@ -112,14 +113,14 @@ pub fn build_unilevel_plan_with_pass_up(
     let mut rate_table = BTreeMap::new();
     let mut rates = BTreeMap::new();
     for level in 1..=max_depth {
-        rates.insert(level, 0.05);
+        rates.insert(level, d!(0.05));
     }
     rate_table.insert("member".to_string(), rates);
 
     let structure = UnilevelStructureConfig {
         name: "Test".to_string(),
         level_commission: LevelCommissionConfig {
-            broad_commission_percent: 0.40,
+            broad_commission_percent: d!(0.40),
             volume_to_dollar_multiplier: None,
             max_depth,
             rate_table,
@@ -163,7 +164,7 @@ pub fn build_binary_plan(pairing: PairingConfig) -> (CompensationPlan, BinaryStr
 /// 10% on weaker leg, full flush, no cap.
 pub fn default_pairing() -> PairingConfig {
     PairingConfig {
-        percent: 0.10,
+        percent: d!(0.10),
         calculation: PairingCalculation::WeakerLeg,
         cap_per_period: None,
         volume_after_payout: VolumeAfterPayout::FullFlush,
@@ -209,7 +210,7 @@ pub fn build_two_rank_unilevel_plan(
     for rank_name in &["associate", "silver"] {
         let mut rates = BTreeMap::new();
         for level in 1..=max_depth {
-            rates.insert(level, 0.05);
+            rates.insert(level, d!(0.05));
         }
         rate_table.insert(rank_name.to_string(), rates);
     }
@@ -217,7 +218,7 @@ pub fn build_two_rank_unilevel_plan(
     let structure = UnilevelStructureConfig {
         name: "Test".to_string(),
         level_commission: LevelCommissionConfig {
-            broad_commission_percent: 0.40,
+            broad_commission_percent: d!(0.40),
             volume_to_dollar_multiplier: None,
             max_depth,
             rate_table,
@@ -269,7 +270,7 @@ pub fn build_stairstep_plan_with_eligibility(
     for rank_name in &["member", "director"] {
         let mut rates = BTreeMap::new();
         for level in 1..=max_depth {
-            rates.insert(level, 0.05);
+            rates.insert(level, d!(0.05));
         }
         rate_table.insert(rank_name.to_string(), rates);
     }
@@ -277,7 +278,7 @@ pub fn build_stairstep_plan_with_eligibility(
     let structure = StairstepStructureConfig {
         name: "Test".to_string(),
         level_commission: LevelCommissionConfig {
-            broad_commission_percent: 0.40,
+            broad_commission_percent: d!(0.40),
             volume_to_dollar_multiplier: None,
             max_depth,
             rate_table,
@@ -290,10 +291,10 @@ pub fn build_stairstep_plan_with_eligibility(
                 mode: OverrideMode::Differential(DifferentialConfig {
                     rank_rates: {
                         let mut m = BTreeMap::new();
-                        m.insert("director".to_string(), 0.10);
+                        m.insert("director".to_string(), d!(0.10));
                         m
                     },
-                    min_override: MinOverride::Rate { value: 0.0 },
+                    min_override: MinOverride::Rate { value: d!(0.0) },
                 }),
                 generation_overrides: None,
             },
@@ -330,7 +331,7 @@ pub fn build_multi_tier_stairstep_plan(
     for rank_name in &["member", "director"] {
         let mut rates = BTreeMap::new();
         for level in 1..=max_depth {
-            rates.insert(level, 0.05);
+            rates.insert(level, d!(0.05));
         }
         rate_table.insert(rank_name.to_string(), rates);
     }
@@ -338,7 +339,7 @@ pub fn build_multi_tier_stairstep_plan(
     let structure = StairstepStructureConfig {
         name: "Test".to_string(),
         level_commission: LevelCommissionConfig {
-            broad_commission_percent: 0.40,
+            broad_commission_percent: d!(0.40),
             volume_to_dollar_multiplier: None,
             max_depth,
             rate_table,
@@ -394,11 +395,11 @@ pub fn build_generation_plan_with_eligibility(
     for g in 1..=max_generations {
         // Decreasing rates: gen 1 = 0.10, gen 2 = 0.07, gen 3 = 0.05, gen 4 = 0.03
         let rate = match g {
-            1 => 0.10,
-            2 => 0.07,
-            3 => 0.05,
-            4 => 0.03,
-            _ => 0.02,
+            1 => d!(0.10),
+            2 => d!(0.07),
+            3 => d!(0.05),
+            4 => d!(0.03),
+            _ => d!(0.02),
         };
         rates.insert(g, rate);
     }
@@ -450,11 +451,11 @@ pub fn build_same_rank_generation_plan(
     let mut rates = BTreeMap::new();
     for g in 1..=max_generations {
         let rate = match g {
-            1 => 0.10,
-            2 => 0.07,
-            3 => 0.05,
-            4 => 0.03,
-            _ => 0.02,
+            1 => d!(0.10),
+            2 => d!(0.07),
+            3 => d!(0.05),
+            4 => d!(0.03),
+            _ => d!(0.02),
         };
         rates.insert(g, rate);
     }
@@ -525,7 +526,7 @@ pub fn build_matrix_plan_with_eligibility(
     let mut rate_table = BTreeMap::new();
     let mut rates = BTreeMap::new();
     for level in 1..=max_depth {
-        rates.insert(level, 0.05);
+        rates.insert(level, d!(0.05));
     }
     rate_table.insert("member".to_string(), rates);
 
@@ -537,7 +538,7 @@ pub fn build_matrix_plan_with_eligibility(
             spillover: SpilloverDirection::BreadthFirst,
         },
         level_commission: LevelCommissionConfig {
-            broad_commission_percent: 0.40,
+            broad_commission_percent: d!(0.40),
             volume_to_dollar_multiplier: None,
             max_depth,
             rate_table,
@@ -573,7 +574,7 @@ pub fn build_two_rank_matrix_plan(
     for rank_name in &["associate", "silver"] {
         let mut rates = BTreeMap::new();
         for level in 1..=max_depth {
-            rates.insert(level, 0.05);
+            rates.insert(level, d!(0.05));
         }
         rate_table.insert(rank_name.to_string(), rates);
     }
@@ -586,7 +587,7 @@ pub fn build_two_rank_matrix_plan(
             spillover: SpilloverDirection::BreadthFirst,
         },
         level_commission: LevelCommissionConfig {
-            broad_commission_percent: 0.40,
+            broad_commission_percent: d!(0.40),
             volume_to_dollar_multiplier: None,
             max_depth,
             rate_table,

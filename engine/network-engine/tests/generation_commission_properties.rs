@@ -1,11 +1,12 @@
 mod common;
 
 use common::{
-    build_generation_plan, build_same_rank_generation_plan, snapshot_with_rank, uuid_from_index,
-    walk_order_fingerprint,
+    build_generation_plan, build_same_rank_generation_plan, cents, snapshot_with_rank,
+    uuid_from_index, walk_order_fingerprint,
 };
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_generation};
+use network_engine::d;
 use network_engine::tree::unilevel::UnilevelTree;
 use proptest::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -89,11 +90,11 @@ fn reference_tree_threshold_mode() {
     let (plan, structure) = build_generation_plan(4);
 
     let director = DistributorSnapshot {
-        personal_volume: 150.0,
+        personal_volume: d!(150.0),
         ..snapshot_with_rank("director")
     };
     let associate = DistributorSnapshot {
-        personal_volume: 150.0,
+        personal_volume: d!(150.0),
         ..snapshot_with_rank("associate")
     };
 
@@ -114,7 +115,7 @@ fn reference_tree_threshold_mode() {
     // Alice earns gen 2 at 0.07: 100 * 1.0 * 0.07 = 7.0
     let volume_eve = vec![VolumeSource {
         source_id: uuid_from_index(4),
-        cv_amount: 100.0,
+        cv_amount: d!(100.0),
     }];
     let result = calculate_generation(
         &tree,
@@ -147,7 +148,7 @@ fn reference_tree_threshold_mode() {
     // Alice earns gen 1 at 0.10: 50 * 1.0 * 0.10 = 5.0
     let volume_henry = vec![VolumeSource {
         source_id: uuid_from_index(7),
-        cv_amount: 50.0,
+        cv_amount: d!(50.0),
     }];
     let result = calculate_generation(
         &tree,
@@ -170,7 +171,7 @@ fn reference_tree_threshold_mode() {
     // Alice earns gen 1 at 0.10: 75 * 1.0 * 0.10 = 7.5
     let volume_grace = vec![VolumeSource {
         source_id: uuid_from_index(6),
-        cv_amount: 75.0,
+        cv_amount: d!(75.0),
     }];
     let result = calculate_generation(
         &tree,
@@ -193,7 +194,7 @@ fn reference_tree_threshold_mode() {
     // Alice earns gen 1 at 0.10: 200 * 1.0 * 0.10 = 20.0
     let volume_bob = vec![VolumeSource {
         source_id: uuid_from_index(1),
-        cv_amount: 200.0,
+        cv_amount: d!(200.0),
     }];
     let result = calculate_generation(
         &tree,
@@ -216,11 +217,11 @@ fn reference_tree_threshold_mode() {
     let volume_multi = vec![
         VolumeSource {
             source_id: uuid_from_index(4),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         },
         VolumeSource {
             source_id: uuid_from_index(7),
-            cv_amount: 50.0,
+            cv_amount: d!(50.0),
         },
     ];
     let result = calculate_generation(
@@ -286,7 +287,7 @@ fn build_random_chain(
             uuid_from_index(i),
             DistributorSnapshot {
                 rank: rank.to_string(),
-                personal_volume: 150.0,
+                personal_volume: d!(150.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
             },
@@ -300,7 +301,7 @@ fn build_random_chain(
 fn generation_inputs() -> impl Strategy<Value = (usize, Vec<usize>, f64, u8)> {
     (3..30usize).prop_flat_map(|size| {
         let directors = proptest::collection::vec(0..size, 0..size / 2 + 1);
-        let cv = 0.0..10000.0f64;
+        let cv = cents(0, 1_000_000);
         let max_gen = 1..6u8;
         (Just(size), directors, cv, max_gen)
     })
@@ -408,7 +409,7 @@ proptest! {
     #[test]
     fn at_least_one_earner_when_boundary_exists(
         size in 3..20usize,
-        cv in 1.0..1000.0f64,
+        cv in cents(100, 100_000),
     ) {
         // Force a director at position 0 (root) to guarantee a boundary.
         let directors = vec![0];
@@ -492,7 +493,7 @@ fn build_multi_rank_chain(
             uuid_from_index(i),
             DistributorSnapshot {
                 rank: rank_names[rank_idx].to_string(),
-                personal_volume: 150.0,
+                personal_volume: d!(150.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
             },
@@ -506,7 +507,7 @@ fn build_multi_rank_chain(
 fn same_rank_inputs() -> impl Strategy<Value = (usize, Vec<u8>, f64, u8)> {
     (3..20usize).prop_flat_map(|size| {
         let ranks = proptest::collection::vec(0..3u8, size..=size);
-        let cv = 0.0..5000.0f64;
+        let cv = cents(0, 500_000);
         let max_gen = 1..5u8;
         (Just(size), ranks, cv, max_gen)
     })

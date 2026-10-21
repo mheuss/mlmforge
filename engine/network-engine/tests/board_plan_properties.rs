@@ -1,10 +1,11 @@
 mod common;
 
-use common::uuid_from_index;
+use common::{cents, uuid_from_index};
 use network_engine::board_plan::board::total_positions;
 use network_engine::board_plan::{BoardPlanEngine, BoardPlanError, CycleEvent};
 use network_engine::commission::calculate_board_commissions;
 use network_engine::config::board_plan::{BoardPlanConfig, ReEntryPosition};
+use network_engine::d;
 use proptest::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU32;
@@ -17,7 +18,7 @@ use uuid::Uuid;
 /// Standard board plan config for property tests.
 fn prop_config() -> BoardPlanConfig {
     BoardPlanConfig {
-        cycle_commission: 500.0,
+        cycle_commission: d!(500.0),
         re_entry_enabled: true,
         re_entry_position: ReEntryPosition::Bottom,
         max_cycles_per_period: 5,
@@ -261,7 +262,7 @@ proptest! {
     /// is exercised on both sides of the cap, so the test keeps its teeth.
     #[test]
     fn cycle_commission_dollar_law(
-        cycle_commission in 1.0f64..10_000.0,
+        cycle_commission in cents(100, 1_000_000),
         max_cycles in 1u32..8,
         extra in 1u32..6,
     ) {
@@ -315,7 +316,7 @@ proptest! {
                 max_cycles
             );
 
-            let expected = if should_cap { 0.0 } else { cycle_commission };
+            let expected = if should_cap { d!(0.0) } else { cycle_commission };
             prop_assert!(
                 (earning.dollar_amount - expected).abs() < 1e-10,
                 "cycle {} (capped={}): dollar {} != expected {}",

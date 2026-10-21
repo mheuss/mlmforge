@@ -169,8 +169,42 @@ macro_rules! d {
     };
 }
 
+/// Builds a test value of the same type as `_like` from its literal text.
+pub fn like<T: FromLiteral>(_like: &T, text: &str) -> T {
+    T::from_literal(text)
+}
+
+/// Asserts that `actual` equals a decimal literal of `actual`'s own type.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! assert_d {
+    ($actual:expr, $($literal:tt)+) => {{
+        let actual = &$actual;
+        assert_eq!(
+            actual,
+            &$crate::test_support::like(
+                actual,
+                &::std::stringify!($($literal)+).replace([' ', '_'], ""),
+            )
+        );
+    }};
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn assert_d_accepts_an_equal_value() {
+        let rate: f64 = 0.07;
+        crate::assert_d!(rate, 0.07);
+    }
+
+    #[test]
+    #[should_panic(expected = "assertion `left == right` failed")]
+    fn assert_d_panics_on_an_unequal_value() {
+        let rate: f64 = 0.07;
+        crate::assert_d!(rate, 0.08);
+    }
+
     #[test]
     fn d_builds_the_value_its_literal_names() {
         let positive: f64 = crate::d!(10.10);

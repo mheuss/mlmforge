@@ -915,4 +915,110 @@ mod tests {
             prop_assert!((big(q) + BigDecimal::from(1)) * big(b) > big(a));
         }
     }
+
+    #[test]
+    fn floor_div_floors_across_mixed_scales_and_signs() {
+        assert_eq!(d("150.5").floor_div(d("100")).unwrap(), d("1"));
+        assert_eq!(d("1").floor_div(d("0.25")).unwrap(), d("4"));
+        assert_eq!(d("-0.5").floor_div(d("1")).unwrap(), d("-1"));
+        assert_eq!(d("0.5").floor_div(d("-1")).unwrap(), d("-1"));
+        assert_eq!(d("-0.5").floor_div(d("-1")).unwrap(), Dec::ZERO);
+        assert_eq!(d("7").floor_div(d("-2")).unwrap(), d("-4"));
+        let max = d("79228162514264337593543950335");
+        let err = max.floor_div(d("0.5")).unwrap_err();
+        assert_eq!(err.kind, NumericErrorKind::Overflow);
+    }
+
+    #[test]
+    fn mul_div_trunc_truncates_toward_zero_for_each_sign() {
+        let third = d("0.6666666666666");
+        assert_eq!(
+            d("-1").mul_div_trunc(d("2"), d("3"), 13).unwrap(),
+            Dec::ZERO.try_sub(third).unwrap()
+        );
+        assert_eq!(
+            d("1").mul_div_trunc(d("-2"), d("3"), 13).unwrap(),
+            Dec::ZERO.try_sub(third).unwrap()
+        );
+        assert_eq!(
+            d("1").mul_div_trunc(d("2"), d("-3"), 13).unwrap(),
+            Dec::ZERO.try_sub(third).unwrap()
+        );
+        assert_eq!(d("-1").mul_div_trunc(d("-2"), d("3"), 13).unwrap(), third);
+    }
+
+    #[test]
+    fn mul_div_trunc_handles_operands_finer_than_the_result() {
+        let (a, b) = (d("0.1234567890"), d("0.9876543210"));
+        assert_eq!(a.mul_div_trunc(b, d("0.3"), 4).unwrap(), d("0.4064"));
+        assert_eq!(a.mul_div_trunc(b, d("0.125"), 4).unwrap(), d("0.9754"));
+        assert_eq!(
+            d("-0.1234567890").mul_div_trunc(b, d("0.125"), 4).unwrap(),
+            d("-0.9754")
+        );
+    }
+
+    #[test]
+    fn div_ratio_beyond_the_range_is_an_overflow() {
+        let max = d("79228162514264337593543950335");
+        let err = max.div_ratio(d("0.5")).unwrap_err();
+        assert_eq!(err.kind, NumericErrorKind::Overflow);
+        assert_eq!(err.op, NumericOp::DivRatio);
+    }
+
+    fn signed_dec() -> impl Strategy<Value = Dec> {
+        (-(1i128 << 60)..(1i128 << 60), 0u32..=28)
+            .prop_map(|(m, s)| Dec(Decimal::from_i128_with_scale(m, s)))
+    }
+
+    fn two_to_the_96_less_one() -> BigDecimal {
+        BigDecimal::from(bigdecimal::num_bigint::BigInt::from(1u8) << 96usize) - BigDecimal::from(1)
+    }
+
+    proptest! {
+        #[test]
+        fn floor_div_is_the_floor_for_any_signs_and_scales(a in signed_dec(), b in signed_dec()) {
+            prop_assume!(!b.is_zero());
+            let (ab, bb) = (big(a), big(b));
+            match a.floor_div(b) {
+                Ok(q) => {
+                    let (low, high) = (big(q) * &bb, (big(q) + BigDecimal::from(1)) * &bb);
+                    if bb.is_positive() {
+                        prop_assert!(low <= ab && ab < high, "{} fdiv {} = {}", a, b, q);
+                    } else {
+                        prop_assert!(low >= ab && ab > high, "{} fdiv {} = {}", a, b, q);
+                    }
+                }
+                Err(e) => {
+                    prop_assert_eq!(e.kind, NumericErrorKind::Overflow);
+                    prop_assert!(ab.abs() >= two_to_the_96_less_one() * bb.abs());
+                }
+            }
+        }
+
+        #[test]
+        fn mul_div_trunc_truncates_toward_zero_for_any_signs_and_scales(
+            a in signed_dec(),
+            b in signed_dec(),
+            c in signed_dec(),
+            scale in 0u32..=28,
+        ) {
+            prop_assume!(!c.is_zero());
+            let (product, cb) = (big(a) * big(b), big(c));
+            let unit = BigDecimal::new(1.into(), i64::from(scale));
+            match a.mul_div_trunc(b, c, scale) {
+                Ok(q) => {
+                    let qb = big(q);
+                    prop_assert!(qb.abs() * cb.abs() <= product.abs());
+                    prop_assert!((qb.abs() + unit) * cb.abs() > product.abs());
+                    prop_assert!(!(qb.clone() * &cb * &product).is_negative(), "{} has the wrong sign", q);
+                }
+                Err(e) => {
+                    prop_assert!(e.kind != NumericErrorKind::DivisionByZero);
+                    let scaled = product.abs() * BigDecimal::new(1.into(), -i64::from(scale));
+                    prop_assert!(scaled >= two_to_the_96_less_one() * cb.abs());
+                }
+            }
+        }
+    }
 }

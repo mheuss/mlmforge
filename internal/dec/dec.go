@@ -105,8 +105,10 @@ func kindName(k yaml.Kind) string {
 		return "sequence"
 	case yaml.AliasNode:
 		return "alias"
-	default:
+	case yaml.DocumentNode:
 		return "document"
+	default:
+		return fmt.Sprintf("kind %d", k)
 	}
 }
 

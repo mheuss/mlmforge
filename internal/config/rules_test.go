@@ -2268,7 +2268,7 @@ func TestRulesRefuseAnAuthoredValueOfTenToTheFifteenth(t *testing.T) {
 	require.Len(t, errs, 1)
 	assert.Equal(t, "/volume/volume_to_dollar_multiplier", errs[0].Path)
 	assert.Equal(t, "out_of_envelope", errs[0].Code)
-	assert.Contains(t, errs[0].Message, "1000000000000000")
+	assert.Equal(t, "1000000000000000 is not below 10^15 in absolute value", errs[0].Message)
 }
 
 func TestRulesRefuseAnAuthoredValueWithElevenDecimalPlaces(t *testing.T) {

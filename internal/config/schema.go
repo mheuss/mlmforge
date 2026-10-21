@@ -128,7 +128,12 @@ func (c *yamlConverter) fail(n *yaml.Node, path, code, message string) {
 func (c *yamlConverter) spend(n *yaml.Node, path string) bool {
 	c.visited++
 	if c.visited == maxYAMLNodes+1 {
-		c.fail(n, path, "document_too_large", fmt.Sprintf("the document expands to more than %d nodes", maxYAMLNodes))
+		c.errs = append(c.errs, ValidationError{
+			Path:     path,
+			Code:     "document_too_large",
+			Message:  fmt.Sprintf("the document expands to more than %d nodes", maxYAMLNodes),
+			Severity: SeverityError,
+		})
 	}
 	return c.visited <= maxYAMLNodes
 }
@@ -182,6 +187,9 @@ func (c *yamlConverter) mapping(n *yaml.Node, path string) map[string]any {
 	var merge *yaml.Node
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		k, v := n.Content[i], n.Content[i+1]
+		if !c.spend(k, path) {
+			return out
+		}
 		if isMergeKey(k) {
 			if merge != nil {
 				c.fail(k, path+"/<<", "duplicate_key", "mapping key \"<<\" appears more than once")
@@ -206,7 +214,6 @@ func (c *yamlConverter) mapping(n *yaml.Node, path string) map[string]any {
 	return out
 }
 
-// merge accepts a mapping, an alias to a mapping, or a list of either.
 func (c *yamlConverter) merge(m *yaml.Node, path string, out map[string]any) {
 	if m.Kind != yaml.SequenceNode {
 		c.mergeOne(m, path, out)
@@ -217,6 +224,7 @@ func (c *yamlConverter) merge(m *yaml.Node, path string, out map[string]any) {
 	}
 }
 
+// mergeOne accepts a mapping or an alias to a mapping and refuses any other node.
 func (c *yamlConverter) mergeOne(m *yaml.Node, path string, out map[string]any) {
 	if !c.spend(m, path) {
 		return

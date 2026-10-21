@@ -749,3 +749,22 @@ func TestYAMLErrorIsReportedOncePerSourceNode(t *testing.T) {
 		assert.Equal(t, code, errs[0].Code, src)
 	}
 }
+
+func TestYAMLDuplicateKeysThroughAliasesStopAtTheBudget(t *testing.T) {
+	src := "d: &d {" + strings.Repeat("a: 1, ", 1100) + "a: 1}\nr: [" + strings.Repeat("*d, ", 999) + "*d]\n"
+	_, errs := convertYAML(t, src)
+	require.NotEmpty(t, errs)
+	assert.Equal(t, "document_too_large", errs[len(errs)-1].Code)
+}
+
+func TestYAMLBudgetErrorSurvivesANodeThatAlreadyFailed(t *testing.T) {
+	body := "x: &x .inf\nl1: &l1 [" + strings.Repeat("*x, ", 99) + "*x]\nl2: &l2 [" + strings.Repeat("*l1, ", 99) + "*l1]\nl3: [" + strings.Repeat("*l2, ", 99) + "*l2]\n"
+	for _, prefix := range []string{"", "w: 0\n"} {
+		_, errs := convertYAML(t, prefix+body)
+		codes := make([]string, len(errs))
+		for i, e := range errs {
+			codes[i] = e.Code
+		}
+		assert.Contains(t, codes, "document_too_large", "prefix %q", prefix)
+	}
+}

@@ -1344,8 +1344,8 @@ fn structures_above_lowest_rank_finds_the_lowest_rank_by_ordinal() {
     );
 }
 
-/// Associate and silver both have ordinal 1. Associate comes first in the
-/// plan, so it is the lowest and only silver's structure is returned.
+/// Both ranks share the lowest ordinal. The first in the plan is the lowest,
+/// so only the second rank's structure is returned.
 #[test]
 fn structures_above_lowest_rank_takes_the_first_of_tied_lowest_ordinals_as_the_lowest() {
     let mut plan = linear_plan();

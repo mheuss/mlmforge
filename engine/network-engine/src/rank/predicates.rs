@@ -235,11 +235,11 @@ fn leg_contains_match(
 ///
 /// `ContainsRank` resolves `min_rank` against `rank_ordinals` (unknown ranks
 /// raise `UnknownMinRank`) and reads the node's evaluated rank from `already`;
-/// a node that is absent or `Unranked` does not match. `ContainsPersonalVolume`
-/// reads the node's personal volume from `distributors`. Its `None` arm is a
-/// fallback. It does not mean a missing input has no volume. Plan validation
-/// (the Go layer) is the primary gate for `min_rank`; this error is defense
-/// in depth.
+/// a node that is absent or `Unranked` does not match.
+///
+/// `ContainsPersonalVolume` reads the node's personal volume from
+/// `distributors`. Its `None` arm is a fallback. It does not mean a missing
+/// input has no volume.
 fn node_matches(
     predicate: &LegPredicate,
     node_id: Uuid,

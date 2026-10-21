@@ -800,7 +800,8 @@ separate matter; HEU-632 tracks the three that remain, listed below.
   `active_products` are required and null-tolerant. `RankDriver.EvaluatePeriod`
   still normalizes nil to empty before the call; that is now belt and braces
   rather than the thing keeping it working, and it only ever bound Go callers.
-  A real `PeriodInputProvider` (HEU-505) may hand over nils safely.
+  A real `PeriodInputProvider` (HEU-505) may hand over nils without an
+  `INVALID_PARAMS` error.
 - The six other commission handlers — `snapshots` and `volume` are required and
   null-tolerant; `carry_forward` is optional and no longer depends on Go's
   `omitempty` to stay correct. Binary pairing's `ownership` is left alone: it is

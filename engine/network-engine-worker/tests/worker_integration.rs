@@ -5555,7 +5555,7 @@ fn load_rank_plan_with_root(child: &mut std::process::Child) {
 }
 
 /// Explicit null `distributors` and `volume_sources` against a populated tree
-/// are refused with EVALUATION_ERROR naming ROOT.
+/// are refused with EVALUATION_ERROR naming ROOT, not INVALID_PARAMS.
 #[test]
 fn evaluate_ranks_accepts_null_collections() {
     let mut child = common::spawn_worker();

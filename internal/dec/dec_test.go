@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -153,4 +154,11 @@ func TestAmountReadsOnlyANumericYAMLScalar(t *testing.T) {
 	assert.Equal(t, "1.25", b.A.String())
 	require.NoError(t, yaml.Unmarshal([]byte("a: 7\n"), &b))
 	assert.Equal(t, "7", b.A.String())
+}
+
+func TestParseRefusesTextLongerThanTheLimit(t *testing.T) {
+	_, err := Parse("1." + strings.Repeat("3", 63))
+	require.EqualError(t, err, "decimal text is 65 bytes long; the limit is 64")
+	_, err = Parse("1." + strings.Repeat("3", 62))
+	assert.NoError(t, err)
 }

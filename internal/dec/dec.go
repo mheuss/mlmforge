@@ -20,12 +20,18 @@ type Amount struct {
 
 var numberText = regexp.MustCompile(`^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$`)
 
+// maxTextLength bounds the text Parse reads, so the work per value stays small.
+const maxTextLength = 64
+
 // maxExponent bounds the written exponent, so a short input cannot stand for a
 // value with a vast number of digits.
 const maxExponent = 60
 
 // Parse reads plain decimal text such as "12.50" or "1e-7".
 func Parse(text string) (Amount, error) {
+	if len(text) > maxTextLength {
+		return Amount{}, fmt.Errorf("decimal text is %d bytes long; the limit is %d", len(text), maxTextLength)
+	}
 	if !numberText.MatchString(text) {
 		return Amount{}, fmt.Errorf("decimal %q: not a plain decimal number", text)
 	}

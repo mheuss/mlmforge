@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/mlmforge/mlmforge/internal/dec"
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -16,6 +17,16 @@ import (
 // It returns a slice of ValidationError for each schema violation found.
 // An empty slice means the document passed schema validation.
 func (p *Pipeline) validateSchema(yamlBytes []byte) []ValidationError {
+	// This decode must run before the node walk. It is what refuses an alias bomb.
+	var discard any
+	if err := yaml.Unmarshal(yamlBytes, &discard); err != nil {
+		return []ValidationError{{
+			Path:     "",
+			Code:     "yaml_parse_error",
+			Message:  err.Error(),
+			Severity: SeverityError,
+		}}
+	}
 	var root yaml.Node
 	if err := yaml.Unmarshal(yamlBytes, &root); err != nil {
 		return []ValidationError{{
@@ -184,11 +195,19 @@ func isMergeKey(k *yaml.Node) bool {
 // among merged mappings the first to supply a key wins.
 func (c *yamlConverter) mapping(n *yaml.Node, path string) map[string]any {
 	out := make(map[string]any, len(n.Content)/2)
+	c.fill(n, path, out)
+	return out
+}
+
+// fill adds each key of n that out does not already hold, then the keys of
+// n's merges.
+func (c *yamlConverter) fill(n *yaml.Node, path string, out map[string]any) {
+	seen := make(map[string]bool, len(n.Content)/2)
 	var merge *yaml.Node
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		k, v := n.Content[i], n.Content[i+1]
 		if !c.spend(k, path) {
-			return out
+			return
 		}
 		if isMergeKey(k) {
 			if merge != nil {
@@ -202,16 +221,36 @@ func (c *yamlConverter) mapping(n *yaml.Node, path string) map[string]any {
 		if !ok {
 			continue
 		}
-		if _, dup := out[key]; dup {
-			c.fail(k, path+"/"+key, "duplicate_key", fmt.Sprintf("mapping key %q appears more than once after conversion to JSON", key))
+		at := path + "/" + shortKey(key)
+		if seen[key] {
+			c.fail(k, at, "duplicate_key", fmt.Sprintf("mapping key %q appears more than once after conversion to JSON", shortKey(key)))
 			continue
 		}
-		out[key] = c.node(v, path+"/"+key)
+		seen[key] = true
+		value := c.node(v, at)
+		if _, exists := out[key]; !exists {
+			out[key] = value
+		}
 	}
 	if merge != nil {
 		c.merge(merge, path, out)
 	}
-	return out
+}
+
+// maxPathKey bounds how much of a key a path or message repeats.
+const maxPathKey = 64
+
+// shortKey cuts a long key to its first maxPathKey bytes, on a rune boundary,
+// and states the full length.
+func shortKey(key string) string {
+	if len(key) <= maxPathKey {
+		return key
+	}
+	cut := maxPathKey
+	for cut > 0 && !utf8.RuneStart(key[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s...(%d bytes)", key[:cut], len(key))
 }
 
 func (c *yamlConverter) merge(m *yaml.Node, path string, out map[string]any) {
@@ -238,11 +277,7 @@ func (c *yamlConverter) mergeOne(m *yaml.Node, path string, out map[string]any) 
 		return
 	}
 	apply := func(target *yaml.Node) any {
-		for k, v := range c.mapping(target, path) {
-			if _, exists := out[k]; !exists {
-				out[k] = v
-			}
-		}
+		c.fill(target, path, out)
 		return nil
 	}
 	if m.Kind == yaml.AliasNode {

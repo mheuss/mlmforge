@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -759,7 +760,7 @@ func TestYAMLDuplicateKeysThroughAliasesStopAtTheBudget(t *testing.T) {
 
 func TestYAMLBudgetErrorSurvivesANodeThatAlreadyFailed(t *testing.T) {
 	body := "x: &x .inf\nl1: &l1 [" + strings.Repeat("*x, ", 99) + "*x]\nl2: &l2 [" + strings.Repeat("*l1, ", 99) + "*l1]\nl3: [" + strings.Repeat("*l2, ", 99) + "*l2]\n"
-	for _, prefix := range []string{"", "w: 0\n"} {
+	for _, prefix := range []string{"", "w: [0]\n"} {
 		_, errs := convertYAML(t, prefix+body)
 		codes := make([]string, len(errs))
 		for i, e := range errs {
@@ -767,4 +768,68 @@ func TestYAMLBudgetErrorSurvivesANodeThatAlreadyFailed(t *testing.T) {
 		}
 		assert.Contains(t, codes, "document_too_large", "prefix %q", prefix)
 	}
+}
+
+func bytesAllocatedBy(f func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	f()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+func TestSchemaRefusesExcessiveAliasingBeforeConverting(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	src := "l0: &l0 [x, x, x, x, x, x, x, x, x, x]\n"
+	for i := 1; i <= 7; i++ {
+		prev := fmt.Sprintf("*l%d", i-1)
+		src += fmt.Sprintf("l%d: &l%d [%s%s]\n", i, i, strings.Repeat(prev+", ", 9), prev)
+	}
+
+	errs := p.validateSchema([]byte(src))
+
+	require.Len(t, errs, 1)
+	assert.Equal(t, "yaml_parse_error", errs[0].Code)
+	assert.Contains(t, errs[0].Message, "excessive aliasing")
+}
+
+func TestSchemaNestedMergeChainStaysSmall(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	keys := make([]string, 3000)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("k%d: 0", i)
+	}
+	src := "m: " + strings.Repeat("{<<: ", 3000) + "{" + strings.Join(keys, ", ") + "}" + strings.Repeat("}", 3000) + "\n"
+
+	allocated := bytesAllocatedBy(func() { p.validateSchema([]byte(src)) })
+
+	assert.Less(t, allocated, uint64(64<<20))
+}
+
+func TestSchemaAliasedLongNumberStaysSmall(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	src := "s: &s 1." + strings.Repeat("3", 20000) + "\nr: [" + strings.Repeat("*s, ", 299) + "*s]\n"
+
+	allocated := bytesAllocatedBy(func() { p.validateSchema([]byte(src)) })
+
+	assert.Less(t, allocated, uint64(64<<20))
+}
+
+func TestSchemaLongAliasKeyDoesNotRepeatInEveryError(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	src := "k: &k " + strings.Repeat("a", 20000) + "\nm:\n  *k : [" + strings.Repeat(".inf, ", 999) + ".inf]\n"
+
+	errs := p.validateSchema([]byte(src))
+
+	require.NotEmpty(t, errs)
+	var size int
+	for _, e := range errs {
+		size += len(e.Path) + len(e.Message)
+	}
+	assert.Less(t, size, 1<<20)
 }

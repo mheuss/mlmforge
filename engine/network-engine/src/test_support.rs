@@ -178,16 +178,20 @@ pub fn like<T: FromLiteral>(_like: &T, text: &str) -> T {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! assert_d {
-    ($actual:expr, $($literal:tt)+) => {{
+    (@check $actual:expr, $text:expr $(, $($message:tt)+)?) => {{
         let actual = &$actual;
         assert_eq!(
             actual,
-            &$crate::test_support::like(
-                actual,
-                &::std::stringify!($($literal)+).replace([' ', '_'], ""),
-            )
+            &$crate::test_support::like(actual, &$text.replace('_', ""))
+            $(, $($message)+)?
         );
     }};
+    ($actual:expr, - $literal:literal $(, $($message:tt)+)?) => {
+        $crate::assert_d!(@check $actual, ::std::concat!("-", ::std::stringify!($literal)) $(, $($message)+)?)
+    };
+    ($actual:expr, $literal:literal $(, $($message:tt)+)?) => {
+        $crate::assert_d!(@check $actual, ::std::stringify!($literal) $(, $($message)+)?)
+    };
 }
 
 #[cfg(test)]
@@ -203,6 +207,19 @@ mod tests {
     fn assert_d_panics_on_an_unequal_value() {
         let rate: f64 = 0.07;
         crate::assert_d!(rate, 0.08);
+    }
+
+    #[test]
+    fn assert_d_takes_a_negative_literal_and_a_message() {
+        let rate: f64 = -0.5;
+        crate::assert_d!(rate, -0.5, "rate for level {}", 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "rate for level 1")]
+    fn assert_d_reports_its_message_on_a_mismatch() {
+        let rate: f64 = 0.07;
+        crate::assert_d!(rate, 0.08, "rate for level {}", 1);
     }
 
     #[test]

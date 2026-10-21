@@ -493,6 +493,23 @@ Float addition depends on order. `(0.1 + 0.2) + 0.3` and `0.1 + (0.2 + 0.3)` giv
 
 The engine has to give the same `f64` bits from the same inputs. Go persists these values unrounded, so a different last bit is a different stored amount. (HEU-936)
 
+## A Tolerance On An `f64` Product Cannot Tell A Real Digit From Float Noise
+
+`0.29 * 100000.0` is `28999.999999999996`. Snapping a product like that to a decimal grid looks like the fix. It is not, because a snap needs a tolerance, and some real value always sits inside it.
+
+HEU-966 tried two tolerances and both withheld a rank that main awarded:
+
+- A gate of 8 × `f64::EPSILON` × the product snapped a real seventh decimal once the cap passed about 5.6e7.
+- Adding a 5e-8 ceiling still snapped real 8th and 9th decimals between about 1e6 and 1.5e8. `1.0 × 29000000.00000004` and `0.500000001 × 2000001` both ranked silver on main and associate with the gate.
+
+Tightening the tolerance only shrinks the window. The product alone does not carry the information.
+
+Multiply the decimals instead. `{:e}` gives each input's shortest round-trip decimal. Multiply the two mantissas as `u128`, add the exponents, and parse `<digits>e<exponent>` with `str::parse::<f64>`, which rounds correctly. Two mantissas of at most 17 digits multiply to under 1e34, so `u128` cannot overflow. Guard zero and non-finite inputs first, because `{:e}` prints `inf` and `NaN` with no exponent.
+
+That formatting costs about 250 ns per call. Compute the value once per request, not inside a per-distributor predicate.
+
+This holds until HEU-969 replaces `f64` for volume.
+
 ## `f64::min` Hides A NaN
 
 `f64::min` and `f64::max` return the other argument when one is NaN. So a clamp written as `leg.min(cap)` turns a NaN leg into exactly the cap. A rank that should fail can then pass.
@@ -600,6 +617,18 @@ If the worker enables `arbitrary_precision` or another number feature, rerun the
 So an engine guard that rejects non-finite and negative floats can only meet a finite negative value from Go, such as `-5.5`. Test NaN and infinity through the library `calculate_*` functions. Test a finite negative value through a contract fixture.
 
 `CalculationError` derives `PartialEq`. Some variants carry an `f64`. NaN is not equal to itself. `assert_eq!` can never match a variant holding NaN. Use `matches!` with `is_nan()`, or compare `to_bits()`.
+
+## `serde_json` Misreads Some 16- And 17-Digit Numbers
+
+The engine's `serde_json` has no `float_roundtrip` feature. Without it, serde_json parses a number by converting its significand to `f64` and then scaling by a power of ten. When the significand is above 2^53, that rounds twice.
+
+Measured 2026-10-21, 200,000 samples per digit count: 0 misreads up to 15 significant digits, 3.6% at 16 and 25% at 17. Each misread is one `f64` step.
+
+So a value the engine computes with correct rounding can differ by one step from the same value sent over the wire. HEU-966's adversarial review showed a fixed cap of `364953592.32720524` and a fraction cap of the same decimal giving different ranks. Turning on `float_roundtrip` removed every mismatch. It changes how every float on the protocol is parsed, so it is tracked as HEU-975, under HEU-969.
+
+Until then, a claim that two values agree "exactly" holds for values of up to 15 significant digits.
+
+This holds until HEU-969 replaces `f64` for volume.
 
 ## Worker Binary Freshness
 

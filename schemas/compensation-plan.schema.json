@@ -249,7 +249,7 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "The per-leg cap as a fraction of group_volume, in [0, 1]. 0, or an absent field, means no cap. Not set together with max_group_volume_per_leg."
+          "description": "The per-leg cap as a fraction of group_volume, in [0, 1]. For values of up to 15 significant digits, the resulting cap equals the fixed cap it stands for. 0, or an absent field, means no cap. Not set together with max_group_volume_per_leg."
         },
         "min_retail_volume": {
           "type": "number",

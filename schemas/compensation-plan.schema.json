@@ -249,7 +249,7 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "The per-leg cap as a fraction of group_volume, in [0, 1]. The engine removes float rounding error from the resulting cap. 0, or an absent field, means no cap. Not set together with max_group_volume_per_leg."
+          "description": "The per-leg cap as a fraction of group_volume, in [0, 1]. The engine removes float rounding error from a resulting cap with at most six decimal places. 0, or an absent field, means no cap. Not set together with max_group_volume_per_leg."
         },
         "min_retail_volume": {
           "type": "number",

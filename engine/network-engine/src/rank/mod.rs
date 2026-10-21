@@ -31,8 +31,11 @@ pub fn evaluate_ranks(
     ranks_sorted.sort_by_key(|r| r.ordinal);
     // Re-bind to owned RankDefinition slice for predicate lifetimes.
     // (RankDefinition is Clone via the derive on its fields.)
-    let ranks_owned: Vec<crate::config::rank::RankDefinition> =
+    let mut ranks_owned: Vec<crate::config::rank::RankDefinition> =
         ranks_sorted.iter().map(|r| (*r).clone()).collect();
+    // Resolve fraction caps once per evaluation. The exact product is too slow to compute
+    // per distributor.
+    predicates::resolve_fraction_caps(&mut ranks_owned);
 
     // BR9 empty-axis guard: a time gate cannot be evaluated without an axis.
     // If any rank above the lowest declares a window or tenure requirement but the caller

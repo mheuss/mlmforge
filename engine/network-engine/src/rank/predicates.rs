@@ -70,10 +70,26 @@ pub(crate) fn effective_leg_cap(sq: &StructureQualification) -> Option<f64> {
     if sq.max_group_volume_per_leg > 0.0 {
         return Some(sq.max_group_volume_per_leg);
     }
-    // Multiply the decimals the plan wrote, not their binary values, so that 0.29 of 100000
-    // is exactly 29000 rather than 28999.999999999996.
+    // Multiply the shortest decimals of the inputs, not their binary values, so that 0.29 of
+    // 100000 is exactly 29000 rather than 28999.999999999996.
     let cap = decimal_product(sq.max_group_volume_per_leg_fraction, sq.group_volume);
     (cap > 0.0).then_some(cap)
+}
+
+/// Replace each fraction cap in `ranks` with the fixed cap it resolves to.
+pub(crate) fn resolve_fraction_caps(ranks: &mut [RankDefinition]) {
+    for sq in ranks
+        .iter_mut()
+        .flat_map(|rank| rank.qualification.structures.iter_mut())
+    {
+        if sq.max_group_volume_per_leg > 0.0 {
+            continue;
+        }
+        if let Some(cap) = effective_leg_cap(sq) {
+            sq.max_group_volume_per_leg = cap;
+            sq.max_group_volume_per_leg_fraction = 0.0;
+        }
+    }
 }
 
 /// Return the f64 nearest the exact product of the shortest decimals `a` and `b` print as.
@@ -718,6 +734,14 @@ mod tests {
         assert_eq!(
             effective_leg_cap(&sq_with_caps(1e308, 0.0, 0.5)),
             Some(5e307)
+        );
+    }
+
+    #[test]
+    fn effective_leg_cap_gives_the_plain_product_for_an_infinite_group_volume() {
+        assert_eq!(
+            effective_leg_cap(&sq_with_caps(f64::INFINITY, 0.0, 0.5)),
+            Some(f64::INFINITY)
         );
     }
 
@@ -1383,6 +1407,47 @@ mod tests {
             qualified_structures: vec![structure.to_string()],
             demotion_policy: DemotionPolicy::PromotionOnly,
         }
+    }
+
+    fn rank_with_fraction_cap(gv: f64, fraction: f64) -> RankDefinition {
+        let mut rank = rank_with_pv_and_gv("silver", 1, "Test", 0.0, gv);
+        let sq = &mut rank.qualification.structures[0];
+        sq.max_group_volume_per_leg = 0.0;
+        sq.max_group_volume_per_leg_fraction = fraction;
+        rank
+    }
+
+    fn caps(rank: &RankDefinition) -> (f64, f64) {
+        let sq = &rank.qualification.structures[0];
+        (
+            sq.max_group_volume_per_leg,
+            sq.max_group_volume_per_leg_fraction,
+        )
+    }
+
+    #[test]
+    fn resolve_fraction_caps_turns_a_fraction_cap_into_its_fixed_cap() {
+        let mut ranks = vec![rank_with_fraction_cap(100000.0, 0.29)];
+        resolve_fraction_caps(&mut ranks);
+        assert_eq!(caps(&ranks[0]), (29000.0, 0.0));
+    }
+
+    #[test]
+    fn resolve_fraction_caps_leaves_a_fixed_cap_alone() {
+        let mut ranks = vec![rank_with_pv_and_gv("gold", 2, "Test", 0.0, 5000.0)];
+        resolve_fraction_caps(&mut ranks);
+        assert_eq!(caps(&ranks[0]), (50000.0, 0.0));
+    }
+
+    #[test]
+    fn resolve_fraction_caps_leaves_a_fraction_that_gives_no_cap_alone() {
+        let mut ranks = vec![rank_with_fraction_cap(0.0, 0.5)];
+        resolve_fraction_caps(&mut ranks);
+        assert_eq!(caps(&ranks[0]), (0.0, 0.5));
+        assert_eq!(
+            effective_leg_cap(&ranks[0].qualification.structures[0]),
+            None
+        );
     }
 
     #[test]

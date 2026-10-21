@@ -28,13 +28,15 @@ pub trait TreeNavigator {
     fn get_sponsor(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError>;
     fn get_sponsor_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError>;
     fn get_sponsored(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError>;
+    /// Returns every user ID placed in the tree.
+    fn user_ids(&self) -> Vec<Uuid>;
 }
 
 /// Generates the TreeNavigator trait implementation by delegating
 /// to the tree type's inherent methods.
 ///
-/// Every tree type has the same 13-method delegation. This macro
-/// eliminates the boilerplate per tree type.
+/// Every tree type has the same delegation. This macro eliminates the
+/// boilerplate per tree type.
 macro_rules! impl_tree_navigator {
     ($tree_type:ty) => {
         impl crate::tree::navigator::TreeNavigator for $tree_type {
@@ -85,6 +87,9 @@ macro_rules! impl_tree_navigator {
             fn get_sponsored(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
                 self.get_sponsored(user_id)
             }
+            fn user_ids(&self) -> Vec<Uuid> {
+                self.user_ids()
+            }
         }
     };
 }
@@ -111,6 +116,21 @@ mod tests {
         let children = nav.get_children(test_uuid(1)).unwrap();
         assert_eq!(children.len(), 1);
         assert_eq!(children[0].user_id, test_uuid(2));
+    }
+
+    #[test]
+    fn user_ids_lists_every_node_through_the_trait() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+
+        let nav: Box<dyn TreeNavigator> = Box::new(tree);
+        let mut ids = nav.user_ids();
+        ids.sort();
+        let mut expected = vec![test_uuid(1), test_uuid(2)];
+        expected.sort();
+        assert_eq!(ids, expected);
     }
 
     #[test]

@@ -581,6 +581,7 @@ impl CapsConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::d;
     use std::collections::BTreeMap;
     use std::num::NonZeroU32;
 
@@ -603,32 +604,32 @@ mod tests {
 
     #[test]
     fn fraction_accepts_bounds_and_rejects_out_of_range() {
-        assert!(check_fraction("f", 0.0).is_ok());
-        assert!(check_fraction("f", 1.0).is_ok());
-        assert!(check_fraction("f", 0.5).is_ok());
-        assert!(check_fraction("f", -0.01).is_err());
-        assert!(check_fraction("f", 1.01).is_err());
+        assert!(check_fraction("f", d!(0.0)).is_ok());
+        assert!(check_fraction("f", d!(1.0)).is_ok());
+        assert!(check_fraction("f", d!(0.5)).is_ok());
+        assert!(check_fraction("f", d!(-0.01)).is_err());
+        assert!(check_fraction("f", d!(1.01)).is_err());
         assert!(check_fraction("f", f64::NAN).is_err());
         assert!(check_fraction("f", f64::INFINITY).is_err());
     }
 
     #[test]
     fn positive_rejects_zero_negative_and_nonfinite() {
-        assert!(check_positive("m", 0.001).is_ok());
-        assert!(check_positive("m", 0.0).is_err());
-        assert!(check_positive("m", -1.0).is_err());
+        assert!(check_positive("m", d!(0.001)).is_ok());
+        assert!(check_positive("m", d!(0.0)).is_err());
+        assert!(check_positive("m", d!(-1.0)).is_err());
         assert!(check_positive("m", f64::NAN).is_err());
     }
 
     #[test]
     fn non_negative_allows_zero_but_not_negative() {
-        assert!(check_min_override(&MinOverride::Currency { value: 250.0 }).is_ok());
-        assert!(check_min_override(&MinOverride::Rate { value: 1.5 }).is_err());
-        assert!(check_min_override(&MinOverride::Currency { value: -1.0 }).is_err());
-        assert!(check_min_override(&MinOverride::Rate { value: 0.02 }).is_ok());
-        assert!(check_non_negative("c", 0.0).is_ok());
-        assert!(check_non_negative("c", 10.0).is_ok());
-        assert!(check_non_negative("c", -0.01).is_err());
+        assert!(check_min_override(&MinOverride::Currency { value: d!(250.0) }).is_ok());
+        assert!(check_min_override(&MinOverride::Rate { value: d!(1.5) }).is_err());
+        assert!(check_min_override(&MinOverride::Currency { value: d!(-1.0) }).is_err());
+        assert!(check_min_override(&MinOverride::Rate { value: d!(0.02) }).is_ok());
+        assert!(check_non_negative("c", d!(0.0)).is_ok());
+        assert!(check_non_negative("c", d!(10.0)).is_ok());
+        assert!(check_non_negative("c", d!(-0.01)).is_err());
         assert!(check_non_negative("c", f64::INFINITY).is_err());
     }
 
@@ -636,8 +637,8 @@ mod tests {
     fn optional_positive_treats_none_as_absent() {
         // The critical null-multiplier rule: None must pass.
         assert!(check_optional_positive("m", None).is_ok());
-        assert!(check_optional_positive("m", Some(1.0)).is_ok());
-        assert!(check_optional_positive("m", Some(0.0)).is_err());
+        assert!(check_optional_positive("m", Some(d!(1.0))).is_ok());
+        assert!(check_optional_positive("m", Some(d!(0.0))).is_err());
     }
 
     // --- representative type validators ---
@@ -657,28 +658,36 @@ mod tests {
 
     #[test]
     fn level_commission_happy_path() {
-        assert!(level_config(0.40, None, 0.05).validate().is_ok());
-        assert!(level_config(0.40, Some(1.0), 0.05).validate().is_ok());
+        assert!(level_config(d!(0.40), None, d!(0.05)).validate().is_ok());
+        assert!(
+            level_config(d!(0.40), Some(d!(1.0)), d!(0.05))
+                .validate()
+                .is_ok()
+        );
     }
 
     #[test]
     fn level_commission_rejects_bad_broad_percent() {
-        assert!(level_config(1.5, None, 0.05).validate().is_err());
+        assert!(level_config(d!(1.5), None, d!(0.05)).validate().is_err());
     }
 
     #[test]
     fn level_commission_rejects_bad_rate_table_value() {
-        assert!(level_config(0.40, None, 1.5).validate().is_err());
+        assert!(level_config(d!(0.40), None, d!(1.5)).validate().is_err());
     }
 
     #[test]
     fn level_commission_rejects_zero_multiplier() {
-        assert!(level_config(0.40, Some(0.0), 0.05).validate().is_err());
+        assert!(
+            level_config(d!(0.40), Some(d!(0.0)), d!(0.05))
+                .validate()
+                .is_err()
+        );
     }
 
     #[test]
     fn level_commission_rejects_zero_depth() {
-        let mut config = level_config(0.40, None, 0.05);
+        let mut config = level_config(d!(0.40), None, d!(0.05));
         config.max_depth = 0;
         assert!(config.validate().is_err());
     }
@@ -687,7 +696,7 @@ mod tests {
         GenerationCommissionConfig {
             max_generations,
             max_generations_per_rank: BTreeMap::new(),
-            rates: BTreeMap::from([(1u8, 0.10)]),
+            rates: BTreeMap::from([(1u8, d!(0.10))]),
             boundary_mode: GenerationBoundaryMode::ThresholdRank,
             boundary_rank: "Silver".to_string(),
             empty_generation_consumes_number: false,
@@ -767,13 +776,13 @@ mod tests {
             levels: vec![StreamlineLevel {
                 level: 1,
                 min_rank: "associate".to_string(),
-                percent: 0.1,
+                percent: d!(0.1),
             }],
             stream_config: None,
         };
         assert!(config.validate().is_ok());
 
-        config.levels[0].percent = 5.0; // whole-number percent — rejected
+        config.levels[0].percent = d!(5.0); // whole-number percent — rejected
         assert!(config.validate().is_err());
     }
 
@@ -788,7 +797,7 @@ mod tests {
                 .map(|l| StreamlineLevel {
                     level: *l,
                     min_rank: "associate".to_string(),
-                    percent: 0.1,
+                    percent: d!(0.1),
                 })
                 .collect(),
             stream_config: None,
@@ -895,7 +904,7 @@ mod tests {
         let tiers: Vec<BreakawayTier> = (0..256)
             .map(|_| BreakawayTier {
                 min_split_out_groups: 1,
-                rate: 0.05,
+                rate: d!(0.05),
             })
             .collect();
         assert!(multi_tier_breakaway(tiers).validate().is_err());
@@ -906,7 +915,7 @@ mod tests {
         let tiers: Vec<BreakawayTier> = (0..255)
             .map(|_| BreakawayTier {
                 min_split_out_groups: 1,
-                rate: 0.05,
+                rate: d!(0.05),
             })
             .collect();
         assert!(multi_tier_breakaway(tiers).validate().is_ok());
@@ -916,7 +925,7 @@ mod tests {
     fn multi_tier_rejects_bad_tier_rate() {
         let tiers = vec![BreakawayTier {
             min_split_out_groups: 1,
-            rate: 2.0,
+            rate: d!(2.0),
         }];
         assert!(multi_tier_breakaway(tiers).validate().is_err());
     }
@@ -926,11 +935,11 @@ mod tests {
         let mut v = VolumeConfig {
             inhibit_signup_volume: false,
             base_currency: "USD".to_string(),
-            volume_to_dollar_multiplier: 1.0,
+            volume_to_dollar_multiplier: d!(1.0),
             deduct_qualifying_volume: false,
         };
         assert!(v.validate().is_ok());
-        v.volume_to_dollar_multiplier = 0.0;
+        v.volume_to_dollar_multiplier = d!(0.0);
         assert!(v.validate().is_err());
     }
 
@@ -938,35 +947,38 @@ mod tests {
     fn caps_percent_is_a_fraction() {
         let mut caps = CapsConfig {
             per_distributor_cap: None,
-            company_payout_cap_percent: 0.42,
+            company_payout_cap_percent: d!(0.42),
             enforcement: CapEnforcement::ProRata,
             enable_clawback: false,
         };
         assert!(caps.validate().is_ok());
-        caps.company_payout_cap_percent = 1.5;
+        caps.company_payout_cap_percent = d!(1.5);
         assert!(caps.validate().is_err());
     }
 
     #[test]
     fn pairing_percent_is_a_fraction() {
         let ok = PairingConfig {
-            percent: 0.10,
+            percent: d!(0.10),
             calculation: PairingCalculation::WeakerLeg,
-            cap_per_period: Some(1000.0),
+            cap_per_period: Some(d!(1000.0)),
             volume_after_payout: VolumeAfterPayout::CarryForward,
             carry_forward_cap: None,
             multi_position_cap_mode: Default::default(),
         };
         assert!(ok.validate().is_ok());
 
-        let bad = PairingConfig { percent: 1.2, ..ok };
+        let bad = PairingConfig {
+            percent: d!(1.2),
+            ..ok
+        };
         assert!(bad.validate().is_err());
     }
 
     #[test]
     fn board_cycle_commission_must_be_non_negative() {
         let ok = BoardPlanConfig {
-            cycle_commission: 500.0,
+            cycle_commission: d!(500.0),
             re_entry_enabled: true,
             re_entry_position: ReEntryPosition::Bottom,
             max_cycles_per_period: 3,
@@ -977,7 +989,7 @@ mod tests {
         assert!(ok.validate().is_ok());
 
         let negative = BoardPlanConfig {
-            cycle_commission: -1.0,
+            cycle_commission: d!(-1.0),
             ..ok
         };
         assert!(negative.validate().is_err());
@@ -987,7 +999,7 @@ mod tests {
 
     fn test_eligibility() -> CommissionEligibility {
         CommissionEligibility {
-            minimum_pv: 100.0,
+            minimum_pv: d!(100.0),
             require_order_in_period: false,
             eligible_statuses: vec!["active".to_string()],
             active_leg_tiers: vec![],
@@ -1003,7 +1015,7 @@ mod tests {
                 levels: vec![StreamlineLevel {
                     level: 1,
                     min_rank: "associate".to_string(),
-                    percent: 0.1,
+                    percent: d!(0.1),
                 }],
                 stream_config: None,
             },
@@ -1013,7 +1025,7 @@ mod tests {
     fn named_unilevel(name: &str) -> StructureConfig {
         StructureConfig::Unilevel(UnilevelStructureConfig {
             name: name.to_string(),
-            level_commission: level_config(0.40, None, 0.05),
+            level_commission: level_config(d!(0.40), None, d!(0.05)),
             compression: None,
             pass_up: None,
         })
@@ -1063,7 +1075,7 @@ mod tests {
         let mut plan = plan_with_structures(vec![named_generation(
             "gen",
             false,
-            Some(level_config(0.40, None, 0.05)),
+            Some(level_config(d!(0.40), None, d!(0.05))),
         )]);
         assert_eq!(plan.validate(), Ok(()));
     }
@@ -1073,7 +1085,7 @@ mod tests {
         let mut plan = plan_with_structures(vec![named_generation(
             "gen",
             false,
-            Some(level_config(1.5, None, 0.05)),
+            Some(level_config(d!(1.5), None, d!(0.05))),
         )]);
         assert!(plan.validate().is_err());
     }
@@ -1083,7 +1095,7 @@ mod tests {
         let mut plan = plan_with_structures(vec![named_generation(
             "gen",
             true,
-            Some(level_config(0.40, None, 0.05)),
+            Some(level_config(d!(0.40), None, d!(0.05))),
         )]);
         assert_eq!(plan.validate(), Ok(()));
     }
@@ -1155,11 +1167,11 @@ mod tests {
     fn zero_threshold(structure: &str) -> crate::config::rank::StructureQualification {
         crate::config::rank::StructureQualification {
             structure: structure.to_string(),
-            personal_volume: 0.0,
-            group_volume: 0.0,
-            max_group_volume_per_leg: 0.0,
-            max_group_volume_per_leg_fraction: 0.0,
-            min_retail_volume: 0.0,
+            personal_volume: d!(0.0),
+            group_volume: d!(0.0),
+            max_group_volume_per_leg: d!(0.0),
+            max_group_volume_per_leg_fraction: d!(0.0),
+            min_retail_volume: d!(0.0),
             distributor_count: None,
             leg_quality: vec![],
         }
@@ -1182,7 +1194,7 @@ mod tests {
     fn plan_accepts_a_per_leg_cap_on_the_base_rank() {
         let mut plan = plan_with_two_ranks();
         let mut entry = zero_threshold("main");
-        entry.max_group_volume_per_leg = 500.0;
+        entry.max_group_volume_per_leg = d!(500.0);
         plan.ranks[0].qualification.structures = vec![entry];
         assert!(plan.validate().is_ok());
     }
@@ -1196,15 +1208,15 @@ mod tests {
         type Mutate = fn(&mut RankDefinition);
         let cases: Vec<(Mutate, &str)> = vec![
             (
-                |r| r.qualification.structures[0].personal_volume = 50.0,
+                |r| r.qualification.structures[0].personal_volume = d!(50.0),
                 "sets personal_volume 50 on structure 'main'",
             ),
             (
-                |r| r.qualification.structures[0].group_volume = 1000.0,
+                |r| r.qualification.structures[0].group_volume = d!(1000.0),
                 "sets group_volume 1000 on structure 'main'",
             ),
             (
-                |r| r.qualification.structures[0].min_retail_volume = 10.0,
+                |r| r.qualification.structures[0].min_retail_volume = d!(10.0),
                 "sets min_retail_volume 10 on structure 'main'",
             ),
             (
@@ -1220,7 +1232,7 @@ mod tests {
                             search_mode: SearchMode::AnyLevel,
                             search_depth: None,
                             total_count: 1,
-                            min_leg_group_volume: 0.0,
+                            min_leg_group_volume: d!(0.0),
                         })
                 },
                 "sets distributor_count on structure 'main'",
@@ -1230,7 +1242,7 @@ mod tests {
                     r.qualification.structures[0].leg_quality = vec![LegQualityRequirement {
                         count: 1,
                         predicate: LegPredicate::ContainsPersonalVolume {
-                            min_personal_volume: 100.0,
+                            min_personal_volume: d!(100.0),
                         },
                     }]
                 },
@@ -1278,7 +1290,7 @@ mod tests {
         let mut plan = plan_with_two_ranks();
         plan.ranks.swap(0, 1);
         let mut entry = zero_threshold("main");
-        entry.personal_volume = 50.0;
+        entry.personal_volume = d!(50.0);
         plan.ranks[1].qualification.structures = vec![entry];
         let err = plan.validate().unwrap_err();
         assert!(
@@ -1290,7 +1302,7 @@ mod tests {
     #[test]
     fn plan_takes_the_first_of_tied_lowest_ordinals_as_the_base() {
         let mut entry = zero_threshold("main");
-        entry.personal_volume = 50.0;
+        entry.personal_volume = d!(50.0);
 
         let mut second_tied = plan_with_two_ranks();
         second_tied.ranks[1].ordinal = 1;
@@ -1311,7 +1323,7 @@ mod tests {
     fn plan_rejects_a_requirement_on_any_base_rank_structure_entry() {
         let mut plan = plan_with_two_ranks();
         let mut second = zero_threshold("second");
-        second.personal_volume = 5.0;
+        second.personal_volume = d!(5.0);
         plan.ranks[0].qualification.structures = vec![zero_threshold("main"), second];
         let err = plan.validate().unwrap_err();
         assert!(
@@ -1325,7 +1337,7 @@ mod tests {
         let mut plan = plan_with_two_ranks();
         plan.ranks.swap(0, 1);
         let mut entry = zero_threshold("main");
-        entry.personal_volume = 100.0;
+        entry.personal_volume = d!(100.0);
         plan.ranks[0].qualification.structures = vec![entry];
         assert!(plan.validate().is_ok());
     }
@@ -1335,7 +1347,7 @@ mod tests {
     #[test]
     fn plan_rejects_a_per_leg_cap_that_is_negative_or_not_finite() {
         for (value, shown) in [
-            (-1.0, "-1"),
+            (d!(-1.0), "-1"),
             (f64::NAN, "NaN"),
             (f64::INFINITY, "inf"),
             (f64::NEG_INFINITY, "-inf"),
@@ -1356,7 +1368,7 @@ mod tests {
     fn plan_rejects_a_negative_per_leg_cap_on_a_later_structure_entry() {
         let mut plan = plan_with_two_ranks();
         let mut second = zero_threshold("second");
-        second.max_group_volume_per_leg = -1.0;
+        second.max_group_volume_per_leg = d!(-1.0);
         plan.ranks[1].qualification.structures = vec![zero_threshold("main"), second];
         let err = plan.validate().unwrap_err();
         assert!(
@@ -1369,7 +1381,7 @@ mod tests {
     fn plan_rejects_a_negative_per_leg_cap_on_the_base_rank() {
         let mut plan = plan_with_two_ranks();
         let mut entry = zero_threshold("main");
-        entry.max_group_volume_per_leg = -1.0;
+        entry.max_group_volume_per_leg = d!(-1.0);
         plan.ranks[0].qualification.structures = vec![entry];
         let err = plan.validate().unwrap_err();
         assert!(
@@ -1381,8 +1393,8 @@ mod tests {
     #[test]
     fn plan_rejects_a_per_leg_cap_fraction_outside_zero_to_one_or_not_finite() {
         for (value, shown) in [
-            (-0.1, "-0.1"),
-            (1.1, "1.1"),
+            (d!(-0.1), "-0.1"),
+            (d!(1.1), "1.1"),
             (f64::NAN, "NaN"),
             (f64::INFINITY, "inf"),
         ] {
@@ -1400,7 +1412,7 @@ mod tests {
 
     #[test]
     fn plan_accepts_a_per_leg_cap_fraction_from_zero_to_one() {
-        for value in [0.0, 0.6, 1.0] {
+        for value in [d!(0.0), d!(0.6), d!(1.0)] {
             let mut plan = plan_with_two_ranks();
             let mut entry = zero_threshold("main");
             entry.max_group_volume_per_leg_fraction = value;
@@ -1413,7 +1425,7 @@ mod tests {
     fn plan_accepts_a_per_leg_cap_fraction_on_the_base_rank() {
         let mut plan = plan_with_two_ranks();
         let mut entry = zero_threshold("main");
-        entry.max_group_volume_per_leg_fraction = 0.5;
+        entry.max_group_volume_per_leg_fraction = d!(0.5);
         plan.ranks[0].qualification.structures = vec![entry];
         assert!(plan.validate().is_ok());
     }
@@ -1422,8 +1434,8 @@ mod tests {
     fn plan_rejects_both_per_leg_caps_set() {
         let mut plan = plan_with_two_ranks();
         let mut entry = zero_threshold("main");
-        entry.max_group_volume_per_leg = 6000.0;
-        entry.max_group_volume_per_leg_fraction = 0.6;
+        entry.max_group_volume_per_leg = d!(6000.0);
+        entry.max_group_volume_per_leg_fraction = d!(0.6);
         plan.ranks[1].qualification.structures = vec![entry];
         let err = plan.validate().unwrap_err();
         assert!(

@@ -114,6 +114,7 @@ pub enum GenerationBoundaryMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{assert_d, d};
 
     #[test]
     fn deserialize_generation_config_threshold() {
@@ -133,17 +134,17 @@ mod tests {
         let config: GenerationCommissionConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.max_generations, 4);
         assert_eq!(config.rates.len(), 4);
-        assert_eq!(config.rates[&1], 0.10);
-        assert_eq!(config.rates[&2], 0.06);
-        assert_eq!(config.rates[&3], 0.04);
-        assert_eq!(config.rates[&4], 0.02);
+        assert_d!(config.rates[&1], 0.10);
+        assert_d!(config.rates[&2], 0.06);
+        assert_d!(config.rates[&3], 0.04);
+        assert_d!(config.rates[&4], 0.02);
         assert!(matches!(
             config.boundary_mode,
             GenerationBoundaryMode::ThresholdRank
         ));
         assert_eq!(config.boundary_rank, "director");
         assert!(config.empty_generation_consumes_number);
-        assert_eq!(config.volume_to_dollar_multiplier, Some(1.25));
+        assert_eq!(config.volume_to_dollar_multiplier, Some(d!(1.25)));
         assert!(config.ineligible_creates_boundary);
     }
 
@@ -164,9 +165,9 @@ mod tests {
         let config: GenerationCommissionConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.max_generations, 3);
         assert_eq!(config.rates.len(), 3);
-        assert_eq!(config.rates[&1], 0.08);
-        assert_eq!(config.rates[&2], 0.05);
-        assert_eq!(config.rates[&3], 0.03);
+        assert_d!(config.rates[&1], 0.08);
+        assert_d!(config.rates[&2], 0.05);
+        assert_d!(config.rates[&3], 0.03);
         assert!(matches!(
             config.boundary_mode,
             GenerationBoundaryMode::SameRank
@@ -289,7 +290,7 @@ mod tests {
         let original = GenerationCommissionConfig {
             max_generations: 4,
             max_generations_per_rank: per_rank,
-            rates: BTreeMap::from([(1u8, 0.10)]),
+            rates: BTreeMap::from([(1u8, d!(0.10))]),
             boundary_mode: GenerationBoundaryMode::ThresholdRank,
             boundary_rank: "director".to_string(),
             empty_generation_consumes_number: false,

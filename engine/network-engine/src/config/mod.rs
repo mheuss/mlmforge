@@ -316,6 +316,7 @@ pub struct BoardPlanStructureConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{assert_d, d};
 
     /// A structure whose `config` key precedes its `type` key must still
     /// deserialize. Sorted-key input takes serde's `Content` buffer, which
@@ -340,7 +341,7 @@ mod tests {
             serde_json::from_str(json).expect("config-before-type must parse");
         match parsed {
             StructureConfig::Unilevel(u) => {
-                assert_eq!(u.level_commission.rate_table["member"][&1], 0.05);
+                assert_d!(u.level_commission.rate_table["member"][&1], 0.05);
             }
             other => panic!("expected unilevel, got {other:?}"),
         }
@@ -373,8 +374,8 @@ mod tests {
             serde_json::from_str(json).expect("config-before-type must parse");
         match parsed {
             StructureConfig::Generation(g) => {
-                assert_eq!(g.generation_commission.rates[&1], 0.10);
-                assert_eq!(g.generation_commission.rates[&2], 0.06);
+                assert_d!(g.generation_commission.rates[&1], 0.10);
+                assert_d!(g.generation_commission.rates[&2], 0.06);
             }
             other => panic!("expected generation, got {other:?}"),
         }
@@ -826,7 +827,7 @@ mod tests {
         match &plan.structures[0] {
             StructureConfig::Unilevel(uni) => {
                 assert_eq!(uni.name, "Primary Unilevel");
-                assert_eq!(uni.level_commission.broad_commission_percent, 0.40);
+                assert_d!(uni.level_commission.broad_commission_percent, 0.40);
                 assert_eq!(uni.level_commission.max_depth, 7);
                 assert_eq!(uni.level_commission.rate_table.len(), 3);
                 assert!(uni.compression.is_some());
@@ -840,7 +841,7 @@ mod tests {
         // Volume
         assert!(!plan.volume.inhibit_signup_volume);
         assert_eq!(plan.volume.base_currency, "USD");
-        assert_eq!(plan.volume.volume_to_dollar_multiplier, 1.0);
+        assert_d!(plan.volume.volume_to_dollar_multiplier, 1.0);
 
         // Ranks
         assert_eq!(plan.ranks.len(), 3);
@@ -859,7 +860,7 @@ mod tests {
         assert!(!plan.rank_features.overrides_enabled);
 
         // Eligibility
-        assert_eq!(plan.eligibility.minimum_pv, 100.0);
+        assert_d!(plan.eligibility.minimum_pv, 100.0);
         assert!(plan.eligibility.require_order_in_period);
         assert_eq!(plan.eligibility.eligible_statuses, vec!["active", "grace"]);
         assert_eq!(plan.eligibility.active_leg_tiers.len(), 3);
@@ -874,13 +875,13 @@ mod tests {
 
         // Payout
         assert_eq!(plan.payout.currency, "USD");
-        assert_eq!(plan.payout.minimum_payout, 50.0);
+        assert_d!(plan.payout.minimum_payout, 50.0);
         assert!(plan.payout.allow_partial_payout);
         assert_eq!(plan.payout.payment_methods.len(), 2);
 
         // Caps
-        assert_eq!(plan.caps.per_distributor_cap, Some(10000.0));
-        assert_eq!(plan.caps.company_payout_cap_percent, 0.42);
+        assert_eq!(plan.caps.per_distributor_cap, Some(d!(10000.0)));
+        assert_d!(plan.caps.company_payout_cap_percent, 0.42);
         assert!(!plan.caps.enable_clawback);
 
         // Placement
@@ -914,7 +915,7 @@ mod tests {
                 assert_eq!(bp.name, "Sales Board");
                 assert_eq!(bp.width, 2);
                 assert_eq!(bp.height, 2);
-                assert_eq!(bp.board_cycling.cycle_commission, 500.0);
+                assert_d!(bp.board_cycling.cycle_commission, 500.0);
                 assert!(bp.board_cycling.re_entry_enabled);
                 assert_eq!(bp.board_cycling.re_entry_position, ReEntryPosition::Bottom);
                 assert_eq!(bp.board_cycling.max_cycles_per_period, 5);

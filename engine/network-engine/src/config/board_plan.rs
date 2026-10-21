@@ -55,6 +55,7 @@ fn default_max_cascade_depth() -> NonZeroU32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assert_d;
 
     #[test]
     fn deserialize_board_plan_config() {
@@ -68,7 +69,7 @@ mod tests {
             "inactive_compression": true
         }"#;
         let config: BoardPlanConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.cycle_commission, 500.0);
+        assert_d!(config.cycle_commission, 500.0);
         assert!(config.re_entry_enabled);
         assert!(matches!(
             config.re_entry_position,

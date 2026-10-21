@@ -340,6 +340,7 @@ impl From<BreakawayConfig> for BreakawayConfigWire {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{assert_d, d};
 
     #[test]
     fn differential_rejects_a_bare_min_override() {
@@ -362,7 +363,7 @@ mod tests {
             "min_override": {"type": "currency", "value": 10.0}
         }"#;
         let cfg: DifferentialConfig = serde_json::from_str(json).expect("deserialize");
-        assert_eq!(cfg.min_override, MinOverride::Currency { value: 10.0 });
+        assert_eq!(cfg.min_override, MinOverride::Currency { value: d!(10.0) });
     }
 
     #[test]
@@ -407,7 +408,7 @@ mod tests {
         match cfg.overrides {
             OverrideStrategy::SingleWalk { mode, .. } => match mode {
                 OverrideMode::Differential(diff) => {
-                    assert_eq!(diff.min_override, MinOverride::Currency { value: 10.0 });
+                    assert_eq!(diff.min_override, MinOverride::Currency { value: d!(10.0) });
                 }
                 OverrideMode::FixedOverride(_) => panic!("expected differential"),
             },
@@ -459,17 +460,17 @@ mod tests {
             OverrideMode::FixedOverride(_) => panic!("expected Differential"),
         };
         assert_eq!(diff.rank_rates.len(), 3);
-        assert_eq!(diff.rank_rates["director"], 0.10);
-        assert_eq!(diff.rank_rates["senior_director"], 0.15);
-        assert_eq!(diff.rank_rates["executive"], 0.20);
-        assert_eq!(diff.min_override, MinOverride::Rate { value: 0.02 });
+        assert_d!(diff.rank_rates["director"], 0.10);
+        assert_d!(diff.rank_rates["senior_director"], 0.15);
+        assert_d!(diff.rank_rates["executive"], 0.20);
+        assert_eq!(diff.min_override, MinOverride::Rate { value: d!(0.02) });
 
         let gen_cfg = generation_overrides.as_ref().unwrap();
         assert_eq!(gen_cfg.max_generations, 3);
         assert_eq!(gen_cfg.rates.len(), 3);
-        assert_eq!(gen_cfg.rates[&1], 0.05);
-        assert_eq!(gen_cfg.rates[&2], 0.03);
-        assert_eq!(gen_cfg.rates[&3], 0.01);
+        assert_d!(gen_cfg.rates[&1], 0.05);
+        assert_d!(gen_cfg.rates[&2], 0.03);
+        assert_d!(gen_cfg.rates[&3], 0.01);
         assert_eq!(gen_cfg.boundary_rank, "director");
     }
 
@@ -497,11 +498,11 @@ mod tests {
         }"#;
         let config: DifferentialConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.rank_rates.len(), 4);
-        assert_eq!(config.rank_rates["silver"], 0.08);
-        assert_eq!(config.rank_rates["gold"], 0.12);
-        assert_eq!(config.rank_rates["platinum"], 0.18);
-        assert_eq!(config.rank_rates["diamond"], 0.25);
-        assert_eq!(config.min_override, MinOverride::Rate { value: 0.01 });
+        assert_d!(config.rank_rates["silver"], 0.08);
+        assert_d!(config.rank_rates["gold"], 0.12);
+        assert_d!(config.rank_rates["platinum"], 0.18);
+        assert_d!(config.rank_rates["diamond"], 0.25);
+        assert_eq!(config.min_override, MinOverride::Rate { value: d!(0.01) });
     }
 
     #[test]
@@ -519,10 +520,10 @@ mod tests {
         let config: BreakawayGenerationConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.max_generations, 5);
         assert_eq!(config.rates.len(), 4);
-        assert_eq!(config.rates[&1], 0.06);
-        assert_eq!(config.rates[&2], 0.04);
-        assert_eq!(config.rates[&3], 0.02);
-        assert_eq!(config.rates[&5], 0.01);
+        assert_d!(config.rates[&1], 0.06);
+        assert_d!(config.rates[&2], 0.04);
+        assert_d!(config.rates[&3], 0.02);
+        assert_d!(config.rates[&5], 0.01);
         assert_eq!(config.boundary_rank, "senior_director");
     }
 
@@ -559,8 +560,8 @@ mod tests {
             OverrideMode::Differential(_) => panic!("expected FixedOverride"),
         };
         assert_eq!(fixed.rank_rates.len(), 2);
-        assert_eq!(fixed.rank_rates["director"], 0.05);
-        assert_eq!(fixed.rank_rates["senior_director"], 0.08);
+        assert_d!(fixed.rank_rates["director"], 0.05);
+        assert_d!(fixed.rank_rates["senior_director"], 0.08);
         assert!(generation_overrides.is_none());
     }
 
@@ -571,8 +572,8 @@ mod tests {
             exclude_breakaway_gv: true,
             overrides: OverrideStrategy::SingleWalk {
                 mode: OverrideMode::Differential(DifferentialConfig {
-                    rank_rates: BTreeMap::from([("director".to_string(), 0.10)]),
-                    min_override: MinOverride::Rate { value: 0.02 },
+                    rank_rates: BTreeMap::from([("director".to_string(), d!(0.10))]),
+                    min_override: MinOverride::Rate { value: d!(0.02) },
                 }),
                 generation_overrides: None,
             },
@@ -599,7 +600,7 @@ mod tests {
             exclude_breakaway_gv: false,
             overrides: OverrideStrategy::SingleWalk {
                 mode: OverrideMode::FixedOverride(FixedOverrideConfig {
-                    rank_rates: BTreeMap::from([("director".to_string(), 0.05)]),
+                    rank_rates: BTreeMap::from([("director".to_string(), d!(0.05))]),
                 }),
                 generation_overrides: None,
             },
@@ -699,9 +700,9 @@ mod tests {
         }"#;
         let config: FixedOverrideConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.rank_rates.len(), 3);
-        assert_eq!(config.rank_rates["director"], 0.05);
-        assert_eq!(config.rank_rates["senior_director"], 0.08);
-        assert_eq!(config.rank_rates["executive"], 0.12);
+        assert_d!(config.rank_rates["director"], 0.05);
+        assert_d!(config.rank_rates["senior_director"], 0.08);
+        assert_d!(config.rank_rates["executive"], 0.12);
     }
 
     #[test]
@@ -727,9 +728,9 @@ mod tests {
         };
         assert_eq!(tiers.len(), 2);
         assert_eq!(tiers[0].min_split_out_groups, 1);
-        assert_eq!(tiers[0].rate, 0.05);
+        assert_d!(tiers[0].rate, 0.05);
         assert_eq!(tiers[1].min_split_out_groups, 2);
-        assert_eq!(tiers[1].rate, 0.02);
+        assert_d!(tiers[1].rate, 0.02);
 
         // Round-trip: serialize then deserialize again, expect the same shape.
         let serialized = serde_json::to_string(&config).unwrap();
@@ -740,9 +741,9 @@ mod tests {
         };
         assert_eq!(restored_tiers.len(), 2);
         assert_eq!(restored_tiers[0].min_split_out_groups, 1);
-        assert_eq!(restored_tiers[0].rate, 0.05);
+        assert_d!(restored_tiers[0].rate, 0.05);
         assert_eq!(restored_tiers[1].min_split_out_groups, 2);
-        assert_eq!(restored_tiers[1].rate, 0.02);
+        assert_d!(restored_tiers[1].rate, 0.02);
     }
 
     #[test]
@@ -771,8 +772,8 @@ mod tests {
             OverrideMode::Differential(d) => d,
             OverrideMode::FixedOverride(_) => panic!("expected Differential"),
         };
-        assert_eq!(diff.rank_rates["director"], 0.10);
-        assert_eq!(diff.min_override, MinOverride::Rate { value: 0.02 });
+        assert_d!(diff.rank_rates["director"], 0.10);
+        assert_eq!(diff.min_override, MinOverride::Rate { value: d!(0.02) });
 
         // Round-trip: serialize then deserialize again, expect the same shape.
         let serialized = serde_json::to_string(&config).unwrap();
@@ -812,7 +813,7 @@ mod tests {
         };
         assert_eq!(tiers.len(), 2);
         assert_eq!(tiers[0].min_split_out_groups, 1);
-        assert_eq!(tiers[1].rate, 0.02);
+        assert_d!(tiers[1].rate, 0.02);
 
         let single_walk_go = r#"{
             "threshold_rank": "director",
@@ -837,8 +838,8 @@ mod tests {
         let OverrideMode::Differential(diff) = mode else {
             panic!("expected Differential override mode");
         };
-        assert_eq!(diff.rank_rates["director"], 0.10);
-        assert_eq!(diff.min_override, MinOverride::Rate { value: 0.02 });
+        assert_d!(diff.rank_rates["director"], 0.10);
+        assert_eq!(diff.min_override, MinOverride::Rate { value: d!(0.02) });
     }
 
     #[test]

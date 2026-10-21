@@ -142,6 +142,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assert_d;
     use serde::Deserialize;
 
     // `Debug` is required: `unwrap_err()` formats the success type.
@@ -169,8 +170,8 @@ mod tests {
     #[test]
     fn flat_map_parses_string_keys() {
         let v: Flat = serde_json::from_str(r#"{"rates":{"1":0.05,"255":0.01}}"#).unwrap();
-        assert_eq!(v.rates[&1], 0.05);
-        assert_eq!(v.rates[&255], 0.01);
+        assert_d!(v.rates[&1], 0.05);
+        assert_d!(v.rates[&255], 0.01);
     }
 
     #[test]
@@ -212,7 +213,7 @@ mod tests {
     #[test]
     fn flat_map_accepts_leading_zeros() {
         let v: Flat = serde_json::from_str(r#"{"rates":{"01":0.05}}"#).unwrap();
-        assert_eq!(v.rates[&1], 0.05);
+        assert_d!(v.rates[&1], 0.05);
     }
 
     /// Two spellings of one key is the case worth rejecting. Silently keeping
@@ -239,21 +240,21 @@ mod tests {
     #[test]
     fn nested_map_accepts_leading_zeros() {
         let v: Nested = serde_json::from_str(r#"{"table":{"silver":{"03":0.05}}}"#).unwrap();
-        assert_eq!(v.table["silver"][&3], 0.05);
+        assert_d!(v.table["silver"][&3], 0.05);
     }
 
     #[test]
     fn flat_map_accepts_zero_key() {
         let v: Flat = serde_json::from_str(r#"{"rates":{"0":0.05}}"#).unwrap();
-        assert_eq!(v.rates[&0], 0.05);
+        assert_d!(v.rates[&0], 0.05);
     }
 
     #[test]
     fn nested_map_parses_inner_keys() {
         let v: Nested =
             serde_json::from_str(r#"{"table":{"silver":{"3":0.05},"gold":{"1":0.1}}}"#).unwrap();
-        assert_eq!(v.table["silver"][&3], 0.05);
-        assert_eq!(v.table["gold"][&1], 0.1);
+        assert_d!(v.table["silver"][&3], 0.05);
+        assert_d!(v.table["gold"][&1], 0.1);
     }
 
     #[test]
@@ -289,6 +290,6 @@ mod tests {
     #[test]
     fn optional_map_parses_string_keys() {
         let v: Optional = serde_json::from_str(r#"{"rates":{"2":0.03}}"#).unwrap();
-        assert_eq!(v.rates.unwrap()[&2], 0.03);
+        assert_d!(v.rates.unwrap()[&2], 0.03);
     }
 }

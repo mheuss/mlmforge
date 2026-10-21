@@ -138,6 +138,7 @@ pub enum StreamAssignmentMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{assert_d, d};
 
     #[test]
     fn deserialize_streamline_config() {
@@ -163,15 +164,15 @@ mod tests {
             }
         }"#;
         let config: StreamlineCommissionConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.volume_to_dollar_multiplier, Some(1.5));
+        assert_eq!(config.volume_to_dollar_multiplier, Some(d!(1.5)));
         assert_eq!(config.max_depth, 7);
         assert_eq!(config.levels.len(), 5);
         assert_eq!(config.levels[0].level, 1);
         assert_eq!(config.levels[0].min_rank, "active");
-        assert_eq!(config.levels[0].percent, 0.05);
+        assert_d!(config.levels[0].percent, 0.05);
         assert_eq!(config.levels[4].level, 5);
         assert_eq!(config.levels[4].min_rank, "platinum");
-        assert_eq!(config.levels[4].percent, 0.01);
+        assert_d!(config.levels[4].percent, 0.01);
 
         let stream_cfg = config.stream_config.as_ref().unwrap();
         assert_eq!(stream_cfg.additional_streams.len(), 3);
@@ -196,7 +197,7 @@ mod tests {
         let level: StreamlineLevel = serde_json::from_str(json).unwrap();
         assert_eq!(level.level, 4);
         assert_eq!(level.min_rank, "gold");
-        assert_eq!(level.percent, 0.03);
+        assert_d!(level.percent, 0.03);
     }
 
     #[test]
@@ -254,10 +255,10 @@ mod tests {
         assert_eq!(config.levels.len(), 2);
         assert_eq!(config.levels[0].level, 1);
         assert_eq!(config.levels[0].min_rank, "active");
-        assert_eq!(config.levels[0].percent, 0.10);
+        assert_d!(config.levels[0].percent, 0.10);
         assert_eq!(config.levels[1].level, 2);
         assert_eq!(config.levels[1].min_rank, "bronze");
-        assert_eq!(config.levels[1].percent, 0.05);
+        assert_d!(config.levels[1].percent, 0.05);
         assert!(config.stream_config.is_none());
     }
 }

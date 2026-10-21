@@ -409,17 +409,20 @@ type pausedRemovalStore struct {
 	TreeStore
 	reached chan struct{}
 	release chan struct{}
+	once    sync.Once
 }
 
 func (s *pausedRemovalStore) ProjectRemoval(ctx context.Context, treeID string, r RemovalProjection,
 	removalEventID string, eventVersion int64) error {
-	close(s.reached)
-	<-s.release
+	s.once.Do(func() {
+		close(s.reached)
+		<-s.release
+	})
 	return s.TreeStore.ProjectRemoval(ctx, treeID, r, removalEventID, eventVersion)
 }
 
 // guardReadStore records the projected version when an insert for user is
-// skipped as already projected, and runs meanwhile once, beside the next
+// skipped as already projected, and runs meanwhile once, beside the first
 // tombstone-aware read for user.
 type guardReadStore struct {
 	TreeStore
@@ -464,10 +467,10 @@ type guardRace struct {
 	lateEngine          *EngineClient
 }
 
-// raceTheReplayedInsertGuard places x and loses the lock after the append. A
-// second writer then catches the placement up and removes x, and its removal
-// projection is held until the first writer's guard reads x's row. beforeRead
-// says which side of that read the removal projects on.
+// raceTheReplayedInsertGuard has a first writer place x and lose its lock after
+// the append, then has a second writer remove x. The second writer's removal
+// projection is held until the first writer's store is asked for x's row.
+// beforeRead says which side of that read the removal projects on.
 func (it *writerIntegration) raceTheReplayedInsertGuard(t *testing.T, tree, root, x string, beforeRead bool) guardRace {
 	t.Helper()
 	ctx := context.Background()
@@ -485,7 +488,9 @@ func (it *writerIntegration) raceTheReplayedInsertGuard(t *testing.T, tree, root
 	t.Cleanup(release)
 
 	race := guardRace{lateEngine: it.engine(t)}
+	started := false
 	events := &lockKillingEvents{EventStore: it.events, t: t, pool: it.pool, meanwhile: func() {
+		started = true
 		go func() {
 			res, err := second.Remove(ctx, RemoveRequest{TreeID: tree, UserID: x, RemovedAt: writeTime.Add(2 * time.Hour)})
 			done <- outcome{res, err}
@@ -506,6 +511,9 @@ func (it *writerIntegration) raceTheReplayedInsertGuard(t *testing.T, tree, root
 	race.first, race.firstErr = NewTreeWriter(events, race.guard, NewMemorySnapshotStore(), race.lateEngine,
 		NewPostgresTreeLocker(it.dsn)).
 		Place(ctx, PlaceRequest{TreeID: tree, UserID: x, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(time.Hour)})
+	if !started {
+		t.Fatalf("the first writer's append never ran its hook; Place returned %+v, %v", race.first, race.firstErr)
+	}
 	if !race.guard.meanwhileRan {
 		release()
 		o := receive(t, done, 30*time.Second)
@@ -514,9 +522,9 @@ func (it *writerIntegration) raceTheReplayedInsertGuard(t *testing.T, tree, root
 	return race
 }
 
-// requireTheRaceRan checks that the late insert was skipped at version 2 and
-// that the removal projected beside the guard's read, then checks what both
-// writers and the store report afterwards.
+// requireTheRaceRan checks that the first writer's insert was skipped at
+// version 2 and that its store was then asked for x's row, then checks what
+// both writers and the store report afterwards.
 func requireTheRaceRan(t *testing.T, it *writerIntegration, race guardRace, tree, root, x string) {
 	t.Helper()
 	require.NoError(t, race.firstErr)
@@ -540,6 +548,9 @@ func requireTheRaceRan(t *testing.T, it *writerIntegration, race guardRace, tree
 	require.NotNil(t, row, "no row at all for %s", x)
 	assert.Equal(t, race.first.EventID, row.ID)
 	assert.NotNil(t, row.RemovedAt, "the row for %s is active", x)
+	require.NotNil(t, row.RemovedByEventID, "the row for %s carries no removal stamp", x)
+	assert.True(t, sameUUID(*row.RemovedByEventID, race.second.EventID),
+		"the row for %s is stamped by removal event %s, want %s", x, *row.RemovedByEventID, race.second.EventID)
 	version, found, err := it.store.ProjectedVersion(context.Background(), tree)
 	require.NoError(t, err)
 	assert.True(t, found)
@@ -572,6 +583,7 @@ func TestTreeWriter_AGuardReadBehindALateRemovalRefusesThePlacement(t *testing.T
 
 	requireTheRaceRan(t, it, race, tree, root, x)
 	assert.ErrorIs(t, race.first.ProjectionErr, ErrReplayedPlacement)
+	assert.Equal(t, &ProjectionObservation{Version: 3, Found: true}, race.first.Observed)
 	pos, err := race.lateEngine.GetPosition(context.Background(), tree, x)
 	assert.True(t, isEngineCode(err, engineCodeUserNotFound),
 		"GetPosition for %s on the first writer's engine returned position %+v and error %v", x, pos, err)

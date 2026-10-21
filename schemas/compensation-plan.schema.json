@@ -221,8 +221,8 @@
       "not": {
         "required": ["max_group_volume_per_leg", "max_group_volume_per_leg_fraction"],
         "properties": {
-          "max_group_volume_per_leg": { "type": "number", "description": "Absolute value below 10^15, with at most 10 decimal places.", "exclusiveMinimum": 0 },
-          "max_group_volume_per_leg_fraction": { "type": "number", "description": "Absolute value below 10^15, with at most 10 decimal places.", "exclusiveMinimum": 0 }
+          "max_group_volume_per_leg": { "type": "number", "exclusiveMinimum": 0, "description": "Absolute value below 10^15, with at most 10 decimal places." },
+          "max_group_volume_per_leg_fraction": { "type": "number", "exclusiveMinimum": 0, "description": "Absolute value below 10^15, with at most 10 decimal places." }
         }
       },
       "properties": {
@@ -696,8 +696,8 @@
           "oneOf": [
             {
               "type": "number",
-              "description": "Absolute value below 10^15, with at most 10 decimal places.",
-              "exclusiveMinimum": 0
+              "exclusiveMinimum": 0,
+              "description": "Absolute value below 10^15, with at most 10 decimal places."
             },
             {
               "type": "null"
@@ -748,8 +748,8 @@
           "oneOf": [
             {
               "type": "number",
-              "description": "Absolute value below 10^15, with at most 10 decimal places.",
-              "exclusiveMinimum": 0
+              "exclusiveMinimum": 0,
+              "description": "Absolute value below 10^15, with at most 10 decimal places."
             },
             {
               "type": "null"
@@ -829,8 +829,8 @@
           "oneOf": [
             {
               "type": "number",
-              "description": "Absolute value below 10^15, with at most 10 decimal places.",
-              "exclusiveMinimum": 0
+              "exclusiveMinimum": 0,
+              "description": "Absolute value below 10^15, with at most 10 decimal places."
             },
             {
               "type": "null"
@@ -876,8 +876,8 @@
           "oneOf": [
             {
               "type": "number",
-              "description": "Absolute value below 10^15, with at most 10 decimal places.",
-              "exclusiveMinimum": 0
+              "exclusiveMinimum": 0,
+              "description": "Absolute value below 10^15, with at most 10 decimal places."
             },
             {
               "type": "null"
@@ -938,8 +938,8 @@
           "oneOf": [
             {
               "type": "number",
-              "description": "Absolute value below 10^15, with at most 10 decimal places.",
-              "exclusiveMinimum": 0
+              "exclusiveMinimum": 0,
+              "description": "Absolute value below 10^15, with at most 10 decimal places."
             },
             {
               "type": "null"
@@ -998,8 +998,8 @@
           "oneOf": [
             {
               "type": "number",
-              "description": "Absolute value below 10^15, with at most 10 decimal places.",
-              "exclusiveMinimum": 0
+              "exclusiveMinimum": 0,
+              "description": "Absolute value below 10^15, with at most 10 decimal places."
             },
             {
               "type": "null"
@@ -1042,9 +1042,9 @@
         "type": "object",
         "additionalProperties": {
           "type": "number",
-          "description": "Absolute value below 10^15, with at most 10 decimal places.",
           "minimum": 0,
-          "maximum": 1
+          "maximum": 1,
+          "description": "Absolute value below 10^15, with at most 10 decimal places."
         },
         "propertyNames": {
           "pattern": "^0*(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
@@ -1122,8 +1122,8 @@
           "oneOf": [
             {
               "type": "number",
-              "description": "Absolute value below 10^15, with at most 10 decimal places.",
-              "minimum": 0
+              "minimum": 0,
+              "description": "Absolute value below 10^15, with at most 10 decimal places."
             },
             {
               "type": "null"
@@ -1140,8 +1140,8 @@
           "oneOf": [
             {
               "type": "number",
-              "description": "Absolute value below 10^15, with at most 10 decimal places.",
-              "minimum": 0
+              "minimum": 0,
+              "description": "Absolute value below 10^15, with at most 10 decimal places."
             },
             {
               "type": "null"
@@ -1177,14 +1177,14 @@
         },
         "cap_per_period": {
           "oneOf": [
-            { "type": "number", "description": "Absolute value below 10^15, with at most 10 decimal places.", "minimum": 0 },
+            { "type": "number", "minimum": 0, "description": "Absolute value below 10^15, with at most 10 decimal places." },
             { "type": "null" }
           ],
           "description": "Maximum commission per period. Null means uncapped."
         },
         "carry_forward_cap": {
           "oneOf": [
-            { "type": "number", "description": "Absolute value below 10^15, with at most 10 decimal places.", "minimum": 0 },
+            { "type": "number", "minimum": 0, "description": "Absolute value below 10^15, with at most 10 decimal places." },
             { "type": "null" }
           ],
           "description": "Maximum volume that can carry forward into the next period. Null means unlimited."
@@ -1368,9 +1368,9 @@
           "type": "object",
           "additionalProperties": {
             "type": "number",
-            "description": "Absolute value below 10^15, with at most 10 decimal places.",
             "minimum": 0,
-            "maximum": 1
+            "maximum": 1,
+            "description": "Absolute value below 10^15, with at most 10 decimal places."
           },
           "description": "Override rate by rank."
         },
@@ -1386,7 +1386,7 @@
       "additionalProperties": false,
       "properties": {
         "type": { "type": "string", "enum": ["rate", "currency"] },
-        "value": { "type": "number", "description": "Absolute value below 10^15, with at most 10 decimal places.", "minimum": 0 }
+        "value": { "type": "number", "minimum": 0, "description": "Absolute value below 10^15, with at most 10 decimal places." }
       },
       "oneOf": [
         {
@@ -1411,9 +1411,9 @@
           "type": "object",
           "additionalProperties": {
             "type": "number",
-            "description": "Absolute value below 10^15, with at most 10 decimal places.",
             "minimum": 0,
-            "maximum": 1
+            "maximum": 1,
+            "description": "Absolute value below 10^15, with at most 10 decimal places."
           },
           "description": "Fixed override rate by rank."
         }
@@ -1434,9 +1434,9 @@
           "type": "object",
           "additionalProperties": {
             "type": "number",
-            "description": "Absolute value below 10^15, with at most 10 decimal places.",
             "minimum": 0,
-            "maximum": 1
+            "maximum": 1,
+            "description": "Absolute value below 10^15, with at most 10 decimal places."
           },
           "propertyNames": {
             "pattern": "^0*(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
@@ -1479,9 +1479,9 @@
           "type": "object",
           "additionalProperties": {
             "type": "number",
-            "description": "Absolute value below 10^15, with at most 10 decimal places.",
             "minimum": 0,
-            "maximum": 1
+            "maximum": 1,
+            "description": "Absolute value below 10^15, with at most 10 decimal places."
           },
           "propertyNames": {
             "pattern": "^0*(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
@@ -1505,8 +1505,8 @@
           "oneOf": [
             {
               "type": "number",
-              "description": "Absolute value below 10^15, with at most 10 decimal places.",
-              "exclusiveMinimum": 0
+              "exclusiveMinimum": 0,
+              "description": "Absolute value below 10^15, with at most 10 decimal places."
             },
             {
               "type": "null"
@@ -1753,9 +1753,9 @@
           "type": "object",
           "additionalProperties": {
             "type": "number",
-            "description": "Absolute value below 10^15, with at most 10 decimal places.",
             "minimum": 0,
-            "maximum": 1
+            "maximum": 1,
+            "description": "Absolute value below 10^15, with at most 10 decimal places."
           },
           "propertyNames": {
             "pattern": "^0*(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
@@ -1821,8 +1821,8 @@
           "type": "object",
           "additionalProperties": {
             "type": "number",
-            "description": "Absolute value below 10^15, with at most 10 decimal places.",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Absolute value below 10^15, with at most 10 decimal places."
           },
           "description": "Bonus amount per rank achieved."
         },
@@ -1847,9 +1847,9 @@
           "type": "object",
           "additionalProperties": {
             "type": "number",
-            "description": "Absolute value below 10^15, with at most 10 decimal places.",
             "minimum": 0,
-            "maximum": 1
+            "maximum": 1,
+            "description": "Absolute value below 10^15, with at most 10 decimal places."
           },
           "propertyNames": {
             "pattern": "^0*(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
@@ -1877,9 +1877,9 @@
           "oneOf": [
             {
               "type": "number",
-              "description": "Absolute value below 10^15, with at most 10 decimal places.",
               "minimum": 0,
-              "maximum": 1
+              "maximum": 1,
+              "description": "Absolute value below 10^15, with at most 10 decimal places."
             },
             {
               "type": "null"
@@ -1893,9 +1893,9 @@
               "type": "object",
               "additionalProperties": {
                 "type": "number",
-                "description": "Absolute value below 10^15, with at most 10 decimal places.",
                 "minimum": 0,
-                "maximum": 1
+                "maximum": 1,
+                "description": "Absolute value below 10^15, with at most 10 decimal places."
               },
               "propertyNames": {
                 "pattern": "^0*(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
@@ -1928,9 +1928,9 @@
             "properties": {
               "flat_rate": {
                 "type": "number",
-                "description": "Absolute value below 10^15, with at most 10 decimal places.",
                 "minimum": 0,
-                "maximum": 1
+                "maximum": 1,
+                "description": "Absolute value below 10^15, with at most 10 decimal places."
               }
             }
           }
@@ -1951,9 +1951,9 @@
                 "type": "object",
                 "additionalProperties": {
                   "type": "number",
-                  "description": "Absolute value below 10^15, with at most 10 decimal places.",
                   "minimum": 0,
-                  "maximum": 1
+                  "maximum": 1,
+                  "description": "Absolute value below 10^15, with at most 10 decimal places."
                 },
                 "propertyNames": {
                   "pattern": "^0*(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
@@ -2194,8 +2194,8 @@
           "oneOf": [
             {
               "type": "number",
-              "description": "Absolute value below 10^15, with at most 10 decimal places.",
-              "exclusiveMinimum": 0
+              "exclusiveMinimum": 0,
+              "description": "Absolute value below 10^15, with at most 10 decimal places."
             },
             {
               "type": "null"
@@ -2214,8 +2214,8 @@
           "type": "object",
           "additionalProperties": {
             "type": "number",
-            "description": "Absolute value below 10^15, with at most 10 decimal places.",
-            "minimum": 0
+            "minimum": 0,
+            "description": "Absolute value below 10^15, with at most 10 decimal places."
           },
           "propertyNames": {
             "pattern": "^0*(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
@@ -2407,8 +2407,8 @@
           "oneOf": [
             {
               "type": "number",
-              "description": "Absolute value below 10^15, with at most 10 decimal places.",
-              "minimum": 0
+              "minimum": 0,
+              "description": "Absolute value below 10^15, with at most 10 decimal places."
             },
             {
               "type": "null"

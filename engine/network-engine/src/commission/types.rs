@@ -126,7 +126,7 @@ pub enum CalculationError {
     ConfigError(String),
 
     /// An arithmetic step has no exact result the engine can hold.
-    #[error("{0}")]
+    #[error(transparent)]
     Numeric(#[from] crate::decimal::NumericError),
 
     /// The tree's topology does not match the structure config it pays against.

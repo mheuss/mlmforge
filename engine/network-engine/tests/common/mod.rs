@@ -16,8 +16,7 @@ use network_engine::config::{
     BinaryStructureConfig, CompensationPlan, StairstepStructureConfig, StructureConfig,
     UnilevelStructureConfig,
 };
-use network_engine::test_support::FromLiteral;
-use network_engine::test_support::{build_test_plan, make_rank};
+use network_engine::test_support::{FromLiteral, build_test_plan, make_rank};
 #[allow(unused_imports)]
 pub use network_engine::test_support::{member_snapshot, snapshot_with_rank, uuid_from_index};
 use proptest::prelude::*;

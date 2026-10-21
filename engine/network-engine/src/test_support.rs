@@ -159,6 +159,7 @@ impl FromLiteral for f64 {
 }
 
 /// A decimal test literal whose type comes from context: `d!(10.10)`, `d!(-0.5)`.
+#[doc(hidden)]
 #[macro_export]
 macro_rules! d {
     ($($literal:tt)+) => {

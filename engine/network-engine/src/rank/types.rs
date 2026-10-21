@@ -113,7 +113,7 @@ pub enum EvaluationError {
     DistributorNotInInputs(Uuid),
 
     /// An arithmetic step has no exact result the engine can hold.
-    #[error("{0}")]
+    #[error(transparent)]
     Numeric(#[from] crate::decimal::NumericError),
 
     /// Fixpoint iteration in `evaluate_ranks` did not stabilize within the

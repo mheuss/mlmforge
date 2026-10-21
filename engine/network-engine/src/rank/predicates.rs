@@ -70,7 +70,15 @@ pub(crate) fn effective_leg_cap(sq: &StructureQualification) -> Option<f64> {
     if sq.max_group_volume_per_leg > 0.0 {
         return Some(sq.max_group_volume_per_leg);
     }
-    let cap = sq.max_group_volume_per_leg_fraction * sq.group_volume;
+    let raw = sq.max_group_volume_per_leg_fraction * sq.group_volume;
+    // Round to 1e-6: the f64 product can land one ulp off the cap the fraction names.
+    // Keep the raw product when rounding gives 0 or overflows, because None means uncapped.
+    let snapped = (raw * 1e6).round() / 1e6;
+    let cap = if snapped.is_finite() && snapped > 0.0 {
+        snapped
+    } else {
+        raw
+    };
     (cap > 0.0).then_some(cap)
 }
 
@@ -644,6 +652,54 @@ mod tests {
     }
 
     #[test]
+    fn effective_leg_cap_gives_the_exact_cap_for_a_fraction_that_rounds_low() {
+        assert_eq!(
+            effective_leg_cap(&sq_with_caps(100000.0, 0.0, 0.29)),
+            Some(29000.0)
+        );
+    }
+
+    #[test]
+    fn effective_leg_cap_gives_the_exact_cap_for_a_fraction_that_rounds_high() {
+        assert_eq!(
+            effective_leg_cap(&sq_with_caps(10000.0, 0.0, 0.07)),
+            Some(700.0)
+        );
+    }
+
+    #[test]
+    fn effective_leg_cap_gives_the_exact_cap_for_a_cent_valued_group_volume() {
+        assert_eq!(
+            effective_leg_cap(&sq_with_caps(1234.56, 0.0, 0.09)),
+            Some(111.1104)
+        );
+    }
+
+    #[test]
+    fn effective_leg_cap_gives_the_exact_cap_for_a_basis_point_fraction() {
+        assert_eq!(
+            effective_leg_cap(&sq_with_caps(100.0, 0.0, 0.0078)),
+            Some(0.78)
+        );
+    }
+
+    #[test]
+    fn effective_leg_cap_keeps_a_tiny_fraction_cap_that_rounds_to_zero() {
+        assert_eq!(
+            effective_leg_cap(&sq_with_caps(100.0, 0.0, 1e-9)),
+            Some(1e-9 * 100.0)
+        );
+    }
+
+    #[test]
+    fn effective_leg_cap_keeps_a_huge_fraction_cap_that_overflows_when_scaled() {
+        assert_eq!(
+            effective_leg_cap(&sq_with_caps(1e308, 0.0, 0.5)),
+            Some(5e307)
+        );
+    }
+
+    #[test]
     fn capped_gv_meets_sums_downline_cv_plus_own_pv_with_no_cap() {
         // Build chain: 1 -> 2 -> 3
         let mut tree = UnilevelTree::new();
@@ -768,17 +824,14 @@ mod tests {
     }
 
     #[test]
-    fn capped_gv_meets_fails_at_the_threshold_under_a_fraction_that_rounds_low() {
-        // Pins the current fail-closed result (HEU-966).
+    fn capped_gv_meets_treats_a_fraction_cap_like_its_fixed_cap() {
         let (tree, idx) = root_with_legs(&[29000.0, 29000.0, 29000.0, 13000.0]);
         let primitives = primitives_with_pv(0.0);
         let fixed_cap = effective_leg_cap(&sq_with_caps(100000.0, 29000.0, 0.0));
         let fraction_cap = effective_leg_cap(&sq_with_caps(100000.0, 0.0, 0.29));
 
         assert!(capped_gv_meets(100000.0, fixed_cap, uid(1), &tree, &idx, &primitives).unwrap());
-        assert!(
-            !capped_gv_meets(100000.0, fraction_cap, uid(1), &tree, &idx, &primitives).unwrap()
-        );
+        assert!(capped_gv_meets(100000.0, fraction_cap, uid(1), &tree, &idx, &primitives).unwrap());
     }
 
     #[test]

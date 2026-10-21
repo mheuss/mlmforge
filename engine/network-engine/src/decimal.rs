@@ -102,7 +102,9 @@ fn fit(mut m: I512, mut s: u32) -> Result<Decimal, NumericErrorKind> {
         let m = i128::try_from(m).expect("a 96-bit mantissa fits i128");
         return Ok(Decimal::from_i128_with_scale(m, s));
     }
-    if fits_96_bits(m / pow10(s)) {
+    // 10^154 is beyond I512, and every I512 value is below it, so at such a
+    // scale the integer part is zero.
+    if s > 153 || fits_96_bits(m / pow10(s)) {
         Err(NumericErrorKind::Precision)
     } else {
         Err(NumericErrorKind::Overflow)
@@ -250,6 +252,7 @@ impl Dec {
     }
 
     fn wide_add(self, rhs: Dec, op: NumericOp) -> Result<Dec, NumericError> {
+        debug_assert!(matches!(op, NumericOp::Add | NumericOp::Sub));
         let ((ma, sa), (mb, sb)) = (wide(self.0), wide(rhs.0));
         let s = sa.max(sb);
         let (a, b) = (ma * pow10(s - sa), mb * pow10(s - sb));
@@ -576,10 +579,68 @@ mod tests {
 
     #[test]
     fn a_lossless_scale_reduction_is_exact() {
-        let product = d("0.00000000000001")
-            .try_mul(d("0.00000000000002"))
-            .unwrap();
-        assert_eq!(product, d("0.0000000000000000000000000002"));
+        let (a, b) = (d("0.000000000000000100"), d("0.0000000000100"));
+        assert!(fast_mul(a.0, b.0).is_none());
+        assert_eq!(a.try_mul(b).unwrap(), d("1e-27"));
+    }
+
+    #[test]
+    fn a_wide_sum_reduces_to_a_value_it_can_hold() {
+        let a = Dec(Decimal::from_i128_with_scale((1i128 << 96) - 1, 1));
+        let b = d("0.5");
+        assert!(fast_add(a.0, b.0, false).is_none());
+        assert_eq!(a.try_add(b).unwrap(), d("7922816251426433759354395034"));
+    }
+
+    #[test]
+    fn wide_differences_keep_their_sign() {
+        let a = d("39614081257132168796771975168");
+        let b = d("1.0000000000000000");
+        let neg_a = d("-39614081257132168796771975168");
+        assert!(fast_add(a.0, b.0, true).is_none());
+        assert_eq!(a.try_sub(b).unwrap(), d("39614081257132168796771975167"));
+        assert_eq!(b.try_sub(a).unwrap(), d("-39614081257132168796771975167"));
+        assert_eq!(
+            neg_a.try_sub(b).unwrap(),
+            d("-39614081257132168796771975169")
+        );
+        assert_eq!(
+            b.try_sub(neg_a).unwrap(),
+            d("39614081257132168796771975169")
+        );
+        assert_eq!(
+            neg_a.try_add(b).unwrap(),
+            d("-39614081257132168796771975167")
+        );
+    }
+
+    #[test]
+    fn results_just_past_the_range_are_classified_by_their_integer_part() {
+        let max = d("79228162514264337593543950335");
+        let kind = |r: Result<Dec, NumericError>| r.unwrap_err().kind;
+        assert_eq!(kind(max.try_add(d("0.5"))), NumericErrorKind::Precision);
+        assert_eq!(kind(max.try_add(d("1.5"))), NumericErrorKind::Overflow);
+        let below = d("-79228162514264337593543950335")
+            .try_sub(d("1"))
+            .unwrap_err();
+        assert_eq!(
+            (below.kind, below.op),
+            (NumericErrorKind::Overflow, NumericOp::Sub)
+        );
+        assert_eq!(
+            kind(max.try_mul(d("-1.0000000000000000000000000001"))),
+            NumericErrorKind::Overflow
+        );
+        assert_eq!(
+            kind(max.try_mul(d("0.9999999999999999999999999999"))),
+            NumericErrorKind::Precision
+        );
+    }
+
+    #[test]
+    fn fit_classifies_a_scale_beyond_i512_as_a_precision_error() {
+        assert_eq!(fit(I512::from(7i32), 200), Err(NumericErrorKind::Precision));
+        assert_eq!(fit(I512::from(7i32), 154), Err(NumericErrorKind::Precision));
     }
 
     #[test]
@@ -654,7 +715,7 @@ mod tests {
     }
 
     fn wide_mantissa() -> impl Strategy<Value = i128> {
-        ((1i128 << 94)..(1i128 << 96) - 1, any::<bool>())
+        ((1i128 << 94)..=(1i128 << 96) - 1, any::<bool>())
             .prop_map(|(m, negative)| if negative { -m } else { m })
     }
 

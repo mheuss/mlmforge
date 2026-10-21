@@ -858,7 +858,7 @@ func TestYAMLNestingBeyondTheLimitIsRefused(t *testing.T) {
 
 	require.Len(t, errs, 1)
 	assert.Equal(t, "document_too_deep", errs[0].Code)
-	assert.Equal(t, "nesting reached depth 65; the limit is 64", errs[0].Message)
+	assert.Equal(t, "the walk reached depth 65, counting each alias and merge followed; the limit is 64", errs[0].Message)
 }
 
 func TestYAMLConversionStopsAfterTheErrorCap(t *testing.T) {
@@ -874,7 +874,7 @@ func TestYAMLDuplicateLongKeyStatesItsLengthOutsideTheQuotes(t *testing.T) {
 	_, errs := convertYAML(t, "k: &k "+key+"\nm: {*k : 1, *k : 2}\n")
 
 	require.Len(t, errs, 1)
-	assert.Equal(t, "/m/"+strings.Repeat("a", 64), errs[0].Path)
+	assert.Equal(t, "/m/"+strings.Repeat("a", 64)+"...", errs[0].Path)
 	assert.Equal(t, `mapping key "`+strings.Repeat("a", 64)+`"... (100 bytes) appears more than once after conversion to JSON`, errs[0].Message)
 }
 
@@ -904,66 +904,152 @@ func TestYAMLAliasedNumericKeyIsConvertedOnce(t *testing.T) {
 	assert.Less(t, allocated, uint64(64<<20))
 }
 
-// hostileYAML builds a document of at most about 1 MB that mixes long
-// scalars, aliases, a merge chain and deep nesting.
-func hostileYAML(r *rand.Rand) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "n: &n 1.%s\n", strings.Repeat("7", 1+r.IntN(200000)))
-	fmt.Fprintf(&b, "s: &s %s\n", strings.Repeat("s", 1+r.IntN(100000)))
-	fmt.Fprintf(&b, "f: &f 1%s\n", strings.Repeat("0", 1+r.IntN(100000)))
-	fmt.Fprintf(&b, "w: &w [%s*n]\n", strings.Repeat("*n, ", r.IntN(1000)))
-	fmt.Fprintf(&b, "m0: &m0 {%s}\n", strings.TrimSuffix(strings.Repeat("x: 1, ", 1+r.IntN(200)), ", "))
-	chain := 1 + r.IntN(12)
-	for i := 1; i <= chain; i++ {
-		prev := fmt.Sprintf("*m%d", i-1)
-		fmt.Fprintf(&b, "m%d: &m%d {<<: [%s%s]}\n", i, i, strings.Repeat(prev+", ", r.IntN(10)), prev)
-	}
-	b.WriteString("body: ")
-	depth := r.IntN(9000)
-	closers := make([]byte, 0, depth)
-	longKey := strings.Repeat("k", 64)
+// hostileShape is one generated document and the error code its shape must
+// produce, or "" when it must convert cleanly.
+type hostileShape struct {
+	name string
+	src  string
+	want string
+}
+
+func between(r *rand.Rand, lo, hi int) int {
+	return lo + r.IntN(hi-lo+1)
+}
+
+// wrap nests body inside depth containers of mixed kinds.
+func wrap(r *rand.Rand, depth int, body string) string {
+	var open, closers strings.Builder
+	var stack []byte
 	for range depth {
-		switch r.IntN(4) {
-		case 0:
-			b.WriteString("[")
-			closers = append(closers, ']')
-		case 1:
-			b.WriteString("{*s : ")
-			closers = append(closers, '}')
-		case 2:
-			b.WriteString("{*f : ")
-			closers = append(closers, '}')
-		default:
-			b.WriteString("{" + longKey + ": ")
-			closers = append(closers, '}')
+		if r.IntN(2) == 0 {
+			open.WriteString("[")
+			stack = append(stack, ']')
+		} else {
+			open.WriteString("{" + strings.Repeat("k", between(r, 1, 64)) + ": ")
+			stack = append(stack, '}')
 		}
 	}
-	leaves := []string{"*w", "*n", "*s", fmt.Sprintf("*m%d", chain), ".inf", "{<<: *m1}"}
-	b.WriteString("[")
-	for i := range r.IntN(20000) {
-		if i > 0 {
-			b.WriteString(", ")
+	for i := len(stack) - 1; i >= 0; i-- {
+		closers.WriteByte(stack[i])
+	}
+	return open.String() + body + closers.String()
+}
+
+func aliasList(name string, count int) string {
+	return "[" + strings.Repeat("*"+name+", ", count-1) + "*" + name + "]"
+}
+
+// hostileYAML builds a document of at most about 1 MB in one of seven shapes.
+// Each shape's parameters are drawn so the shape reaches the code it names.
+func hostileYAML(r *rand.Rand, shape int) hostileShape {
+	switch shape {
+	case 0:
+		w, m := between(r, 500, 1000), between(r, 2500, 20000)
+		src := "w: &w [" + strings.Repeat("0, ", w-1) + "0]\nb: " + wrap(r, between(r, 0, 50), aliasList("w", m)) + "\n"
+		return hostileShape{"alias fan-out", src, "document_too_large"}
+	case 1:
+		return hostileShape{"deep nesting", "b: " + wrap(r, between(r, 70, 9000), "0") + "\n", "document_too_deep"}
+	case 2:
+		n := between(r, 150, 20000)
+		return hostileShape{"error spray", "b: " + wrap(r, between(r, 0, 50), "["+strings.Repeat(".inf, ", n-1)+".inf]") + "\n", "too_many_errors"}
+	case 3:
+		fan := between(r, 5, 10)
+		levels := 2
+		for total := fan * fan; total < 1_200_000; total *= fan {
+			levels++
 		}
-		b.WriteString(leaves[r.IntN(len(leaves))])
+		var b strings.Builder
+		fmt.Fprintf(&b, "m0: &m0 {x0: 1, x1: 2}\n")
+		for i := 1; i <= levels; i++ {
+			fmt.Fprintf(&b, "m%d: &m%d {<<: %s}\n", i, i, aliasList(fmt.Sprintf("m%d", i-1), fan))
+		}
+		return hostileShape{"merge chain", b.String(), "document_too_large"}
+	case 4:
+		text := strings.Repeat("QUFB", between(r, 256, 98304))
+		src := "s: &s !!binary " + text + "\nb: " + wrap(r, between(r, 0, 50), aliasList("s", between(r, 100, 3000))) + "\n"
+		return hostileShape{"aliased long scalar", src, ""}
+	case 5:
+		key := strings.Repeat("k", between(r, 1025, 200000))
+		m := between(r, 100, 3000)
+		src := "k: &k " + key + "\nb: [" + strings.Repeat("{*k : 0}, ", m-1) + "{*k : 0}]\n"
+		return hostileShape{"aliased long key", src, "invalid_key"}
+	default:
+		number := "1" + strings.Repeat("0", between(r, 400, 200000))
+		if r.IntN(2) == 0 {
+			number = fmt.Sprintf("1e%d", between(r, 400, 99999))
+		}
+		src := "n: &n " + number + "\nb: " + wrap(r, between(r, 0, 50), aliasList("n", between(r, 100, 3000))) + "\n"
+		return hostileShape{"out-of-range number", src, "invalid_number"}
 	}
-	b.WriteString("]")
-	for i := len(closers) - 1; i >= 0; i-- {
-		b.WriteByte(closers[i])
-	}
-	b.WriteString("\n")
-	return b.String()
 }
 
 func TestYAMLWalkerStaysBoundedOnHostileDocuments(t *testing.T) {
 	r := rand.New(rand.NewPCG(969, 1))
-	for i := range 24 {
-		src := hostileYAML(r)
-		require.LessOrEqual(t, len(src), 1<<20+(1<<16), "document %d", i)
+	for i := range 28 {
+		doc := hostileYAML(r, i%7)
+		require.LessOrEqual(t, len(doc.src), 1<<20, "document %d (%s)", i, doc.name)
 
-		errs, allocated, elapsed := walkerCost(t, src)
+		errs, allocated, elapsed := walkerCost(t, doc.src)
 
-		assert.Less(t, allocated, uint64(256<<20), "document %d allocated %d bytes", i, allocated)
-		assert.Less(t, elapsed, 2*time.Second, "document %d", i)
-		assert.Less(t, errorTextSize(errs), 1<<20, "document %d", i)
+		codes := make([]string, len(errs))
+		for j, e := range errs {
+			codes[j] = e.Code
+		}
+		if doc.want == "" {
+			assert.Empty(t, codes, "document %d (%s)", i, doc.name)
+		} else {
+			assert.Contains(t, codes, doc.want, "document %d (%s)", i, doc.name)
+		}
+		assert.Less(t, allocated, uint64(256<<20), "document %d (%s) allocated %d bytes", i, doc.name, allocated)
+		assert.Less(t, elapsed, 2*time.Second, "document %d (%s)", i, doc.name)
+		assert.Less(t, errorTextSize(errs), 1<<20, "document %d (%s)", i, doc.name)
 	}
+}
+
+func TestYAMLKeyLongerThanTheLimitIsRefused(t *testing.T) {
+	_, errs := convertYAML(t, "k: &k "+strings.Repeat("k", 1025)+"\nm: {*k : 1}\n")
+
+	require.Len(t, errs, 1)
+	assert.Equal(t, "invalid_key", errs[0].Code)
+	assert.Equal(t, "a mapping key is 1025 bytes long; the limit is 1024", errs[0].Message)
+}
+
+func TestYAMLAliasedLongScalarIsConvertedOnce(t *testing.T) {
+	src := "b: &b !!binary " + strings.Repeat("QUFB", 16384) + "\nr: [" + strings.Repeat("*b, ", 1999) + "*b]\n"
+
+	_, allocated, _ := walkerCost(t, src)
+
+	assert.Less(t, allocated, uint64(32<<20))
+}
+
+func TestSchemaRefusesAnOutOfRangeNumberInANumericField(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	src := strings.Replace(string(readFixture(t, "valid/leg-cap-fraction-plan.yaml")), "volume_to_dollar_multiplier: 1.0", "volume_to_dollar_multiplier: 1e400", 1)
+
+	errs := p.validateSchema([]byte(src))
+
+	require.Len(t, errs, 1)
+	assert.Equal(t, "/volume/volume_to_dollar_multiplier", errs[0].Path)
+	assert.Equal(t, "invalid_number", errs[0].Code)
+}
+
+func TestSchemaRefusesAnOutOfRangeNumberInAStringField(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	src := strings.Replace(string(readFixture(t, "valid/leg-cap-fraction-plan.yaml")), "name: Leg Cap Fraction Plan", "name: 1e400", 1)
+
+	errs := p.validateSchema([]byte(src))
+
+	require.Len(t, errs, 1)
+	assert.Equal(t, "/name", errs[0].Path)
+	assert.Equal(t, "invalid_number", errs[0].Code)
+}
+
+func TestSchemaAcceptsAQuotedOutOfRangeNumberInAStringField(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	src := strings.Replace(string(readFixture(t, "valid/leg-cap-fraction-plan.yaml")), "name: Leg Cap Fraction Plan", "name: '1e400'", 1)
+
+	assert.Empty(t, p.validateSchema([]byte(src)))
 }

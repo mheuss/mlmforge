@@ -111,7 +111,7 @@ func buildInstancePath(tokens []string) string {
 // maxYAMLNodes bounds how many nodes and merges conversion may visit.
 const maxYAMLNodes = 1_000_000
 
-// maxYAMLDepth bounds nesting, counting each alias and merge followed as a level.
+// maxYAMLDepth bounds nesting.
 const maxYAMLDepth = 64
 
 // maxYAMLErrors bounds how many errors conversion records before it stops.
@@ -122,6 +122,7 @@ type yamlConverter struct {
 	active   map[*yaml.Node]bool
 	reported map[*yaml.Node]bool
 	keys     map[*yaml.Node]yamlKey
+	scalars  map[*yaml.Node]any
 	visited  uint
 	depth    uint
 	tooDeep  bool
@@ -133,7 +134,7 @@ type yamlKey struct {
 	ok   bool
 }
 
-// yamlPath is a JSON Pointer built only when an error needs it.
+// yamlPath is a JSON Pointer kept as parent links.
 type yamlPath struct {
 	parent  *yamlPath
 	segment string
@@ -163,12 +164,13 @@ func yamlNodeToJSON(root *yaml.Node) (any, []ValidationError) {
 		active:   map[*yaml.Node]bool{},
 		reported: map[*yaml.Node]bool{},
 		keys:     map[*yaml.Node]yamlKey{},
+		scalars:  map[*yaml.Node]any{},
 	}
 	v := c.node(root, nil)
 	return v, c.errs
 }
 
-// record appends an error until the cap, then records the cap once and stops conversion.
+// record appends an error until the cap, then records the cap once.
 func (c *yamlConverter) record(path *yamlPath, code, message string) {
 	if c.stopped {
 		return
@@ -217,7 +219,7 @@ func (c *yamlConverter) descend(path *yamlPath) bool {
 	}
 	if !c.tooDeep {
 		c.tooDeep = true
-		c.record(path, "document_too_deep", fmt.Sprintf("nesting reached depth %d; the limit is %d", c.depth, maxYAMLDepth))
+		c.record(path, "document_too_deep", fmt.Sprintf("the walk reached depth %d, counting each alias and merge followed; the limit is %d", c.depth, maxYAMLDepth))
 	}
 	return false
 }
@@ -319,8 +321,8 @@ func (c *yamlConverter) fill(n *yaml.Node, path *yamlPath, out map[string]any) {
 // maxPathKey bounds how much of a key a path or message repeats.
 const maxPathKey = 64
 
-// shortKey cuts a long key to its first maxPathKey bytes, on a rune boundary.
-func shortKey(key string) string {
+// keyPrefix cuts a long key to its first maxPathKey bytes, on a rune boundary.
+func keyPrefix(key string) string {
 	if len(key) <= maxPathKey {
 		return key
 	}
@@ -331,13 +333,21 @@ func shortKey(key string) string {
 	return key[:cut]
 }
 
+// shortKey is a path segment for key, marked with "..." when it was cut.
+func shortKey(key string) string {
+	if len(key) <= maxPathKey {
+		return key
+	}
+	return keyPrefix(key) + "..."
+}
+
 // quoteKey quotes a key for a message, stating the full length outside the
 // quotes when the key was cut.
 func quoteKey(key string) string {
 	if len(key) <= maxPathKey {
 		return strconv.Quote(key)
 	}
-	return fmt.Sprintf("%q... (%d bytes)", shortKey(key), len(key))
+	return fmt.Sprintf("%q... (%d bytes)", keyPrefix(key), len(key))
 }
 
 func (c *yamlConverter) merge(m *yaml.Node, path *yamlPath, out map[string]any) {
@@ -391,9 +401,16 @@ func (c *yamlConverter) key(k *yaml.Node, path *yamlPath) (string, bool) {
 	return text, ok
 }
 
+// maxKeyLength bounds a mapping key, so hashing one stays cheap however often an alias reaches it.
+const maxKeyLength = 1024
+
 func (c *yamlConverter) convertKey(k *yaml.Node, path *yamlPath) (string, bool) {
 	if k.Kind != yaml.ScalarNode {
 		c.fail(k, path, "invalid_key", "a mapping key must be a scalar")
+		return "", false
+	}
+	if len(k.Value) > maxKeyLength {
+		c.fail(k, path, "invalid_key", fmt.Sprintf("a mapping key is %d bytes long; the limit is %d", len(k.Value), maxKeyLength))
 		return "", false
 	}
 	var v any
@@ -404,22 +421,43 @@ func (c *yamlConverter) convertKey(k *yaml.Node, path *yamlPath) (string, bool) 
 	return stringifyKey(v), true
 }
 
+// scalar converts a scalar once per source node, however many aliases reach it.
 func (c *yamlConverter) scalar(n *yaml.Node, path *yamlPath) any {
+	if v, done := c.scalars[n]; done {
+		return v
+	}
+	v := c.convertScalar(n, path)
+	c.scalars[n] = v
+	return v
+}
+
+// isNumber reports whether a scalar is an authored number. A plain scalar
+// that YAML resolved to a string, such as 1e400, counts when it has number form.
+func isNumber(n *yaml.Node) bool {
 	switch n.ShortTag() {
 	case "!!int", "!!float":
+		return true
+	case "!!str":
+		return n.Style == 0 && dec.LooksLikeNumber(n.Value)
+	default:
+		return false
+	}
+}
+
+func (c *yamlConverter) convertScalar(n *yaml.Node, path *yamlPath) any {
+	if isNumber(n) {
 		if _, err := dec.Parse(n.Value); err != nil {
 			c.fail(n, path, "invalid_number", err.Error())
 			return nil
 		}
 		return json.Number(n.Value)
-	default:
-		var v any
-		if err := n.Decode(&v); err != nil {
-			c.fail(n, path, "yaml_parse_error", err.Error())
-			return nil
-		}
-		return v
 	}
+	var v any
+	if err := n.Decode(&v); err != nil {
+		c.fail(n, path, "yaml_parse_error", err.Error())
+		return nil
+	}
+	return v
 }
 
 // stringifyKey converts a non-string map key to its string representation.

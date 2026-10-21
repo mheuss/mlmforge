@@ -1,6 +1,6 @@
 mod common;
 use common::{
-    build_binary_cycle_step_plan, build_binary_plan, default_pairing, member_snapshot,
+    build_binary_cycle_step_plan, build_binary_plan, cents, default_pairing, member_snapshot,
     uuid_from_index,
 };
 
@@ -10,6 +10,7 @@ use network_engine::config::binary::{
     VolumeAfterPayout,
 };
 use network_engine::config::{BinaryStructureConfig, CompensationPlan};
+use network_engine::d;
 use network_engine::tree::binary::BinaryTree;
 use proptest::prelude::*;
 use std::collections::{BTreeSet, HashMap};
@@ -40,7 +41,7 @@ fn three_node_tree() -> BinaryTree {
 
 /// Generate a random volume amount (positive, finite).
 fn arb_volume() -> impl Strategy<Value = f64> {
-    0.0..10000.0f64
+    cents(0, 1_000_000)
 }
 
 proptest! {
@@ -78,7 +79,7 @@ proptest! {
         let volume = vec![
             VolumeSource { source_id: uuid_from_index(3), cv_amount: left_vol },
             VolumeSource { source_id: uuid_from_index(4), cv_amount: right_vol },
-            VolumeSource { source_id: uuid_from_index(2), cv_amount: 100.0 },
+            VolumeSource { source_id: uuid_from_index(2), cv_amount: d!(100.0) },
         ];
 
         let result = calculate_binary_pairing(
@@ -90,12 +91,12 @@ proptest! {
         // based on its own left/right subtree volume. No "pass-through" earnings.
         for earning in &result.earnings {
             prop_assert!(
-                earning.matched_volume > 0.0,
+                earning.matched_volume > d!(0.0),
                 "Earner {} has zero matched volume but got an earning",
                 earning.earner_id
             );
             prop_assert!(
-                earning.left_volume > 0.0 && earning.right_volume > 0.0,
+                earning.left_volume > d!(0.0) && earning.right_volume > d!(0.0),
                 "Earner {} earned without volume in both legs (left={}, right={})",
                 earning.earner_id, earning.left_volume, earning.right_volume
             );
@@ -131,12 +132,12 @@ proptest! {
 
         for (uid, legs) in &result.carry_forward {
             prop_assert!(
-                legs.left >= 0.0,
+                legs.left >= d!(0.0),
                 "Distributor {} has negative left carry-forward: {}",
                 uid, legs.left
             );
             prop_assert!(
-                legs.right >= 0.0,
+                legs.right >= d!(0.0),
                 "Distributor {} has negative right carry-forward: {}",
                 uid, legs.right
             );
@@ -170,7 +171,7 @@ proptest! {
         ).unwrap();
 
         let matched = left_vol.min(right_vol);
-        if matched == 0.0 {
+        if matched == d!(0.0) {
             // No earning expected.
             prop_assert!(result.earnings.is_empty());
         } else {
@@ -192,7 +193,7 @@ proptest! {
     fn total_payout_never_exceeds_cap(
         (left_vol, right_vol) in (arb_volume(), arb_volume()),
     ) {
-        let cap = 25.0;
+        let cap = d!(25.0);
         let pairing = PairingConfig {
             cap_per_period: Some(cap),
             ..default_pairing()
@@ -257,8 +258,8 @@ proptest! {
         let matched = left_vol.min(right_vol);
 
         // NetOff: both legs subtract matched. Stronger keeps the excess.
-        let expected_left = (left_vol - matched).max(0.0);
-        let expected_right = (right_vol - matched).max(0.0);
+        let expected_left = (left_vol - matched).max(d!(0.0));
+        let expected_right = (right_vol - matched).max(d!(0.0));
 
         prop_assert!(
             (root_cf.left - expected_left).abs() < 1e-10,
@@ -300,12 +301,12 @@ proptest! {
 
         for (uid, legs) in &result.carry_forward {
             prop_assert!(
-                legs.left >= 0.0,
+                legs.left >= d!(0.0),
                 "NetOff: distributor {} has negative left carry-forward: {}",
                 uid, legs.left
             );
             prop_assert!(
-                legs.right >= 0.0,
+                legs.right >= d!(0.0),
                 "NetOff: distributor {} has negative right carry-forward: {}",
                 uid, legs.right
             );
@@ -399,7 +400,7 @@ proptest! {
     /// and the payout equals WeakerLeg payout.
     #[test]
     fn volume_ratio_balanced_equals_weaker_leg(
-        vol in 1.0..10000.0f64,
+        vol in cents(100, 1_000_000),
     ) {
         let weaker_leg_pairing = default_pairing();
         let ratio_pairing = PairingConfig {
@@ -632,11 +633,11 @@ proptest! {
     /// payout never exceeds the cap regardless of volume distribution.
     #[test]
     fn multi_position_total_payout_respects_aggregate_cap(
-        cap in 10.0..1000.0f64,
-        left1 in 0.0..5000.0f64,
-        right1 in 0.0..5000.0f64,
-        left2 in 0.0..5000.0f64,
-        right2 in 0.0..5000.0f64,
+        cap in cents(1_000, 100_000),
+        left1 in cents(0, 500_000),
+        right1 in cents(0, 500_000),
+        left2 in cents(0, 500_000),
+        right2 in cents(0, 500_000),
     ) {
         let pairing = PairingConfig {
             cap_per_period: Some(cap),
@@ -685,10 +686,10 @@ proptest! {
     /// owned by the same person.
     #[test]
     fn multi_position_carry_forward_independent_per_position(
-        left1 in 0.0..5000.0f64,
-        right1 in 0.0..5000.0f64,
-        left2 in 0.0..5000.0f64,
-        right2 in 0.0..5000.0f64,
+        left1 in cents(0, 500_000),
+        right1 in cents(0, 500_000),
+        left2 in cents(0, 500_000),
+        right2 in cents(0, 500_000),
     ) {
         let pairing = PairingConfig {
             volume_after_payout: VolumeAfterPayout::CarryForward,
@@ -765,7 +766,7 @@ proptest! {
 /// near-duplicate thresholds that would fail validation.
 fn arb_cycle_step_config() -> impl Strategy<Value = CycleStepConfig> {
     (
-        prop::collection::vec((100.0..5000.0f64, 10.0..500.0f64), 1..=4),
+        prop::collection::vec((cents(10_000, 500_000), cents(1_000, 50_000)), 1..=4),
         prop::bool::ANY,
     )
         .prop_map(|(pairs, use_flush)| {
@@ -818,7 +819,7 @@ proptest! {
 
         for earning in &result.earnings {
             prop_assert!(
-                earning.dollar_amount >= 0.0,
+                earning.dollar_amount >= d!(0.0),
                 "CycleStep earning {} is negative",
                 earning.dollar_amount
             );
@@ -862,13 +863,13 @@ proptest! {
         let total_payout: f64 = result.earnings.iter().map(|e| e.dollar_amount).sum();
 
         let max_cycles = if is_flush {
-            1.0
+            d!(1.0)
         } else {
             let matched = left_vol.min(right_vol);
-            if highest_threshold > 0.0 {
+            if highest_threshold > d!(0.0) {
                 (matched / highest_threshold).floor() + 1.0
             } else {
-                1.0
+                d!(1.0)
             }
         };
 
@@ -885,7 +886,7 @@ proptest! {
     #[test]
     fn cycle_step_full_flush_zeroes_carry_forward(
         config in arb_cycle_step_config(),
-        extra in 0.0..5000.0f64,
+        extra in cents::<f64>(0, 500_000),
     ) {
         let mut config = config;
         config.volume_after_cycle = VolumeAfterPayout::FullFlush;
@@ -935,7 +936,7 @@ proptest! {
     #[test]
     fn cycle_step_carry_forward_legs_below_highest_threshold(
         config in arb_cycle_step_config(),
-        extra in 0.0..5000.0f64,
+        extra in cents::<f64>(0, 500_000),
     ) {
         let highest_threshold = config.steps.iter()
             .map(|s| s.threshold)
@@ -987,7 +988,7 @@ proptest! {
         left_vol in arb_volume(),
         right_vol in arb_volume(),
     ) {
-        let cap = 100.0;
+        let cap = d!(100.0);
 
         // Override to CarryForward mode with a cap.
         let cf_config = CycleStepConfig {
@@ -1169,53 +1170,57 @@ fn aggregate_cap_pairing_plan(cap: f64) -> (CompensationPlan, BinaryStructureCon
 
 #[test]
 fn aggregate_cap_pairing_left_1_right_3_does_not_depend_on_map_order() {
-    let (plan, structure) = aggregate_cap_pairing_plan(0.1);
+    let (plan, structure) = aggregate_cap_pairing_plan(d!(0.1));
     assert_owner_capped_bits(
         &plan,
         &structure,
-        1.0,
-        3.0,
-        [0.03333333333333333, 0.016666666666666666, 0.05],
+        d!(1.0),
+        d!(3.0),
+        [d!(0.03333333333333333), d!(0.016666666666666666), d!(0.05)],
     );
 }
 
 #[test]
 fn aggregate_cap_pairing_left_0_7_right_1_1_does_not_depend_on_map_order() {
-    let (plan, structure) = aggregate_cap_pairing_plan(0.13);
+    let (plan, structure) = aggregate_cap_pairing_plan(d!(0.13));
     assert_owner_capped_bits(
         &plan,
         &structure,
-        0.7,
-        1.1,
-        [0.056875, 0.0284375, 0.04468750000000001],
+        d!(0.7),
+        d!(1.1),
+        [d!(0.056875), d!(0.0284375), d!(0.04468750000000001)],
     );
 }
 
 #[test]
 fn aggregate_cap_pairing_left_1_3_right_2_9_does_not_depend_on_map_order() {
-    let (plan, structure) = aggregate_cap_pairing_plan(0.37);
+    let (plan, structure) = aggregate_cap_pairing_plan(d!(0.37));
     assert_owner_capped_bits(
         &plan,
         &structure,
-        1.3,
-        2.9,
+        d!(1.3),
+        d!(2.9),
         [
-            0.14147058823529413,
-            0.07073529411764706,
-            0.15779411764705883,
+            d!(0.14147058823529413),
+            d!(0.07073529411764706),
+            d!(0.15779411764705883),
         ],
     );
 }
 
 #[test]
 fn aggregate_cap_pairing_left_3_right_7_does_not_depend_on_map_order() {
-    let (plan, structure) = aggregate_cap_pairing_plan(1.1);
+    let (plan, structure) = aggregate_cap_pairing_plan(d!(1.1));
     assert_owner_capped_bits(
         &plan,
         &structure,
-        3.0,
-        7.0,
-        [0.4125000000000001, 0.20625000000000004, 0.48125000000000007],
+        d!(3.0),
+        d!(7.0),
+        [
+            d!(0.4125000000000001),
+            d!(0.20625000000000004),
+            d!(0.48125000000000007),
+        ],
     );
 }
 
@@ -1224,32 +1229,32 @@ fn aggregate_cap_cycle_step_does_not_depend_on_map_order() {
     let (plan, structure) = build_binary_cycle_step_plan(CycleStepConfig {
         steps: vec![
             CycleStep {
-                threshold: 1.0,
-                amount: 0.1,
+                threshold: d!(1.0),
+                amount: d!(0.1),
             },
             CycleStep {
-                threshold: 2.0,
-                amount: 0.2,
+                threshold: d!(2.0),
+                amount: d!(0.2),
             },
             CycleStep {
-                threshold: 3.0,
-                amount: 0.7,
+                threshold: d!(3.0),
+                amount: d!(0.7),
             },
         ],
         volume_after_cycle: VolumeAfterPayout::FullFlush,
-        cap_per_period: Some(0.13),
+        cap_per_period: Some(d!(0.13)),
         carry_forward_cap: None,
         multi_position_cap_mode: MultiPositionCapMode::Aggregate,
     });
     assert_owner_capped_bits(
         &plan,
         &structure,
-        1.0,
-        3.0,
+        d!(1.0),
+        d!(3.0),
         [
-            0.02785714285714286,
-            0.009285714285714286,
-            0.09285714285714286,
+            d!(0.02785714285714286),
+            d!(0.009285714285714286),
+            d!(0.09285714285714286),
         ],
     );
 }

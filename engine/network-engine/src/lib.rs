@@ -15,3 +15,6 @@ pub mod streamline;
 pub mod test_support;
 pub mod tree;
 pub mod types;
+
+#[cfg(test)]
+pub(crate) mod test_strategies;

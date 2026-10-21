@@ -577,12 +577,14 @@ mod tests {
         MultiPositionCapMode, PairingCalculation, PairingConfig, VolumeAfterPayout,
     };
     use crate::config::{BinaryStructureConfig, CompensationPlan, StructureConfig};
+    use crate::test_support::like;
     use crate::tree::binary::BinaryTree;
     use crate::tree::test_helpers::test_uuid;
+    use crate::{assert_d, d};
 
     fn test_pairing_config() -> PairingConfig {
         PairingConfig {
-            percent: 0.10,
+            percent: d!(0.10),
             calculation: PairingCalculation::WeakerLeg,
             cap_per_period: None,
             volume_after_payout: VolumeAfterPayout::FullFlush,
@@ -644,11 +646,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -667,18 +669,18 @@ mod tests {
         assert_eq!(result.earnings.len(), 1);
         let earning = &result.earnings[0];
         assert_eq!(earning.earner_id, test_uuid(1));
-        assert_eq!(earning.left_volume, 500.0);
-        assert_eq!(earning.right_volume, 500.0);
-        assert_eq!(earning.matched_volume, 500.0);
-        assert_eq!(earning.ratio, 1.0);
-        assert_eq!(earning.percent, 0.10);
-        assert_eq!(earning.dollar_amount, 50.0);
+        assert_d!(earning.left_volume, 500.0);
+        assert_d!(earning.right_volume, 500.0);
+        assert_d!(earning.matched_volume, 500.0);
+        assert_d!(earning.ratio, 1.0);
+        assert_d!(earning.percent, 0.10);
+        assert_d!(earning.dollar_amount, 50.0);
         assert!(!earning.capped);
 
         // FullFlush: all carry-forward should be zero.
         for legs in result.carry_forward.values() {
-            assert_eq!(legs.left, 0.0);
-            assert_eq!(legs.right, 0.0);
+            assert_d!(legs.left, 0.0);
+            assert_d!(legs.right, 0.0);
         }
     }
 
@@ -697,11 +699,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 800.0,
+                cv_amount: d!(800.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 200.0,
+                cv_amount: d!(200.0),
             },
         ];
 
@@ -718,8 +720,8 @@ mod tests {
 
         assert_eq!(result.earnings.len(), 1);
         let earning = &result.earnings[0];
-        assert_eq!(earning.matched_volume, 200.0);
-        assert_eq!(earning.dollar_amount, 20.0); // 200 * 0.10 * 1.0
+        assert_d!(earning.matched_volume, 200.0);
+        assert_d!(earning.dollar_amount, 20.0); // 200 * 0.10 * 1.0
     }
 
     #[test]
@@ -744,7 +746,7 @@ mod tests {
         snapshots.insert(
             test_uuid(2),
             DistributorSnapshot {
-                personal_volume: 0.0, // Below 100 PV minimum
+                personal_volume: d!(0.0), // Below 100 PV minimum
                 ..eligible_snapshot()
             },
         );
@@ -754,11 +756,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(4),
-                cv_amount: 300.0,
+                cv_amount: d!(300.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 300.0,
+                cv_amount: d!(300.0),
             },
         ];
 
@@ -780,9 +782,9 @@ mod tests {
             .iter()
             .find(|e| e.earner_id == test_uuid(1))
             .expect("root should earn");
-        assert_eq!(root_earning.left_volume, 300.0);
-        assert_eq!(root_earning.right_volume, 300.0);
-        assert_eq!(root_earning.dollar_amount, 30.0);
+        assert_d!(root_earning.left_volume, 300.0);
+        assert_d!(root_earning.right_volume, 300.0);
+        assert_d!(root_earning.dollar_amount, 30.0);
 
         // Node 2 should NOT be in earnings (ineligible).
         assert!(result.earnings.iter().all(|e| e.earner_id != test_uuid(2)));
@@ -805,7 +807,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 500.0,
+            cv_amount: d!(500.0),
         }];
 
         let result = calculate_binary_pairing(
@@ -838,15 +840,15 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 200.0,
+                cv_amount: d!(200.0),
             },
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 300.0,
+                cv_amount: d!(300.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 400.0,
+                cv_amount: d!(400.0),
             },
         ];
 
@@ -864,10 +866,10 @@ mod tests {
         // Left = 200 + 300 = 500, Right = 400. Matched = 400.
         assert_eq!(result.earnings.len(), 1);
         let earning = &result.earnings[0];
-        assert_eq!(earning.left_volume, 500.0);
-        assert_eq!(earning.right_volume, 400.0);
-        assert_eq!(earning.matched_volume, 400.0);
-        assert_eq!(earning.dollar_amount, 40.0); // 400 * 0.10
+        assert_d!(earning.left_volume, 500.0);
+        assert_d!(earning.right_volume, 400.0);
+        assert_d!(earning.matched_volume, 400.0);
+        assert_d!(earning.dollar_amount, 40.0); // 400 * 0.10
     }
 
     // --- VolumeRatio tests ---
@@ -899,11 +901,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -920,9 +922,9 @@ mod tests {
 
         assert_eq!(result.earnings.len(), 1);
         let earning = &result.earnings[0];
-        assert_eq!(earning.ratio, 1.0);
+        assert_d!(earning.ratio, 1.0);
         // 500 * 0.10 * 1.0 * 1.0 = 50.0
-        assert_eq!(earning.dollar_amount, 50.0);
+        assert_d!(earning.dollar_amount, 50.0);
     }
 
     #[test]
@@ -940,11 +942,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 400.0,
+                cv_amount: d!(400.0),
             },
         ];
 
@@ -961,9 +963,9 @@ mod tests {
 
         assert_eq!(result.earnings.len(), 1);
         let earning = &result.earnings[0];
-        assert_eq!(earning.ratio, 0.25);
+        assert_d!(earning.ratio, 0.25);
         // matched=100, 100 * 0.10 * 1.0 * 0.25 = 2.5
-        assert_eq!(earning.dollar_amount, 2.5);
+        assert_d!(earning.dollar_amount, 2.5);
     }
 
     // --- Cap enforcement tests ---
@@ -983,7 +985,7 @@ mod tests {
 
     #[test]
     fn under_cap_not_clamped() {
-        let structure = capped_structure(1000.0);
+        let structure = capped_structure(d!(1000.0));
         let tree = three_node_tree();
         let plan = test_plan_with_structure(default_eligibility(), structure.clone());
 
@@ -995,11 +997,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -1015,13 +1017,13 @@ mod tests {
         .unwrap();
 
         let earning = &result.earnings[0];
-        assert_eq!(earning.dollar_amount, 50.0); // 500 * 0.10, well under 1000 cap
+        assert_d!(earning.dollar_amount, 50.0); // 500 * 0.10, well under 1000 cap
         assert!(!earning.capped);
     }
 
     #[test]
     fn over_cap_clamped() {
-        let structure = capped_structure(25.0);
+        let structure = capped_structure(d!(25.0));
         let tree = three_node_tree();
         let plan = test_plan_with_structure(default_eligibility(), structure.clone());
 
@@ -1033,11 +1035,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -1054,13 +1056,13 @@ mod tests {
 
         let earning = &result.earnings[0];
         // raw_amount would be 50.0, capped to 25.0
-        assert_eq!(earning.dollar_amount, 25.0);
+        assert_d!(earning.dollar_amount, 25.0);
         assert!(earning.capped);
     }
 
     #[test]
     fn at_exact_cap_not_flagged_as_capped() {
-        let structure = capped_structure(50.0);
+        let structure = capped_structure(d!(50.0));
         let tree = three_node_tree();
         let plan = test_plan_with_structure(default_eligibility(), structure.clone());
 
@@ -1072,11 +1074,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -1093,7 +1095,7 @@ mod tests {
 
         let earning = &result.earnings[0];
         // raw_amount = 50.0, cap = 50.0. Not exceeded, so not capped.
-        assert_eq!(earning.dollar_amount, 50.0);
+        assert_d!(earning.dollar_amount, 50.0);
         assert!(!earning.capped);
     }
 
@@ -1127,11 +1129,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 800.0,
+                cv_amount: d!(800.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 300.0,
+                cv_amount: d!(300.0),
             },
         ];
 
@@ -1148,8 +1150,8 @@ mod tests {
 
         let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
         // NetOff: left = 800 - 300 = 500, right = 300 - 300 = 0
-        assert_eq!(root_cf.left, 500.0);
-        assert_eq!(root_cf.right, 0.0);
+        assert_d!(root_cf.left, 500.0);
+        assert_d!(root_cf.right, 0.0);
     }
 
     #[test]
@@ -1165,11 +1167,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -1188,8 +1190,8 @@ mod tests {
         // Node 2 is a leaf. Legs are both 0. No matched volume.
         // NetOff: 0-0=0, 0-0=0. Carry forward is zero.
         let node2_cf = result.carry_forward.get(&test_uuid(2)).unwrap();
-        assert_eq!(node2_cf.left, 0.0);
-        assert_eq!(node2_cf.right, 0.0);
+        assert_d!(node2_cf.left, 0.0);
+        assert_d!(node2_cf.right, 0.0);
     }
 
     // --- CarryForward mode tests ---
@@ -1222,11 +1224,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 800.0,
+                cv_amount: d!(800.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 300.0,
+                cv_amount: d!(300.0),
             },
         ];
 
@@ -1244,8 +1246,8 @@ mod tests {
         let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
         // CarryForward: weaker (right) zeroed, stronger (left) keeps excess.
         // left = 800 - 300 = 500, right = 0
-        assert_eq!(root_cf.left, 500.0);
-        assert_eq!(root_cf.right, 0.0);
+        assert_d!(root_cf.left, 500.0);
+        assert_d!(root_cf.right, 0.0);
     }
 
     #[test]
@@ -1262,11 +1264,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -1283,8 +1285,8 @@ mod tests {
 
         let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
         // Balanced: left is "weaker" (or equal). Both zero after payout.
-        assert_eq!(root_cf.left, 0.0);
-        assert_eq!(root_cf.right, 0.0);
+        assert_d!(root_cf.left, 0.0);
+        assert_d!(root_cf.right, 0.0);
     }
 
     #[test]
@@ -1295,7 +1297,7 @@ mod tests {
                 volume_to_dollar_multiplier: None,
                 mode: BinaryCommissionMode::Pairing(PairingConfig {
                     volume_after_payout: VolumeAfterPayout::CarryForward,
-                    carry_forward_cap: Some(200.0),
+                    carry_forward_cap: Some(d!(200.0)),
                     ..test_pairing_config()
                 }),
             },
@@ -1312,11 +1314,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 1000.0,
+                cv_amount: d!(1000.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 200.0,
+                cv_amount: d!(200.0),
             },
         ];
 
@@ -1333,8 +1335,8 @@ mod tests {
 
         let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
         // CarryForward: left excess = 1000-200 = 800, capped to 200.
-        assert_eq!(root_cf.left, 200.0);
-        assert_eq!(root_cf.right, 0.0);
+        assert_d!(root_cf.left, 200.0);
+        assert_d!(root_cf.right, 0.0);
     }
 
     // --- Prior carry-forward tests ---
@@ -1354,11 +1356,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 200.0,
+                cv_amount: d!(200.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             },
         ];
 
@@ -1367,8 +1369,8 @@ mod tests {
         prior_cf.insert(
             test_uuid(1),
             LegVolumes {
-                left: 300.0,
-                right: 400.0,
+                left: d!(300.0),
+                right: d!(400.0),
             },
         );
 
@@ -1380,10 +1382,10 @@ mod tests {
         // Root legs: left = 200 + 300 = 500, right = 100 + 400 = 500.
         assert_eq!(result.earnings.len(), 1);
         let earning = &result.earnings[0];
-        assert_eq!(earning.left_volume, 500.0);
-        assert_eq!(earning.right_volume, 500.0);
-        assert_eq!(earning.matched_volume, 500.0);
-        assert_eq!(earning.dollar_amount, 50.0);
+        assert_d!(earning.left_volume, 500.0);
+        assert_d!(earning.right_volume, 500.0);
+        assert_d!(earning.matched_volume, 500.0);
+        assert_d!(earning.dollar_amount, 50.0);
     }
 
     // --- Error handling tests ---
@@ -1402,7 +1404,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(99), // Not in tree
-            cv_amount: 500.0,
+            cv_amount: d!(500.0),
         }];
 
         let result = calculate_binary_pairing(
@@ -1431,7 +1433,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2), // In tree, not in snapshots
-            cv_amount: 500.0,
+            cv_amount: d!(500.0),
         }];
 
         let result = calculate_binary_pairing(
@@ -1463,7 +1465,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: -100.0,
+            cv_amount: d!(-100.0),
         }];
 
         let result = calculate_binary_pairing(
@@ -1551,7 +1553,7 @@ mod tests {
         // Root generates volume but has no children. Both legs are zero.
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: 500.0,
+            cv_amount: d!(500.0),
         }];
 
         let result = calculate_binary_pairing(
@@ -1605,11 +1607,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(6),
-                cv_amount: 400.0,
+                cv_amount: d!(400.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 400.0,
+                cv_amount: d!(400.0),
             },
         ];
 
@@ -1631,9 +1633,9 @@ mod tests {
             .iter()
             .find(|e| e.earner_id == test_uuid(1))
             .expect("root should earn");
-        assert_eq!(root_earning.left_volume, 400.0);
-        assert_eq!(root_earning.right_volume, 400.0);
-        assert_eq!(root_earning.dollar_amount, 40.0);
+        assert_d!(root_earning.left_volume, 400.0);
+        assert_d!(root_earning.right_volume, 400.0);
+        assert_d!(root_earning.dollar_amount, 40.0);
     }
 
     #[test]
@@ -1715,8 +1717,8 @@ mod tests {
     #[test]
     fn cycle_step_refuses_a_position_owner_with_no_snapshot() {
         let steps = vec![CycleStep {
-            threshold: 300.0,
-            amount: 25.0,
+            threshold: d!(300.0),
+            amount: d!(25.0),
         }];
         let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
         let tree = three_node_tree();
@@ -1753,7 +1755,7 @@ mod tests {
         ]);
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 500.0,
+            cv_amount: d!(500.0),
         }];
 
         assert_eq!(
@@ -1776,11 +1778,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -1789,8 +1791,8 @@ mod tests {
         prior_cf.insert(
             test_uuid(99),
             LegVolumes {
-                left: 9999.0,
-                right: 9999.0,
+                left: d!(9999.0),
+                right: d!(9999.0),
             },
         );
 
@@ -1801,7 +1803,7 @@ mod tests {
 
         // Should not crash. Result should be same as without carry-forward.
         assert_eq!(result.earnings.len(), 1);
-        assert_eq!(result.earnings[0].dollar_amount, 50.0);
+        assert_d!(result.earnings[0].dollar_amount, 50.0);
 
         // Stale node should not appear in output carry-forward.
         assert!(!result.carry_forward.contains_key(&test_uuid(99)));
@@ -1827,7 +1829,7 @@ mod tests {
         snapshots.insert(
             test_uuid(1),
             DistributorSnapshot {
-                personal_volume: 50.0, // below 100 minimum
+                personal_volume: d!(50.0), // below 100 minimum
                 ..eligible_snapshot()
             },
         );
@@ -1870,11 +1872,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 0.0,
+                cv_amount: d!(0.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 0.0,
+                cv_amount: d!(0.0),
             },
         ];
 
@@ -1891,7 +1893,11 @@ mod tests {
 
         // cv_amount=0.0 is valid. Zero matched volume produces no earnings.
         assert!(
-            result.earnings.is_empty() || result.earnings.iter().all(|e| e.dollar_amount == 0.0),
+            result.earnings.is_empty()
+                || result
+                    .earnings
+                    .iter()
+                    .all(|e| e.dollar_amount == like(&e.dollar_amount, "0.0")),
             "zero CV should produce zero or empty earnings"
         );
     }
@@ -1937,11 +1943,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -1982,11 +1988,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -2033,7 +2039,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: -50.0,
+            cv_amount: d!(-50.0),
         }];
 
         let err = calculate_binary_pairing(
@@ -2059,8 +2065,8 @@ mod tests {
     #[test]
     fn cycle_step_unknown_rank_wins_over_invalid_cv() {
         let steps = vec![CycleStep {
-            threshold: 300.0,
-            amount: 25.0,
+            threshold: d!(300.0),
+            amount: d!(25.0),
         }];
         let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
         let tree = three_node_tree();
@@ -2079,7 +2085,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: -50.0,
+            cv_amount: d!(-50.0),
         }];
 
         let err = calculate_binary_pairing(
@@ -2122,7 +2128,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 500.0,
+            cv_amount: d!(500.0),
         }];
 
         let err = calculate_binary_pairing(
@@ -2152,8 +2158,8 @@ mod tests {
     #[test]
     fn pairing_in_cycle_step_mode_rejects_a_rank_not_in_the_ladder() {
         let steps = vec![CycleStep {
-            threshold: 300.0,
-            amount: 25.0,
+            threshold: d!(300.0),
+            amount: d!(25.0),
         }];
         let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
         let tree = three_node_tree();
@@ -2173,11 +2179,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -2201,8 +2207,8 @@ mod tests {
     #[test]
     fn pairing_in_cycle_step_mode_rejects_a_nan_personal_volume() {
         let steps = vec![CycleStep {
-            threshold: 300.0,
-            amount: 25.0,
+            threshold: d!(300.0),
+            amount: d!(25.0),
         }];
         let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
         let tree = three_node_tree();
@@ -2222,11 +2228,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -2255,8 +2261,8 @@ mod tests {
     fn cycle_step_single_step_both_legs_meet() {
         // Both legs at 500, step at 300/$25. Earns $25.
         let steps = vec![CycleStep {
-            threshold: 300.0,
-            amount: 25.0,
+            threshold: d!(300.0),
+            amount: d!(25.0),
         }];
         let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
         let tree = three_node_tree();
@@ -2270,11 +2276,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -2292,26 +2298,26 @@ mod tests {
         assert_eq!(result.earnings.len(), 1);
         let earning = &result.earnings[0];
         assert_eq!(earning.earner_id, test_uuid(1));
-        assert_eq!(earning.dollar_amount, 25.0);
-        assert_eq!(earning.left_volume, 500.0);
-        assert_eq!(earning.right_volume, 500.0);
-        assert_eq!(earning.matched_volume, 500.0);
-        assert_eq!(earning.percent, 0.0);
-        assert_eq!(earning.ratio, 0.0);
+        assert_d!(earning.dollar_amount, 25.0);
+        assert_d!(earning.left_volume, 500.0);
+        assert_d!(earning.right_volume, 500.0);
+        assert_d!(earning.matched_volume, 500.0);
+        assert_d!(earning.percent, 0.0);
+        assert_d!(earning.ratio, 0.0);
         assert!(!earning.capped);
 
         // FullFlush after complete cycle: carry-forward legs should be zero.
         let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
-        assert_eq!(root_cf.left, 0.0);
-        assert_eq!(root_cf.right, 0.0);
+        assert_d!(root_cf.left, 0.0);
+        assert_d!(root_cf.right, 0.0);
     }
 
     #[test]
     fn cycle_step_single_step_one_leg_below() {
         // Left at 500, right at 200, step at 300/$25. Earns nothing.
         let steps = vec![CycleStep {
-            threshold: 300.0,
-            amount: 25.0,
+            threshold: d!(300.0),
+            amount: d!(25.0),
         }];
         let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
         let tree = three_node_tree();
@@ -2325,11 +2331,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 200.0,
+                cv_amount: d!(200.0),
             },
         ];
 
@@ -2346,14 +2352,18 @@ mod tests {
 
         // matched = min(500, 200) = 200 < 300 threshold. No step qualifies.
         assert!(
-            result.earnings.is_empty() || result.earnings.iter().all(|e| e.dollar_amount == 0.0),
+            result.earnings.is_empty()
+                || result
+                    .earnings
+                    .iter()
+                    .all(|e| e.dollar_amount == like(&e.dollar_amount, "0.0")),
             "should earn nothing when weaker leg is below threshold"
         );
 
         // Legs carry forward unchanged (no cycle started).
         let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
-        assert_eq!(root_cf.left, 500.0);
-        assert_eq!(root_cf.right, 200.0);
+        assert_d!(root_cf.left, 500.0);
+        assert_d!(root_cf.right, 200.0);
     }
 
     #[test]
@@ -2362,16 +2372,16 @@ mod tests {
         // All three steps qualify. Earns $25 + $50 + $100 = $175.
         let steps = vec![
             CycleStep {
-                threshold: 300.0,
-                amount: 25.0,
+                threshold: d!(300.0),
+                amount: d!(25.0),
             },
             CycleStep {
-                threshold: 600.0,
-                amount: 50.0,
+                threshold: d!(600.0),
+                amount: d!(50.0),
             },
             CycleStep {
-                threshold: 1200.0,
-                amount: 100.0,
+                threshold: d!(1200.0),
+                amount: d!(100.0),
             },
         ];
         let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
@@ -2386,11 +2396,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 1500.0,
+                cv_amount: d!(1500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 1500.0,
+                cv_amount: d!(1500.0),
             },
         ];
 
@@ -2407,12 +2417,12 @@ mod tests {
 
         assert_eq!(result.earnings.len(), 1);
         let earning = &result.earnings[0];
-        assert_eq!(earning.dollar_amount, 175.0);
+        assert_d!(earning.dollar_amount, 175.0);
 
         // FullFlush: legs zeroed after complete cycle.
         let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
-        assert_eq!(root_cf.left, 0.0);
-        assert_eq!(root_cf.right, 0.0);
+        assert_d!(root_cf.left, 0.0);
+        assert_d!(root_cf.right, 0.0);
     }
 
     #[test]
@@ -2422,16 +2432,16 @@ mod tests {
         // Earns $25 + $50 = $75. Incomplete cycle, no flush.
         let steps = vec![
             CycleStep {
-                threshold: 300.0,
-                amount: 25.0,
+                threshold: d!(300.0),
+                amount: d!(25.0),
             },
             CycleStep {
-                threshold: 600.0,
-                amount: 50.0,
+                threshold: d!(600.0),
+                amount: d!(50.0),
             },
             CycleStep {
-                threshold: 1200.0,
-                amount: 100.0,
+                threshold: d!(1200.0),
+                amount: d!(100.0),
             },
         ];
         let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
@@ -2446,11 +2456,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 800.0,
+                cv_amount: d!(800.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 800.0,
+                cv_amount: d!(800.0),
             },
         ];
 
@@ -2467,12 +2477,12 @@ mod tests {
 
         assert_eq!(result.earnings.len(), 1);
         let earning = &result.earnings[0];
-        assert_eq!(earning.dollar_amount, 75.0);
+        assert_d!(earning.dollar_amount, 75.0);
 
         // Incomplete cycle: legs carry forward unchanged.
         let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
-        assert_eq!(root_cf.left, 800.0);
-        assert_eq!(root_cf.right, 800.0);
+        assert_d!(root_cf.left, 800.0);
+        assert_d!(root_cf.right, 800.0);
     }
 
     // --- CycleStep carry-forward and flush tests ---
@@ -2483,16 +2493,16 @@ mod tests {
         // All steps qualify, cycle completes. FullFlush zeroes carry-forward.
         let steps = vec![
             CycleStep {
-                threshold: 300.0,
-                amount: 25.0,
+                threshold: d!(300.0),
+                amount: d!(25.0),
             },
             CycleStep {
-                threshold: 600.0,
-                amount: 50.0,
+                threshold: d!(600.0),
+                amount: d!(50.0),
             },
             CycleStep {
-                threshold: 1200.0,
-                amount: 100.0,
+                threshold: d!(1200.0),
+                amount: d!(100.0),
             },
         ];
         let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
@@ -2507,11 +2517,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 1500.0,
+                cv_amount: d!(1500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 1500.0,
+                cv_amount: d!(1500.0),
             },
         ];
 
@@ -2527,11 +2537,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.earnings.len(), 1);
-        assert_eq!(result.earnings[0].dollar_amount, 175.0);
+        assert_d!(result.earnings[0].dollar_amount, 175.0);
 
         let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
-        assert_eq!(root_cf.left, 0.0);
-        assert_eq!(root_cf.right, 0.0);
+        assert_d!(root_cf.left, 0.0);
+        assert_d!(root_cf.right, 0.0);
     }
 
     #[test]
@@ -2544,16 +2554,16 @@ mod tests {
         // second cycle, no subtraction).
         let steps = vec![
             CycleStep {
-                threshold: 300.0,
-                amount: 25.0,
+                threshold: d!(300.0),
+                amount: d!(25.0),
             },
             CycleStep {
-                threshold: 600.0,
-                amount: 50.0,
+                threshold: d!(600.0),
+                amount: d!(50.0),
             },
             CycleStep {
-                threshold: 1200.0,
-                amount: 100.0,
+                threshold: d!(1200.0),
+                amount: d!(100.0),
             },
         ];
         let structure = test_cycle_step_structure(steps, VolumeAfterPayout::CarryForward);
@@ -2568,11 +2578,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 1500.0,
+                cv_amount: d!(1500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 1500.0,
+                cv_amount: d!(1500.0),
             },
         ];
 
@@ -2589,12 +2599,12 @@ mod tests {
 
         assert_eq!(result.earnings.len(), 1);
         // $175 from the first complete cycle + $25 from the second partial cycle.
-        assert_eq!(result.earnings[0].dollar_amount, 200.0);
+        assert_d!(result.earnings[0].dollar_amount, 200.0);
 
         // 1500 - 1200 = 300 on each leg. Second cycle incomplete, no subtraction.
         let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
-        assert_eq!(root_cf.left, 300.0);
-        assert_eq!(root_cf.right, 300.0);
+        assert_d!(root_cf.left, 300.0);
+        assert_d!(root_cf.right, 300.0);
     }
 
     #[test]
@@ -2606,16 +2616,16 @@ mod tests {
         // Carry-forward: 800 each.
         let steps = vec![
             CycleStep {
-                threshold: 300.0,
-                amount: 25.0,
+                threshold: d!(300.0),
+                amount: d!(25.0),
             },
             CycleStep {
-                threshold: 600.0,
-                amount: 50.0,
+                threshold: d!(600.0),
+                amount: d!(50.0),
             },
             CycleStep {
-                threshold: 1200.0,
-                amount: 100.0,
+                threshold: d!(1200.0),
+                amount: d!(100.0),
             },
         ];
         let structure = test_cycle_step_structure(steps, VolumeAfterPayout::CarryForward);
@@ -2630,11 +2640,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 2000.0,
+                cv_amount: d!(2000.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 2000.0,
+                cv_amount: d!(2000.0),
             },
         ];
 
@@ -2650,11 +2660,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.earnings.len(), 1);
-        assert_eq!(result.earnings[0].dollar_amount, 250.0);
+        assert_d!(result.earnings[0].dollar_amount, 250.0);
 
         let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
-        assert_eq!(root_cf.left, 800.0);
-        assert_eq!(root_cf.right, 800.0);
+        assert_d!(root_cf.left, 800.0);
+        assert_d!(root_cf.right, 800.0);
     }
 
     #[test]
@@ -2664,16 +2674,16 @@ mod tests {
         // Steps 1 and 2 qualify ($75). Incomplete cycle. Carry-forward: 700 each.
         let steps = vec![
             CycleStep {
-                threshold: 300.0,
-                amount: 25.0,
+                threshold: d!(300.0),
+                amount: d!(25.0),
             },
             CycleStep {
-                threshold: 600.0,
-                amount: 50.0,
+                threshold: d!(600.0),
+                amount: d!(50.0),
             },
             CycleStep {
-                threshold: 1200.0,
-                amount: 100.0,
+                threshold: d!(1200.0),
+                amount: d!(100.0),
             },
         ];
         let structure = test_cycle_step_structure(steps, VolumeAfterPayout::CarryForward);
@@ -2688,11 +2698,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 200.0,
+                cv_amount: d!(200.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 200.0,
+                cv_amount: d!(200.0),
             },
         ];
 
@@ -2700,8 +2710,8 @@ mod tests {
         prior_carry.insert(
             test_uuid(1),
             LegVolumes {
-                left: 500.0,
-                right: 500.0,
+                left: d!(500.0),
+                right: d!(500.0),
             },
         );
 
@@ -2717,12 +2727,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.earnings.len(), 1);
-        assert_eq!(result.earnings[0].dollar_amount, 75.0);
+        assert_d!(result.earnings[0].dollar_amount, 75.0);
 
         // Incomplete cycle: legs carry forward unchanged at 700.
         let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
-        assert_eq!(root_cf.left, 700.0);
-        assert_eq!(root_cf.right, 700.0);
+        assert_d!(root_cf.left, 700.0);
+        assert_d!(root_cf.right, 700.0);
     }
 
     #[test]
@@ -2733,16 +2743,16 @@ mod tests {
         // Post-cycle legs: 300 each. carry_forward_cap = 200 clamps to 200.
         let steps = vec![
             CycleStep {
-                threshold: 300.0,
-                amount: 25.0,
+                threshold: d!(300.0),
+                amount: d!(25.0),
             },
             CycleStep {
-                threshold: 600.0,
-                amount: 50.0,
+                threshold: d!(600.0),
+                amount: d!(50.0),
             },
             CycleStep {
-                threshold: 1200.0,
-                amount: 100.0,
+                threshold: d!(1200.0),
+                amount: d!(100.0),
             },
         ];
         let structure = BinaryStructureConfig {
@@ -2753,7 +2763,7 @@ mod tests {
                     steps,
                     volume_after_cycle: VolumeAfterPayout::CarryForward,
                     cap_per_period: None,
-                    carry_forward_cap: Some(200.0),
+                    carry_forward_cap: Some(d!(200.0)),
                     multi_position_cap_mode: MultiPositionCapMode::PerPosition,
                 }),
             },
@@ -2769,11 +2779,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 1500.0,
+                cv_amount: d!(1500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 1500.0,
+                cv_amount: d!(1500.0),
             },
         ];
 
@@ -2790,12 +2800,12 @@ mod tests {
 
         assert_eq!(result.earnings.len(), 1);
         // $175 from the first complete cycle + $25 from the second partial cycle.
-        assert_eq!(result.earnings[0].dollar_amount, 200.0);
+        assert_d!(result.earnings[0].dollar_amount, 200.0);
 
         // 1500 - 1200 = 300, clamped to 200 by carry_forward_cap.
         let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
-        assert_eq!(root_cf.left, 200.0);
-        assert_eq!(root_cf.right, 200.0);
+        assert_d!(root_cf.left, 200.0);
+        assert_d!(root_cf.right, 200.0);
     }
 
     #[test]
@@ -2803,8 +2813,8 @@ mod tests {
         // Root is ineligible (PV below minimum). Both legs at 500, step at 300/$25.
         // No earnings. Both legs carry forward at 500 (unchanged).
         let steps = vec![CycleStep {
-            threshold: 300.0,
-            amount: 25.0,
+            threshold: d!(300.0),
+            amount: d!(25.0),
         }];
         let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
         let tree = three_node_tree();
@@ -2814,7 +2824,7 @@ mod tests {
         snapshots.insert(
             test_uuid(1),
             DistributorSnapshot {
-                personal_volume: 0.0, // Below 100 PV minimum
+                personal_volume: d!(0.0), // Below 100 PV minimum
                 ..eligible_snapshot()
             },
         );
@@ -2824,11 +2834,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -2853,8 +2863,8 @@ mod tests {
 
         // Volume preserved in carry-forward.
         let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
-        assert_eq!(root_cf.left, 500.0);
-        assert_eq!(root_cf.right, 500.0);
+        assert_d!(root_cf.left, 500.0);
+        assert_d!(root_cf.right, 500.0);
     }
 
     #[test]
@@ -2864,16 +2874,16 @@ mod tests {
         // $200 ($175 first cycle + $25 second partial) and carry-forward 300.
         let steps = vec![
             CycleStep {
-                threshold: 1200.0,
-                amount: 100.0,
+                threshold: d!(1200.0),
+                amount: d!(100.0),
             },
             CycleStep {
-                threshold: 600.0,
-                amount: 50.0,
+                threshold: d!(600.0),
+                amount: d!(50.0),
             },
             CycleStep {
-                threshold: 300.0,
-                amount: 25.0,
+                threshold: d!(300.0),
+                amount: d!(25.0),
             },
         ];
         let structure = test_cycle_step_structure(steps, VolumeAfterPayout::CarryForward);
@@ -2888,11 +2898,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 1500.0,
+                cv_amount: d!(1500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 1500.0,
+                cv_amount: d!(1500.0),
             },
         ];
 
@@ -2909,11 +2919,11 @@ mod tests {
 
         assert_eq!(result.earnings.len(), 1);
         // Same as carry_forward_subtracts_highest: $175 + $25 partial = $200.
-        assert_eq!(result.earnings[0].dollar_amount, 200.0);
+        assert_d!(result.earnings[0].dollar_amount, 200.0);
 
         let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
-        assert_eq!(root_cf.left, 300.0);
-        assert_eq!(root_cf.right, 300.0);
+        assert_d!(root_cf.left, 300.0);
+        assert_d!(root_cf.right, 300.0);
     }
 
     #[test]
@@ -2927,16 +2937,16 @@ mod tests {
         // Cap = $400, so earnings clamped to $400.
         let steps = vec![
             CycleStep {
-                threshold: 300.0,
-                amount: 25.0,
+                threshold: d!(300.0),
+                amount: d!(25.0),
             },
             CycleStep {
-                threshold: 600.0,
-                amount: 50.0,
+                threshold: d!(600.0),
+                amount: d!(50.0),
             },
             CycleStep {
-                threshold: 1200.0,
-                amount: 100.0,
+                threshold: d!(1200.0),
+                amount: d!(100.0),
             },
         ];
         let structure = BinaryStructureConfig {
@@ -2946,7 +2956,7 @@ mod tests {
                 mode: BinaryCommissionMode::CycleStep(CycleStepConfig {
                     steps,
                     volume_after_cycle: VolumeAfterPayout::CarryForward,
-                    cap_per_period: Some(400.0),
+                    cap_per_period: Some(d!(400.0)),
                     carry_forward_cap: None,
                     multi_position_cap_mode: MultiPositionCapMode::PerPosition,
                 }),
@@ -2963,11 +2973,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 5000.0,
+                cv_amount: d!(5000.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 5000.0,
+                cv_amount: d!(5000.0),
             },
         ];
 
@@ -2984,14 +2994,14 @@ mod tests {
 
         assert_eq!(result.earnings.len(), 1);
         let earning = &result.earnings[0];
-        assert_eq!(earning.dollar_amount, 400.0);
+        assert_d!(earning.dollar_amount, 400.0);
         assert!(earning.capped);
 
         // Carry-forward should reflect post-cycle legs (200 each),
         // not affected by the cap.
         let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
-        assert_eq!(root_cf.left, 200.0);
-        assert_eq!(root_cf.right, 200.0);
+        assert_d!(root_cf.left, 200.0);
+        assert_d!(root_cf.right, 200.0);
     }
 
     #[test]
@@ -3004,16 +3014,16 @@ mod tests {
         // Each position capped independently to $150.
         let steps = vec![
             CycleStep {
-                threshold: 300.0,
-                amount: 25.0,
+                threshold: d!(300.0),
+                amount: d!(25.0),
             },
             CycleStep {
-                threshold: 600.0,
-                amount: 50.0,
+                threshold: d!(600.0),
+                amount: d!(50.0),
             },
             CycleStep {
-                threshold: 1200.0,
-                amount: 100.0,
+                threshold: d!(1200.0),
+                amount: d!(100.0),
             },
         ];
         let structure = BinaryStructureConfig {
@@ -3023,7 +3033,7 @@ mod tests {
                 mode: BinaryCommissionMode::CycleStep(CycleStepConfig {
                     steps,
                     volume_after_cycle: VolumeAfterPayout::CarryForward,
-                    cap_per_period: Some(150.0),
+                    cap_per_period: Some(d!(150.0)),
                     carry_forward_cap: None,
                     multi_position_cap_mode: MultiPositionCapMode::PerPosition,
                 }),
@@ -3049,19 +3059,19 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(4),
-                cv_amount: 1500.0,
+                cv_amount: d!(1500.0),
             },
             VolumeSource {
                 source_id: test_uuid(5),
-                cv_amount: 1500.0,
+                cv_amount: d!(1500.0),
             },
             VolumeSource {
                 source_id: test_uuid(6),
-                cv_amount: 1500.0,
+                cv_amount: d!(1500.0),
             },
             VolumeSource {
                 source_id: test_uuid(7),
-                cv_amount: 1500.0,
+                cv_amount: d!(1500.0),
             },
         ];
 
@@ -3103,16 +3113,16 @@ mod tests {
         // Aggregate cap = $300. Pro-rata: each gets 300 * (175/350) = $150.
         let steps = vec![
             CycleStep {
-                threshold: 300.0,
-                amount: 25.0,
+                threshold: d!(300.0),
+                amount: d!(25.0),
             },
             CycleStep {
-                threshold: 600.0,
-                amount: 50.0,
+                threshold: d!(600.0),
+                amount: d!(50.0),
             },
             CycleStep {
-                threshold: 1200.0,
-                amount: 100.0,
+                threshold: d!(1200.0),
+                amount: d!(100.0),
             },
         ];
         let structure = BinaryStructureConfig {
@@ -3122,7 +3132,7 @@ mod tests {
                 mode: BinaryCommissionMode::CycleStep(CycleStepConfig {
                     steps,
                     volume_after_cycle: VolumeAfterPayout::FullFlush,
-                    cap_per_period: Some(300.0),
+                    cap_per_period: Some(d!(300.0)),
                     carry_forward_cap: None,
                     multi_position_cap_mode: MultiPositionCapMode::Aggregate,
                 }),
@@ -3148,19 +3158,19 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(4),
-                cv_amount: 1200.0,
+                cv_amount: d!(1200.0),
             },
             VolumeSource {
                 source_id: test_uuid(5),
-                cv_amount: 1200.0,
+                cv_amount: d!(1200.0),
             },
             VolumeSource {
                 source_id: test_uuid(6),
-                cv_amount: 1200.0,
+                cv_amount: d!(1200.0),
             },
             VolumeSource {
                 source_id: test_uuid(7),
-                cv_amount: 1200.0,
+                cv_amount: d!(1200.0),
             },
         ];
 
@@ -3206,12 +3216,12 @@ mod tests {
         // Both legs at zero volume. No earnings, no crash.
         let steps = vec![
             CycleStep {
-                threshold: 300.0,
-                amount: 25.0,
+                threshold: d!(300.0),
+                amount: d!(25.0),
             },
             CycleStep {
-                threshold: 600.0,
-                amount: 50.0,
+                threshold: d!(600.0),
+                amount: d!(50.0),
             },
         ];
         let structure = test_cycle_step_structure(steps, VolumeAfterPayout::CarryForward);
@@ -3227,11 +3237,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 0.0,
+                cv_amount: d!(0.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 0.0,
+                cv_amount: d!(0.0),
             },
         ];
 
@@ -3251,8 +3261,8 @@ mod tests {
 
         // Carry-forward should have zero on both legs.
         let root_cf = result.carry_forward.get(&test_uuid(1)).unwrap();
-        assert_eq!(root_cf.left, 0.0);
-        assert_eq!(root_cf.right, 0.0);
+        assert_d!(root_cf.left, 0.0);
+        assert_d!(root_cf.right, 0.0);
     }
 
     // --- Multi-position ownership resolution tests ---
@@ -3277,11 +3287,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -3324,11 +3334,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -3346,7 +3356,7 @@ mod tests {
         // Owner_a earns through position 1.
         assert_eq!(result.earnings.len(), 1);
         assert_eq!(result.earnings[0].earner_id, owner_a);
-        assert_eq!(result.earnings[0].dollar_amount, 50.0);
+        assert_d!(result.earnings[0].dollar_amount, 50.0);
     }
 
     #[test]
@@ -3364,11 +3374,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -3408,11 +3418,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -3484,19 +3494,19 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(4),
-                cv_amount: 1000.0,
+                cv_amount: d!(1000.0),
             },
             VolumeSource {
                 source_id: test_uuid(5),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(6),
-                cv_amount: 200.0,
+                cv_amount: d!(200.0),
             },
             VolumeSource {
                 source_id: test_uuid(7),
-                cv_amount: 800.0,
+                cv_amount: d!(800.0),
             },
         ];
 
@@ -3590,7 +3600,7 @@ mod tests {
             binary_commission: BinaryCommissionConfig {
                 volume_to_dollar_multiplier: None,
                 mode: BinaryCommissionMode::Pairing(PairingConfig {
-                    cap_per_period: Some(500.0),
+                    cap_per_period: Some(d!(500.0)),
                     multi_position_cap_mode: MultiPositionCapMode::Aggregate,
                     ..test_pairing_config()
                 }),
@@ -3617,19 +3627,19 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(4),
-                cv_amount: 3000.0,
+                cv_amount: d!(3000.0),
             },
             VolumeSource {
                 source_id: test_uuid(5),
-                cv_amount: 3000.0,
+                cv_amount: d!(3000.0),
             },
             VolumeSource {
                 source_id: test_uuid(6),
-                cv_amount: 3000.0,
+                cv_amount: d!(3000.0),
             },
             VolumeSource {
                 source_id: test_uuid(7),
-                cv_amount: 3000.0,
+                cv_amount: d!(3000.0),
             },
         ];
 
@@ -3681,7 +3691,7 @@ mod tests {
             binary_commission: BinaryCommissionConfig {
                 volume_to_dollar_multiplier: None,
                 mode: BinaryCommissionMode::Pairing(PairingConfig {
-                    cap_per_period: Some(500.0),
+                    cap_per_period: Some(d!(500.0)),
                     multi_position_cap_mode: MultiPositionCapMode::PerPosition,
                     ..test_pairing_config()
                 }),
@@ -3705,19 +3715,19 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(4),
-                cv_amount: 3000.0,
+                cv_amount: d!(3000.0),
             },
             VolumeSource {
                 source_id: test_uuid(5),
-                cv_amount: 3000.0,
+                cv_amount: d!(3000.0),
             },
             VolumeSource {
                 source_id: test_uuid(6),
-                cv_amount: 3000.0,
+                cv_amount: d!(3000.0),
             },
             VolumeSource {
                 source_id: test_uuid(7),
-                cv_amount: 3000.0,
+                cv_amount: d!(3000.0),
             },
         ];
 
@@ -3767,7 +3777,7 @@ mod tests {
             binary_commission: BinaryCommissionConfig {
                 volume_to_dollar_multiplier: None,
                 mode: BinaryCommissionMode::Pairing(PairingConfig {
-                    cap_per_period: Some(100.0),
+                    cap_per_period: Some(d!(100.0)),
                     multi_position_cap_mode: MultiPositionCapMode::Aggregate,
                     ..test_pairing_config()
                 }),
@@ -3792,19 +3802,19 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(4),
-                cv_amount: 200.0,
+                cv_amount: d!(200.0),
             },
             VolumeSource {
                 source_id: test_uuid(5),
-                cv_amount: 200.0,
+                cv_amount: d!(200.0),
             },
             VolumeSource {
                 source_id: test_uuid(6),
-                cv_amount: 3000.0,
+                cv_amount: d!(3000.0),
             },
             VolumeSource {
                 source_id: test_uuid(7),
-                cv_amount: 3000.0,
+                cv_amount: d!(3000.0),
             },
         ];
 
@@ -3868,7 +3878,7 @@ mod tests {
             binary_commission: BinaryCommissionConfig {
                 volume_to_dollar_multiplier: None,
                 mode: BinaryCommissionMode::Pairing(PairingConfig {
-                    cap_per_period: Some(30.0),
+                    cap_per_period: Some(d!(30.0)),
                     multi_position_cap_mode: MultiPositionCapMode::Aggregate,
                     ..test_pairing_config()
                 }),
@@ -3884,11 +3894,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
         ];
 
@@ -3917,11 +3927,12 @@ mod tests {
 
     mod prop_tests {
         use super::*;
+        use crate::test_strategies::cents;
         use proptest::prelude::*;
 
         /// Generate a random volume amount (positive, finite).
         fn arb_volume() -> impl Strategy<Value = f64> {
-            0.0..10000.0f64
+            cents(0, 1_000_000)
         }
 
         /// Generate a pair of leg volumes for a balanced-to-unbalanced tree.
@@ -3987,8 +3998,8 @@ mod tests {
                 ).unwrap();
 
                 for legs in result.carry_forward.values() {
-                    prop_assert!(legs.left >= 0.0, "left carry-forward is negative: {}", legs.left);
-                    prop_assert!(legs.right >= 0.0, "right carry-forward is negative: {}", legs.right);
+                    prop_assert!(legs.left >= d!(0.0), "left carry-forward is negative: {}", legs.left);
+                    prop_assert!(legs.right >= d!(0.0), "right carry-forward is negative: {}", legs.right);
                 }
             }
 
@@ -4015,8 +4026,8 @@ mod tests {
                 ).unwrap();
 
                 for legs in result.carry_forward.values() {
-                    prop_assert_eq!(legs.left, 0.0);
-                    prop_assert_eq!(legs.right, 0.0);
+                    prop_assert_eq!(legs.left, like(&legs.left, "0.0"));
+                    prop_assert_eq!(legs.right, like(&legs.right, "0.0"));
                 }
             }
 
@@ -4059,7 +4070,7 @@ mod tests {
             fn carry_forward_cap_never_exceeded(
                 (left_vol, right_vol) in arb_leg_pair()
             ) {
-                let cap = 500.0;
+                let cap = d!(500.0);
                 let structure = BinaryStructureConfig {
                     name: "Test Binary".to_string(),
                     binary_commission: BinaryCommissionConfig {
@@ -4108,7 +4119,7 @@ mod tests {
             fn cap_per_period_never_exceeded(
                 (left_vol, right_vol) in arb_leg_pair()
             ) {
-                let cap = 25.0;
+                let cap = d!(25.0);
                 let structure = capped_structure(cap);
                 let tree = three_node_tree();
                 let plan = test_plan_with_structure(default_eligibility(), structure.clone());
@@ -4141,10 +4152,10 @@ mod tests {
             /// remain non-negative across periods.
             #[test]
             fn carry_forward_preserved_across_periods(
-                left_p1 in 0.0..5000.0f64,
-                right_p1 in 0.0..5000.0f64,
-                left_p2 in 0.0..5000.0f64,
-                right_p2 in 0.0..5000.0f64,
+                left_p1 in cents(0, 500_000),
+                right_p1 in cents(0, 500_000),
+                left_p2 in cents(0, 500_000),
+                right_p2 in cents(0, 500_000),
             ) {
                 let tree = three_node_tree();
                 let structure = carry_forward_structure();
@@ -4167,8 +4178,8 @@ mod tests {
 
                 // All carry-forward values from period 1 must be non-negative.
                 for legs in result_p1.carry_forward.values() {
-                    prop_assert!(legs.left >= 0.0, "P1 left carry-forward negative: {}", legs.left);
-                    prop_assert!(legs.right >= 0.0, "P1 right carry-forward negative: {}", legs.right);
+                    prop_assert!(legs.left >= d!(0.0), "P1 left carry-forward negative: {}", legs.left);
+                    prop_assert!(legs.right >= d!(0.0), "P1 right carry-forward negative: {}", legs.right);
                 }
 
                 // Period 2: feed carry-forward from period 1 as input.
@@ -4183,8 +4194,8 @@ mod tests {
 
                 // All carry-forward values from period 2 must be non-negative.
                 for legs in result_p2.carry_forward.values() {
-                    prop_assert!(legs.left >= 0.0, "P2 left carry-forward negative: {}", legs.left);
-                    prop_assert!(legs.right >= 0.0, "P2 right carry-forward negative: {}", legs.right);
+                    prop_assert!(legs.left >= d!(0.0), "P2 left carry-forward negative: {}", legs.left);
+                    prop_assert!(legs.right >= d!(0.0), "P2 right carry-forward negative: {}", legs.right);
                 }
 
                 // Total paid across both periods should never exceed total
@@ -4214,18 +4225,18 @@ mod tests {
         let earning = |position: u8, amount: f64| BinaryCommissionEarning {
             earner_id: owner,
             position_id: test_uuid(position),
-            left_volume: 0.0,
-            right_volume: 0.0,
-            matched_volume: 0.0,
-            ratio: 1.0,
-            percent: 0.10,
+            left_volume: d!(0.0),
+            right_volume: d!(0.0),
+            matched_volume: d!(0.0),
+            ratio: d!(1.0),
+            percent: d!(0.10),
             dollar_amount: amount,
             capped: false,
         };
         let base = [
-            earning(1, 0.2),
-            earning(2, 0.1),
-            earning(3, 0.30000000000000004),
+            earning(1, d!(0.2)),
+            earning(2, d!(0.1)),
+            earning(3, d!(0.30000000000000004)),
         ];
         let pinned = [0.03333333333333333f64, 0.016666666666666666, 0.05].map(f64::to_bits);
         for order in [
@@ -4237,7 +4248,7 @@ mod tests {
             [2, 1, 0],
         ] {
             let mut earnings: Vec<_> = order.iter().map(|&i| base[i].clone()).collect();
-            apply_aggregate_cap(&mut earnings, 0.1);
+            apply_aggregate_cap(&mut earnings, d!(0.1));
             earnings.sort_by_key(|e| e.position_id);
             let amounts: Vec<f64> = earnings.iter().map(|e| e.dollar_amount).collect();
             let bits: Vec<u64> = amounts.iter().map(|a| a.to_bits()).collect();

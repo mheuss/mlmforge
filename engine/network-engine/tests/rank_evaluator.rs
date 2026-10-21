@@ -92,6 +92,33 @@ fn linear_plan() -> CompensationPlan {
     plan
 }
 
+/// `linear_plan`, with silver also requiring one leg holding a node at PV 100
+/// or more.
+fn leg_volume_plan() -> CompensationPlan {
+    let mut plan = linear_plan();
+    plan.ranks[1].qualification.structures[0].leg_quality = vec![LegQualityRequirement {
+        count: 1,
+        predicate: LegPredicate::ContainsPersonalVolume {
+            min_personal_volume: 100.0,
+        },
+    }];
+    plan
+}
+
+/// Root 1 with one child, node 2.
+fn root_and_child() -> UnilevelTree {
+    let mut tree = UnilevelTree::new();
+    tree.add_root(uuid_from_index(1), 0).unwrap();
+    tree.add_node(
+        uuid_from_index(2),
+        uuid_from_index(1),
+        uuid_from_index(1),
+        0,
+    )
+    .unwrap();
+    tree
+}
+
 #[test]
 fn evaluate_ranks_returns_per_distributor_rank() {
     let mut tree = UnilevelTree::new();
@@ -169,11 +196,105 @@ fn evaluate_ranks_gives_the_base_rank_without_evaluating_its_qualification() {
     );
 }
 
+/// Root 1 at PV 250 reaches silver when its one leg, node 2, is at PV 150.
 #[test]
-fn evaluate_ranks_omitting_primitives_omits_distributor() {
-    // Reproduces design risk #3 mitigation.
+fn a_leg_with_enough_volume_lifts_its_upline_to_silver() {
+    let tree = root_and_child();
+    let plan = leg_volume_plan();
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &tree);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(250.0));
+    distributors.insert(uuid_from_index(2), primitives(150.0));
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+    assert_eq!(
+        result.ranks.get(&uuid_from_index(1)),
+        Some(&EvaluatedRank::Qualified {
+            rank: "silver".to_string(),
+            ordinal: 2
+        })
+    );
+}
+
+/// Root 1 at PV 250 stays at associate when its one leg, node 2, is at PV 50.
+#[test]
+fn a_leg_below_the_volume_leaves_its_upline_at_associate() {
+    let tree = root_and_child();
+    let plan = leg_volume_plan();
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &tree);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(250.0));
+    distributors.insert(uuid_from_index(2), primitives(50.0));
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+    assert_eq!(
+        result.ranks.get(&uuid_from_index(1)),
+        Some(&EvaluatedRank::Qualified {
+            rank: "associate".to_string(),
+            ordinal: 1
+        })
+    );
+}
+
+/// Root 1 at PV 250, with its one leg, node 2, left out of the inputs. The
+/// request is refused and names node 2.
+#[test]
+fn evaluate_ranks_refuses_an_omitted_leg() {
+    let tree = root_and_child();
+    let plan = leg_volume_plan();
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &tree);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(250.0));
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    assert_eq!(
+        evaluate_ranks(&plan, &nav, &inputs).unwrap_err(),
+        EvaluationError::DistributorNotInInputs(uuid_from_index(2))
+    );
+}
+
+/// Nodes 3 and 2 are both left out, and node 3 is placed first. The refusal
+/// names node 2, the lower ID.
+#[test]
+fn evaluate_ranks_names_the_lowest_missing_distributor() {
     let mut tree = UnilevelTree::new();
     tree.add_root(uuid_from_index(1), 0).unwrap();
+    tree.add_node(
+        uuid_from_index(3),
+        uuid_from_index(1),
+        uuid_from_index(1),
+        0,
+    )
+    .unwrap();
     tree.add_node(
         uuid_from_index(2),
         uuid_from_index(1),
@@ -187,7 +308,6 @@ fn evaluate_ranks_omitting_primitives_omits_distributor() {
     let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
     nav.insert("Test".to_string(), &tree);
 
-    // Only distributor 1 has primitives.
     let mut distributors = HashMap::new();
     distributors.insert(uuid_from_index(1), primitives(250.0));
 
@@ -198,9 +318,97 @@ fn evaluate_ranks_omitting_primitives_omits_distributor() {
         history: HashMap::new(),
     };
 
+    assert_eq!(
+        evaluate_ranks(&plan, &nav, &inputs).unwrap_err(),
+        EvaluationError::DistributorNotInInputs(uuid_from_index(2))
+    );
+}
+
+/// Node 7 is in "Base", which only the lowest rank names, and has no inputs.
+/// The request succeeds.
+#[test]
+fn evaluate_ranks_does_not_require_members_of_a_tree_only_the_lowest_rank_names() {
+    let mut test_tree = UnilevelTree::new();
+    test_tree.add_root(uuid_from_index(1), 0).unwrap();
+    let mut base_tree = UnilevelTree::new();
+    base_tree.add_root(uuid_from_index(7), 0).unwrap();
+
+    let mut plan = linear_plan();
+    plan.ranks[0].qualification.structures[0].structure = "Base".to_string();
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &test_tree);
+    nav.insert("Base".to_string(), &base_tree);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(250.0));
+    assert!(
+        base_tree.contains(uuid_from_index(7)),
+        "node 7 must be in Base"
+    );
+    assert!(
+        !distributors.contains_key(&uuid_from_index(7)),
+        "node 7 must have no inputs"
+    );
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
     let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
-    // Distributor 2 must NOT appear in the result — they have no primitives.
-    assert!(!result.ranks.contains_key(&uuid_from_index(2)));
+    assert_eq!(
+        result.ranks.get(&uuid_from_index(1)),
+        Some(&EvaluatedRank::Qualified {
+            rank: "silver".to_string(),
+            ordinal: 2
+        })
+    );
+}
+
+/// Node 8 is in "Extra", which no rank names, and has no inputs. The request
+/// succeeds.
+#[test]
+fn evaluate_ranks_does_not_require_members_of_a_tree_no_rank_names() {
+    let mut test_tree = UnilevelTree::new();
+    test_tree.add_root(uuid_from_index(1), 0).unwrap();
+    let mut extra_tree = UnilevelTree::new();
+    extra_tree.add_root(uuid_from_index(8), 0).unwrap();
+
+    let plan = linear_plan();
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &test_tree);
+    nav.insert("Extra".to_string(), &extra_tree);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(250.0));
+    assert!(
+        extra_tree.contains(uuid_from_index(8)),
+        "node 8 must be in Extra"
+    );
+    assert!(
+        !distributors.contains_key(&uuid_from_index(8)),
+        "node 8 must have no inputs"
+    );
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+    assert_eq!(
+        result.ranks.get(&uuid_from_index(1)),
+        Some(&EvaluatedRank::Qualified {
+            rank: "silver".to_string(),
+            ordinal: 2
+        })
+    );
 }
 
 #[test]
@@ -318,7 +526,7 @@ fn evaluate_ranks_errors_on_unknown_min_rank() {
 /// — one `ContainsRank` and one `ContainsPersonalVolume` — is enforced through
 /// the public `evaluate_ranks` entry point.
 ///
-/// Tree layout (root 1 has no primitives and is not evaluated):
+/// Tree layout (root 1 is at PV 0 and its rank is not asserted):
 /// ```text
 /// root(1)
 /// ├── subject_a(2)  PV=50
@@ -417,9 +625,8 @@ fn evaluate_ranks_with_populated_leg_quality_gates_rank() {
         },
     ];
 
-    // Tree: root(1) is the structural parent. It has no primitives so it is
-    // not evaluated. subject_a(2) and subject_b(3) are root's children; each
-    // has two children of their own.
+    // Tree: root(1) is the structural parent. subject_a(2) and subject_b(3)
+    // are root's children; each has two children of their own.
     let mut tree = UnilevelTree::new();
     tree.add_root(uuid_from_index(1), 0).unwrap();
     // subject_a and its two legs
@@ -472,8 +679,9 @@ fn evaluate_ranks_with_populated_leg_quality_gates_rank() {
 
     // subject_a(2): PV=50. Its children: node 4 (PV=100), node 5 (PV=50).
     // subject_b(3): PV=50. Its children: node 6 (PV=50), node 7 (PV=50).
-    // Root(1) has no primitives — not evaluated.
+    // Root(1): PV=0.
     let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(0.0));
     distributors.insert(uuid_from_index(2), primitives(50.0));
     distributors.insert(uuid_from_index(3), primitives(50.0));
     distributors.insert(uuid_from_index(4), primitives(100.0));
@@ -1038,6 +1246,34 @@ fn evaluate_ranks_errors_when_windowed_rank_has_empty_history_window() {
     let err = evaluate_ranks(&plan, &nav, &inputs).unwrap_err();
     assert_eq!(
         err,
+        EvaluationError::TimeGateWithoutHistory {
+            rank: "QD".to_string(),
+        }
+    );
+}
+
+/// A windowed rank with an empty history_window, and node 2 left out of the
+/// inputs. The time-gate error is returned, not the missing input.
+#[test]
+fn evaluate_ranks_reports_a_missing_history_window_before_a_missing_input() {
+    let tree = root_and_child();
+    let plan = windowed_plan();
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &tree);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(0.0));
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    assert_eq!(
+        evaluate_ranks(&plan, &nav, &inputs).unwrap_err(),
         EvaluationError::TimeGateWithoutHistory {
             rank: "QD".to_string(),
         }

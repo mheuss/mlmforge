@@ -108,6 +108,11 @@ pub enum EvaluationError {
     #[error("distributor {0} not found in tree '{1}'")]
     DistributorNotInTree(Uuid, String),
 
+    /// A member of a tree in `trees` whose structure a rank above the lowest
+    /// names has no entry in `distributors`.
+    #[error("distributor {0} has no rank inputs")]
+    DistributorNotInInputs(Uuid),
+
     /// Fixpoint iteration in `evaluate_ranks` did not stabilize within the
     /// pass bound. Rank evaluation is monotone, so this is unreachable unless
     /// a non-monotone descendant-reading predicate was introduced — a bug,

@@ -19,7 +19,8 @@ use crate::tree::navigator::TreeNavigator;
 use self::evaluator::{EvalCtx, VolumeIndex, evaluation_order_for_users, iterate_to_fixpoint};
 
 /// Evaluate the rank of every distributor in `inputs` against the plan's
-/// rank ladder.
+/// rank ladder. Refuses inputs that leave out a member of a tree in `trees`
+/// whose structure a rank above the lowest names.
 pub fn evaluate_ranks(
     plan: &CompensationPlan,
     trees: &HashMap<String, &dyn TreeNavigator>,
@@ -49,6 +50,8 @@ pub fn evaluate_ranks(
             });
         }
     }
+
+    require_every_tree_member(plan, trees, &inputs.distributors)?;
 
     let rank_ordinals: HashMap<String, u16> = ranks_owned
         .iter()
@@ -90,6 +93,26 @@ pub fn evaluate_ranks(
     // Move into a BTreeMap so the result serializes with sorted keys.
     let ranks: std::collections::BTreeMap<Uuid, EvaluatedRank> = already.into_iter().collect();
     Ok(EvaluationResult { ranks })
+}
+
+/// Refuse inputs that leave out a member of a tree in `trees` whose structure
+/// a rank above the lowest names. A named structure missing from `trees` is
+/// skipped.
+fn require_every_tree_member(
+    plan: &CompensationPlan,
+    trees: &HashMap<String, &dyn TreeNavigator>,
+    distributors: &HashMap<Uuid, DistributorPrimitives>,
+) -> Result<(), EvaluationError> {
+    let missing = structures_above_lowest_rank(plan)
+        .into_iter()
+        .filter_map(|name| trees.get(name))
+        .flat_map(|tree| tree.user_ids())
+        .filter(|id| !distributors.contains_key(id))
+        .min();
+    match missing {
+        Some(id) => Err(EvaluationError::DistributorNotInInputs(id)),
+        None => Ok(()),
+    }
 }
 
 /// Return the structure names that a rank above the lowest names in its

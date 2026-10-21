@@ -1,12 +1,16 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/mlmforge/mlmforge/internal/dec"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // schemaPath returns the absolute path to the JSON Schema file.
@@ -54,7 +58,7 @@ func minimalPlan() *CompensationPlan {
 		},
 		Volume: VolumeConfig{
 			BaseCurrency:             "USD",
-			VolumeToDollarMultiplier: 1.0,
+			VolumeToDollarMultiplier: dec.MustParse("1.0"),
 		},
 		Ranks: []RankDefinition{
 			{
@@ -75,8 +79,8 @@ func minimalPlan() *CompensationPlan {
 					Structures: []StructureQualification{
 						{
 							Structure:      "Primary",
-							PersonalVolume: 100,
-							GroupVolume:    3000,
+							PersonalVolume: dec.MustParse("100"),
+							GroupVolume:    dec.MustParse("3000"),
 						},
 					},
 					RequiredProducts: []string{},
@@ -95,11 +99,11 @@ func minimalPlan() *CompensationPlan {
 		},
 		Payout: PayoutConfig{
 			BaseCurrency:  "USD",
-			MinimumAmount: 50,
-			Methods:       []PayoutMethod{{Type: "bank_transfer", Fee: 2.50}},
+			MinimumAmount: dec.MustParse("50"),
+			Methods:       []PayoutMethod{{Type: "bank_transfer", Fee: dec.MustParse("2.50")}},
 		},
 		Caps: CapsConfig{
-			CompanyPayoutCapPercent: 0.42,
+			CompanyPayoutCapPercent: dec.MustParse("0.42"),
 			CapEnforcement:          "pro_rata",
 		},
 		Placement: PlacementConfig{
@@ -113,10 +117,10 @@ func minimalPlan() *CompensationPlan {
 func minimalPlanWithCommission() *CompensationPlan {
 	plan := minimalPlan()
 	plan.Structures[0].resolvedCommission = &UnilevelCommission{
-		BroadCommissionPercent: 0.40,
+		BroadCommissionPercent: dec.MustParse("0.40"),
 		CommissionableDepth:    5,
-		RateTable: map[string]map[string]float64{
-			"Associate": {"1": 0.05, "2": 0.04},
+		RateTable: map[string]map[string]dec.Amount{
+			"Associate": {"1": dec.MustParse("0.05"), "2": dec.MustParse("0.04")},
 		},
 	}
 	return plan
@@ -131,11 +135,27 @@ func minimalPlanWithGenerationStructure() *CompensationPlan {
 	plan.Structures[0].resolvedCommission = &GenerationCommission{
 		Generation: GenerationCommissionConfig{
 			MaxGenerations:                3,
-			GenerationRates:               map[string]float64{"1": 0.10},
+			GenerationRates:               map[string]dec.Amount{"1": dec.MustParse("0.10")},
 			BoundaryMode:                  "threshold_rank",
 			BoundaryRank:                  "Silver",
 			EmptyGenerationConsumesNumber: false,
 		},
 	}
 	return plan
+}
+
+// commissionNode parses YAML text into the node a structure's commission block holds.
+func commissionNode(t *testing.T, text string) yaml.Node {
+	t.Helper()
+	var doc yaml.Node
+	require.NoError(t, yaml.Unmarshal([]byte(text), &doc))
+	return *doc.Content[0]
+}
+
+// assertAmount checks that got equals the decimal value want names.
+func assertAmount(t *testing.T, want string, got dec.Amount, msgAndArgs ...any) {
+	t.Helper()
+	if !dec.MustParse(want).Equal(got.Decimal) {
+		assert.Fail(t, fmt.Sprintf("want %s, got %s", want, got.String()), msgAndArgs...)
+	}
 }

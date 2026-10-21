@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/mlmforge/mlmforge/internal/dec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -112,9 +113,9 @@ func TestTranslateStreamlineLevelsMapToVec(t *testing.T) {
 	plan.Structures[0].resolvedCommission = &StreamlineCommission{
 		CommissionableDepth: 5,
 		DynamicCompression: map[string]StreamlineLevel{
-			"2": {MinRank: "gold", Percent: 0.08},
-			"1": {MinRank: "silver", Percent: 0.05},
-			"3": {MinRank: "platinum", Percent: 0.10},
+			"2": {MinRank: "gold", Percent: dec.MustParse("0.08")},
+			"1": {MinRank: "silver", Percent: dec.MustParse("0.05")},
+			"3": {MinRank: "platinum", Percent: dec.MustParse("0.10")},
 		},
 	}
 
@@ -159,7 +160,7 @@ func TestTranslateBinaryModeTagging(t *testing.T) {
 	plan.Structures[0].resolvedCommission = &BinaryCommission{
 		Mode: "pairing",
 		Pairing: &PairingConfig{
-			Percent:           0.10,
+			Percent:           dec.MustParse("0.10"),
 			Calculation:       "weaker_leg",
 			VolumeAfterPayout: "carry_forward",
 		},
@@ -236,7 +237,7 @@ func TestTranslateDemotionPolicyGraceJSON(t *testing.T) {
 
 func TestTranslateCarriesThePerLegCapFraction(t *testing.T) {
 	plan := minimalPlanWithCommission()
-	plan.Ranks[1].Qualification.Structures[0].MaxGroupVolumePerLegFraction = 0.6
+	plan.Ranks[1].Qualification.Structures[0].MaxGroupVolumePerLegFraction = dec.MustParse("0.6")
 
 	out, err := translateToEngine(plan)
 	require.NoError(t, err)
@@ -272,8 +273,8 @@ func TestSortStreamlineLevelsEmptyMap(t *testing.T) {
 // returns an error when a map key is not a valid integer.
 func TestSortStreamlineLevelsInvalidKey(t *testing.T) {
 	levels := map[string]StreamlineLevel{
-		"1":   {MinRank: "silver", Percent: 0.05},
-		"abc": {MinRank: "gold", Percent: 0.08},
+		"1":   {MinRank: "silver", Percent: dec.MustParse("0.05")},
+		"abc": {MinRank: "gold", Percent: dec.MustParse("0.08")},
 	}
 	_, err := sortStreamlineLevels(levels)
 	require.Error(t, err)
@@ -288,7 +289,7 @@ func TestSortStreamlineLevelsInvalidKey(t *testing.T) {
 func TestSortStreamlineLevelsOutOfRange(t *testing.T) {
 	for _, level := range []string{"256", "300", "0"} {
 		levels := map[string]StreamlineLevel{
-			level: {MinRank: "silver", Percent: 0.05},
+			level: {MinRank: "silver", Percent: dec.MustParse("0.05")},
 		}
 		_, err := sortStreamlineLevels(levels)
 		require.Error(t, err, "level %s must be rejected", level)
@@ -301,8 +302,8 @@ func TestSortStreamlineLevelsOutOfRange(t *testing.T) {
 // off-by-one in the guard (n >= 255 vs n > 255).
 func TestSortStreamlineLevelsAcceptsBoundary(t *testing.T) {
 	accepted, err := sortStreamlineLevels(map[string]StreamlineLevel{
-		"1":   {MinRank: "silver", Percent: 0.05},
-		"255": {MinRank: "gold", Percent: 0.03},
+		"1":   {MinRank: "silver", Percent: dec.MustParse("0.05")},
+		"255": {MinRank: "gold", Percent: dec.MustParse("0.03")},
 	})
 	require.NoError(t, err)
 	assert.Len(t, accepted, 2)
@@ -333,7 +334,7 @@ func TestTranslateCycleStepNetOffRejected(t *testing.T) {
 		Mode: "cycle_step",
 		CycleStep: &CycleStepConfig{
 			VolumeAfterCycle: "net_off",
-			Steps:            []CycleStep{{Threshold: 300, Amount: 25}},
+			Steps:            []CycleStep{{Threshold: dec.MustParse("300"), Amount: dec.MustParse("25")}},
 		},
 	}
 	_, err := translateBinaryCommission(c)
@@ -355,7 +356,7 @@ func TestTranslateBoardPlanConfig(t *testing.T) {
 		},
 		resolvedCommission: &BoardPlanCommission{
 			BoardCycling: BoardCyclingConfig{
-				CycleCommission:       500.0,
+				CycleCommission:       dec.MustParse("500.0"),
 				ReEntryEnabled:        true,
 				ReEntryPosition:       "bottom",
 				MaxCyclesPerPeriod:    5,
@@ -367,10 +368,10 @@ func TestTranslateBoardPlanConfig(t *testing.T) {
 	})
 	// The first structure (unilevel) needs a resolved commission for translation.
 	plan.Structures[0].resolvedCommission = &UnilevelCommission{
-		BroadCommissionPercent: 0.40,
+		BroadCommissionPercent: dec.MustParse("0.40"),
 		CommissionableDepth:    5,
-		RateTable: map[string]map[string]float64{
-			"Associate": {"1": 0.05},
+		RateTable: map[string]map[string]dec.Amount{
+			"Associate": {"1": dec.MustParse("0.05")},
 		},
 	}
 
@@ -457,10 +458,10 @@ func TestTranslateStreamlineConfigWithStreams(t *testing.T) {
 	plan.Structures[0].Type = "streamline"
 	plan.Structures[0].resolvedCommission = &StreamlineCommission{
 		CommissionableDepth:      7,
-		VolumeToDollarMultiplier: floatPtr(1.5),
+		VolumeToDollarMultiplier: amountPtr("1.5"),
 		DynamicCompression: map[string]StreamlineLevel{
-			"1": {MinRank: "active", Percent: 0.05},
-			"2": {MinRank: "bronze", Percent: 0.04},
+			"1": {MinRank: "active", Percent: dec.MustParse("0.05")},
+			"2": {MinRank: "bronze", Percent: dec.MustParse("0.04")},
 		},
 		Streams: &StreamConfig{
 			AdditionalPerRank:   map[string]uint8{"silver": 1, "gold": 2},
@@ -502,7 +503,7 @@ func TestTranslateStreamlineConfigNilStreams(t *testing.T) {
 	plan.Structures[0].resolvedCommission = &StreamlineCommission{
 		CommissionableDepth: 5,
 		DynamicCompression: map[string]StreamlineLevel{
-			"1": {MinRank: "active", Percent: 0.10},
+			"1": {MinRank: "active", Percent: dec.MustParse("0.10")},
 		},
 		Streams: nil,
 	}
@@ -533,8 +534,8 @@ func TestTranslateGenerationIneligibleCreatesBoundary(t *testing.T) {
 		LevelCommissionsEnabled: false,
 		Generation: GenerationCommissionConfig{
 			MaxGenerations: 3,
-			GenerationRates: map[string]float64{
-				"1": 0.05,
+			GenerationRates: map[string]dec.Amount{
+				"1": dec.MustParse("0.05"),
 			},
 			BoundaryMode:                  "threshold_rank",
 			BoundaryRank:                  "Executive",
@@ -565,8 +566,8 @@ func TestTranslateGenerationIneligibleCreatesBoundaryNil(t *testing.T) {
 		LevelCommissionsEnabled: false,
 		Generation: GenerationCommissionConfig{
 			MaxGenerations: 3,
-			GenerationRates: map[string]float64{
-				"1": 0.05,
+			GenerationRates: map[string]dec.Amount{
+				"1": dec.MustParse("0.05"),
 			},
 			BoundaryMode:                  "threshold_rank",
 			BoundaryRank:                  "Executive",
@@ -592,4 +593,16 @@ func TestTranslateGenerationIneligibleCreatesBoundaryNil(t *testing.T) {
 	assert.False(t, exists, "nil *bool should be omitted from JSON so Rust serde default applies")
 }
 
-func floatPtr(f float64) *float64 { return &f }
+func amountPtr(text string) *dec.Amount {
+	a := dec.MustParse(text)
+	return &a
+}
+
+func TestTranslateWritesASmallFractionInPlainDecimal(t *testing.T) {
+	plan := minimalPlanWithCommission()
+	plan.Ranks[1].Qualification.Structures[0].MaxGroupVolumePerLegFraction = dec.MustParse("0.0000001")
+
+	out, err := translateToEngine(plan)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), `"max_group_volume_per_leg_fraction":0.0000001`)
+}

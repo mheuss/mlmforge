@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/mlmforge/mlmforge/internal/dec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -99,7 +100,7 @@ placement:
 	assert.Equal(t, "Primary", plan.Structures[0].Name)
 	assert.Equal(t, "unilevel", plan.Structures[0].Type)
 	assert.Equal(t, "USD", plan.Payout.BaseCurrency)
-	assert.Equal(t, 50.0, plan.Payout.MinimumAmount)
+	assertAmount(t, "50.0", plan.Payout.MinimumAmount)
 	assert.Len(t, plan.Payout.Methods, 1)
 	assert.False(t, plan.Placement.DonatedPlacementEnabled)
 }
@@ -165,7 +166,7 @@ commission:
 	err := yaml.Unmarshal(yamlData, &s)
 	require.NoError(t, err)
 	assert.Equal(t, "unilevel", s.Type)
-	assert.NotNil(t, s.CommissionRaw)
+	assert.NotZero(t, s.CommissionRaw.Kind)
 }
 
 // TestResolveCommissionsUnilevel verifies that resolveCommissions correctly
@@ -201,10 +202,10 @@ placement: {donated_placement_enabled: false}
 
 	c, ok := plan.Structures[0].resolvedCommission.(*UnilevelCommission)
 	require.True(t, ok, "expected *UnilevelCommission, got %T", plan.Structures[0].resolvedCommission)
-	assert.Equal(t, 0.40, c.BroadCommissionPercent)
+	assertAmount(t, "0.40", c.BroadCommissionPercent)
 	assert.Equal(t, uint8(5), c.CommissionableDepth)
-	assert.Equal(t, 0.05, c.RateTable["Associate"]["1"])
-	assert.Equal(t, 0.04, c.RateTable["Associate"]["2"])
+	assertAmount(t, "0.05", c.RateTable["Associate"]["1"])
+	assertAmount(t, "0.04", c.RateTable["Associate"]["2"])
 }
 
 // TestCommissionableDepth_RejectsOverMax verifies the uint8 commissionable_depth
@@ -520,11 +521,11 @@ placement: {donated_placement_enabled: false}
 	require.True(t, ok, "expected *BinaryCommission, got %T", plan.Structures[0].resolvedCommission)
 	assert.Equal(t, "pairing", c.Mode)
 	require.NotNil(t, c.Pairing)
-	assert.Equal(t, 0.10, c.Pairing.Percent)
+	assertAmount(t, "0.10", c.Pairing.Percent)
 	assert.Equal(t, "weaker_leg", c.Pairing.Calculation)
-	assert.Equal(t, 5000.0, *c.Pairing.CapPerPeriod)
+	assertAmount(t, "5000.0", *c.Pairing.CapPerPeriod)
 	assert.Equal(t, "carry_forward", c.Pairing.VolumeAfterPayout)
-	assert.Equal(t, 20000.0, *c.Pairing.CarryForwardCap)
+	assertAmount(t, "20000.0", *c.Pairing.CarryForwardCap)
 }
 
 // TestResolveCommissionsStreamline verifies that resolveCommissions correctly
@@ -565,9 +566,9 @@ placement: {donated_placement_enabled: false}
 	assert.Equal(t, uint8(10), c.CommissionableDepth)
 	require.Len(t, c.DynamicCompression, 2)
 	assert.Equal(t, "Affiliate", c.DynamicCompression["1"].MinRank)
-	assert.Equal(t, 0.10, c.DynamicCompression["1"].Percent)
+	assertAmount(t, "0.10", c.DynamicCompression["1"].Percent)
 	assert.Equal(t, "Team Lead", c.DynamicCompression["2"].MinRank)
-	assert.Equal(t, 0.07, c.DynamicCompression["2"].Percent)
+	assertAmount(t, "0.07", c.DynamicCompression["2"].Percent)
 }
 
 // TestResolveCommissionsGeneration verifies that resolveCommissions correctly
@@ -619,8 +620,8 @@ placement: {donated_placement_enabled: false}
 	assert.True(t, c.Generation.EmptyGenerationConsumesNumber)
 	require.NotNil(t, c.Generation.IneligibleCreatesBoundary)
 	assert.True(t, *c.Generation.IneligibleCreatesBoundary)
-	assert.Equal(t, 0.05, c.Generation.GenerationRates["1"])
-	assert.Equal(t, 0.04, c.Generation.GenerationRates["2"])
+	assertAmount(t, "0.05", c.Generation.GenerationRates["1"])
+	assertAmount(t, "0.04", c.Generation.GenerationRates["2"])
 }
 
 // TestResolveCommissionsStairstep verifies that resolveCommissions correctly
@@ -673,8 +674,9 @@ placement: {donated_placement_enabled: false}
 	assert.Equal(t, "single_walk", c.Breakaway.Overrides.Type)
 	assert.Equal(t, "differential", c.Breakaway.Overrides.OverrideCalculation)
 	require.NotNil(t, c.Breakaway.Overrides.Differential)
-	assert.Equal(t, 0.05, c.Breakaway.Overrides.Differential.RankRates["Supervisor"])
-	assert.Equal(t, MinOverride{Type: "currency", Value: 10.0}, c.Breakaway.Overrides.Differential.MinOverride)
+	assertAmount(t, "0.05", c.Breakaway.Overrides.Differential.RankRates["Supervisor"])
+	assert.Equal(t, "currency", c.Breakaway.Overrides.Differential.MinOverride.Type)
+	assertAmount(t, "10", c.Breakaway.Overrides.Differential.MinOverride.Value)
 }
 
 // TestBreakawayConfig_SingleWalk_MarshalsGoEmittedWireShape verifies the
@@ -692,8 +694,8 @@ func TestBreakawayConfig_SingleWalk_MarshalsGoEmittedWireShape(t *testing.T) {
 			Type:                overrideStrategySingleWalk,
 			OverrideCalculation: "differential",
 			Differential: &DifferentialConfig{
-				RankRates:   map[string]float64{"director": 0.10},
-				MinOverride: MinOverride{Type: "rate", Value: 0.02},
+				RankRates:   map[string]dec.Amount{"director": dec.MustParse("0.10")},
+				MinOverride: MinOverride{Type: "rate", Value: dec.MustParse("0.02")},
 			},
 		},
 	}
@@ -748,8 +750,8 @@ func TestBreakawayConfig_MultiTier_MarshalsGoEmittedWireShape(t *testing.T) {
 		Overrides: OverrideStrategy{
 			Type: overrideStrategyMultiTier,
 			Tiers: []BreakawayTier{
-				{MinSplitOutGroups: 1, Rate: 0.05},
-				{MinSplitOutGroups: 2, Rate: 0.02},
+				{MinSplitOutGroups: 1, Rate: dec.MustParse("0.05")},
+				{MinSplitOutGroups: 2, Rate: dec.MustParse("0.02")},
 			},
 		},
 	}
@@ -860,8 +862,8 @@ placement: {donated_placement_enabled: false}
 	c, ok := plan.Structures[0].resolvedCommission.(*MatrixCommission)
 	require.True(t, ok, "expected *MatrixCommission, got %T", plan.Structures[0].resolvedCommission)
 	assert.Equal(t, uint8(7), c.CommissionableDepth)
-	assert.Equal(t, 0.05, c.RateTable["Starter"]["1"])
-	assert.Equal(t, 0.03, c.RateTable["Starter"]["2"])
+	assertAmount(t, "0.05", c.RateTable["Starter"]["1"])
+	assertAmount(t, "0.03", c.RateTable["Starter"]["2"])
 }
 
 // TestResolveCommissionsUnknownType verifies that resolveCommissions returns
@@ -869,7 +871,7 @@ placement: {donated_placement_enabled: false}
 func TestResolveCommissionsUnknownType(t *testing.T) {
 	plan := &CompensationPlan{
 		Structures: []StructureConfig{
-			{Name: "Bad", Type: "pyramid", CommissionRaw: map[string]any{"foo": "bar"}},
+			{Name: "Bad", Type: "pyramid", CommissionRaw: commissionNode(t, "foo: bar\n")},
 		},
 	}
 	err := resolveCommissions(plan)
@@ -882,7 +884,7 @@ func TestResolveCommissionsUnknownType(t *testing.T) {
 func TestResolveCommissionsNilCommissionReturnsError(t *testing.T) {
 	plan := &CompensationPlan{
 		Structures: []StructureConfig{
-			{Name: "Empty", Type: "unilevel", CommissionRaw: nil},
+			{Name: "Empty", Type: "unilevel", CommissionRaw: yaml.Node{}},
 		},
 	}
 	err := resolveCommissions(plan)
@@ -929,7 +931,7 @@ placement: {donated_placement_enabled: false}
 
 	c, ok := plan.Structures[0].resolvedCommission.(*BoardPlanCommission)
 	require.True(t, ok, "expected *BoardPlanCommission, got %T", plan.Structures[0].resolvedCommission)
-	assert.Equal(t, 500.0, c.BoardCycling.CycleCommission)
+	assertAmount(t, "500.0", c.BoardCycling.CycleCommission)
 	assert.True(t, c.BoardCycling.ReEntryEnabled)
 	assert.Equal(t, "bottom", c.BoardCycling.ReEntryPosition)
 	assert.Equal(t, uint32(5), c.BoardCycling.MaxCyclesPerPeriod)
@@ -1084,7 +1086,7 @@ leg_quality:
 	assert.Equal(t, "contains_rank", sq.LegQuality[0].Predicate.Type)
 	assert.Equal(t, "Gold", sq.LegQuality[0].Predicate.MinRank)
 	assert.Equal(t, "contains_personal_volume", sq.LegQuality[1].Predicate.Type)
-	assert.Equal(t, float64(200), sq.LegQuality[1].Predicate.MinPersonalVolume)
+	assertAmount(t, "200", sq.LegQuality[1].Predicate.MinPersonalVolume)
 
 	// Round-trip JSON to validate Rust-bound serialization.
 	jsonBytes, err := json.Marshal(sq)
@@ -1103,7 +1105,7 @@ leg_quality:
 	require.Len(t, decoded.LegQuality, 2)
 	assert.Equal(t, uint16(12), decoded.LegQuality[0].Count)
 	assert.Equal(t, "Gold", decoded.LegQuality[0].Predicate.MinRank)
-	assert.Equal(t, float64(200), decoded.LegQuality[1].Predicate.MinPersonalVolume)
+	assertAmount(t, "200", decoded.LegQuality[1].Predicate.MinPersonalVolume)
 }
 
 // TestLegQualityDefaultsToEmpty verifies that an absent leg_quality
@@ -1270,7 +1272,7 @@ inactive_compression: false
 	err := yaml.Unmarshal(yamlData, &cfg)
 	require.NoError(t, err)
 
-	assert.Equal(t, 250.0, cfg.CycleCommission)
+	assertAmount(t, "250.0", cfg.CycleCommission)
 	assert.False(t, cfg.ReEntryEnabled)
 	assert.Equal(t, "sponsor_board", cfg.ReEntryPosition)
 	assert.Equal(t, uint32(3), cfg.MaxCyclesPerPeriod)
@@ -1307,4 +1309,24 @@ func TestRankQualification_ParsesTenure(t *testing.T) {
 	require.NotNil(t, q.Tenure)
 	assert.Equal(t, "Director", q.Tenure.ThresholdRank)
 	assert.Equal(t, uint8(12), q.Tenure.Periods)
+}
+func TestResolveCommissionsKeepsEveryDigitOfACommissionValue(t *testing.T) {
+	var s StructureConfig
+	require.NoError(t, yaml.Unmarshal([]byte(`
+name: Primary
+type: unilevel
+commission:
+  broad_commission_percent: 0.4
+  volume_to_dollar_multiplier: 1234567.1234567891
+  commissionable_depth: 3
+  rate_table:
+    Associate:
+      1: 0.05
+`), &s))
+	plan := &CompensationPlan{Structures: []StructureConfig{s}}
+
+	require.NoError(t, resolveCommissions(plan))
+
+	c := plan.Structures[0].resolvedCommission.(*UnilevelCommission)
+	assert.Equal(t, "1234567.1234567891", c.VolumeToDollarMultiplier.String())
 }

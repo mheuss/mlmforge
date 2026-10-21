@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/mlmforge/mlmforge/internal/dec"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -38,10 +40,10 @@ type PeriodConfig struct {
 
 // VolumeConfig controls volume calculation and currency settings.
 type VolumeConfig struct {
-	InhibitSignupVolume      bool    `yaml:"inhibit_signup_volume" json:"inhibit_signup_volume"`
-	BaseCurrency             string  `yaml:"base_currency" json:"base_currency"`
-	VolumeToDollarMultiplier float64 `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
-	DeductQualifyingVolume   bool    `yaml:"deduct_qualifying_volume" json:"deduct_qualifying_volume"`
+	InhibitSignupVolume      bool       `yaml:"inhibit_signup_volume" json:"inhibit_signup_volume"`
+	BaseCurrency             string     `yaml:"base_currency" json:"base_currency"`
+	VolumeToDollarMultiplier dec.Amount `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
+	DeductQualifyingVolume   bool       `yaml:"deduct_qualifying_volume" json:"deduct_qualifying_volume"`
 }
 
 // --- Ranks ---
@@ -83,11 +85,11 @@ type TenureRequirement struct {
 // StructureQualification holds qualification requirements for a specific structure.
 type StructureQualification struct {
 	Structure                    string                       `yaml:"structure" json:"structure"`
-	PersonalVolume               float64                      `yaml:"personal_volume" json:"personal_volume"`
-	GroupVolume                  float64                      `yaml:"group_volume" json:"group_volume"`
-	MaxGroupVolumePerLeg         float64                      `yaml:"max_group_volume_per_leg" json:"max_group_volume_per_leg"`
-	MaxGroupVolumePerLegFraction float64                      `yaml:"max_group_volume_per_leg_fraction,omitempty" json:"max_group_volume_per_leg_fraction,omitempty"`
-	MinRetailVolume              float64                      `yaml:"min_retail_volume" json:"min_retail_volume"`
+	PersonalVolume               dec.Amount                   `yaml:"personal_volume" json:"personal_volume"`
+	GroupVolume                  dec.Amount                   `yaml:"group_volume" json:"group_volume"`
+	MaxGroupVolumePerLeg         dec.Amount                   `yaml:"max_group_volume_per_leg" json:"max_group_volume_per_leg"`
+	MaxGroupVolumePerLegFraction dec.Amount                   `yaml:"max_group_volume_per_leg_fraction,omitempty" json:"max_group_volume_per_leg_fraction,omitzero"`
+	MinRetailVolume              dec.Amount                   `yaml:"min_retail_volume" json:"min_retail_volume"`
 	DistributorCount             *DistributorCountRequirement `yaml:"distributor_count" json:"distributor_count"`
 	LegQuality                   []LegQualityRequirement      `yaml:"leg_quality,omitempty" json:"leg_quality,omitempty"`
 }
@@ -100,12 +102,12 @@ type StructureQualification struct {
 // the Go unmarshal layer instead of truncating at the Rust FFI boundary.
 // See docs/development/config-types.md "Field types must match byte-widths".
 type DistributorCountRequirement struct {
-	Count             uint16  `yaml:"count" json:"count"`
-	MinRank           string  `yaml:"min_rank" json:"min_rank"`
-	SearchMode        string  `yaml:"search_mode" json:"search_mode"`
-	SearchDepth       *uint8  `yaml:"search_depth" json:"search_depth"`
-	TotalCount        uint16  `yaml:"total_count" json:"total_count"`
-	MinLegGroupVolume float64 `yaml:"min_leg_group_volume" json:"min_leg_group_volume"`
+	Count             uint16     `yaml:"count" json:"count"`
+	MinRank           string     `yaml:"min_rank" json:"min_rank"`
+	SearchMode        string     `yaml:"search_mode" json:"search_mode"`
+	SearchDepth       *uint8     `yaml:"search_depth" json:"search_depth"`
+	TotalCount        uint16     `yaml:"total_count" json:"total_count"`
+	MinLegGroupVolume dec.Amount `yaml:"min_leg_group_volume" json:"min_leg_group_volume"`
 }
 
 // LegQualityRequirement defines a per-leg structural requirement: at least
@@ -126,9 +128,9 @@ type LegQualityRequirement struct {
 // internally-tagged enum. omitempty would wrongly drop a legitimate
 // min_personal_volume of 0, and Rust has no serde(default) on that field.
 type LegPredicate struct {
-	Type              string  `yaml:"type" json:"type"`
-	MinRank           string  `yaml:"min_rank" json:"min_rank"`
-	MinPersonalVolume float64 `yaml:"min_personal_volume" json:"min_personal_volume"`
+	Type              string     `yaml:"type" json:"type"`
+	MinRank           string     `yaml:"min_rank" json:"min_rank"`
+	MinPersonalVolume dec.Amount `yaml:"min_personal_volume" json:"min_personal_volume"`
 }
 
 // DemotionPolicy handles the YAML union: either the string "promotion_only"
@@ -198,7 +200,7 @@ type RankFeaturesConfig struct {
 
 // CommissionEligibility defines rules for commission eligibility.
 type CommissionEligibility struct {
-	MinPersonalVolume    float64         `yaml:"min_personal_volume" json:"min_personal_volume"`
+	MinPersonalVolume    dec.Amount      `yaml:"min_personal_volume" json:"min_personal_volume"`
 	RequireOrderInPeriod bool            `yaml:"require_order_in_period" json:"require_order_in_period"`
 	EligibleStatuses     []string        `yaml:"eligible_statuses" json:"eligible_statuses"`
 	ActiveLegTiers       []ActiveLegTier `yaml:"active_leg_tiers" json:"active_leg_tiers,omitempty"`
@@ -232,12 +234,12 @@ func (*BoardPlanCommission) isCommission()  {}
 
 // StructureConfig holds the flat YAML representation of a structure.
 // The commission block varies by type and is deferred for two-pass parsing.
-// CommissionRaw stores the untyped commission map from initial unmarshal.
-// resolveCommissions() re-marshals and decodes it into the correct type.
+// CommissionRaw holds the commission block as parsed YAML.
+// resolveCommissions() decodes it into the correct type.
 type StructureConfig struct {
 	Name          string                 `yaml:"name" json:"name"`
 	Type          string                 `yaml:"type" json:"type"`
-	CommissionRaw any                    `yaml:"commission" json:"-"`
+	CommissionRaw yaml.Node              `yaml:"commission" json:"-"`
 	Structure     *MatrixStructureParams `yaml:"structure" json:"structure,omitempty"`
 	Pruning       *PruningConfig         `yaml:"pruning" json:"pruning,omitempty"`
 	// resolvedCommission holds the parsed commission config after type resolution.
@@ -250,17 +252,17 @@ type StructureConfig struct {
 
 // UnilevelCommission holds commission configuration for unilevel structures.
 type UnilevelCommission struct {
-	BroadCommissionPercent   float64                       `yaml:"broad_commission_percent" json:"broad_commission_percent"`
-	VolumeToDollarMultiplier *float64                      `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
-	CommissionableDepth      uint8                         `yaml:"commissionable_depth" json:"commissionable_depth"`
-	RateTable                map[string]map[string]float64 `yaml:"rate_table" json:"rate_table"`
-	Compression              *CompressionConfig            `yaml:"compression" json:"compression"`
-	PassUp                   *PassUpConfig                 `yaml:"pass_up" json:"pass_up"`
+	BroadCommissionPercent   dec.Amount                       `yaml:"broad_commission_percent" json:"broad_commission_percent"`
+	VolumeToDollarMultiplier *dec.Amount                      `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
+	CommissionableDepth      uint8                            `yaml:"commissionable_depth" json:"commissionable_depth"`
+	RateTable                map[string]map[string]dec.Amount `yaml:"rate_table" json:"rate_table"`
+	Compression              *CompressionConfig               `yaml:"compression" json:"compression"`
+	PassUp                   *PassUpConfig                    `yaml:"pass_up" json:"pass_up"`
 }
 
 // BinaryCommission holds commission configuration for binary structures.
 type BinaryCommission struct {
-	VolumeToDollarMultiplier *float64         `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
+	VolumeToDollarMultiplier *dec.Amount      `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
 	Mode                     string           `yaml:"mode" json:"mode"`
 	Pairing                  *PairingConfig   `yaml:"pairing" json:"pairing,omitempty"`
 	CycleStep                *CycleStepConfig `yaml:"cycle_step" json:"cycle_step,omitempty"`
@@ -268,39 +270,39 @@ type BinaryCommission struct {
 
 // MatrixCommission holds commission configuration for matrix structures.
 type MatrixCommission struct {
-	BroadCommissionPercent   float64                       `yaml:"broad_commission_percent" json:"broad_commission_percent"`
-	VolumeToDollarMultiplier *float64                      `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
-	CommissionableDepth      uint8                         `yaml:"commissionable_depth" json:"commissionable_depth"`
-	RateTable                map[string]map[string]float64 `yaml:"rate_table" json:"rate_table"`
-	Compression              *CompressionConfig            `yaml:"compression" json:"compression"`
+	BroadCommissionPercent   dec.Amount                       `yaml:"broad_commission_percent" json:"broad_commission_percent"`
+	VolumeToDollarMultiplier *dec.Amount                      `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
+	CommissionableDepth      uint8                            `yaml:"commissionable_depth" json:"commissionable_depth"`
+	RateTable                map[string]map[string]dec.Amount `yaml:"rate_table" json:"rate_table"`
+	Compression              *CompressionConfig               `yaml:"compression" json:"compression"`
 }
 
 // StairstepCommission holds commission configuration for stairstep structures.
 type StairstepCommission struct {
-	BroadCommissionPercent   float64                       `yaml:"broad_commission_percent" json:"broad_commission_percent"`
-	VolumeToDollarMultiplier *float64                      `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
-	CommissionableDepth      uint8                         `yaml:"commissionable_depth" json:"commissionable_depth"`
-	RateTable                map[string]map[string]float64 `yaml:"rate_table" json:"rate_table"`
-	Compression              *CompressionConfig            `yaml:"compression" json:"compression"`
-	Breakaway                *BreakawayConfig              `yaml:"breakaway" json:"breakaway"`
+	BroadCommissionPercent   dec.Amount                       `yaml:"broad_commission_percent" json:"broad_commission_percent"`
+	VolumeToDollarMultiplier *dec.Amount                      `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
+	CommissionableDepth      uint8                            `yaml:"commissionable_depth" json:"commissionable_depth"`
+	RateTable                map[string]map[string]dec.Amount `yaml:"rate_table" json:"rate_table"`
+	Compression              *CompressionConfig               `yaml:"compression" json:"compression"`
+	Breakaway                *BreakawayConfig                 `yaml:"breakaway" json:"breakaway"`
 }
 
 // GenerationCommission holds commission configuration for generation structures.
 type GenerationCommission struct {
-	LevelCommissionsEnabled  bool                          `yaml:"level_commissions_enabled" json:"level_commissions_enabled"`
-	BroadCommissionPercent   float64                       `yaml:"broad_commission_percent" json:"broad_commission_percent"`
-	VolumeToDollarMultiplier *float64                      `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
-	CommissionableDepth      uint8                         `yaml:"commissionable_depth" json:"commissionable_depth"`
-	RateTable                map[string]map[string]float64 `yaml:"rate_table" json:"rate_table"`
-	Compression              *CompressionConfig            `yaml:"compression" json:"compression"`
-	Generation               GenerationCommissionConfig    `yaml:"generation" json:"generation"`
+	LevelCommissionsEnabled  bool                             `yaml:"level_commissions_enabled" json:"level_commissions_enabled"`
+	BroadCommissionPercent   dec.Amount                       `yaml:"broad_commission_percent" json:"broad_commission_percent"`
+	VolumeToDollarMultiplier *dec.Amount                      `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
+	CommissionableDepth      uint8                            `yaml:"commissionable_depth" json:"commissionable_depth"`
+	RateTable                map[string]map[string]dec.Amount `yaml:"rate_table" json:"rate_table"`
+	Compression              *CompressionConfig               `yaml:"compression" json:"compression"`
+	Generation               GenerationCommissionConfig       `yaml:"generation" json:"generation"`
 }
 
 // StreamlineCommission holds commission configuration for streamline structures.
 type StreamlineCommission struct {
 	// VolumeToDollarMultiplier is the per-structure CV override. Nil uses
 	// the plan-level multiplier from the volume config.
-	VolumeToDollarMultiplier *float64                   `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
+	VolumeToDollarMultiplier *dec.Amount                `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
 	CommissionableDepth      uint8                      `yaml:"commissionable_depth" json:"commissionable_depth"`
 	DynamicCompression       map[string]StreamlineLevel `yaml:"dynamic_compression" json:"dynamic_compression"`
 	Streams                  *StreamConfig              `yaml:"streams" json:"streams"`
@@ -330,11 +332,11 @@ const (
 
 // PairingConfig holds binary pairing commission configuration.
 type PairingConfig struct {
-	Percent           float64  `yaml:"percent" json:"percent"`
-	Calculation       string   `yaml:"calculation" json:"calculation"`
-	CapPerPeriod      *float64 `yaml:"cap_per_period" json:"cap_per_period"`
-	VolumeAfterPayout string   `yaml:"volume_after_payout" json:"volume_after_payout"`
-	CarryForwardCap   *float64 `yaml:"carry_forward_cap" json:"carry_forward_cap"`
+	Percent           dec.Amount  `yaml:"percent" json:"percent"`
+	Calculation       string      `yaml:"calculation" json:"calculation"`
+	CapPerPeriod      *dec.Amount `yaml:"cap_per_period" json:"cap_per_period"`
+	VolumeAfterPayout string      `yaml:"volume_after_payout" json:"volume_after_payout"`
+	CarryForwardCap   *dec.Amount `yaml:"carry_forward_cap" json:"carry_forward_cap"`
 	// Empty string means the Rust engine's serde default ("per_position") applies.
 	// Go callers should use GetMultiPositionCapMode() for a consistent default.
 	MultiPositionCapMode string `yaml:"multi_position_cap_mode,omitempty" json:"multi_position_cap_mode,omitempty"`
@@ -352,15 +354,15 @@ func (p *PairingConfig) GetMultiPositionCapMode() string {
 type CycleStepConfig struct {
 	Steps                []CycleStep `yaml:"steps" json:"steps"`
 	VolumeAfterCycle     string      `yaml:"volume_after_cycle" json:"volume_after_cycle"`
-	CapPerPeriod         *float64    `yaml:"cap_per_period" json:"cap_per_period"`
-	CarryForwardCap      *float64    `yaml:"carry_forward_cap" json:"carry_forward_cap"`
+	CapPerPeriod         *dec.Amount `yaml:"cap_per_period" json:"cap_per_period"`
+	CarryForwardCap      *dec.Amount `yaml:"carry_forward_cap" json:"carry_forward_cap"`
 	MultiPositionCapMode string      `yaml:"multi_position_cap_mode,omitempty" json:"multi_position_cap_mode,omitempty"`
 }
 
 // CycleStep represents a single step in a binary cycle/step commission.
 type CycleStep struct {
-	Threshold float64 `yaml:"threshold" json:"threshold"`
-	Amount    float64 `yaml:"amount" json:"amount"`
+	Threshold dec.Amount `yaml:"threshold" json:"threshold"`
+	Amount    dec.Amount `yaml:"amount" json:"amount"`
 }
 
 // BreakawayConfig holds stairstep breakaway configuration. The override
@@ -413,14 +415,14 @@ type OverrideStrategy struct {
 // or out-of-range values fail at Go unmarshal time instead of silently
 // truncating downstream.
 type BreakawayTier struct {
-	MinSplitOutGroups uint8   `yaml:"min_split_out_groups" json:"min_split_out_groups"`
-	Rate              float64 `yaml:"rate" json:"rate"`
+	MinSplitOutGroups uint8      `yaml:"min_split_out_groups" json:"min_split_out_groups"`
+	Rate              dec.Amount `yaml:"rate" json:"rate"`
 }
 
 // DifferentialConfig holds differential override commission configuration.
 type DifferentialConfig struct {
-	RankRates   map[string]float64 `yaml:"rank_rates" json:"rank_rates"`
-	MinOverride MinOverride        `yaml:"min_override" json:"min_override"`
+	RankRates   map[string]dec.Amount `yaml:"rank_rates" json:"rank_rates"`
+	MinOverride MinOverride           `yaml:"min_override" json:"min_override"`
 }
 
 // MinOverride is a floor and the unit it is measured in. Type selects the
@@ -430,14 +432,14 @@ type DifferentialConfig struct {
 // reading and currency under the other, and a value between 0 and 1 passed
 // both sides while paying neither amount the author meant.
 type MinOverride struct {
-	Type  string  `yaml:"type" json:"type"`
-	Value float64 `yaml:"value" json:"value"`
+	Type  string     `yaml:"type" json:"type"`
+	Value dec.Amount `yaml:"value" json:"value"`
 }
 
 // FixedOverrideConfig holds fixed override commission configuration.
 // Each rank has a flat override percentage applied to breakaway group volume.
 type FixedOverrideConfig struct {
-	RankRates map[string]float64 `yaml:"rank_rates" json:"rank_rates"`
+	RankRates map[string]dec.Amount `yaml:"rank_rates" json:"rank_rates"`
 }
 
 // BreakawayGenerationConfig holds generation override configuration for breakaway groups.
@@ -446,9 +448,9 @@ type FixedOverrideConfig struct {
 // negative or out-of-range values fail at Go unmarshal time instead of silently
 // truncating or erroring downstream when the config round-trips to the engine.
 type BreakawayGenerationConfig struct {
-	MaxGenerations  uint8              `yaml:"max_generations" json:"max_generations"`
-	GenerationRates map[string]float64 `yaml:"generation_rates" json:"generation_rates"`
-	BoundaryRank    string             `yaml:"boundary_rank" json:"boundary_rank"`
+	MaxGenerations  uint8                 `yaml:"max_generations" json:"max_generations"`
+	GenerationRates map[string]dec.Amount `yaml:"generation_rates" json:"generation_rates"`
+	BoundaryRank    string                `yaml:"boundary_rank" json:"boundary_rank"`
 }
 
 // GenerationCommissionConfig holds configuration for generation-based commissions.
@@ -459,14 +461,14 @@ type BreakawayGenerationConfig struct {
 // the config round-trips to the engine. The omitempty tag on the per-rank map
 // matches the Rust serde(default) behavior so an empty map round-trips cleanly.
 type GenerationCommissionConfig struct {
-	MaxGenerations                uint8              `yaml:"max_generations" json:"max_generations"`
-	MaxGenerationsPerRank         map[string]uint8   `yaml:"max_generations_per_rank,omitempty" json:"max_generations_per_rank,omitempty"`
-	GenerationRates               map[string]float64 `yaml:"generation_rates" json:"generation_rates"`
-	BoundaryMode                  string             `yaml:"boundary_mode" json:"boundary_mode"`
-	BoundaryRank                  string             `yaml:"boundary_rank" json:"boundary_rank"`
-	EmptyGenerationConsumesNumber bool               `yaml:"empty_generation_consumes_number" json:"empty_generation_consumes_number"`
-	VolumeToDollarMultiplier      *float64           `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
-	IneligibleCreatesBoundary     *bool              `yaml:"ineligible_creates_boundary" json:"ineligible_creates_boundary,omitempty"`
+	MaxGenerations                uint8                 `yaml:"max_generations" json:"max_generations"`
+	MaxGenerationsPerRank         map[string]uint8      `yaml:"max_generations_per_rank,omitempty" json:"max_generations_per_rank,omitempty"`
+	GenerationRates               map[string]dec.Amount `yaml:"generation_rates" json:"generation_rates"`
+	BoundaryMode                  string                `yaml:"boundary_mode" json:"boundary_mode"`
+	BoundaryRank                  string                `yaml:"boundary_rank" json:"boundary_rank"`
+	EmptyGenerationConsumesNumber bool                  `yaml:"empty_generation_consumes_number" json:"empty_generation_consumes_number"`
+	VolumeToDollarMultiplier      *dec.Amount           `yaml:"volume_to_dollar_multiplier" json:"volume_to_dollar_multiplier"`
+	IneligibleCreatesBoundary     *bool                 `yaml:"ineligible_creates_boundary" json:"ineligible_creates_boundary,omitempty"`
 }
 
 // StreamlineLevel holds commission configuration for a single streamline level.
@@ -478,7 +480,7 @@ type StreamlineLevel struct {
 	// so a 0.05 level on 100 CV at multiplier 1.0 pays 5.00. Schema
 	// validation, the Go rules, and the engine (HEU-517) all reject
 	// out-of-range values at plan load.
-	Percent float64 `yaml:"percent" json:"percent"`
+	Percent dec.Amount `yaml:"percent" json:"percent"`
 }
 
 // StreamConfig holds multi-stream configuration for streamline plans.
@@ -522,43 +524,43 @@ type BonusConfig struct {
 
 // MatchingBonusConfig pays a percentage of downline commissions.
 type MatchingBonusConfig struct {
-	Depth                  uint8              `yaml:"depth" json:"depth"`
-	Rates                  map[string]float64 `yaml:"rates" json:"rates"`
-	MatchedCommissionTypes []string           `yaml:"matched_commission_types" json:"matched_commission_types"`
+	Depth                  uint8                 `yaml:"depth" json:"depth"`
+	Rates                  map[string]dec.Amount `yaml:"rates" json:"rates"`
+	MatchedCommissionTypes []string              `yaml:"matched_commission_types" json:"matched_commission_types"`
 }
 
 // SponsorBonusConfig pays a bonus when a new distributor enrolls.
 type SponsorBonusConfig struct {
-	Amount             float64  `yaml:"amount" json:"amount"`
-	AmountType         string   `yaml:"amount_type" json:"amount_type"`
-	QualifyingProducts []string `yaml:"qualifying_products" json:"qualifying_products"`
+	Amount             dec.Amount `yaml:"amount" json:"amount"`
+	AmountType         string     `yaml:"amount_type" json:"amount_type"`
+	QualifyingProducts []string   `yaml:"qualifying_products" json:"qualifying_products"`
 }
 
 // FastStartBonusConfig provides enhanced commissions during the early enrollment window.
 type FastStartBonusConfig struct {
-	WindowDays uint16                        `yaml:"window_days" json:"window_days"`
-	RateTable  map[string]map[string]float64 `yaml:"rate_table" json:"rate_table"`
+	WindowDays uint16                           `yaml:"window_days" json:"window_days"`
+	RateTable  map[string]map[string]dec.Amount `yaml:"rate_table" json:"rate_table"`
 }
 
 // RankAdvancementBonusConfig pays a one-time bonus for reaching a new rank.
 type RankAdvancementBonusConfig struct {
-	Amounts     map[string]float64 `yaml:"amounts" json:"amounts"`
-	PayOnceOnly bool               `yaml:"pay_once_only" json:"pay_once_only"`
+	Amounts     map[string]dec.Amount `yaml:"amounts" json:"amounts"`
+	PayOnceOnly bool                  `yaml:"pay_once_only" json:"pay_once_only"`
 }
 
 // LeadershipDevelopmentBonusConfig pays override commissions on downline leaders.
 type LeadershipDevelopmentBonusConfig struct {
-	Depth        uint8              `yaml:"depth" json:"depth"`
-	Rates        map[string]float64 `yaml:"rates" json:"rates"`
-	RankSkipMode string             `yaml:"rank_skip_mode" json:"rank_skip_mode"`
+	Depth        uint8                 `yaml:"depth" json:"depth"`
+	Rates        map[string]dec.Amount `yaml:"rates" json:"rates"`
+	RankSkipMode string                `yaml:"rank_skip_mode" json:"rank_skip_mode"`
 }
 
 // InfinityBonusConfig pays commissions to unlimited depth until blocked.
 type InfinityBonusConfig struct {
-	BlockerMode     string             `yaml:"blocker_mode" json:"blocker_mode"`
-	FlatRate        *float64           `yaml:"flat_rate" json:"flat_rate"`
-	DecreasingRates map[string]float64 `yaml:"decreasing_rates" json:"decreasing_rates"`
-	RateMode        string             `yaml:"rate_mode" json:"rate_mode"`
+	BlockerMode     string                `yaml:"blocker_mode" json:"blocker_mode"`
+	FlatRate        *dec.Amount           `yaml:"flat_rate" json:"flat_rate"`
+	DecreasingRates map[string]dec.Amount `yaml:"decreasing_rates" json:"decreasing_rates"`
+	RateMode        string                `yaml:"rate_mode" json:"rate_mode"`
 }
 
 // LifestyleBonusConfig pays a recurring bonus for maintaining qualifying rank.
@@ -568,15 +570,15 @@ type LifestyleBonusConfig struct {
 
 // LifestyleTier represents a single tier in the lifestyle bonus program.
 type LifestyleTier struct {
-	MinRank      string  `yaml:"min_rank" json:"min_rank"`
-	Amount       float64 `yaml:"amount" json:"amount"`
-	GracePeriods uint8   `yaml:"grace_periods" json:"grace_periods"`
+	MinRank      string     `yaml:"min_rank" json:"min_rank"`
+	Amount       dec.Amount `yaml:"amount" json:"amount"`
+	GracePeriods uint8      `yaml:"grace_periods" json:"grace_periods"`
 }
 
 // PoolBonusConfig defines a revenue pool shared among qualifying distributors.
 type PoolBonusConfig struct {
 	Name                     string            `yaml:"name" json:"name"`
-	SourcePercent            float64           `yaml:"source_percent" json:"source_percent"`
+	SourcePercent            dec.Amount        `yaml:"source_percent" json:"source_percent"`
 	Qualification            PoolQualification `yaml:"qualification" json:"qualification"`
 	Shares                   PoolShares        `yaml:"shares" json:"shares"`
 	RequireAdminConfirmation bool              `yaml:"require_admin_confirmation" json:"require_admin_confirmation"`
@@ -591,39 +593,39 @@ type PoolQualification struct {
 
 // VelocityQualification defines volume velocity requirements for pool bonuses.
 type VelocityQualification struct {
-	VolumeTarget  float64 `yaml:"volume_target" json:"volume_target"`
-	Timeframe     string  `yaml:"timeframe" json:"timeframe"`
-	TimeframeDays *int    `yaml:"timeframe_days" json:"timeframe_days"`
+	VolumeTarget  dec.Amount `yaml:"volume_target" json:"volume_target"`
+	Timeframe     string     `yaml:"timeframe" json:"timeframe"`
+	TimeframeDays *int       `yaml:"timeframe_days" json:"timeframe_days"`
 }
 
 // PoolShares defines how pool bonus payouts are divided among qualifiers.
 type PoolShares struct {
-	Mode          string   `yaml:"mode" json:"mode"`
-	EqualShareCap *float64 `yaml:"equal_share_cap" json:"equal_share_cap"`
+	Mode          string      `yaml:"mode" json:"mode"`
+	EqualShareCap *dec.Amount `yaml:"equal_share_cap" json:"equal_share_cap"`
 }
 
 // MatrixCompletionBonusConfig pays a bonus for completing matrix levels.
 type MatrixCompletionBonusConfig struct {
-	PerLevel   map[string]float64 `yaml:"per_level" json:"per_level"`
-	FullMatrix float64            `yaml:"full_matrix" json:"full_matrix"`
+	PerLevel   map[string]dec.Amount `yaml:"per_level" json:"per_level"`
+	FullMatrix dec.Amount            `yaml:"full_matrix" json:"full_matrix"`
 }
 
 // PositionBonusConfig pays a bonus based on tree position.
 type PositionBonusConfig struct {
-	Amount        float64 `yaml:"amount" json:"amount"`
-	AmountType    string  `yaml:"amount_type" json:"amount_type"`
-	SponsoredOnly bool    `yaml:"sponsored_only" json:"sponsored_only"`
+	Amount        dec.Amount `yaml:"amount" json:"amount"`
+	AmountType    string     `yaml:"amount_type" json:"amount_type"`
+	SponsoredOnly bool       `yaml:"sponsored_only" json:"sponsored_only"`
 }
 
 // BoardCyclingConfig controls cycling behavior for board plan structures.
 type BoardCyclingConfig struct {
-	CycleCommission       float64 `yaml:"cycle_commission" json:"cycle_commission"`
-	ReEntryEnabled        bool    `yaml:"re_entry_enabled" json:"re_entry_enabled"`
-	ReEntryPosition       string  `yaml:"re_entry_position" json:"re_entry_position"`
-	MaxCyclesPerPeriod    uint32  `yaml:"max_cycles_per_period" json:"max_cycles_per_period"`
-	MaxCascadeDepth       uint32  `yaml:"max_cascade_depth" json:"max_cascade_depth,omitempty"`
-	StallThresholdPeriods uint32  `yaml:"stall_threshold_periods" json:"stall_threshold_periods"`
-	InactiveCompression   bool    `yaml:"inactive_compression" json:"inactive_compression"`
+	CycleCommission       dec.Amount `yaml:"cycle_commission" json:"cycle_commission"`
+	ReEntryEnabled        bool       `yaml:"re_entry_enabled" json:"re_entry_enabled"`
+	ReEntryPosition       string     `yaml:"re_entry_position" json:"re_entry_position"`
+	MaxCyclesPerPeriod    uint32     `yaml:"max_cycles_per_period" json:"max_cycles_per_period"`
+	MaxCascadeDepth       uint32     `yaml:"max_cascade_depth" json:"max_cascade_depth,omitempty"`
+	StallThresholdPeriods uint32     `yaml:"stall_threshold_periods" json:"stall_threshold_periods"`
+	InactiveCompression   bool       `yaml:"inactive_compression" json:"inactive_compression"`
 }
 
 // PassUpConfig defines pass-up bonus behavior where initial sales go to the upline.
@@ -637,25 +639,25 @@ type PassUpConfig struct {
 // PayoutConfig controls payout processing and payment methods.
 type PayoutConfig struct {
 	BaseCurrency        string         `yaml:"base_currency" json:"base_currency"`
-	MinimumAmount       float64        `yaml:"minimum_amount" json:"minimum_amount"`
+	MinimumAmount       dec.Amount     `yaml:"minimum_amount" json:"minimum_amount"`
 	SplitPayoutsEnabled bool           `yaml:"split_payouts_enabled" json:"split_payouts_enabled"`
 	Methods             []PayoutMethod `yaml:"methods" json:"methods"`
 }
 
 // PayoutMethod represents a payment method available for commission payouts.
 type PayoutMethod struct {
-	Type string  `yaml:"type" json:"type"`
-	Fee  float64 `yaml:"fee" json:"fee"`
+	Type string     `yaml:"type" json:"type"`
+	Fee  dec.Amount `yaml:"fee" json:"fee"`
 }
 
 // --- Caps ---
 
 // CapsConfig controls commission caps and clawback behavior.
 type CapsConfig struct {
-	PerDistributorPerPeriod *float64 `yaml:"per_distributor_per_period" json:"per_distributor_per_period"`
-	CompanyPayoutCapPercent float64  `yaml:"company_payout_cap_percent" json:"company_payout_cap_percent"`
-	CapEnforcement          string   `yaml:"cap_enforcement" json:"cap_enforcement"`
-	ClawbackOnRefund        bool     `yaml:"clawback_on_refund" json:"clawback_on_refund"`
+	PerDistributorPerPeriod *dec.Amount `yaml:"per_distributor_per_period" json:"per_distributor_per_period"`
+	CompanyPayoutCapPercent dec.Amount  `yaml:"company_payout_cap_percent" json:"company_payout_cap_percent"`
+	CapEnforcement          string      `yaml:"cap_enforcement" json:"cap_enforcement"`
+	ClawbackOnRefund        bool        `yaml:"clawback_on_refund" json:"clawback_on_refund"`
 }
 
 // --- Placement ---
@@ -692,47 +694,43 @@ type MatrixPlacementConfig struct {
 }
 
 // resolveCommissions does the second-pass unmarshal of structure commission
-// blocks. After the initial YAML unmarshal, CommissionRaw holds the untyped
-// map. This function re-marshals it to YAML bytes and decodes into the
-// correct typed struct based on the structure's Type field.
+// blocks. It decodes each structure's CommissionRaw node into the typed
+// struct its Type field names.
 func resolveCommissions(plan *CompensationPlan) error {
 	for i := range plan.Structures {
 		s := &plan.Structures[i]
-		if s.CommissionRaw == nil {
+		if s.CommissionRaw.Kind == 0 {
 			return fmt.Errorf("structure %q has no commission block", s.Name)
 		}
-		rawBytes, err := yaml.Marshal(s.CommissionRaw)
-		if err != nil {
-			return fmt.Errorf("structure %q commission marshal: %w", s.Name, err)
-		}
+		var err error
 		switch s.Type {
 		case "unilevel":
 			var c UnilevelCommission
-			err = yaml.Unmarshal(rawBytes, &c)
+			err = s.CommissionRaw.Decode(&c)
 			s.resolvedCommission = &c
 		case "binary":
 			var c BinaryCommission
-			err = yaml.Unmarshal(rawBytes, &c)
+			err = s.CommissionRaw.Decode(&c)
 			s.resolvedCommission = &c
 		case "matrix":
 			var c MatrixCommission
-			err = yaml.Unmarshal(rawBytes, &c)
+			err = s.CommissionRaw.Decode(&c)
 			s.resolvedCommission = &c
 		case "stairstep":
 			var c StairstepCommission
-			err = yaml.Unmarshal(rawBytes, &c)
+			err = s.CommissionRaw.Decode(&c)
 			s.resolvedCommission = &c
 		case "generation":
 			var c GenerationCommission
-			err = yaml.Unmarshal(rawBytes, &c)
+			err = s.CommissionRaw.Decode(&c)
 			s.resolvedCommission = &c
 		case "streamline":
 			var c StreamlineCommission
-			err = yaml.Unmarshal(rawBytes, &c)
+			err = s.CommissionRaw.Decode(&c)
 			s.resolvedCommission = &c
 		case "board_plan":
 			var c BoardPlanCommission
-			err = yaml.Unmarshal(rawBytes, &c)
+			err = s.CommissionRaw.Decode(&c)
 			s.resolvedCommission = &c
 		default:
 			err = fmt.Errorf("unknown structure type: %s", s.Type)

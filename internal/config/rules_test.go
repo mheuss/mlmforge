@@ -2,10 +2,10 @@ package config
 
 import (
 	"fmt"
-	"math"
 	"strings"
 	"testing"
 
+	"github.com/mlmforge/mlmforge/internal/dec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -116,15 +116,15 @@ func TestRankQualificationStructureMustExist(t *testing.T) {
 }
 
 func TestPerLegCapAtOrAboveGroupVolumeWarns(t *testing.T) {
-	for _, perLegCap := range []float64{5000, 8000, 5000.5} {
+	for _, perLegCap := range []string{"5000", "8000", "5000.5"} {
 		t.Run(fmt.Sprintf("cap %v", perLegCap), func(t *testing.T) {
 			plan := minimalPlan()
 			plan.Ranks[1].Qualification.Structures = []StructureQualification{
 				{
 					Structure:            "Primary",
-					PersonalVolume:       100,
-					GroupVolume:          5000,
-					MaxGroupVolumePerLeg: perLegCap,
+					PersonalVolume:       dec.MustParse("100"),
+					GroupVolume:          dec.MustParse("5000"),
+					MaxGroupVolumePerLeg: dec.MustParse(perLegCap),
 				},
 			}
 
@@ -140,7 +140,7 @@ func TestPerLegCapAtOrAboveGroupVolumeWarns(t *testing.T) {
 
 func TestPerLegCapBelowGroupVolumePasses(t *testing.T) {
 	plan := minimalPlan()
-	plan.Ranks[1].Qualification.Structures[0].MaxGroupVolumePerLeg = 2999
+	plan.Ranks[1].Qualification.Structures[0].MaxGroupVolumePerLeg = dec.MustParse("2999")
 
 	assert.Empty(t, validateBusinessRules(plan))
 }
@@ -149,7 +149,7 @@ func TestPayOnceOnlyRequiresTrackAchievedRank(t *testing.T) {
 	plan := minimalPlan()
 	plan.RankTracking.TrackAchievedRank = false
 	plan.Bonuses.RankAdvancement = &RankAdvancementBonusConfig{
-		Amounts:     map[string]float64{"Silver": 500},
+		Amounts:     map[string]dec.Amount{"Silver": dec.MustParse("500")},
 		PayOnceOnly: true,
 	}
 
@@ -185,7 +185,7 @@ func TestBoundaryRankMustExist(t *testing.T) {
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Gen"}}
 	plan.Ranks[1].QualifiedStructures = []string{"Gen"}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Gen", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "Gen", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 
 	errs := validateBusinessRules(plan)
@@ -215,8 +215,8 @@ func TestRateTableMissingRankWarning(t *testing.T) {
 	// Set a resolved unilevel commission whose rate_table only covers Associate,
 	// missing Silver.
 	plan.Structures[0].resolvedCommission = &UnilevelCommission{
-		RateTable: map[string]map[string]float64{
-			"Associate": {"1": 0.05},
+		RateTable: map[string]map[string]dec.Amount{
+			"Associate": {"1": dec.MustParse("0.05")},
 		},
 	}
 
@@ -252,7 +252,7 @@ func TestBreakawayThresholdRankMustExist(t *testing.T) {
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
 	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "Stairs", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 
 	errs := validateBusinessRules(plan)
@@ -272,11 +272,11 @@ func TestBreakawayDifferentialRankRatesMustExist(t *testing.T) {
 				Type:                overrideStrategySingleWalk,
 				OverrideCalculation: "differential",
 				Differential: &DifferentialConfig{
-					RankRates: map[string]float64{
-						"Silver": 0.05,
-						"Typo":   0.08,
+					RankRates: map[string]dec.Amount{
+						"Silver": dec.MustParse("0.05"),
+						"Typo":   dec.MustParse("0.08"),
 					},
-					MinOverride: MinOverride{Type: "rate", Value: 0},
+					MinOverride: MinOverride{Type: "rate", Value: dec.MustParse("0")},
 				},
 			},
 		},
@@ -285,7 +285,7 @@ func TestBreakawayDifferentialRankRatesMustExist(t *testing.T) {
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
 	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "Stairs", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 
 	errs := validateBusinessRules(plan)
@@ -304,14 +304,11 @@ func TestBreakawayDifferentialMinOverrideUnit(t *testing.T) {
 		code  string
 		msg   string
 	}{
-		{"rate above one", MinOverride{Type: "rate", Value: 1.5}, "out_of_range", "must be in [0, 1]"},
-		{"rate below zero", MinOverride{Type: "rate", Value: -0.1}, "out_of_range", "must be in [0, 1]"},
-		{"currency below zero", MinOverride{Type: "currency", Value: -1}, "out_of_range", "must be non-negative"},
-		{"unrecognised unit", MinOverride{Type: "percent", Value: 0.5}, "undefined_reference", `want "rate" or "currency"`},
+		{"rate above one", MinOverride{Type: "rate", Value: dec.MustParse("1.5")}, "out_of_range", "must be in [0, 1]"},
+		{"rate below zero", MinOverride{Type: "rate", Value: dec.MustParse("-0.1")}, "out_of_range", "must be in [0, 1]"},
+		{"currency below zero", MinOverride{Type: "currency", Value: dec.MustParse("-1")}, "out_of_range", "must be non-negative"},
+		{"unrecognised unit", MinOverride{Type: "percent", Value: dec.MustParse("0.5")}, "undefined_reference", `want "rate" or "currency"`},
 		{"empty unit", MinOverride{}, "undefined_reference", `want "rate" or "currency"`},
-		{"NaN rate", MinOverride{Type: "rate", Value: math.NaN()}, "invalid_value", "must be finite"},
-		{"NaN currency", MinOverride{Type: "currency", Value: math.NaN()}, "invalid_value", "must be finite"},
-		{"infinite currency", MinOverride{Type: "currency", Value: math.Inf(1)}, "invalid_value", "must be finite"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -325,7 +322,7 @@ func TestBreakawayDifferentialMinOverrideUnit(t *testing.T) {
 						Type:                overrideStrategySingleWalk,
 						OverrideCalculation: "differential",
 						Differential: &DifferentialConfig{
-							RankRates:   map[string]float64{"Silver": 0.05},
+							RankRates:   map[string]dec.Amount{"Silver": dec.MustParse("0.05")},
 							MinOverride: tc.floor,
 						},
 					},
@@ -335,7 +332,7 @@ func TestBreakawayDifferentialMinOverrideUnit(t *testing.T) {
 			plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
 			plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
 			plan.Ranks[1].Qualification.Structures = []StructureQualification{
-				{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+				{Structure: "Stairs", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 			}
 
 			errs := validateBusinessRules(plan)
@@ -360,8 +357,8 @@ func TestBreakawayDifferentialMinOverrideAcceptsLargeCurrency(t *testing.T) {
 				Type:                overrideStrategySingleWalk,
 				OverrideCalculation: "differential",
 				Differential: &DifferentialConfig{
-					RankRates:   map[string]float64{"Silver": 0.05},
-					MinOverride: MinOverride{Type: "currency", Value: 250},
+					RankRates:   map[string]dec.Amount{"Silver": dec.MustParse("0.05")},
+					MinOverride: MinOverride{Type: "currency", Value: dec.MustParse("250")},
 				},
 			},
 		},
@@ -370,7 +367,7 @@ func TestBreakawayDifferentialMinOverrideAcceptsLargeCurrency(t *testing.T) {
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
 	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "Stairs", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 
 	require.Empty(t, validateBusinessRules(plan))
@@ -393,7 +390,7 @@ func TestBreakawayGenerationMaxGenerationsMustBeAtLeastOne(t *testing.T) {
 				OverrideCalculation: "generation",
 				Generation: &BreakawayGenerationConfig{
 					MaxGenerations:  0,
-					GenerationRates: map[string]float64{"1": 0.10},
+					GenerationRates: map[string]dec.Amount{"1": dec.MustParse("0.10")},
 					BoundaryRank:    "Silver",
 				},
 			},
@@ -403,7 +400,7 @@ func TestBreakawayGenerationMaxGenerationsMustBeAtLeastOne(t *testing.T) {
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
 	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "Stairs", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 
 	errs := validateBusinessRules(plan)
@@ -428,9 +425,9 @@ func TestBreakawayFixedOverrideRankRatesMustExist(t *testing.T) {
 				Type:                overrideStrategySingleWalk,
 				OverrideCalculation: "fixed_override",
 				FixedOverride: &FixedOverrideConfig{
-					RankRates: map[string]float64{
-						"Silver": 0.05,
-						"Typo":   0.08,
+					RankRates: map[string]dec.Amount{
+						"Silver": dec.MustParse("0.05"),
+						"Typo":   dec.MustParse("0.08"),
 					},
 				},
 			},
@@ -440,7 +437,7 @@ func TestBreakawayFixedOverrideRankRatesMustExist(t *testing.T) {
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
 	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "Stairs", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 
 	errs := validateBusinessRules(plan)
@@ -455,7 +452,7 @@ func TestPoolQualificationMinRankMustExist(t *testing.T) {
 	plan.Bonuses.Pool = []PoolBonusConfig{
 		{
 			Name:          "Leaders Pool",
-			SourcePercent: 0.02,
+			SourcePercent: dec.MustParse("0.02"),
 			Qualification: PoolQualification{
 				Mode:    "rank",
 				MinRank: &badRank,
@@ -479,8 +476,8 @@ func TestStreamlineDynamicCompressionMinRankMustExist(t *testing.T) {
 		resolvedCommission: &StreamlineCommission{
 			CommissionableDepth: 5,
 			DynamicCompression: map[string]StreamlineLevel{
-				"1": {MinRank: "Associate", Percent: 0.05},
-				"2": {MinRank: "Nonexistent", Percent: 0.03},
+				"1": {MinRank: "Associate", Percent: dec.MustParse("0.05")},
+				"2": {MinRank: "Nonexistent", Percent: dec.MustParse("0.03")},
 			},
 		},
 	})
@@ -498,13 +495,13 @@ func TestStreamlineDynamicCompressionMinRankMustExist(t *testing.T) {
 func TestCarryForwardCapRequiresCarryForward(t *testing.T) {
 	plan := minimalPlan()
 	// Change structure to binary with carry_forward_cap set but wrong volume_after_payout.
-	cap := 5000.0
+	cap := dec.MustParse("5000")
 	plan.Structures[0].Name = "Binary"
 	plan.Structures[0].Type = "binary"
 	plan.Structures[0].resolvedCommission = &BinaryCommission{
 		Mode: "pairing",
 		Pairing: &PairingConfig{
-			Percent:           10,
+			Percent:           dec.MustParse("10"),
 			Calculation:       "lesser_leg",
 			VolumeAfterPayout: "flush",
 			CarryForwardCap:   &cap,
@@ -515,7 +512,7 @@ func TestCarryForwardCapRequiresCarryForward(t *testing.T) {
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Binary"}}
 	plan.Ranks[1].QualifiedStructures = []string{"Binary"}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Binary", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "Binary", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 
 	errs := validateBusinessRules(plan)
@@ -545,8 +542,8 @@ func TestDistributorCountMinRankMustExist(t *testing.T) {
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
 		{
 			Structure:      "Primary",
-			PersonalVolume: 100,
-			GroupVolume:    3000,
+			PersonalVolume: dec.MustParse("100"),
+			GroupVolume:    dec.MustParse("3000"),
 			DistributorCount: &DistributorCountRequirement{
 				Count:   2,
 				MinRank: "Nonexistent",
@@ -566,8 +563,8 @@ func TestDistributorCountMinRankMustBeLowerOrdinal(t *testing.T) {
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
 		{
 			Structure:      "Primary",
-			PersonalVolume: 100,
-			GroupVolume:    3000,
+			PersonalVolume: dec.MustParse("100"),
+			GroupVolume:    dec.MustParse("3000"),
 			DistributorCount: &DistributorCountRequirement{
 				Count:   2,
 				MinRank: "Silver",
@@ -586,8 +583,8 @@ func TestLegQualityContainsRankMinRankMustExist(t *testing.T) {
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
 		{
 			Structure:      "Primary",
-			PersonalVolume: 100,
-			GroupVolume:    3000,
+			PersonalVolume: dec.MustParse("100"),
+			GroupVolume:    dec.MustParse("3000"),
 			LegQuality: []LegQualityRequirement{
 				{Count: 2, Predicate: LegPredicate{Type: "contains_rank", MinRank: "Nonexistent"}},
 			},
@@ -607,8 +604,8 @@ func TestLegQualityContainsRankMinRankMustBeLowerOrdinal(t *testing.T) {
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
 		{
 			Structure:      "Primary",
-			PersonalVolume: 100,
-			GroupVolume:    3000,
+			PersonalVolume: dec.MustParse("100"),
+			GroupVolume:    dec.MustParse("3000"),
 			LegQuality: []LegQualityRequirement{
 				{Count: 1, Predicate: LegPredicate{Type: "contains_rank", MinRank: "Silver"}},
 			},
@@ -627,8 +624,8 @@ func TestLegQualityContainsRankValidMinRankPasses(t *testing.T) {
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
 		{
 			Structure:      "Primary",
-			PersonalVolume: 100,
-			GroupVolume:    3000,
+			PersonalVolume: dec.MustParse("100"),
+			GroupVolume:    dec.MustParse("3000"),
 			LegQuality: []LegQualityRequirement{
 				{Count: 2, Predicate: LegPredicate{Type: "contains_rank", MinRank: "Associate"}},
 			},
@@ -760,10 +757,10 @@ func TestLegQualityContainsPersonalVolumeSkipsRankCheck(t *testing.T) {
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
 		{
 			Structure:      "Primary",
-			PersonalVolume: 100,
-			GroupVolume:    3000,
+			PersonalVolume: dec.MustParse("100"),
+			GroupVolume:    dec.MustParse("3000"),
 			LegQuality: []LegQualityRequirement{
-				{Count: 3, Predicate: LegPredicate{Type: "contains_personal_volume", MinPersonalVolume: 200}},
+				{Count: 3, Predicate: LegPredicate{Type: "contains_personal_volume", MinPersonalVolume: dec.MustParse("200")}},
 			},
 		},
 	}
@@ -776,7 +773,7 @@ func TestMatchedCommissionTypesMustExist(t *testing.T) {
 	plan := minimalPlan()
 	plan.Bonuses.Matching = &MatchingBonusConfig{
 		Depth:                  2,
-		Rates:                  map[string]float64{"1": 0.10},
+		Rates:                  map[string]dec.Amount{"1": dec.MustParse("0.10")},
 		MatchedCommissionTypes: []string{"unilevel", "nonexistent"},
 	}
 
@@ -790,7 +787,7 @@ func TestRankAdvancementAmountsMustReferenceDefinedRanks(t *testing.T) {
 	plan := minimalPlan()
 	plan.RankTracking.TrackAchievedRank = true
 	plan.Bonuses.RankAdvancement = &RankAdvancementBonusConfig{
-		Amounts:     map[string]float64{"Nonexistent": 500},
+		Amounts:     map[string]dec.Amount{"Nonexistent": dec.MustParse("500")},
 		PayOnceOnly: false,
 	}
 
@@ -804,7 +801,7 @@ func TestLifestyleTierMinRankMustExist(t *testing.T) {
 	plan := minimalPlan()
 	plan.Bonuses.Lifestyle = &LifestyleBonusConfig{
 		Tiers: []LifestyleTier{
-			{MinRank: "Nonexistent", Amount: 100, GracePeriods: 1},
+			{MinRank: "Nonexistent", Amount: dec.MustParse("100"), GracePeriods: 1},
 		},
 	}
 
@@ -854,13 +851,13 @@ func TestLargeMatrixWarning(t *testing.T) {
 	}
 	plan.Structures[0].resolvedCommission = &MatrixCommission{
 		CommissionableDepth: 7,
-		RateTable:           map[string]map[string]float64{"Associate": {"1": 0.05}},
+		RateTable:           map[string]map[string]dec.Amount{"Associate": {"1": dec.MustParse("0.05")}},
 	}
 	plan.Ranks[0].QualifiedStructures = []string{"BigMatrix"}
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "BigMatrix"}}
 	plan.Ranks[1].QualifiedStructures = []string{"BigMatrix"}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "BigMatrix", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "BigMatrix", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 
 	errs := validateBusinessRules(plan)
@@ -892,7 +889,7 @@ func TestStreamlineStreamsRequireAdditionalPerRank(t *testing.T) {
 		p.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stream"}}
 		p.Ranks[1].QualifiedStructures = []string{"Stream"}
 		p.Ranks[1].Qualification.Structures = []StructureQualification{
-			{Structure: "Stream", PersonalVolume: 100, GroupVolume: 3000},
+			{Structure: "Stream", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 		}
 		return p
 	}
@@ -929,13 +926,13 @@ func TestMatrixSpilloverDepthFirstRejected(t *testing.T) {
 	}
 	plan.Structures[0].resolvedCommission = &MatrixCommission{
 		CommissionableDepth: 4,
-		RateTable:           map[string]map[string]float64{"Associate": {"1": 0.05}},
+		RateTable:           map[string]map[string]dec.Amount{"Associate": {"1": dec.MustParse("0.05")}},
 	}
 	plan.Ranks[0].QualifiedStructures = []string{"Grid"}
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Grid"}}
 	plan.Ranks[1].QualifiedStructures = []string{"Grid"}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Grid", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "Grid", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 
 	errs := validateBusinessRules(plan)
@@ -971,7 +968,7 @@ func TestBreakawayMultiTierEmptyTiersRejected(t *testing.T) {
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
 	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "Stairs", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 
 	errs := validateBusinessRules(plan)
@@ -994,8 +991,8 @@ func TestBreakawayMultiTierRateOutOfRangeRejected(t *testing.T) {
 			Overrides: OverrideStrategy{
 				Type: overrideStrategyMultiTier,
 				Tiers: []BreakawayTier{
-					{MinSplitOutGroups: 1, Rate: 0.05},
-					{MinSplitOutGroups: 2, Rate: 1.5}, // out of range
+					{MinSplitOutGroups: 1, Rate: dec.MustParse("0.05")},
+					{MinSplitOutGroups: 2, Rate: dec.MustParse("1.5")}, // out of range
 				},
 			},
 		},
@@ -1004,7 +1001,7 @@ func TestBreakawayMultiTierRateOutOfRangeRejected(t *testing.T) {
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
 	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "Stairs", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 
 	errs := validateBusinessRules(plan)
@@ -1027,8 +1024,8 @@ func TestBreakawayMultiTierRateAtBoundsAccepted(t *testing.T) {
 			Overrides: OverrideStrategy{
 				Type: overrideStrategyMultiTier,
 				Tiers: []BreakawayTier{
-					{MinSplitOutGroups: 1, Rate: 0.0},
-					{MinSplitOutGroups: 2, Rate: 1.0},
+					{MinSplitOutGroups: 1, Rate: dec.MustParse("0.0")},
+					{MinSplitOutGroups: 2, Rate: dec.MustParse("1.0")},
 				},
 			},
 		},
@@ -1037,7 +1034,7 @@ func TestBreakawayMultiTierRateAtBoundsAccepted(t *testing.T) {
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
 	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "Stairs", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 
 	errs := validateBusinessRules(plan)
@@ -1057,7 +1054,7 @@ func TestBreakawayMultiTierRateJustOverOneRejected(t *testing.T) {
 			Overrides: OverrideStrategy{
 				Type: overrideStrategyMultiTier,
 				Tiers: []BreakawayTier{
-					{MinSplitOutGroups: 1, Rate: 1.0000001},
+					{MinSplitOutGroups: 1, Rate: dec.MustParse("1.0000001")},
 				},
 			},
 		},
@@ -1066,7 +1063,7 @@ func TestBreakawayMultiTierRateJustOverOneRejected(t *testing.T) {
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
 	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "Stairs", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 
 	errs := validateBusinessRules(plan)
@@ -1084,7 +1081,7 @@ func TestBreakawayMultiTierTooManyTiersRejected(t *testing.T) {
 
 	tiers := make([]BreakawayTier, tooMany)
 	for i := range tiers {
-		tiers[i] = BreakawayTier{MinSplitOutGroups: 1, Rate: 0.01}
+		tiers[i] = BreakawayTier{MinSplitOutGroups: 1, Rate: dec.MustParse("0.01")}
 	}
 
 	plan := minimalPlan()
@@ -1103,7 +1100,7 @@ func TestBreakawayMultiTierTooManyTiersRejected(t *testing.T) {
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
 	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "Stairs", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 
 	errs := validateBusinessRules(plan)
@@ -1118,7 +1115,7 @@ func TestBreakawayMultiTierTooManyTiersRejected(t *testing.T) {
 func TestBreakawayMultiTierExactly255TiersAccepted(t *testing.T) {
 	tiers := make([]BreakawayTier, 255)
 	for i := range tiers {
-		tiers[i] = BreakawayTier{MinSplitOutGroups: 1, Rate: 0.01}
+		tiers[i] = BreakawayTier{MinSplitOutGroups: 1, Rate: dec.MustParse("0.01")}
 	}
 
 	plan := minimalPlan()
@@ -1137,7 +1134,7 @@ func TestBreakawayMultiTierExactly255TiersAccepted(t *testing.T) {
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
 	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "Stairs", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 
 	errs := validateBusinessRules(plan)
@@ -1164,7 +1161,7 @@ func TestStairstepBreakawayGenerationBoundaryRankMustExist(t *testing.T) {
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Stairs"}}
 	plan.Ranks[1].QualifiedStructures = []string{"Stairs"}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Stairs", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "Stairs", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 
 	errs := validateBusinessRules(plan)
@@ -1249,7 +1246,7 @@ func TestValidation_StreamlineAdditionalPerRankMustExist(t *testing.T) {
 		resolvedCommission: &StreamlineCommission{
 			CommissionableDepth: 5,
 			DynamicCompression: map[string]StreamlineLevel{
-				"1": {MinRank: "Associate", Percent: 0.05},
+				"1": {MinRank: "Associate", Percent: dec.MustParse("0.05")},
 			},
 			Streams: &StreamConfig{
 				AdditionalPerRank: map[string]uint8{
@@ -1284,39 +1281,39 @@ func TestRateKeyWidth_RejectsKeysOverU8(t *testing.T) {
 		wantPath string
 	}{
 		{"matching rates", func(p *CompensationPlan) {
-			p.Bonuses.Matching = &MatchingBonusConfig{Rates: map[string]float64{"300": 0.5}}
+			p.Bonuses.Matching = &MatchingBonusConfig{Rates: map[string]dec.Amount{"300": dec.MustParse("0.5")}}
 		}, "/bonuses/matching/rates/300"},
 		{"leadership rates", func(p *CompensationPlan) {
-			p.Bonuses.LeadershipDevelopment = &LeadershipDevelopmentBonusConfig{Rates: map[string]float64{"256": 0.5}}
+			p.Bonuses.LeadershipDevelopment = &LeadershipDevelopmentBonusConfig{Rates: map[string]dec.Amount{"256": dec.MustParse("0.5")}}
 		}, "/bonuses/leadership_development/rates/256"},
 		{"infinity decreasing_rates", func(p *CompensationPlan) {
-			p.Bonuses.Infinity = &InfinityBonusConfig{DecreasingRates: map[string]float64{"999": 0.5}}
+			p.Bonuses.Infinity = &InfinityBonusConfig{DecreasingRates: map[string]dec.Amount{"999": dec.MustParse("0.5")}}
 		}, "/bonuses/infinity/decreasing_rates/999"},
 		{"matrix_completion per_level", func(p *CompensationPlan) {
-			p.Bonuses.MatrixCompletion = &MatrixCompletionBonusConfig{PerLevel: map[string]float64{"256": 100.0}}
+			p.Bonuses.MatrixCompletion = &MatrixCompletionBonusConfig{PerLevel: map[string]dec.Amount{"256": dec.MustParse("100.0")}}
 		}, "/bonuses/matrix_completion/per_level/256"},
 		{"fast_start rate_table inner", func(p *CompensationPlan) {
-			p.Bonuses.FastStart = &FastStartBonusConfig{RateTable: map[string]map[string]float64{"Associate": {"256": 0.5}}}
+			p.Bonuses.FastStart = &FastStartBonusConfig{RateTable: map[string]map[string]dec.Amount{"Associate": {"256": dec.MustParse("0.5")}}}
 		}, "/bonuses/fast_start/rate_table/Associate/256"},
 		{"generation rates", func(p *CompensationPlan) {
 			p.Structures[0].resolvedCommission = &GenerationCommission{
-				Generation: GenerationCommissionConfig{GenerationRates: map[string]float64{"256": 0.1}},
+				Generation: GenerationCommissionConfig{GenerationRates: map[string]dec.Amount{"256": dec.MustParse("0.1")}},
 			}
 		}, "/structures/0/commission/generation/generation_rates/256"},
 		{"stairstep breakaway generation_rates", func(p *CompensationPlan) {
 			p.Structures[0].resolvedCommission = &StairstepCommission{
 				Breakaway: &BreakawayConfig{
 					Overrides: OverrideStrategy{
-						Generation: &BreakawayGenerationConfig{GenerationRates: map[string]float64{"256": 0.1}},
+						Generation: &BreakawayGenerationConfig{GenerationRates: map[string]dec.Amount{"256": dec.MustParse("0.1")}},
 					},
 				},
 			}
 		}, "/structures/0/commission/breakaway/overrides/generation/generation_rates/256"},
 		{"commission rate_table inner", func(p *CompensationPlan) {
 			p.Structures[0].resolvedCommission = &UnilevelCommission{
-				RateTable: map[string]map[string]float64{
-					"Associate": {"256": 0.1},
-					"Silver":    {"1": 0.1},
+				RateTable: map[string]map[string]dec.Amount{
+					"Associate": {"256": dec.MustParse("0.1")},
+					"Silver":    {"1": dec.MustParse("0.1")},
 				},
 			}
 		}, "/structures/0/commission/rate_table/Associate/256"},
@@ -1345,7 +1342,7 @@ func TestRateKeyWidth_RejectsKeysOverU8(t *testing.T) {
 func TestRateKeyWidth_RejectsNonNumericAndNegative(t *testing.T) {
 	for _, key := range []string{"-1", "-0", "+5", "abc", "256"} {
 		plan := minimalPlan()
-		plan.Bonuses.Matching = &MatchingBonusConfig{Rates: map[string]float64{key: 0.5}}
+		plan.Bonuses.Matching = &MatchingBonusConfig{Rates: map[string]dec.Amount{key: dec.MustParse("0.5")}}
 		errs := validateBusinessRules(plan)
 		found := false
 		for _, e := range errs {
@@ -1363,11 +1360,11 @@ func TestRateKeyWidth_RejectsNonNumericAndNegative(t *testing.T) {
 // invalid_value on the baseline plan cannot break this test spuriously.
 func TestRateKeyWidth_AcceptsU8Range(t *testing.T) {
 	plan := minimalPlan()
-	plan.Bonuses.Matching = &MatchingBonusConfig{Rates: map[string]float64{"0": 0.1, "1": 0.2, "255": 0.3}}
+	plan.Bonuses.Matching = &MatchingBonusConfig{Rates: map[string]dec.Amount{"0": dec.MustParse("0.1"), "1": dec.MustParse("0.2"), "255": dec.MustParse("0.3")}}
 	plan.Structures[0].resolvedCommission = &UnilevelCommission{
-		RateTable: map[string]map[string]float64{
-			"Associate": {"1": 0.1, "255": 0.2},
-			"Silver":    {"1": 0.1, "255": 0.2},
+		RateTable: map[string]map[string]dec.Amount{
+			"Associate": {"1": dec.MustParse("0.1"), "255": dec.MustParse("0.2")},
+			"Silver":    {"1": dec.MustParse("0.1"), "255": dec.MustParse("0.2")},
 		},
 	}
 	assert.Empty(t, validateRateKeyWidths(plan), "valid u8 keys should produce no errors")
@@ -1378,8 +1375,8 @@ func TestValidation_SearchModeFirstLevelsWithoutDepthWarning(t *testing.T) {
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
 		{
 			Structure:      "Primary",
-			PersonalVolume: 100,
-			GroupVolume:    3000,
+			PersonalVolume: dec.MustParse("100"),
+			GroupVolume:    dec.MustParse("3000"),
 			DistributorCount: &DistributorCountRequirement{
 				Count:      2,
 				MinRank:    "Associate",
@@ -1408,8 +1405,8 @@ func TestValidation_SearchModeFirstLevelsWithDepthPasses(t *testing.T) {
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
 		{
 			Structure:      "Primary",
-			PersonalVolume: 100,
-			GroupVolume:    3000,
+			PersonalVolume: dec.MustParse("100"),
+			GroupVolume:    dec.MustParse("3000"),
 			DistributorCount: &DistributorCountRequirement{
 				Count:       2,
 				MinRank:     "Associate",
@@ -1453,8 +1450,8 @@ func TestValidatePassUp_CountZero(t *testing.T) {
 	plan := minimalPlan()
 	plan.Structures[0].resolvedCommission = &UnilevelCommission{
 		CommissionableDepth: 5,
-		RateTable: map[string]map[string]float64{
-			"Associate": {"1": 0.05},
+		RateTable: map[string]map[string]dec.Amount{
+			"Associate": {"1": dec.MustParse("0.05")},
 		},
 		PassUp: &PassUpConfig{
 			Count:               0,
@@ -1480,9 +1477,9 @@ func TestValidatePassUp_ValidConfig(t *testing.T) {
 	plan := minimalPlan()
 	plan.Structures[0].resolvedCommission = &UnilevelCommission{
 		CommissionableDepth: 5,
-		RateTable: map[string]map[string]float64{
-			"Associate": {"1": 0.05},
-			"Silver":    {"1": 0.07, "2": 0.05},
+		RateTable: map[string]map[string]dec.Amount{
+			"Associate": {"1": dec.MustParse("0.05")},
+			"Silver":    {"1": dec.MustParse("0.07"), "2": dec.MustParse("0.05")},
 		},
 		PassUp: &PassUpConfig{
 			Count:               2,
@@ -1501,9 +1498,9 @@ func TestValidatePassUp_NilPassUpIsValid(t *testing.T) {
 	plan := minimalPlan()
 	plan.Structures[0].resolvedCommission = &UnilevelCommission{
 		CommissionableDepth: 5,
-		RateTable: map[string]map[string]float64{
-			"Associate": {"1": 0.05},
-			"Silver":    {"1": 0.07},
+		RateTable: map[string]map[string]dec.Amount{
+			"Associate": {"1": dec.MustParse("0.05")},
+			"Silver":    {"1": dec.MustParse("0.07")},
 		},
 	}
 
@@ -1521,7 +1518,7 @@ func TestValidatePassUp_SkippedOnNonUnilevel(t *testing.T) {
 	plan.Structures[0].resolvedCommission = &BinaryCommission{
 		Mode: "pairing",
 		Pairing: &PairingConfig{
-			Percent:           10,
+			Percent:           dec.MustParse("10"),
 			Calculation:       "weaker_leg",
 			VolumeAfterPayout: "carry_forward",
 		},
@@ -1530,7 +1527,7 @@ func TestValidatePassUp_SkippedOnNonUnilevel(t *testing.T) {
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Binary"}}
 	plan.Ranks[1].QualifiedStructures = []string{"Binary"}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Binary", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "Binary", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 
 	errs := validateBusinessRules(plan)
@@ -1544,17 +1541,11 @@ func TestValidatePassUp_RejectedOnNonUnilevelViaRaw(t *testing.T) {
 	plan := minimalPlan()
 	plan.Structures[0].Name = "Binary"
 	plan.Structures[0].Type = "binary"
-	plan.Structures[0].CommissionRaw = map[string]any{
-		"mode": "pairing",
-		"pass_up": map[string]any{
-			"count":                2,
-			"includes_commissions": false,
-		},
-	}
+	plan.Structures[0].CommissionRaw = commissionNode(t, "mode: pairing\npass_up:\n  count: 2\n  includes_commissions: false\n")
 	plan.Structures[0].resolvedCommission = &BinaryCommission{
 		Mode: "pairing",
 		Pairing: &PairingConfig{
-			Percent:           10,
+			Percent:           dec.MustParse("10"),
 			Calculation:       "weaker_leg",
 			VolumeAfterPayout: "carry_forward",
 		},
@@ -1563,7 +1554,7 @@ func TestValidatePassUp_RejectedOnNonUnilevelViaRaw(t *testing.T) {
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Binary"}}
 	plan.Ranks[1].QualifiedStructures = []string{"Binary"}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Binary", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "Binary", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 
 	errs := validateBusinessRules(plan)
@@ -1584,7 +1575,7 @@ func TestValidation_MatchedCommissionTypesIncludesValidTypes(t *testing.T) {
 	plan := minimalPlan()
 	plan.Bonuses.Matching = &MatchingBonusConfig{
 		Depth:                  2,
-		Rates:                  map[string]float64{"1": 0.10},
+		Rates:                  map[string]dec.Amount{"1": dec.MustParse("0.10")},
 		MatchedCommissionTypes: []string{"nonexistent"},
 	}
 
@@ -1607,7 +1598,7 @@ func TestValidation_BoardPlanWithoutUnilevelRejected(t *testing.T) {
 	plan.Ranks[0].Qualification.Structures = []StructureQualification{{Structure: "Sales Board"}}
 	plan.Ranks[0].QualifiedStructures = nil
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{Structure: "Sales Board", PersonalVolume: 100, GroupVolume: 3000},
+		{Structure: "Sales Board", PersonalVolume: dec.MustParse("100"), GroupVolume: dec.MustParse("3000")},
 	}
 	plan.Ranks[1].QualifiedStructures = []string{"Sales Board"}
 
@@ -1670,9 +1661,9 @@ func streamlinePlan() *CompensationPlan {
 		resolvedCommission: &StreamlineCommission{
 			CommissionableDepth: 5,
 			DynamicCompression: map[string]StreamlineLevel{
-				"1": {MinRank: "Associate", Percent: 0.05},
-				"2": {MinRank: "Silver", Percent: 0.04},
-				"3": {MinRank: "Bronze", Percent: 0.03},
+				"1": {MinRank: "Associate", Percent: dec.MustParse("0.05")},
+				"2": {MinRank: "Silver", Percent: dec.MustParse("0.04")},
+				"3": {MinRank: "Bronze", Percent: dec.MustParse("0.03")},
 			},
 		},
 	})
@@ -1713,9 +1704,9 @@ func TestValidation_StreamlineNonSequentialLevelsFails(t *testing.T) {
 	plan := streamlinePlan()
 	c := plan.Structures[1].resolvedCommission.(*StreamlineCommission)
 	c.DynamicCompression = map[string]StreamlineLevel{
-		"1": {MinRank: "Associate", Percent: 0.05},
-		"3": {MinRank: "Silver", Percent: 0.04},
-		"4": {MinRank: "Bronze", Percent: 0.03},
+		"1": {MinRank: "Associate", Percent: dec.MustParse("0.05")},
+		"3": {MinRank: "Silver", Percent: dec.MustParse("0.04")},
+		"4": {MinRank: "Bronze", Percent: dec.MustParse("0.03")},
 	}
 
 	errs := validateBusinessRules(plan)
@@ -1731,7 +1722,7 @@ func TestValidation_StreamlineNonSequentialLevelsFails(t *testing.T) {
 func TestValidation_StreamlineInvalidRankReferenceFails(t *testing.T) {
 	plan := streamlinePlan()
 	c := plan.Structures[1].resolvedCommission.(*StreamlineCommission)
-	c.DynamicCompression["1"] = StreamlineLevel{MinRank: "Nonexistent", Percent: 0.05}
+	c.DynamicCompression["1"] = StreamlineLevel{MinRank: "Nonexistent", Percent: dec.MustParse("0.05")}
 
 	errs := validateBusinessRules(plan)
 	found := false
@@ -1777,7 +1768,7 @@ func TestValidation_StreamlinePercentAboveOneFails(t *testing.T) {
 	plan := streamlinePlan()
 	c := plan.Structures[1].resolvedCommission.(*StreamlineCommission)
 	// 5.0 is the whole-number authoring trap: 5% written as 5 rather than 0.05.
-	c.DynamicCompression["1"] = StreamlineLevel{MinRank: "Associate", Percent: 5.0}
+	c.DynamicCompression["1"] = StreamlineLevel{MinRank: "Associate", Percent: dec.MustParse("5.0")}
 
 	errs := validateBusinessRules(plan)
 	found := false
@@ -1792,7 +1783,7 @@ func TestValidation_StreamlinePercentAboveOneFails(t *testing.T) {
 func TestValidation_StreamlinePercentNegativeFails(t *testing.T) {
 	plan := streamlinePlan()
 	c := plan.Structures[1].resolvedCommission.(*StreamlineCommission)
-	c.DynamicCompression["1"] = StreamlineLevel{MinRank: "Associate", Percent: -0.01}
+	c.DynamicCompression["1"] = StreamlineLevel{MinRank: "Associate", Percent: dec.MustParse("-0.01")}
 
 	errs := validateBusinessRules(plan)
 	found := false
@@ -1809,10 +1800,10 @@ func TestValidation_StreamlinePercentNegativeFails(t *testing.T) {
 // this the gate could be tightened to `<= 0 || >= 1` with the suite green,
 // and the two Go layers would silently disagree about legal config.
 func TestValidation_StreamlinePercentInclusiveEndpointsPass(t *testing.T) {
-	for _, pct := range []float64{0, 1.0} {
+	for _, pct := range []string{"0", "1.0"} {
 		plan := streamlinePlan()
 		c := plan.Structures[1].resolvedCommission.(*StreamlineCommission)
-		c.DynamicCompression["1"] = StreamlineLevel{MinRank: "Associate", Percent: pct}
+		c.DynamicCompression["1"] = StreamlineLevel{MinRank: "Associate", Percent: dec.MustParse(pct)}
 
 		for _, e := range validateBusinessRules(plan) {
 			assert.NotEqual(t, "percent_out_of_range", e.Code,
@@ -2024,7 +2015,7 @@ func TestValidatePeriodAcceptsWellFormedStartDate(t *testing.T) {
 // an opaque serde message.
 func TestRateKeyWidth_RejectsDuplicateNormalizedKeys(t *testing.T) {
 	plan := minimalPlan()
-	plan.Bonuses.Matching = &MatchingBonusConfig{Rates: map[string]float64{"1": 0.05, "01": 0.09}}
+	plan.Bonuses.Matching = &MatchingBonusConfig{Rates: map[string]dec.Amount{"1": dec.MustParse("0.05"), "01": dec.MustParse("0.09")}}
 
 	errs := validateRateKeyWidths(plan)
 
@@ -2044,7 +2035,7 @@ func TestRateKeyWidth_RejectsDuplicateNormalizedKeys(t *testing.T) {
 func TestRateKeyWidth_DuplicateCheckReachesRateTables(t *testing.T) {
 	plan := minimalPlan()
 	plan.Structures[0].resolvedCommission = &UnilevelCommission{
-		RateTable: map[string]map[string]float64{"Associate": {"2": 0.1, "002": 0.2}},
+		RateTable: map[string]map[string]dec.Amount{"Associate": {"2": dec.MustParse("0.1"), "002": dec.MustParse("0.2")}},
 	}
 
 	errs := validateRateKeyWidths(plan)
@@ -2064,7 +2055,7 @@ func TestRateKeyWidth_DistinctKeysAreNotDuplicates(t *testing.T) {
 	plan := minimalPlan()
 	// "010" parses to 10, distinct from 1 and 2, so none of these collide.
 	plan.Bonuses.Matching = &MatchingBonusConfig{
-		Rates: map[string]float64{"1": 0.05, "2": 0.1, "010": 0.2},
+		Rates: map[string]dec.Amount{"1": dec.MustParse("0.05"), "2": dec.MustParse("0.1"), "010": dec.MustParse("0.2")},
 	}
 
 	errs := validateRateKeyWidths(plan)
@@ -2085,7 +2076,7 @@ func TestBaseRankWithNoStructureEntriesPasses(t *testing.T) {
 
 func TestBaseRankPerLegCapIsIgnored(t *testing.T) {
 	plan := minimalPlan()
-	plan.Ranks[0].Qualification.Structures[0].MaxGroupVolumePerLeg = 500
+	plan.Ranks[0].Qualification.Structures[0].MaxGroupVolumePerLeg = dec.MustParse("500")
 
 	assert.Empty(t, validateBusinessRules(plan))
 }
@@ -2098,20 +2089,18 @@ func TestBaseRankRequirementRejected(t *testing.T) {
 		path    string
 		message string
 	}{
-		{"personal volume", func(r *RankDefinition) { r.Qualification.Structures[0].PersonalVolume = 50 },
+		{"personal volume", func(r *RankDefinition) { r.Qualification.Structures[0].PersonalVolume = dec.MustParse("50") },
 			at + "/structures/0/personal_volume", `base rank "Associate" sets personal_volume 50 on structure "Primary"`},
-		{"group volume", func(r *RankDefinition) { r.Qualification.Structures[0].GroupVolume = 1000 },
+		{"group volume", func(r *RankDefinition) { r.Qualification.Structures[0].GroupVolume = dec.MustParse("1000") },
 			at + "/structures/0/group_volume", `base rank "Associate" sets group_volume 1000 on structure "Primary"`},
-		{"retail volume", func(r *RankDefinition) { r.Qualification.Structures[0].MinRetailVolume = 10 },
+		{"retail volume", func(r *RankDefinition) { r.Qualification.Structures[0].MinRetailVolume = dec.MustParse("10") },
 			at + "/structures/0/min_retail_volume", `base rank "Associate" sets min_retail_volume 10 on structure "Primary"`},
-		{"NaN personal volume", func(r *RankDefinition) { r.Qualification.Structures[0].PersonalVolume = math.NaN() },
-			at + "/structures/0/personal_volume", `base rank "Associate" sets personal_volume NaN on structure "Primary"`},
 		{"distributor count", func(r *RankDefinition) {
 			r.Qualification.Structures[0].DistributorCount = &DistributorCountRequirement{Count: 1, SearchMode: "any_level", TotalCount: 1}
 		}, at + "/structures/0/distributor_count", `base rank "Associate" sets distributor_count on structure "Primary"`},
 		{"leg quality", func(r *RankDefinition) {
 			r.Qualification.Structures[0].LegQuality = []LegQualityRequirement{
-				{Count: 1, Predicate: LegPredicate{Type: "contains_personal_volume", MinPersonalVolume: 100}},
+				{Count: 1, Predicate: LegPredicate{Type: "contains_personal_volume", MinPersonalVolume: dec.MustParse("100")}},
 			}
 		}, at + "/structures/0/leg_quality", `base rank "Associate" sets leg_quality on structure "Primary"`},
 		{"required products", func(r *RankDefinition) { r.Qualification.RequiredProducts = []string{"starter-kit"} },
@@ -2141,8 +2130,8 @@ func TestBaseRankRequirementRejected(t *testing.T) {
 
 func TestBaseRankReportsEachRequirement(t *testing.T) {
 	plan := minimalPlan()
-	plan.Ranks[0].Qualification.Structures[0].PersonalVolume = 50
-	plan.Ranks[0].Qualification.Structures[0].GroupVolume = 1000
+	plan.Ranks[0].Qualification.Structures[0].PersonalVolume = dec.MustParse("50")
+	plan.Ranks[0].Qualification.Structures[0].GroupVolume = dec.MustParse("1000")
 
 	errs := validateBusinessRules(plan)
 
@@ -2154,7 +2143,7 @@ func TestBaseRankReportsEachRequirement(t *testing.T) {
 func TestBaseRankIsTheLowestOrdinalWhenRanksAreOutOfOrder(t *testing.T) {
 	plan := minimalPlan()
 	plan.Ranks[0], plan.Ranks[1] = plan.Ranks[1], plan.Ranks[0]
-	plan.Ranks[1].Qualification.Structures[0].PersonalVolume = 50
+	plan.Ranks[1].Qualification.Structures[0].PersonalVolume = dec.MustParse("50")
 
 	errs := validateBusinessRules(plan)
 
@@ -2186,19 +2175,16 @@ func TestOutOfRangePerLegCapRejected(t *testing.T) {
 	tests := []struct {
 		name    string
 		rank    int
-		value   float64
+		value   string
 		message string
 	}{
-		{"negative on a higher rank", 1, -1, `rank "Silver" structure "Primary" max_group_volume_per_leg must be finite and non-negative, got -1`},
-		{"NaN on a higher rank", 1, math.NaN(), `rank "Silver" structure "Primary" max_group_volume_per_leg must be finite and non-negative, got NaN`},
-		{"+Inf on a higher rank", 1, math.Inf(1), `rank "Silver" structure "Primary" max_group_volume_per_leg must be finite and non-negative, got +Inf`},
-		{"-Inf on a higher rank", 1, math.Inf(-1), `rank "Silver" structure "Primary" max_group_volume_per_leg must be finite and non-negative, got -Inf`},
-		{"negative on the base rank", 0, -1, `rank "Associate" structure "Primary" max_group_volume_per_leg must be finite and non-negative, got -1`},
+		{"negative on a higher rank", 1, "-1", `rank "Silver" structure "Primary" max_group_volume_per_leg must be non-negative, got -1`},
+		{"negative on the base rank", 0, "-1", `rank "Associate" structure "Primary" max_group_volume_per_leg must be non-negative, got -1`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			plan := minimalPlan()
-			plan.Ranks[tt.rank].Qualification.Structures[0].MaxGroupVolumePerLeg = tt.value
+			plan.Ranks[tt.rank].Qualification.Structures[0].MaxGroupVolumePerLeg = dec.MustParse(tt.value)
 
 			errs := validateBusinessRules(plan)
 
@@ -2213,7 +2199,7 @@ func TestOutOfRangePerLegCapRejected(t *testing.T) {
 
 func TestZeroPerLegCapPasses(t *testing.T) {
 	plan := minimalPlan()
-	plan.Ranks[1].Qualification.Structures[0].MaxGroupVolumePerLeg = 0
+	plan.Ranks[1].Qualification.Structures[0].MaxGroupVolumePerLeg = dec.MustParse("0")
 
 	assert.Empty(t, validateBusinessRules(plan))
 }
@@ -2221,19 +2207,16 @@ func TestZeroPerLegCapPasses(t *testing.T) {
 func TestOutOfRangePerLegCapFractionRejected(t *testing.T) {
 	tests := []struct {
 		name  string
-		value float64
+		value string
 		shown string
 	}{
-		{"negative", -0.1, "-0.1"},
-		{"above one", 1.1, "1.1"},
-		{"NaN", math.NaN(), "NaN"},
-		{"+Inf", math.Inf(1), "+Inf"},
-		{"-Inf", math.Inf(-1), "-Inf"},
+		{"negative", "-0.1", "-0.1"},
+		{"above one", "1.1", "1.1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			plan := minimalPlan()
-			plan.Ranks[1].Qualification.Structures[0].MaxGroupVolumePerLegFraction = tt.value
+			plan.Ranks[1].Qualification.Structures[0].MaxGroupVolumePerLegFraction = dec.MustParse(tt.value)
 
 			errs := validateBusinessRules(plan)
 
@@ -2247,10 +2230,10 @@ func TestOutOfRangePerLegCapFractionRejected(t *testing.T) {
 }
 
 func TestPerLegCapFractionFromZeroToOnePasses(t *testing.T) {
-	for _, value := range []float64{0, 0.6, 1} {
+	for _, value := range []string{"0", "0.6", "1"} {
 		t.Run(fmt.Sprintf("fraction %v", value), func(t *testing.T) {
 			plan := minimalPlan()
-			plan.Ranks[1].Qualification.Structures[0].MaxGroupVolumePerLegFraction = value
+			plan.Ranks[1].Qualification.Structures[0].MaxGroupVolumePerLegFraction = dec.MustParse(value)
 
 			assert.Empty(t, validateBusinessRules(plan))
 		})
@@ -2259,7 +2242,7 @@ func TestPerLegCapFractionFromZeroToOnePasses(t *testing.T) {
 
 func TestPerLegCapFractionOnTheBaseRankPasses(t *testing.T) {
 	plan := minimalPlan()
-	plan.Ranks[0].Qualification.Structures[0].MaxGroupVolumePerLegFraction = 0.5
+	plan.Ranks[0].Qualification.Structures[0].MaxGroupVolumePerLegFraction = dec.MustParse("0.5")
 
 	assert.Empty(t, validateBusinessRules(plan))
 }
@@ -2267,8 +2250,8 @@ func TestPerLegCapFractionOnTheBaseRankPasses(t *testing.T) {
 func TestBothPerLegCapsRejected(t *testing.T) {
 	plan := minimalPlan()
 	sq := &plan.Ranks[1].Qualification.Structures[0]
-	sq.MaxGroupVolumePerLeg = 1000
-	sq.MaxGroupVolumePerLegFraction = 0.5
+	sq.MaxGroupVolumePerLeg = dec.MustParse("1000")
+	sq.MaxGroupVolumePerLegFraction = dec.MustParse("0.5")
 
 	errs := validateBusinessRules(plan)
 

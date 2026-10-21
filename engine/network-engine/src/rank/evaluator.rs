@@ -152,6 +152,7 @@ pub(crate) fn iterate_to_fixpoint(
 mod tests {
     use super::*;
     use crate::commission::types::VolumeSource;
+    use crate::{assert_d, d};
     use proptest::prelude::*;
     use uuid::Uuid;
 
@@ -183,21 +184,21 @@ mod tests {
         let sources = vec![
             VolumeSource {
                 source_id: a,
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             },
             VolumeSource {
                 source_id: a,
-                cv_amount: 50.0,
+                cv_amount: d!(50.0),
             },
             VolumeSource {
                 source_id: b,
-                cv_amount: 200.0,
+                cv_amount: d!(200.0),
             },
         ];
         let idx = VolumeIndex::build(&sources);
         assert!((idx.cv_for(a) - 150.0).abs() < 1e-9);
         assert!((idx.cv_for(b) - 200.0).abs() < 1e-9);
-        assert_eq!(idx.cv_for(Uuid::from_u128(99)), 0.0);
+        assert_d!(idx.cv_for(Uuid::from_u128(99)), 0.0);
     }
 
     use std::collections::HashMap as StdHashMap;
@@ -322,10 +323,10 @@ mod tests {
                 structures: vec![StructureQualification {
                     structure: structure.to_string(),
                     personal_volume: pv,
-                    group_volume: 0.0,
+                    group_volume: d!(0.0),
                     max_group_volume_per_leg: f64::MAX,
-                    max_group_volume_per_leg_fraction: 0.0,
-                    min_retail_volume: 0.0,
+                    max_group_volume_per_leg_fraction: d!(0.0),
+                    min_retail_volume: d!(0.0),
                     distributor_count: None,
                     leg_quality: vec![],
                 }],
@@ -349,18 +350,18 @@ mod tests {
         let idx = VolumeIndex::build(&[]);
 
         let primitives = DistributorPrimitives {
-            personal_volume: 250.0,
-            retail_volume: 0.0,
+            personal_volume: d!(250.0),
+            retail_volume: d!(0.0),
             status: "active".to_string(),
             has_order_in_period: true,
             active_products: vec![],
         };
 
         let ranks = vec![
-            linear_rank("associate", 1, "Test", 0.0),
-            linear_rank("silver", 2, "Test", 100.0),
-            linear_rank("gold", 3, "Test", 200.0),
-            linear_rank("diamond", 4, "Test", 500.0),
+            linear_rank("associate", 1, "Test", d!(0.0)),
+            linear_rank("silver", 2, "Test", d!(100.0)),
+            linear_rank("gold", 3, "Test", d!(200.0)),
+            linear_rank("diamond", 4, "Test", d!(500.0)),
         ];
         let mut ordinals: HashMap<String, u16> = HashMap::new();
         for r in &ranks {
@@ -403,16 +404,16 @@ mod tests {
         let idx = VolumeIndex::build(&[]);
 
         let primitives = DistributorPrimitives {
-            personal_volume: 0.0,
-            retail_volume: 0.0,
+            personal_volume: d!(0.0),
+            retail_volume: d!(0.0),
             status: "inactive".to_string(),
             has_order_in_period: false,
             active_products: vec![],
         };
 
         let ranks = vec![
-            linear_rank("associate", 1, "Test", 100.0),
-            linear_rank("silver", 2, "Test", 100.0),
+            linear_rank("associate", 1, "Test", d!(100.0)),
+            linear_rank("silver", 2, "Test", d!(100.0)),
         ];
         let mut ordinals: HashMap<String, u16> = HashMap::new();
         ordinals.insert("associate".to_string(), 1);
@@ -455,21 +456,21 @@ mod tests {
         let idx = VolumeIndex::build(&[]);
 
         let primitives = DistributorPrimitives {
-            personal_volume: 100.0,
-            retail_volume: 0.0,
+            personal_volume: d!(100.0),
+            retail_volume: d!(0.0),
             status: "active".to_string(),
             has_order_in_period: true,
             active_products: vec!["kit-A".to_string()],
         };
 
         // rank 2 requires product kit-B which the distributor lacks.
-        let mut rank_two = linear_rank("silver", 2, "Test", 50.0);
+        let mut rank_two = linear_rank("silver", 2, "Test", d!(50.0));
         rank_two.qualification.required_products = vec!["kit-B".to_string()];
 
         let ranks = vec![
-            linear_rank("associate", 1, "Test", 0.0),
+            linear_rank("associate", 1, "Test", d!(0.0)),
             rank_two,
-            linear_rank("gold", 3, "Test", 50.0),
+            linear_rank("gold", 3, "Test", d!(50.0)),
         ];
         let mut ordinals: HashMap<String, u16> = HashMap::new();
         for r in &ranks {
@@ -537,11 +538,11 @@ mod tests {
             qualification: RankQualification {
                 structures: vec![StructureQualification {
                     structure: "uni".to_string(),
-                    personal_volume: 0.0,
-                    group_volume: 0.0,
+                    personal_volume: d!(0.0),
+                    group_volume: d!(0.0),
                     max_group_volume_per_leg: f64::MAX,
-                    max_group_volume_per_leg_fraction: 0.0,
-                    min_retail_volume: 0.0,
+                    max_group_volume_per_leg_fraction: d!(0.0),
+                    min_retail_volume: d!(0.0),
                     distributor_count: None,
                     leg_quality: vec![],
                 }],
@@ -558,18 +559,18 @@ mod tests {
             qualification: RankQualification {
                 structures: vec![StructureQualification {
                     structure: "uni".to_string(),
-                    personal_volume: 0.0,
-                    group_volume: 0.0,
+                    personal_volume: d!(0.0),
+                    group_volume: d!(0.0),
                     max_group_volume_per_leg: f64::MAX,
-                    max_group_volume_per_leg_fraction: 0.0,
-                    min_retail_volume: 0.0,
+                    max_group_volume_per_leg_fraction: d!(0.0),
+                    min_retail_volume: d!(0.0),
                     distributor_count: Some(DistributorCountRequirement {
                         count: 1,
                         min_rank: "associate".to_string(),
                         search_mode: SearchMode::AnyLevel,
                         search_depth: None,
                         total_count: 1,
-                        min_leg_group_volume: 0.0,
+                        min_leg_group_volume: d!(0.0),
                     }),
                     leg_quality: vec![],
                 }],
@@ -585,8 +586,8 @@ mod tests {
             ranks.iter().map(|r| (r.name.clone(), r.ordinal)).collect();
 
         let prim = DistributorPrimitives {
-            personal_volume: 0.0,
-            retail_volume: 0.0,
+            personal_volume: d!(0.0),
+            retail_volume: d!(0.0),
             status: "active".to_string(),
             has_order_in_period: true,
             active_products: vec![],
@@ -675,11 +676,11 @@ mod tests {
 
             let sq = |dc: Option<DistributorCountRequirement>| StructureQualification {
                 structure: "uni".to_string(),
-                personal_volume: 100.0,
-                group_volume: 0.0,
+                personal_volume: d!(100.0),
+                group_volume: d!(0.0),
                 max_group_volume_per_leg: f64::MAX,
-                max_group_volume_per_leg_fraction: 0.0,
-                min_retail_volume: 0.0,
+                max_group_volume_per_leg_fraction: d!(0.0),
+                min_retail_volume: d!(0.0),
                 distributor_count: dc,
                 leg_quality: vec![],
             };
@@ -689,7 +690,7 @@ mod tests {
                     ordinal: 1,
                     qualification: RankQualification {
                         structures: vec![StructureQualification {
-                            personal_volume: 0.0,
+                            personal_volume: d!(0.0),
                             ..sq(None)
                         }],
                         required_products: vec![],
@@ -721,7 +722,7 @@ mod tests {
                             search_mode: SearchMode::AnyLevel,
                             search_depth: None,
                             total_count: 1,
-                            min_leg_group_volume: 0.0,
+                            min_leg_group_volume: d!(0.0),
                         }))],
                         required_products: vec![],
                         window: None,
@@ -738,7 +739,7 @@ mod tests {
             // are held constant so order is the lone varying dimension.
             let prim = |pv: u32| DistributorPrimitives {
                 personal_volume: pv as f64,
-                retail_volume: 0.0,
+                retail_volume: d!(0.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
                 active_products: vec![],

@@ -536,6 +536,7 @@ pub(crate) fn tenure_meets(
 mod tests {
     use super::*;
     use crate::commission::types::VolumeSource;
+    use crate::d;
     use crate::rank::evaluator::VolumeIndex;
     use crate::rank::types::DistributorPrimitives;
     use crate::tree::error::TreeError;
@@ -550,7 +551,7 @@ mod tests {
     fn primitives_with_pv(pv: f64) -> DistributorPrimitives {
         DistributorPrimitives {
             personal_volume: pv,
-            retail_volume: 0.0,
+            retail_volume: d!(0.0),
             status: "active".to_string(),
             has_order_in_period: true,
             active_products: vec![],
@@ -559,19 +560,19 @@ mod tests {
 
     #[test]
     fn pv_meets_returns_true_when_pv_at_or_above_threshold() {
-        assert!(pv_meets(100.0, &primitives_with_pv(100.0)));
-        assert!(pv_meets(100.0, &primitives_with_pv(150.0)));
+        assert!(pv_meets(d!(100.0), &primitives_with_pv(d!(100.0))));
+        assert!(pv_meets(d!(100.0), &primitives_with_pv(d!(150.0))));
     }
 
     #[test]
     fn pv_meets_returns_false_when_pv_below_threshold() {
-        assert!(!pv_meets(100.0, &primitives_with_pv(99.99)));
-        assert!(!pv_meets(100.0, &primitives_with_pv(0.0)));
+        assert!(!pv_meets(d!(100.0), &primitives_with_pv(d!(99.99))));
+        assert!(!pv_meets(d!(100.0), &primitives_with_pv(d!(0.0))));
     }
 
     fn primitives_with_retail(retail: f64) -> DistributorPrimitives {
         DistributorPrimitives {
-            personal_volume: 0.0,
+            personal_volume: d!(0.0),
             retail_volume: retail,
             status: "active".to_string(),
             has_order_in_period: true,
@@ -581,19 +582,19 @@ mod tests {
 
     #[test]
     fn retail_meets_returns_true_when_at_or_above_threshold() {
-        assert!(retail_meets(50.0, &primitives_with_retail(50.0)));
-        assert!(retail_meets(50.0, &primitives_with_retail(75.0)));
+        assert!(retail_meets(d!(50.0), &primitives_with_retail(d!(50.0))));
+        assert!(retail_meets(d!(50.0), &primitives_with_retail(d!(75.0))));
     }
 
     #[test]
     fn retail_meets_returns_false_when_below_threshold() {
-        assert!(!retail_meets(50.0, &primitives_with_retail(49.99)));
+        assert!(!retail_meets(d!(50.0), &primitives_with_retail(d!(49.99))));
     }
 
     fn primitives_with_products(products: Vec<&str>) -> DistributorPrimitives {
         DistributorPrimitives {
-            personal_volume: 0.0,
-            retail_volume: 0.0,
+            personal_volume: d!(0.0),
+            retail_volume: d!(0.0),
             status: "active".to_string(),
             has_order_in_period: true,
             active_products: products.into_iter().map(String::from).collect(),
@@ -653,11 +654,11 @@ mod tests {
     fn sq_with_caps(group_volume: f64, cap: f64, fraction: f64) -> StructureQualification {
         StructureQualification {
             structure: "Test".to_string(),
-            personal_volume: 0.0,
+            personal_volume: d!(0.0),
             group_volume,
             max_group_volume_per_leg: cap,
             max_group_volume_per_leg_fraction: fraction,
-            min_retail_volume: 0.0,
+            min_retail_volume: d!(0.0),
             distributor_count: None,
             leg_quality: vec![],
         }
@@ -666,66 +667,72 @@ mod tests {
     #[test]
     fn effective_leg_cap_returns_the_fixed_cap_when_set() {
         assert_eq!(
-            effective_leg_cap(&sq_with_caps(10000.0, 6000.0, 0.0)),
-            Some(6000.0)
+            effective_leg_cap(&sq_with_caps(d!(10000.0), d!(6000.0), d!(0.0))),
+            Some(d!(6000.0))
         );
     }
 
     #[test]
     fn effective_leg_cap_returns_the_fraction_of_group_volume() {
         assert_eq!(
-            effective_leg_cap(&sq_with_caps(10000.0, 0.0, 0.6)),
-            Some(6000.0)
+            effective_leg_cap(&sq_with_caps(d!(10000.0), d!(0.0), d!(0.6))),
+            Some(d!(6000.0))
         );
     }
 
     #[test]
     fn effective_leg_cap_returns_none_for_a_fraction_with_zero_group_volume() {
-        assert_eq!(effective_leg_cap(&sq_with_caps(0.0, 0.0, 0.5)), None);
+        assert_eq!(
+            effective_leg_cap(&sq_with_caps(d!(0.0), d!(0.0), d!(0.5))),
+            None
+        );
     }
 
     #[test]
     fn effective_leg_cap_returns_none_when_neither_cap_is_set() {
-        assert_eq!(effective_leg_cap(&sq_with_caps(10000.0, 0.0, 0.0)), None);
+        assert_eq!(
+            effective_leg_cap(&sq_with_caps(d!(10000.0), d!(0.0), d!(0.0))),
+            None
+        );
     }
 
     #[test]
     fn effective_leg_cap_gives_the_exact_cap_for_a_fraction_that_rounds_low() {
         assert_eq!(
-            effective_leg_cap(&sq_with_caps(100000.0, 0.0, 0.29)),
-            Some(29000.0)
+            effective_leg_cap(&sq_with_caps(d!(100000.0), d!(0.0), d!(0.29))),
+            Some(d!(29000.0))
         );
     }
 
     #[test]
     fn effective_leg_cap_gives_the_exact_cap_for_a_fraction_that_rounds_high() {
         assert_eq!(
-            effective_leg_cap(&sq_with_caps(10000.0, 0.0, 0.07)),
-            Some(700.0)
+            effective_leg_cap(&sq_with_caps(d!(10000.0), d!(0.0), d!(0.07))),
+            Some(d!(700.0))
         );
     }
 
     #[test]
     fn effective_leg_cap_gives_the_exact_cap_for_a_cent_valued_group_volume() {
         assert_eq!(
-            effective_leg_cap(&sq_with_caps(1234.56, 0.0, 0.09)),
-            Some(111.1104)
+            effective_leg_cap(&sq_with_caps(d!(1234.56), d!(0.0), d!(0.09))),
+            Some(d!(111.1104))
         );
     }
 
     #[test]
     fn effective_leg_cap_gives_the_exact_cap_for_a_basis_point_fraction() {
         assert_eq!(
-            effective_leg_cap(&sq_with_caps(100.0, 0.0, 0.0078)),
-            Some(0.78)
+            effective_leg_cap(&sq_with_caps(d!(100.0), d!(0.0), d!(0.0078))),
+            Some(d!(0.78))
         );
     }
 
     #[test]
     fn effective_leg_cap_gives_the_exact_cap_for_a_tiny_fraction() {
         assert_eq!(
-            effective_leg_cap(&sq_with_caps(100.0, 0.0, 1e-9)),
-            Some(1e-7)
+            effective_leg_cap(&sq_with_caps(d!(100.0), d!(0.0), d!(1e-9))),
+            Some(d!(1e-7))
         );
     }
 
@@ -747,29 +754,37 @@ mod tests {
 
     #[test]
     fn effective_leg_cap_gives_the_exact_cap_for_a_fraction_with_more_than_six_decimals() {
-        let cap = effective_leg_cap(&sq_with_caps(100.0, 0.0, 0.333333334));
-        assert_eq!(cap, Some(33.3333334));
+        let cap = effective_leg_cap(&sq_with_caps(d!(100.0), d!(0.0), d!(0.333333334)));
+        assert_eq!(cap, Some(d!(33.3333334)));
 
-        let (tree, idx) = root_with_legs(&[33.34, 33.34, 33.34]);
+        let (tree, idx) = root_with_legs(&[d!(33.34), d!(33.34), d!(33.34)]);
         assert!(
-            capped_gv_meets(100.0, cap, uid(1), &tree, &idx, &primitives_with_pv(0.0)).unwrap()
+            capped_gv_meets(
+                d!(100.0),
+                cap,
+                uid(1),
+                &tree,
+                &idx,
+                &primitives_with_pv(d!(0.0))
+            )
+            .unwrap()
         );
     }
 
     #[test]
     fn effective_leg_cap_gives_the_exact_cap_for_a_seventh_decimal_on_a_large_cap() {
-        let cap = effective_leg_cap(&sq_with_caps(60000000.0000001, 0.0, 1.0));
-        assert_eq!(cap, Some(60000000.0000001));
+        let cap = effective_leg_cap(&sq_with_caps(d!(60000000.0000001), d!(0.0), d!(1.0)));
+        assert_eq!(cap, Some(d!(60000000.0000001)));
 
-        let (tree, idx) = root_with_legs(&[60000000.0000001]);
+        let (tree, idx) = root_with_legs(&[d!(60000000.0000001)]);
         assert!(
             capped_gv_meets(
-                60000000.0000001,
+                d!(60000000.0000001),
                 cap,
                 uid(1),
                 &tree,
                 &idx,
-                &primitives_with_pv(0.0)
+                &primitives_with_pv(d!(0.0))
             )
             .unwrap()
         );
@@ -778,25 +793,25 @@ mod tests {
     #[test]
     fn effective_leg_cap_gives_the_exact_cap_for_a_sub_micro_digit_on_a_large_fraction_cap() {
         assert_eq!(
-            effective_leg_cap(&sq_with_caps(1e9, 0.0, 0.2900000000000004)),
-            Some(290000000.0000004)
+            effective_leg_cap(&sq_with_caps(d!(1e9), d!(0.0), d!(0.2900000000000004))),
+            Some(d!(290000000.0000004))
         );
     }
 
     #[test]
     fn effective_leg_cap_gives_the_exact_cap_for_an_eighth_decimal_on_a_mid_sized_cap() {
-        let cap = effective_leg_cap(&sq_with_caps(29000000.00000004, 0.0, 1.0));
-        assert_eq!(cap, Some(29000000.00000004));
+        let cap = effective_leg_cap(&sq_with_caps(d!(29000000.00000004), d!(0.0), d!(1.0)));
+        assert_eq!(cap, Some(d!(29000000.00000004)));
 
-        let (tree, idx) = root_with_legs(&[29000000.00000004]);
+        let (tree, idx) = root_with_legs(&[d!(29000000.00000004)]);
         assert!(
             capped_gv_meets(
-                29000000.00000004,
+                d!(29000000.00000004),
                 cap,
                 uid(1),
                 &tree,
                 &idx,
-                &primitives_with_pv(0.0)
+                &primitives_with_pv(d!(0.0))
             )
             .unwrap()
         );
@@ -804,19 +819,19 @@ mod tests {
 
     #[test]
     fn effective_leg_cap_gives_the_exact_cap_for_a_ninth_decimal_fraction() {
-        let cap = effective_leg_cap(&sq_with_caps(2000001.0, 0.0, 0.500000001));
-        assert_eq!(cap, Some(1000000.502000001));
+        let cap = effective_leg_cap(&sq_with_caps(d!(2000001.0), d!(0.0), d!(0.500000001)));
+        assert_eq!(cap, Some(d!(1000000.502000001)));
 
-        let (tree, idx) = root_with_legs(&[1000000.5020000009]);
-        let primitives = primitives_with_pv(1000000.4979999991);
-        assert!(capped_gv_meets(2000001.0, cap, uid(1), &tree, &idx, &primitives).unwrap());
+        let (tree, idx) = root_with_legs(&[d!(1000000.5020000009)]);
+        let primitives = primitives_with_pv(d!(1000000.4979999991));
+        assert!(capped_gv_meets(d!(2000001.0), cap, uid(1), &tree, &idx, &primitives).unwrap());
     }
 
     #[test]
     fn effective_leg_cap_gives_the_exact_cap_for_a_fraction_that_rounds_high_on_a_large_cap() {
         assert_eq!(
-            effective_leg_cap(&sq_with_caps(1.4e9, 0.0, 0.07)),
-            Some(98000000.0)
+            effective_leg_cap(&sq_with_caps(d!(1.4e9), d!(0.0), d!(0.07))),
+            Some(d!(98000000.0))
         );
     }
 
@@ -848,35 +863,67 @@ mod tests {
         let idx = VolumeIndex::build(&[
             VolumeSource {
                 source_id: uid(2),
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             },
             VolumeSource {
                 source_id: uid(3),
-                cv_amount: 200.0,
+                cv_amount: d!(200.0),
             },
         ]);
-        let primitives = primitives_with_pv(50.0);
+        let primitives = primitives_with_pv(d!(50.0));
 
-        assert!(capped_gv_meets(350.0, None, uid(1), &tree, &idx, &primitives).unwrap());
-        assert!(!capped_gv_meets(350.01, None, uid(1), &tree, &idx, &primitives).unwrap());
+        assert!(capped_gv_meets(d!(350.0), None, uid(1), &tree, &idx, &primitives).unwrap());
+        assert!(!capped_gv_meets(d!(350.01), None, uid(1), &tree, &idx, &primitives).unwrap());
     }
 
     #[test]
     fn capped_gv_meets_counts_a_strong_leg_up_to_the_cap() {
-        let (tree, idx) = root_with_legs(&[7000.0, 4000.0]);
-        let primitives = primitives_with_pv(0.0);
+        let (tree, idx) = root_with_legs(&[d!(7000.0), d!(4000.0)]);
+        let primitives = primitives_with_pv(d!(0.0));
 
-        assert!(capped_gv_meets(10000.0, Some(6000.0), uid(1), &tree, &idx, &primitives).unwrap());
-        assert!(!capped_gv_meets(10000.0, Some(5000.0), uid(1), &tree, &idx, &primitives).unwrap());
+        assert!(
+            capped_gv_meets(
+                d!(10000.0),
+                Some(d!(6000.0)),
+                uid(1),
+                &tree,
+                &idx,
+                &primitives
+            )
+            .unwrap()
+        );
+        assert!(
+            !capped_gv_meets(
+                d!(10000.0),
+                Some(d!(5000.0)),
+                uid(1),
+                &tree,
+                &idx,
+                &primitives
+            )
+            .unwrap()
+        );
     }
 
     #[test]
     fn capped_gv_meets_caps_every_leg() {
-        let (tree, idx) = root_with_legs(&[300.0, 400.0, 500.0]);
-        let primitives = primitives_with_pv(0.0);
+        let (tree, idx) = root_with_legs(&[d!(300.0), d!(400.0), d!(500.0)]);
+        let primitives = primitives_with_pv(d!(0.0));
 
-        assert!(capped_gv_meets(600.0, Some(200.0), uid(1), &tree, &idx, &primitives).unwrap());
-        assert!(!capped_gv_meets(600.01, Some(200.0), uid(1), &tree, &idx, &primitives).unwrap());
+        assert!(
+            capped_gv_meets(d!(600.0), Some(d!(200.0)), uid(1), &tree, &idx, &primitives).unwrap()
+        );
+        assert!(
+            !capped_gv_meets(
+                d!(600.01),
+                Some(d!(200.0)),
+                uid(1),
+                &tree,
+                &idx,
+                &primitives
+            )
+            .unwrap()
+        );
     }
 
     #[test]
@@ -889,47 +936,81 @@ mod tests {
         let idx = VolumeIndex::build(&[
             VolumeSource {
                 source_id: uid(2),
-                cv_amount: 50.0,
+                cv_amount: d!(50.0),
             },
             VolumeSource {
                 source_id: uid(4),
-                cv_amount: 150.0,
+                cv_amount: d!(150.0),
             }, // leg A: 200, capped to 120
             VolumeSource {
                 source_id: uid(3),
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             }, // leg B: 100
         ]);
-        let primitives = primitives_with_pv(0.0);
+        let primitives = primitives_with_pv(d!(0.0));
 
-        assert!(capped_gv_meets(220.0, Some(120.0), uid(1), &tree, &idx, &primitives).unwrap());
-        assert!(!capped_gv_meets(220.01, Some(120.0), uid(1), &tree, &idx, &primitives).unwrap());
+        assert!(
+            capped_gv_meets(d!(220.0), Some(d!(120.0)), uid(1), &tree, &idx, &primitives).unwrap()
+        );
+        assert!(
+            !capped_gv_meets(
+                d!(220.01),
+                Some(d!(120.0)),
+                uid(1),
+                &tree,
+                &idx,
+                &primitives
+            )
+            .unwrap()
+        );
     }
 
     #[test]
     fn capped_gv_meets_does_not_cap_personal_volume() {
-        let (tree, idx) = root_with_legs(&[500.0]);
-        let primitives = primitives_with_pv(900.0);
+        let (tree, idx) = root_with_legs(&[d!(500.0)]);
+        let primitives = primitives_with_pv(d!(900.0));
 
-        assert!(capped_gv_meets(1000.0, Some(100.0), uid(1), &tree, &idx, &primitives).unwrap());
-        assert!(!capped_gv_meets(1000.01, Some(100.0), uid(1), &tree, &idx, &primitives).unwrap());
+        assert!(
+            capped_gv_meets(
+                d!(1000.0),
+                Some(d!(100.0)),
+                uid(1),
+                &tree,
+                &idx,
+                &primitives
+            )
+            .unwrap()
+        );
+        assert!(
+            !capped_gv_meets(
+                d!(1000.01),
+                Some(d!(100.0)),
+                uid(1),
+                &tree,
+                &idx,
+                &primitives
+            )
+            .unwrap()
+        );
     }
 
     #[test]
     fn capped_gv_meets_passes_on_personal_volume_with_no_children() {
         let (tree, idx) = root_with_legs(&[]);
-        let primitives = primitives_with_pv(100.0);
+        let primitives = primitives_with_pv(d!(100.0));
 
-        assert!(capped_gv_meets(100.0, Some(50.0), uid(1), &tree, &idx, &primitives).unwrap());
+        assert!(
+            capped_gv_meets(d!(100.0), Some(d!(50.0)), uid(1), &tree, &idx, &primitives).unwrap()
+        );
     }
 
     #[test]
     fn capped_gv_meets_errors_when_distributor_missing_from_tree() {
         let tree = UnilevelTree::new();
         let idx = VolumeIndex::build(&[]);
-        let primitives = primitives_with_pv(0.0);
+        let primitives = primitives_with_pv(d!(0.0));
 
-        let err = capped_gv_meets(0.0, None, uid(99), &tree, &idx, &primitives).unwrap_err();
+        let err = capped_gv_meets(d!(0.0), None, uid(99), &tree, &idx, &primitives).unwrap_err();
         assert_eq!(err, TreeError::UserNotFound(uid(99)));
     }
 
@@ -943,42 +1024,48 @@ mod tests {
         let idx = VolumeIndex::build(&[
             VolumeSource {
                 source_id: uid(1),
-                cv_amount: 500.0,
+                cv_amount: d!(500.0),
             },
             VolumeSource {
                 source_id: uid(2),
-                cv_amount: 300.0,
+                cv_amount: d!(300.0),
             },
             VolumeSource {
                 source_id: uid(3),
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             },
         ]);
-        let primitives = primitives_with_pv(50.0);
+        let primitives = primitives_with_pv(d!(50.0));
 
-        for cap in [None, Some(1000.0)] {
-            assert!(capped_gv_meets(150.0, cap, uid(2), &tree, &idx, &primitives).unwrap());
-            assert!(!capped_gv_meets(150.01, cap, uid(2), &tree, &idx, &primitives).unwrap());
+        for cap in [None, Some(d!(1000.0))] {
+            assert!(capped_gv_meets(d!(150.0), cap, uid(2), &tree, &idx, &primitives).unwrap());
+            assert!(!capped_gv_meets(d!(150.01), cap, uid(2), &tree, &idx, &primitives).unwrap());
         }
     }
 
     #[test]
     fn capped_gv_meets_treats_a_fraction_cap_like_its_fixed_cap() {
-        let (tree, idx) = root_with_legs(&[29000.0, 29000.0, 29000.0, 13000.0]);
-        let primitives = primitives_with_pv(0.0);
-        let fixed_cap = effective_leg_cap(&sq_with_caps(100000.0, 29000.0, 0.0));
-        let fraction_cap = effective_leg_cap(&sq_with_caps(100000.0, 0.0, 0.29));
+        let (tree, idx) = root_with_legs(&[d!(29000.0), d!(29000.0), d!(29000.0), d!(13000.0)]);
+        let primitives = primitives_with_pv(d!(0.0));
+        let fixed_cap = effective_leg_cap(&sq_with_caps(d!(100000.0), d!(29000.0), d!(0.0)));
+        let fraction_cap = effective_leg_cap(&sq_with_caps(d!(100000.0), d!(0.0), d!(0.29)));
 
-        assert!(capped_gv_meets(100000.0, fixed_cap, uid(1), &tree, &idx, &primitives).unwrap());
-        assert!(capped_gv_meets(100000.0, fraction_cap, uid(1), &tree, &idx, &primitives).unwrap());
+        assert!(
+            capped_gv_meets(d!(100000.0), fixed_cap, uid(1), &tree, &idx, &primitives).unwrap()
+        );
+        assert!(
+            capped_gv_meets(d!(100000.0), fraction_cap, uid(1), &tree, &idx, &primitives).unwrap()
+        );
     }
 
     #[test]
     fn capped_gv_meets_fails_on_a_nan_leg_under_a_cap() {
         let (tree, idx) = root_with_legs(&[f64::NAN]);
-        let primitives = primitives_with_pv(0.0);
+        let primitives = primitives_with_pv(d!(0.0));
 
-        assert!(!capped_gv_meets(0.0, Some(100.0), uid(1), &tree, &idx, &primitives).unwrap());
+        assert!(
+            !capped_gv_meets(d!(0.0), Some(d!(100.0)), uid(1), &tree, &idx, &primitives).unwrap()
+        );
     }
 
     proptest! {
@@ -1019,7 +1106,7 @@ mod tests {
         ) {
             let leg_cvs: Vec<f64> = legs.iter().map(|&v| f64::from(v)).collect();
             let (tree, idx) = root_with_legs(&leg_cvs);
-            let primitives = primitives_with_pv(0.0);
+            let primitives = primitives_with_pv(d!(0.0));
             let required = f64::from(required);
             let low_pass =
                 capped_gv_meets(required, Some(f64::from(low)), uid(1), &tree, &idx, &primitives).unwrap();
@@ -1077,9 +1164,9 @@ mod tests {
         ordinals.insert("bronze".to_string(), 1);
 
         let mut cv_per: HashMap<Uuid, f64> = HashMap::new();
-        cv_per.insert(uid(2), 600.0);
-        cv_per.insert(uid(3), 600.0);
-        cv_per.insert(uid(4), 600.0);
+        cv_per.insert(uid(2), d!(600.0));
+        cv_per.insert(uid(3), d!(600.0));
+        cv_per.insert(uid(4), d!(600.0));
         let sources: Vec<VolumeSource> = cv_per
             .into_iter()
             .map(|(id, cv)| VolumeSource {
@@ -1095,7 +1182,7 @@ mod tests {
             search_mode: SearchMode::FirstLevels,
             search_depth: Some(1),
             total_count: 3,
-            min_leg_group_volume: 500.0,
+            min_leg_group_volume: d!(500.0),
         };
 
         assert!(distributor_count_meets(&req, uid(1), &tree, &idx, &already, &ordinals).unwrap());
@@ -1116,7 +1203,7 @@ mod tests {
             search_mode: SearchMode::AnyLevel,
             search_depth: None,
             total_count: 0,
-            min_leg_group_volume: 0.0,
+            min_leg_group_volume: d!(0.0),
         };
 
         let err =
@@ -1194,14 +1281,14 @@ mod tests {
 
         let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
-        distributors.insert(uid(2), primitives_with_pv(200.0));
-        distributors.insert(uid(3), primitives_with_pv(50.0));
+        distributors.insert(uid(2), primitives_with_pv(d!(200.0)));
+        distributors.insert(uid(3), primitives_with_pv(d!(50.0)));
         let ordinals: HashMap<String, u16> = HashMap::new();
 
         let reqs = vec![LegQualityRequirement {
             count: 1,
             predicate: LegPredicate::ContainsPersonalVolume {
-                min_personal_volume: 200.0,
+                min_personal_volume: d!(200.0),
             },
         }];
         // Only leg 2 has a node with PV >= 200.
@@ -1311,14 +1398,14 @@ mod tests {
 
         let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
-        distributors.insert(uid(2), primitives_with_pv(500.0));
-        distributors.insert(uid(3), primitives_with_pv(500.0));
+        distributors.insert(uid(2), primitives_with_pv(d!(500.0)));
+        distributors.insert(uid(3), primitives_with_pv(d!(500.0)));
         let ordinals: HashMap<String, u16> = HashMap::new();
 
         let reqs = vec![LegQualityRequirement {
             count: 3, // requires 3 legs but only 2 exist
             predicate: LegPredicate::ContainsPersonalVolume {
-                min_personal_volume: 100.0,
+                min_personal_volume: d!(100.0),
             },
         }];
         assert!(
@@ -1340,7 +1427,7 @@ mod tests {
         let reqs = vec![LegQualityRequirement {
             count: 0,
             predicate: LegPredicate::ContainsPersonalVolume {
-                min_personal_volume: 9999.0, // impossible threshold — vacuously satisfied
+                min_personal_volume: d!(9999.0), // impossible threshold — vacuously satisfied
             },
         }];
         assert!(
@@ -1395,8 +1482,8 @@ mod tests {
                     personal_volume: pv,
                     group_volume: gv,
                     max_group_volume_per_leg: gv * 10.0, // permissive
-                    max_group_volume_per_leg_fraction: 0.0,
-                    min_retail_volume: 0.0,
+                    max_group_volume_per_leg_fraction: d!(0.0),
+                    min_retail_volume: d!(0.0),
                     distributor_count: None,
                     leg_quality: vec![],
                 }],
@@ -1410,9 +1497,9 @@ mod tests {
     }
 
     fn rank_with_fraction_cap(gv: f64, fraction: f64) -> RankDefinition {
-        let mut rank = rank_with_pv_and_gv("silver", 1, "Test", 0.0, gv);
+        let mut rank = rank_with_pv_and_gv("silver", 1, "Test", d!(0.0), gv);
         let sq = &mut rank.qualification.structures[0];
-        sq.max_group_volume_per_leg = 0.0;
+        sq.max_group_volume_per_leg = d!(0.0);
         sq.max_group_volume_per_leg_fraction = fraction;
         rank
     }
@@ -1427,23 +1514,23 @@ mod tests {
 
     #[test]
     fn resolve_fraction_caps_turns_a_fraction_cap_into_its_fixed_cap() {
-        let mut ranks = vec![rank_with_fraction_cap(100000.0, 0.29)];
+        let mut ranks = vec![rank_with_fraction_cap(d!(100000.0), d!(0.29))];
         resolve_fraction_caps(&mut ranks);
-        assert_eq!(caps(&ranks[0]), (29000.0, 0.0));
+        assert_eq!(caps(&ranks[0]), (d!(29000.0), d!(0.0)));
     }
 
     #[test]
     fn resolve_fraction_caps_leaves_a_fixed_cap_alone() {
-        let mut ranks = vec![rank_with_pv_and_gv("gold", 2, "Test", 0.0, 5000.0)];
+        let mut ranks = vec![rank_with_pv_and_gv("gold", 2, "Test", d!(0.0), d!(5000.0))];
         resolve_fraction_caps(&mut ranks);
-        assert_eq!(caps(&ranks[0]), (50000.0, 0.0));
+        assert_eq!(caps(&ranks[0]), (d!(50000.0), d!(0.0)));
     }
 
     #[test]
     fn resolve_fraction_caps_leaves_a_fraction_that_gives_no_cap_alone() {
-        let mut ranks = vec![rank_with_fraction_cap(0.0, 0.5)];
+        let mut ranks = vec![rank_with_fraction_cap(d!(0.0), d!(0.5))];
         resolve_fraction_caps(&mut ranks);
-        assert_eq!(caps(&ranks[0]), (0.0, 0.5));
+        assert_eq!(caps(&ranks[0]), (d!(0.0), d!(0.5)));
         assert_eq!(
             effective_leg_cap(&ranks[0].qualification.structures[0]),
             None
@@ -1458,7 +1545,7 @@ mod tests {
 
         let sources = vec![VolumeSource {
             source_id: uid(2),
-            cv_amount: 1000.0,
+            cv_amount: d!(1000.0),
         }];
         let idx = VolumeIndex::build(&sources);
 
@@ -1466,14 +1553,14 @@ mod tests {
         nav_map.insert("Test".to_string(), &tree);
 
         let primitives = DistributorPrimitives {
-            personal_volume: 100.0,
-            retail_volume: 0.0,
+            personal_volume: d!(100.0),
+            retail_volume: d!(0.0),
             status: "active".to_string(),
             has_order_in_period: true,
             active_products: vec![],
         };
 
-        let rank = rank_with_pv_and_gv("silver", 2, "Test", 100.0, 500.0);
+        let rank = rank_with_pv_and_gv("silver", 2, "Test", d!(100.0), d!(500.0));
         let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
         let ordinals: HashMap<String, u16> = HashMap::new();
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
@@ -1504,9 +1591,9 @@ mod tests {
         let mut nav_map: HashMap<String, &dyn TreeNavigator> = HashMap::new();
         nav_map.insert("Test".to_string(), &tree);
 
-        let primitives = primitives_with_pv(50.0); // PV too low
+        let primitives = primitives_with_pv(d!(50.0)); // PV too low
 
-        let rank = rank_with_pv_and_gv("silver", 2, "Test", 100.0, 0.0);
+        let rank = rank_with_pv_and_gv("silver", 2, "Test", d!(100.0), d!(0.0));
         let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
         let ordinals: HashMap<String, u16> = HashMap::new();
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
@@ -1530,11 +1617,11 @@ mod tests {
 
     #[test]
     fn satisfies_counts_a_strong_leg_up_to_the_per_leg_cap() {
-        let (tree, idx) = root_with_legs(&[7000.0, 4000.0]);
+        let (tree, idx) = root_with_legs(&[d!(7000.0), d!(4000.0)]);
         let mut nav_map: HashMap<String, &dyn TreeNavigator> = HashMap::new();
         nav_map.insert("Test".to_string(), &tree);
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
-        distributors.insert(uid(1), primitives_with_pv(0.0));
+        distributors.insert(uid(1), primitives_with_pv(d!(0.0)));
         let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
         let ordinals: HashMap<String, u16> = HashMap::new();
         let ranks: Vec<RankDefinition> = vec![];
@@ -1551,12 +1638,12 @@ mod tests {
         };
 
         for (cap, fraction, qualifies) in [
-            (6000.0, 0.0, true),
-            (5000.0, 0.0, false),
-            (0.0, 0.6, true),
-            (0.0, 0.5, false),
+            (d!(6000.0), d!(0.0), true),
+            (d!(5000.0), d!(0.0), false),
+            (d!(0.0), d!(0.6), true),
+            (d!(0.0), d!(0.5), false),
         ] {
-            let mut rank = rank_with_pv_and_gv("silver", 2, "Test", 0.0, 10000.0);
+            let mut rank = rank_with_pv_and_gv("silver", 2, "Test", d!(0.0), d!(10000.0));
             let sq = &mut rank.qualification.structures[0];
             sq.max_group_volume_per_leg = cap;
             sq.max_group_volume_per_leg_fraction = fraction;
@@ -1576,8 +1663,8 @@ mod tests {
 
         let nav_map: HashMap<String, &dyn TreeNavigator> = HashMap::new(); // missing "Test"
 
-        let primitives = primitives_with_pv(0.0);
-        let rank = rank_with_pv_and_gv("silver", 2, "Test", 0.0, 0.0);
+        let primitives = primitives_with_pv(d!(0.0));
+        let rank = rank_with_pv_and_gv("silver", 2, "Test", d!(0.0), d!(0.0));
         let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
         let ordinals: HashMap<String, u16> = HashMap::new();
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
@@ -1620,16 +1707,16 @@ mod tests {
         let mut nav_map: HashMap<String, &dyn TreeNavigator> = HashMap::new();
         nav_map.insert("Test".to_string(), &tree);
 
-        let primitives = primitives_with_pv(0.0);
+        let primitives = primitives_with_pv(d!(0.0));
 
-        let mut rank = rank_with_pv_and_gv("silver", 2, "Test", 0.0, 0.0);
+        let mut rank = rank_with_pv_and_gv("silver", 2, "Test", d!(0.0), d!(0.0));
         rank.qualification.structures[0].distributor_count = Some(DistributorCountRequirement {
             count: 1,
             min_rank: "phantom_rank".to_string(),
             search_mode: SearchMode::AnyLevel,
             search_depth: None,
             total_count: 0,
-            min_leg_group_volume: 0.0,
+            min_leg_group_volume: d!(0.0),
         });
 
         let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
@@ -1673,9 +1760,9 @@ mod tests {
         nav_map.insert("Test".to_string(), &tree);
 
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
-        distributors.insert(uid(1), primitives_with_pv(100.0));
+        distributors.insert(uid(1), primitives_with_pv(d!(100.0)));
 
-        let mut rank = rank_with_pv_and_gv("silver", 2, "Test", 100.0, 0.0);
+        let mut rank = rank_with_pv_and_gv("silver", 2, "Test", d!(100.0), d!(0.0));
         rank.qualification.structures[0].leg_quality = vec![LegQualityRequirement {
             count: 2,
             predicate: LegPredicate::ContainsRank {
@@ -1716,9 +1803,9 @@ mod tests {
         nav_map.insert("Test".to_string(), &tree);
 
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
-        distributors.insert(uid(1), primitives_with_pv(100.0));
+        distributors.insert(uid(1), primitives_with_pv(d!(100.0)));
 
-        let mut rank = rank_with_pv_and_gv("silver", 2, "Test", 100.0, 0.0);
+        let mut rank = rank_with_pv_and_gv("silver", 2, "Test", d!(100.0), d!(0.0));
         rank.qualification.structures[0].leg_quality = vec![LegQualityRequirement {
             count: 2, // requires 2 bronze legs; only one leg exists
             predicate: LegPredicate::ContainsRank {
@@ -1758,9 +1845,9 @@ mod tests {
         nav_map.insert("Test".to_string(), &tree);
 
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
-        distributors.insert(uid(1), primitives_with_pv(100.0));
+        distributors.insert(uid(1), primitives_with_pv(d!(100.0)));
 
-        let mut rank = rank_with_pv_and_gv("silver", 2, "Test", 100.0, 0.0);
+        let mut rank = rank_with_pv_and_gv("silver", 2, "Test", d!(100.0), d!(0.0));
         rank.qualification.structures[0].leg_quality = vec![LegQualityRequirement {
             count: 1,
             predicate: LegPredicate::ContainsRank {
@@ -1896,9 +1983,9 @@ mod tests {
         nav_map.insert("Test".to_string(), &tree);
 
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
-        distributors.insert(uid(1), primitives_with_pv(100.0));
+        distributors.insert(uid(1), primitives_with_pv(d!(100.0)));
 
-        let mut rank = rank_with_pv_and_gv("QD", 6, "Test", 100.0, 0.0);
+        let mut rank = rank_with_pv_and_gv("QD", 6, "Test", d!(100.0), d!(0.0));
         rank.qualification.window = Some(win(2, 3));
 
         let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
@@ -1937,9 +2024,9 @@ mod tests {
         nav_map.insert("Test".to_string(), &tree);
 
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
-        distributors.insert(uid(1), primitives_with_pv(100.0));
+        distributors.insert(uid(1), primitives_with_pv(d!(100.0)));
 
-        let mut rank = rank_with_pv_and_gv("QD", 6, "Test", 100.0, 0.0);
+        let mut rank = rank_with_pv_and_gv("QD", 6, "Test", d!(100.0), d!(0.0));
         rank.qualification.window = Some(win(2, 3));
 
         let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
@@ -1983,9 +2070,9 @@ mod tests {
         nav_map.insert("Test".to_string(), &tree);
 
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
-        distributors.insert(uid(1), primitives_with_pv(100.0));
+        distributors.insert(uid(1), primitives_with_pv(d!(100.0)));
 
-        let mut rank = rank_with_pv_and_gv("QD", 6, "Test", 100.0, 0.0);
+        let mut rank = rank_with_pv_and_gv("QD", 6, "Test", d!(100.0), d!(0.0));
         rank.qualification.tenure = Some(ten(3));
 
         let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();
@@ -2024,9 +2111,9 @@ mod tests {
         nav_map.insert("Test".to_string(), &tree);
 
         let mut distributors: HashMap<Uuid, DistributorPrimitives> = HashMap::new();
-        distributors.insert(uid(1), primitives_with_pv(100.0));
+        distributors.insert(uid(1), primitives_with_pv(d!(100.0)));
 
-        let mut rank = rank_with_pv_and_gv("QD", 6, "Test", 100.0, 0.0);
+        let mut rank = rank_with_pv_and_gv("QD", 6, "Test", d!(100.0), d!(0.0));
         rank.qualification.tenure = Some(ten(3));
 
         let already: HashMap<Uuid, EvaluatedRank> = HashMap::new();

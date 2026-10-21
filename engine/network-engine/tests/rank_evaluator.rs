@@ -6,6 +6,7 @@ use network_engine::config::rank::{
     RankQualificationWindow, StructureQualification, TenureRequirement,
 };
 use network_engine::config::{CompensationPlan, StructureConfig, UnilevelStructureConfig};
+use network_engine::d;
 use network_engine::rank::{
     DistributorPrimitives, EvaluatedRank, EvaluationError, EvaluationInputs, evaluate_ranks,
     structures_above_lowest_rank,
@@ -21,7 +22,7 @@ use uuid::Uuid;
 fn primitives(pv: f64) -> DistributorPrimitives {
     DistributorPrimitives {
         personal_volume: pv,
-        retail_volume: 0.0,
+        retail_volume: d!(0.0),
         status: "active".to_string(),
         has_order_in_period: true,
         active_products: vec![],
@@ -31,7 +32,7 @@ fn primitives(pv: f64) -> DistributorPrimitives {
 fn linear_plan() -> CompensationPlan {
     let mut plan = network_engine::test_support::build_test_plan(
         network_engine::config::eligibility::CommissionEligibility {
-            minimum_pv: 0.0,
+            minimum_pv: d!(0.0),
             require_order_in_period: false,
             eligible_statuses: vec![],
             active_leg_tiers: vec![],
@@ -39,7 +40,7 @@ fn linear_plan() -> CompensationPlan {
         StructureConfig::Unilevel(UnilevelStructureConfig {
             name: "Test".to_string(),
             level_commission: network_engine::config::commission::LevelCommissionConfig {
-                broad_commission_percent: 0.40,
+                broad_commission_percent: d!(0.40),
                 volume_to_dollar_multiplier: None,
                 max_depth: 3,
                 rate_table: Default::default(),
@@ -56,11 +57,11 @@ fn linear_plan() -> CompensationPlan {
             qualification: RankQualification {
                 structures: vec![StructureQualification {
                     structure: "Test".to_string(),
-                    personal_volume: 0.0,
-                    group_volume: 0.0,
+                    personal_volume: d!(0.0),
+                    group_volume: d!(0.0),
                     max_group_volume_per_leg: f64::MAX,
-                    max_group_volume_per_leg_fraction: 0.0,
-                    min_retail_volume: 0.0,
+                    max_group_volume_per_leg_fraction: d!(0.0),
+                    min_retail_volume: d!(0.0),
                     distributor_count: None,
                     leg_quality: vec![],
                 }],
@@ -77,11 +78,11 @@ fn linear_plan() -> CompensationPlan {
             qualification: RankQualification {
                 structures: vec![StructureQualification {
                     structure: "Test".to_string(),
-                    personal_volume: 100.0,
-                    group_volume: 0.0,
+                    personal_volume: d!(100.0),
+                    group_volume: d!(0.0),
                     max_group_volume_per_leg: f64::MAX,
-                    max_group_volume_per_leg_fraction: 0.0,
-                    min_retail_volume: 0.0,
+                    max_group_volume_per_leg_fraction: d!(0.0),
+                    min_retail_volume: d!(0.0),
                     distributor_count: None,
                     leg_quality: vec![],
                 }],
@@ -103,7 +104,7 @@ fn leg_volume_plan() -> CompensationPlan {
     plan.ranks[1].qualification.structures[0].leg_quality = vec![LegQualityRequirement {
         count: 1,
         predicate: LegPredicate::ContainsPersonalVolume {
-            min_personal_volume: 100.0,
+            min_personal_volume: d!(100.0),
         },
     }];
     plan
@@ -141,8 +142,8 @@ fn evaluate_ranks_returns_per_distributor_rank() {
     nav.insert("Test".to_string(), &tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(250.0));
-    distributors.insert(uuid_from_index(2), primitives(50.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(250.0)));
+    distributors.insert(uuid_from_index(2), primitives(d!(50.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -175,13 +176,13 @@ fn evaluate_ranks_gives_the_base_rank_without_evaluating_its_qualification() {
     tree.add_root(uuid_from_index(1), 0).unwrap();
 
     let mut plan = linear_plan();
-    plan.ranks[0].qualification.structures[0].personal_volume = 50.0;
+    plan.ranks[0].qualification.structures[0].personal_volume = d!(50.0);
 
     let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
     nav.insert("Test".to_string(), &tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(0.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(0.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -210,8 +211,8 @@ fn a_leg_with_enough_volume_lifts_its_upline_to_silver() {
     nav.insert("Test".to_string(), &tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(250.0));
-    distributors.insert(uuid_from_index(2), primitives(150.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(250.0)));
+    distributors.insert(uuid_from_index(2), primitives(d!(150.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -240,8 +241,8 @@ fn a_leg_below_the_volume_leaves_its_upline_at_associate() {
     nav.insert("Test".to_string(), &tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(250.0));
-    distributors.insert(uuid_from_index(2), primitives(50.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(250.0)));
+    distributors.insert(uuid_from_index(2), primitives(d!(50.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -271,7 +272,7 @@ fn evaluate_ranks_refuses_an_omitted_leg() {
     nav.insert("Test".to_string(), &tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(250.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(250.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -370,7 +371,7 @@ fn evaluate_ranks_names_the_lowest_missing_distributor() {
     nav.insert("Test".to_string(), &tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(250.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(250.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -421,7 +422,7 @@ fn evaluate_ranks_names_the_lowest_missing_distributor_across_trees() {
     nav.insert("Beta".to_string(), &beta);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(250.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(250.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -453,7 +454,7 @@ fn evaluate_ranks_does_not_require_members_of_a_tree_only_the_lowest_rank_names(
     nav.insert("Base".to_string(), &base_tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(250.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(250.0)));
     assert!(
         base_tree.contains(uuid_from_index(7)),
         "node 7 must be in Base"
@@ -496,7 +497,7 @@ fn evaluate_ranks_does_not_require_members_of_a_tree_no_rank_names() {
     nav.insert("Extra".to_string(), &extra_tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(250.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(250.0)));
     assert!(
         extra_tree.contains(uuid_from_index(8)),
         "node 8 must be in Extra"
@@ -538,7 +539,7 @@ fn evaluate_ranks_errors_on_unknown_structure() {
     nav.insert("Other".to_string(), &tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(0.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(0.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -573,7 +574,7 @@ fn evaluate_ranks_errors_on_distributor_not_in_referenced_tree() {
     nav.insert("Other".to_string(), &other_tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(0.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(0.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -606,7 +607,7 @@ fn evaluate_ranks_errors_on_unknown_min_rank() {
             search_mode: SearchMode::AnyLevel,
             search_depth: None,
             total_count: 0,
-            min_leg_group_volume: 0.0,
+            min_leg_group_volume: d!(0.0),
         });
 
     let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
@@ -615,7 +616,7 @@ fn evaluate_ranks_errors_on_unknown_min_rank() {
     let mut distributors = HashMap::new();
     // PV high enough that satisfies() reaches the distributor_count check
     // for silver. associate has no distributor_count, so it passes first.
-    distributors.insert(uuid_from_index(1), primitives(250.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(250.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -658,7 +659,7 @@ fn evaluate_ranks_with_populated_leg_quality_gates_rank() {
     // with two AND-combined leg_quality requirements on silver.
     let mut plan = network_engine::test_support::build_test_plan(
         network_engine::config::eligibility::CommissionEligibility {
-            minimum_pv: 0.0,
+            minimum_pv: d!(0.0),
             require_order_in_period: false,
             eligible_statuses: vec![],
             active_leg_tiers: vec![],
@@ -666,7 +667,7 @@ fn evaluate_ranks_with_populated_leg_quality_gates_rank() {
         StructureConfig::Unilevel(UnilevelStructureConfig {
             name: "Test".to_string(),
             level_commission: network_engine::config::commission::LevelCommissionConfig {
-                broad_commission_percent: 0.40,
+                broad_commission_percent: d!(0.40),
                 volume_to_dollar_multiplier: None,
                 max_depth: 3,
                 rate_table: Default::default(),
@@ -683,11 +684,11 @@ fn evaluate_ranks_with_populated_leg_quality_gates_rank() {
             qualification: RankQualification {
                 structures: vec![StructureQualification {
                     structure: "Test".to_string(),
-                    personal_volume: 0.0,
-                    group_volume: 0.0,
+                    personal_volume: d!(0.0),
+                    group_volume: d!(0.0),
                     max_group_volume_per_leg: f64::MAX,
-                    max_group_volume_per_leg_fraction: 0.0,
-                    min_retail_volume: 0.0,
+                    max_group_volume_per_leg_fraction: d!(0.0),
+                    min_retail_volume: d!(0.0),
                     distributor_count: None,
                     leg_quality: vec![],
                 }],
@@ -704,11 +705,11 @@ fn evaluate_ranks_with_populated_leg_quality_gates_rank() {
             qualification: RankQualification {
                 structures: vec![StructureQualification {
                     structure: "Test".to_string(),
-                    personal_volume: 50.0,
-                    group_volume: 0.0,
+                    personal_volume: d!(50.0),
+                    group_volume: d!(0.0),
                     max_group_volume_per_leg: f64::MAX,
-                    max_group_volume_per_leg_fraction: 0.0,
-                    min_retail_volume: 0.0,
+                    max_group_volume_per_leg_fraction: d!(0.0),
+                    min_retail_volume: d!(0.0),
                     distributor_count: None,
                     // Two AND-combined requirements.
                     // req 1: at least 2 legs each containing an associate node.
@@ -723,7 +724,7 @@ fn evaluate_ranks_with_populated_leg_quality_gates_rank() {
                         LegQualityRequirement {
                             count: 1,
                             predicate: LegPredicate::ContainsPersonalVolume {
-                                min_personal_volume: 100.0,
+                                min_personal_volume: d!(100.0),
                             },
                         },
                     ],
@@ -793,13 +794,13 @@ fn evaluate_ranks_with_populated_leg_quality_gates_rank() {
     // subject_b(3): PV=50. Its children: node 6 (PV=50), node 7 (PV=50).
     // Root(1): PV=0.
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(0.0));
-    distributors.insert(uuid_from_index(2), primitives(50.0));
-    distributors.insert(uuid_from_index(3), primitives(50.0));
-    distributors.insert(uuid_from_index(4), primitives(100.0));
-    distributors.insert(uuid_from_index(5), primitives(50.0));
-    distributors.insert(uuid_from_index(6), primitives(50.0));
-    distributors.insert(uuid_from_index(7), primitives(50.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(0.0)));
+    distributors.insert(uuid_from_index(2), primitives(d!(50.0)));
+    distributors.insert(uuid_from_index(3), primitives(d!(50.0)));
+    distributors.insert(uuid_from_index(4), primitives(d!(100.0)));
+    distributors.insert(uuid_from_index(5), primitives(d!(50.0)));
+    distributors.insert(uuid_from_index(6), primitives(d!(50.0)));
+    distributors.insert(uuid_from_index(7), primitives(d!(50.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -869,8 +870,8 @@ fn evaluate_ranks_with_empty_leg_quality_matches_baseline() {
     nav.insert("Test".to_string(), &tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(250.0));
-    distributors.insert(uuid_from_index(2), primitives(50.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(250.0)));
+    distributors.insert(uuid_from_index(2), primitives(d!(50.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -940,7 +941,7 @@ fn evaluate_ranks_counts_descendant_across_trees() {
     plan.ranks[1].name = "manager".to_string();
     // associate stays trivial (PV >= 0). manager additionally needs one
     // downline distributor of associate-or-better.
-    plan.ranks[1].qualification.structures[0].personal_volume = 0.0;
+    plan.ranks[1].qualification.structures[0].personal_volume = d!(0.0);
     plan.ranks[1].qualification.structures[0].distributor_count =
         Some(DistributorCountRequirement {
             count: 1,
@@ -948,7 +949,7 @@ fn evaluate_ranks_counts_descendant_across_trees() {
             search_mode: SearchMode::AnyLevel,
             search_depth: None,
             total_count: 1,
-            min_leg_group_volume: 0.0,
+            min_leg_group_volume: d!(0.0),
         });
 
     let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
@@ -956,8 +957,8 @@ fn evaluate_ranks_counts_descendant_across_trees() {
     nav.insert("bin".to_string(), &bin);
 
     let mut distributors = HashMap::new();
-    distributors.insert(subject, primitives(0.0));
-    distributors.insert(child, primitives(0.0));
+    distributors.insert(subject, primitives(d!(0.0)));
+    distributors.insert(child, primitives(d!(0.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -1018,16 +1019,16 @@ fn evaluate_ranks_converges_on_cyclic_ancestry() {
         search_mode: SearchMode::AnyLevel,
         search_depth: None,
         total_count: 1,
-        min_leg_group_volume: 0.0,
+        min_leg_group_volume: d!(0.0),
     };
     let structure_qual =
         |structure: &str, dc: Option<DistributorCountRequirement>| StructureQualification {
             structure: structure.to_string(),
-            personal_volume: 0.0,
-            group_volume: 0.0,
+            personal_volume: d!(0.0),
+            group_volume: d!(0.0),
             max_group_volume_per_leg: f64::MAX,
-            max_group_volume_per_leg_fraction: 0.0,
-            min_retail_volume: 0.0,
+            max_group_volume_per_leg_fraction: d!(0.0),
+            min_retail_volume: d!(0.0),
             distributor_count: dc,
             leg_quality: vec![],
         };
@@ -1059,8 +1060,8 @@ fn evaluate_ranks_converges_on_cyclic_ancestry() {
     nav.insert("bin".to_string(), &bin);
 
     let mut distributors = HashMap::new();
-    distributors.insert(a, primitives(0.0));
-    distributors.insert(b, primitives(0.0));
+    distributors.insert(a, primitives(d!(0.0)));
+    distributors.insert(b, primitives(d!(0.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -1116,7 +1117,7 @@ fn evaluate_ranks_converges_on_cyclic_ancestry() {
 fn evaluate_ranks_resolves_recursive_leg_quality_ladder() {
     let mut plan = network_engine::test_support::build_test_plan(
         network_engine::config::eligibility::CommissionEligibility {
-            minimum_pv: 0.0,
+            minimum_pv: d!(0.0),
             require_order_in_period: false,
             eligible_statuses: vec![],
             active_leg_tiers: vec![],
@@ -1124,7 +1125,7 @@ fn evaluate_ranks_resolves_recursive_leg_quality_ladder() {
         StructureConfig::Unilevel(UnilevelStructureConfig {
             name: "Test".to_string(),
             level_commission: network_engine::config::commission::LevelCommissionConfig {
-                broad_commission_percent: 0.40,
+                broad_commission_percent: d!(0.40),
                 volume_to_dollar_multiplier: None,
                 max_depth: 3,
                 rate_table: Default::default(),
@@ -1142,11 +1143,11 @@ fn evaluate_ranks_resolves_recursive_leg_quality_ladder() {
         qualification: RankQualification {
             structures: vec![StructureQualification {
                 structure: "Test".to_string(),
-                personal_volume: 50.0,
-                group_volume: 0.0,
+                personal_volume: d!(50.0),
+                group_volume: d!(0.0),
                 max_group_volume_per_leg: f64::MAX,
-                max_group_volume_per_leg_fraction: 0.0,
-                min_retail_volume: 0.0,
+                max_group_volume_per_leg_fraction: d!(0.0),
+                min_retail_volume: d!(0.0),
                 distributor_count: None,
                 leg_quality,
             }],
@@ -1171,7 +1172,7 @@ fn evaluate_ranks_resolves_recursive_leg_quality_ladder() {
         rank("director", 2, legs_containing("manager")),
         rank("president", 3, legs_containing("director")),
     ];
-    plan.ranks[0].qualification.structures[0].personal_volume = 0.0;
+    plan.ranks[0].qualification.structures[0].personal_volume = d!(0.0);
 
     // president(1) -> director(2), director(3); each director -> two managers.
     let mut tree = UnilevelTree::new();
@@ -1224,7 +1225,7 @@ fn evaluate_ranks_resolves_recursive_leg_quality_ladder() {
 
     let mut distributors = HashMap::new();
     for i in 1..=7usize {
-        distributors.insert(uuid_from_index(i), primitives(50.0));
+        distributors.insert(uuid_from_index(i), primitives(d!(50.0)));
     }
 
     let inputs = EvaluationInputs {
@@ -1287,11 +1288,11 @@ fn windowed_plan() -> CompensationPlan {
             qualification: RankQualification {
                 structures: vec![StructureQualification {
                     structure: "Test".to_string(),
-                    personal_volume: 0.0,
-                    group_volume: 0.0,
+                    personal_volume: d!(0.0),
+                    group_volume: d!(0.0),
                     max_group_volume_per_leg: f64::MAX,
-                    max_group_volume_per_leg_fraction: 0.0,
-                    min_retail_volume: 0.0,
+                    max_group_volume_per_leg_fraction: d!(0.0),
+                    min_retail_volume: d!(0.0),
                     distributor_count: None,
                     leg_quality: vec![],
                 }],
@@ -1308,11 +1309,11 @@ fn windowed_plan() -> CompensationPlan {
             qualification: RankQualification {
                 structures: vec![StructureQualification {
                     structure: "Test".to_string(),
-                    personal_volume: 0.0,
-                    group_volume: 0.0,
+                    personal_volume: d!(0.0),
+                    group_volume: d!(0.0),
                     max_group_volume_per_leg: f64::MAX,
-                    max_group_volume_per_leg_fraction: 0.0,
-                    min_retail_volume: 0.0,
+                    max_group_volume_per_leg_fraction: d!(0.0),
+                    min_retail_volume: d!(0.0),
                     distributor_count: None,
                     leg_quality: vec![],
                 }],
@@ -1346,7 +1347,7 @@ fn evaluate_ranks_errors_when_windowed_rank_has_empty_history_window() {
     nav.insert("Test".to_string(), &tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(0.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(0.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -1375,7 +1376,7 @@ fn evaluate_ranks_reports_a_missing_history_window_before_a_missing_input() {
     nav.insert("Test".to_string(), &tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(0.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(0.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -1407,7 +1408,7 @@ fn evaluate_ranks_applies_windowed_rank_when_history_window_supplied() {
     nav.insert("Test".to_string(), &tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(0.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(0.0)));
 
     let mut hist: HashMap<String, Option<u16>> = HashMap::new();
     hist.insert("2026-05".to_string(), Some(1)); // associate
@@ -1447,11 +1448,11 @@ fn tenure_plan() -> CompensationPlan {
             qualification: RankQualification {
                 structures: vec![StructureQualification {
                     structure: "Test".to_string(),
-                    personal_volume: 0.0,
-                    group_volume: 0.0,
+                    personal_volume: d!(0.0),
+                    group_volume: d!(0.0),
                     max_group_volume_per_leg: f64::MAX,
-                    max_group_volume_per_leg_fraction: 0.0,
-                    min_retail_volume: 0.0,
+                    max_group_volume_per_leg_fraction: d!(0.0),
+                    min_retail_volume: d!(0.0),
                     distributor_count: None,
                     leg_quality: vec![],
                 }],
@@ -1468,11 +1469,11 @@ fn tenure_plan() -> CompensationPlan {
             qualification: RankQualification {
                 structures: vec![StructureQualification {
                     structure: "Test".to_string(),
-                    personal_volume: 0.0,
-                    group_volume: 0.0,
+                    personal_volume: d!(0.0),
+                    group_volume: d!(0.0),
                     max_group_volume_per_leg: f64::MAX,
-                    max_group_volume_per_leg_fraction: 0.0,
-                    min_retail_volume: 0.0,
+                    max_group_volume_per_leg_fraction: d!(0.0),
+                    min_retail_volume: d!(0.0),
                     distributor_count: None,
                     leg_quality: vec![],
                 }],
@@ -1505,7 +1506,7 @@ fn evaluate_ranks_errors_when_tenure_rank_has_empty_history_window() {
     nav.insert("Test".to_string(), &tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(0.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(0.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -1537,7 +1538,7 @@ fn evaluate_ranks_applies_tenure_rank_when_history_window_supplied() {
     nav.insert("Test".to_string(), &tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(0.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(0.0)));
 
     let mut hist: HashMap<String, Option<u16>> = HashMap::new();
     hist.insert("2026-05".to_string(), Some(1)); // associate
@@ -1573,8 +1574,8 @@ fn evaluate_ranks_gives_the_base_rank_to_a_distributor_in_no_tree() {
     nav.insert("Test".to_string(), &tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(250.0));
-    distributors.insert(uuid_from_index(99), primitives(0.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(250.0)));
+    distributors.insert(uuid_from_index(99), primitives(d!(0.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -1612,8 +1613,8 @@ fn evaluate_ranks_returns_unranked_only_for_an_empty_ladder() {
     nav.insert("Test".to_string(), &tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(0.0));
-    distributors.insert(uuid_from_index(99), primitives(0.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(0.0)));
+    distributors.insert(uuid_from_index(99), primitives(d!(0.0)));
 
     let inputs = EvaluationInputs {
         distributors,
@@ -1650,7 +1651,7 @@ fn evaluate_ranks_ignores_a_time_gate_on_the_base_rank() {
     nav.insert("Test".to_string(), &tree);
 
     let mut distributors = HashMap::new();
-    distributors.insert(uuid_from_index(1), primitives(0.0));
+    distributors.insert(uuid_from_index(1), primitives(d!(0.0)));
 
     let inputs = EvaluationInputs {
         distributors,

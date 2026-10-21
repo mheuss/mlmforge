@@ -71,10 +71,11 @@ pub(crate) fn effective_leg_cap(sq: &StructureQualification) -> Option<f64> {
         return Some(sq.max_group_volume_per_leg);
     }
     let raw = sq.max_group_volume_per_leg_fraction * sq.group_volume;
-    // Snap to 1e-6 only when that moves the product by float noise. Otherwise keep the raw
-    // product, so a real seventh decimal, a cap near 0 or a huge cap keeps its value.
+    // Snap to 1e-6 only when that moves the product by float noise, and never by more than
+    // 5e-8. Otherwise keep the raw product, so a real seventh decimal keeps its value.
     let snapped = (raw * 1e6).round() / 1e6;
-    let cap = if (snapped - raw).abs() <= 8.0 * f64::EPSILON * raw.abs() {
+    let tolerance = (8.0 * f64::EPSILON * raw.abs()).min(5e-8);
+    let cap = if (snapped - raw).abs() <= tolerance {
         snapped
     } else {
         raw
@@ -708,6 +709,33 @@ mod tests {
         let (tree, idx) = root_with_legs(&[33.34, 33.34, 33.34]);
         assert!(
             capped_gv_meets(100.0, cap, uid(1), &tree, &idx, &primitives_with_pv(0.0)).unwrap()
+        );
+    }
+
+    #[test]
+    fn effective_leg_cap_keeps_a_seventh_decimal_on_a_large_cap() {
+        let cap = effective_leg_cap(&sq_with_caps(60000000.0000001, 0.0, 1.0));
+        assert_eq!(cap, Some(60000000.0000001));
+
+        let (tree, idx) = root_with_legs(&[60000000.0000001]);
+        assert!(
+            capped_gv_meets(
+                60000000.0000001,
+                cap,
+                uid(1),
+                &tree,
+                &idx,
+                &primitives_with_pv(0.0)
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn effective_leg_cap_keeps_a_sub_micro_digit_on_a_large_fraction_cap() {
+        assert_eq!(
+            effective_leg_cap(&sq_with_caps(1e9, 0.0, 0.2900000000000004)),
+            Some(290000000.0000004)
         );
     }
 

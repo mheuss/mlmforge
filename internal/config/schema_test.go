@@ -3,9 +3,11 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -752,7 +754,7 @@ func TestYAMLErrorIsReportedOncePerSourceNode(t *testing.T) {
 }
 
 func TestYAMLDuplicateKeysThroughAliasesStopAtTheBudget(t *testing.T) {
-	src := "d: &d {" + strings.Repeat("a: 1, ", 1100) + "a: 1}\nr: [" + strings.Repeat("*d, ", 999) + "*d]\n"
+	src := "d: &d {" + strings.Repeat("a: 1, ", 98) + "a: 1}\nr: [" + strings.Repeat("*d, ", 10999) + "*d]\n"
 	_, errs := convertYAML(t, src)
 	require.NotEmpty(t, errs)
 	assert.Equal(t, "document_too_large", errs[len(errs)-1].Code)
@@ -832,4 +834,136 @@ func TestSchemaLongAliasKeyDoesNotRepeatInEveryError(t *testing.T) {
 		size += len(e.Path) + len(e.Message)
 	}
 	assert.Less(t, size, 1<<20)
+}
+
+func walkerCost(t *testing.T, src string) (errs []ValidationError, allocated uint64, elapsed time.Duration) {
+	t.Helper()
+	var root yaml.Node
+	require.NoError(t, yaml.Unmarshal([]byte(src), &root))
+	start := time.Now()
+	allocated = bytesAllocatedBy(func() { _, errs = yamlNodeToJSON(&root) })
+	return errs, allocated, time.Since(start)
+}
+
+func errorTextSize(errs []ValidationError) int {
+	size := 0
+	for _, e := range errs {
+		size += len(e.Path) + len(e.Message)
+	}
+	return size
+}
+
+func TestYAMLNestingBeyondTheLimitIsRefused(t *testing.T) {
+	_, errs := convertYAML(t, "a: "+strings.Repeat("[", 100)+strings.Repeat("]", 100)+"\n")
+
+	require.Len(t, errs, 1)
+	assert.Equal(t, "document_too_deep", errs[0].Code)
+	assert.Equal(t, "nesting reached depth 65; the limit is 64", errs[0].Message)
+}
+
+func TestYAMLConversionStopsAfterTheErrorCap(t *testing.T) {
+	_, errs := convertYAML(t, "a: ["+strings.Repeat(".inf, ", 499)+".inf]\n")
+
+	require.Len(t, errs, 101)
+	assert.Equal(t, "invalid_number", errs[99].Code)
+	assert.Equal(t, "too_many_errors", errs[100].Code)
+}
+
+func TestYAMLDuplicateLongKeyStatesItsLengthOutsideTheQuotes(t *testing.T) {
+	key := strings.Repeat("a", 100)
+	_, errs := convertYAML(t, "k: &k "+key+"\nm: {*k : 1, *k : 2}\n")
+
+	require.Len(t, errs, 1)
+	assert.Equal(t, "/m/"+strings.Repeat("a", 64), errs[0].Path)
+	assert.Equal(t, `mapping key "`+strings.Repeat("a", 64)+`"... (100 bytes) appears more than once after conversion to JSON`, errs[0].Message)
+}
+
+func TestYAMLDeepMappingsUnderAliasedListsStaySmall(t *testing.T) {
+	key := strings.Repeat("k", 64)
+	src := "w: &w [" + strings.Repeat("1, ", 599) + "1]\nm: " + strings.Repeat("{"+key+": ", 9500) + "[" + strings.Repeat("*w, ", 599) + "*w]" + strings.Repeat("}", 9500) + "\n"
+
+	_, allocated, _ := walkerCost(t, src)
+
+	assert.Less(t, allocated, uint64(64<<20))
+}
+
+func TestYAMLDeepErrorsKeepLittleText(t *testing.T) {
+	key := strings.Repeat("k", 64)
+	src := "m: " + strings.Repeat("{"+key+": ", 9000) + "[" + strings.Repeat(".inf, ", 9999) + ".inf]" + strings.Repeat("}", 9000) + "\n"
+
+	errs, _, _ := walkerCost(t, src)
+
+	assert.Less(t, errorTextSize(errs), 1<<20)
+}
+
+func TestYAMLAliasedNumericKeyIsConvertedOnce(t *testing.T) {
+	src := "k: &k 1." + strings.Repeat("3", 100000) + "\nl: [" + strings.Repeat("{*k : 0}, ", 2999) + "{*k : 0}]\n"
+
+	_, allocated, _ := walkerCost(t, src)
+
+	assert.Less(t, allocated, uint64(64<<20))
+}
+
+// hostileYAML builds a document of at most about 1 MB that mixes long
+// scalars, aliases, a merge chain and deep nesting.
+func hostileYAML(r *rand.Rand) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "n: &n 1.%s\n", strings.Repeat("7", 1+r.IntN(200000)))
+	fmt.Fprintf(&b, "s: &s %s\n", strings.Repeat("s", 1+r.IntN(100000)))
+	fmt.Fprintf(&b, "f: &f 1%s\n", strings.Repeat("0", 1+r.IntN(100000)))
+	fmt.Fprintf(&b, "w: &w [%s*n]\n", strings.Repeat("*n, ", r.IntN(1000)))
+	fmt.Fprintf(&b, "m0: &m0 {%s}\n", strings.TrimSuffix(strings.Repeat("x: 1, ", 1+r.IntN(200)), ", "))
+	chain := 1 + r.IntN(12)
+	for i := 1; i <= chain; i++ {
+		prev := fmt.Sprintf("*m%d", i-1)
+		fmt.Fprintf(&b, "m%d: &m%d {<<: [%s%s]}\n", i, i, strings.Repeat(prev+", ", r.IntN(10)), prev)
+	}
+	b.WriteString("body: ")
+	depth := r.IntN(9000)
+	closers := make([]byte, 0, depth)
+	longKey := strings.Repeat("k", 64)
+	for range depth {
+		switch r.IntN(4) {
+		case 0:
+			b.WriteString("[")
+			closers = append(closers, ']')
+		case 1:
+			b.WriteString("{*s : ")
+			closers = append(closers, '}')
+		case 2:
+			b.WriteString("{*f : ")
+			closers = append(closers, '}')
+		default:
+			b.WriteString("{" + longKey + ": ")
+			closers = append(closers, '}')
+		}
+	}
+	leaves := []string{"*w", "*n", "*s", fmt.Sprintf("*m%d", chain), ".inf", "{<<: *m1}"}
+	b.WriteString("[")
+	for i := range r.IntN(20000) {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(leaves[r.IntN(len(leaves))])
+	}
+	b.WriteString("]")
+	for i := len(closers) - 1; i >= 0; i-- {
+		b.WriteByte(closers[i])
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+func TestYAMLWalkerStaysBoundedOnHostileDocuments(t *testing.T) {
+	r := rand.New(rand.NewPCG(969, 1))
+	for i := range 24 {
+		src := hostileYAML(r)
+		require.LessOrEqual(t, len(src), 1<<20+(1<<16), "document %d", i)
+
+		errs, allocated, elapsed := walkerCost(t, src)
+
+		assert.Less(t, allocated, uint64(256<<20), "document %d allocated %d bytes", i, allocated)
+		assert.Less(t, elapsed, 2*time.Second, "document %d", i)
+		assert.Less(t, errorTextSize(errs), 1<<20, "document %d", i)
+	}
 }

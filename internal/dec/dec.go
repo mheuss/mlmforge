@@ -45,6 +45,9 @@ func Parse(text string) (Amount, error) {
 	if err != nil {
 		return Amount{}, fmt.Errorf("decimal %q: %w", text, err)
 	}
+	if canonical := d.String(); len(canonical) > maxTextLength {
+		return Amount{}, fmt.Errorf("decimal %q: its canonical text is %d bytes long; the limit is %d", text, len(canonical), maxTextLength)
+	}
 	return Amount{d}, nil
 }
 

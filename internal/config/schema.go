@@ -111,46 +111,123 @@ func buildInstancePath(tokens []string) string {
 // maxYAMLNodes bounds how many nodes and merges conversion may visit.
 const maxYAMLNodes = 1_000_000
 
+// maxYAMLDepth bounds nesting, counting each alias and merge followed as a level.
+const maxYAMLDepth = 64
+
+// maxYAMLErrors bounds how many errors conversion records before it stops.
+const maxYAMLErrors = 100
+
 type yamlConverter struct {
 	errs     []ValidationError
 	active   map[*yaml.Node]bool
 	reported map[*yaml.Node]bool
+	keys     map[*yaml.Node]yamlKey
 	visited  uint
+	depth    uint
+	tooDeep  bool
+	stopped  bool
+}
+
+type yamlKey struct {
+	text string
+	ok   bool
+}
+
+// yamlPath is a JSON Pointer built only when an error needs it.
+type yamlPath struct {
+	parent  *yamlPath
+	segment string
+}
+
+func (p *yamlPath) child(segment string) *yamlPath {
+	return &yamlPath{parent: p, segment: segment}
+}
+
+func (p *yamlPath) String() string {
+	var segments []string
+	for at := p; at != nil; at = at.parent {
+		segments = append(segments, at.segment)
+	}
+	var b strings.Builder
+	for i := len(segments) - 1; i >= 0; i-- {
+		b.WriteString("/")
+		b.WriteString(segments[i])
+	}
+	return b.String()
 }
 
 // yamlNodeToJSON converts a decoded YAML tree into the value shapes the
 // schema validator reads. Numbers become json.Number holding their exact text.
 func yamlNodeToJSON(root *yaml.Node) (any, []ValidationError) {
-	c := &yamlConverter{active: map[*yaml.Node]bool{}, reported: map[*yaml.Node]bool{}}
-	v := c.node(root, "")
+	c := &yamlConverter{
+		active:   map[*yaml.Node]bool{},
+		reported: map[*yaml.Node]bool{},
+		keys:     map[*yaml.Node]yamlKey{},
+	}
+	v := c.node(root, nil)
 	return v, c.errs
 }
 
+// record appends an error until the cap, then records the cap once and stops conversion.
+func (c *yamlConverter) record(path *yamlPath, code, message string) {
+	if c.stopped {
+		return
+	}
+	if len(c.errs) == maxYAMLErrors {
+		c.errs = append(c.errs, ValidationError{
+			Path:     path.String(),
+			Code:     "too_many_errors",
+			Message:  fmt.Sprintf("conversion stopped after %d errors", maxYAMLErrors),
+			Severity: SeverityError,
+		})
+		c.stopped = true
+		return
+	}
+	c.errs = append(c.errs, ValidationError{Path: path.String(), Code: code, Message: message, Severity: SeverityError})
+}
+
 // fail records one error per source node, so alias expansion does not repeat it.
-func (c *yamlConverter) fail(n *yaml.Node, path, code, message string) {
+func (c *yamlConverter) fail(n *yaml.Node, path *yamlPath, code, message string) {
 	if c.reported[n] {
 		return
 	}
 	c.reported[n] = true
-	c.errs = append(c.errs, ValidationError{Path: path, Code: code, Message: message, Severity: SeverityError})
+	c.record(path, code, message)
 }
 
-// spend counts one step against the budget and reports whether any remains.
-func (c *yamlConverter) spend(n *yaml.Node, path string) bool {
-	c.visited++
-	if c.visited == maxYAMLNodes+1 {
-		c.errs = append(c.errs, ValidationError{
-			Path:     path,
-			Code:     "document_too_large",
-			Message:  fmt.Sprintf("the document expands to more than %d nodes", maxYAMLNodes),
-			Severity: SeverityError,
-		})
+// spend counts one step against the budget and reports whether conversion may go on.
+func (c *yamlConverter) spend(path *yamlPath) bool {
+	if c.stopped {
+		return false
 	}
-	return c.visited <= maxYAMLNodes
+	c.visited++
+	if c.visited > maxYAMLNodes {
+		c.record(path, "document_too_large", fmt.Sprintf("the document expands to more than %d nodes", maxYAMLNodes))
+		c.stopped = true
+		return false
+	}
+	return true
+}
+
+// descend enters one level of nesting and reports whether the limit allows it.
+func (c *yamlConverter) descend(path *yamlPath) bool {
+	c.depth++
+	if c.depth <= maxYAMLDepth {
+		return true
+	}
+	if !c.tooDeep {
+		c.tooDeep = true
+		c.record(path, "document_too_deep", fmt.Sprintf("nesting reached depth %d; the limit is %d", c.depth, maxYAMLDepth))
+	}
+	return false
+}
+
+func (c *yamlConverter) ascend() {
+	c.depth--
 }
 
 // alias follows an alias node, refusing one that refers to itself.
-func (c *yamlConverter) alias(n *yaml.Node, path string, follow func(*yaml.Node) any) any {
+func (c *yamlConverter) alias(n *yaml.Node, path *yamlPath, follow func(*yaml.Node) any) any {
 	if c.active[n.Alias] {
 		c.fail(n, path, "alias_cycle", "an alias refers to a node that contains it")
 		return nil
@@ -160,8 +237,12 @@ func (c *yamlConverter) alias(n *yaml.Node, path string, follow func(*yaml.Node)
 	return follow(n.Alias)
 }
 
-func (c *yamlConverter) node(n *yaml.Node, path string) any {
-	if !c.spend(n, path) {
+func (c *yamlConverter) node(n *yaml.Node, path *yamlPath) any {
+	if !c.spend(path) {
+		return nil
+	}
+	defer c.ascend()
+	if !c.descend(path) {
 		return nil
 	}
 	switch n.Kind {
@@ -175,7 +256,7 @@ func (c *yamlConverter) node(n *yaml.Node, path string) any {
 	case yaml.SequenceNode:
 		out := make([]any, len(n.Content))
 		for i, item := range n.Content {
-			out[i] = c.node(item, path+"/"+strconv.Itoa(i))
+			out[i] = c.node(item, path.child(strconv.Itoa(i)))
 		}
 		return out
 	case yaml.MappingNode:
@@ -191,27 +272,25 @@ func isMergeKey(k *yaml.Node) bool {
 	return k.Kind == yaml.ScalarNode && k.Value == "<<" && (k.Tag == "" || k.Tag == "!" || k.ShortTag() == "!!merge")
 }
 
-// mapping applies the merge rule: an explicit key wins over a merged one, and
-// among merged mappings the first to supply a key wins.
-func (c *yamlConverter) mapping(n *yaml.Node, path string) map[string]any {
+func (c *yamlConverter) mapping(n *yaml.Node, path *yamlPath) map[string]any {
 	out := make(map[string]any, len(n.Content)/2)
 	c.fill(n, path, out)
 	return out
 }
 
-// fill adds each key of n that out does not already hold, then the keys of
-// n's merges.
-func (c *yamlConverter) fill(n *yaml.Node, path string, out map[string]any) {
+// fill applies the merge rule: it adds each key of n that out does not already
+// hold, then the keys of n's merges, the first merged mapping winning.
+func (c *yamlConverter) fill(n *yaml.Node, path *yamlPath, out map[string]any) {
 	seen := make(map[string]bool, len(n.Content)/2)
 	var merge *yaml.Node
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		k, v := n.Content[i], n.Content[i+1]
-		if !c.spend(k, path) {
+		if !c.spend(path) {
 			return
 		}
 		if isMergeKey(k) {
 			if merge != nil {
-				c.fail(k, path+"/<<", "duplicate_key", "mapping key \"<<\" appears more than once")
+				c.fail(k, path.child("<<"), "duplicate_key", "mapping key \"<<\" appears more than once")
 				continue
 			}
 			merge = v
@@ -221,9 +300,9 @@ func (c *yamlConverter) fill(n *yaml.Node, path string, out map[string]any) {
 		if !ok {
 			continue
 		}
-		at := path + "/" + shortKey(key)
+		at := path.child(shortKey(key))
 		if seen[key] {
-			c.fail(k, at, "duplicate_key", fmt.Sprintf("mapping key %q appears more than once after conversion to JSON", shortKey(key)))
+			c.fail(k, at, "duplicate_key", fmt.Sprintf("mapping key %s appears more than once after conversion to JSON", quoteKey(key)))
 			continue
 		}
 		seen[key] = true
@@ -240,8 +319,7 @@ func (c *yamlConverter) fill(n *yaml.Node, path string, out map[string]any) {
 // maxPathKey bounds how much of a key a path or message repeats.
 const maxPathKey = 64
 
-// shortKey cuts a long key to its first maxPathKey bytes, on a rune boundary,
-// and states the full length.
+// shortKey cuts a long key to its first maxPathKey bytes, on a rune boundary.
 func shortKey(key string) string {
 	if len(key) <= maxPathKey {
 		return key
@@ -250,10 +328,19 @@ func shortKey(key string) string {
 	for cut > 0 && !utf8.RuneStart(key[cut]) {
 		cut--
 	}
-	return fmt.Sprintf("%s...(%d bytes)", key[:cut], len(key))
+	return key[:cut]
 }
 
-func (c *yamlConverter) merge(m *yaml.Node, path string, out map[string]any) {
+// quoteKey quotes a key for a message, stating the full length outside the
+// quotes when the key was cut.
+func quoteKey(key string) string {
+	if len(key) <= maxPathKey {
+		return strconv.Quote(key)
+	}
+	return fmt.Sprintf("%q... (%d bytes)", shortKey(key), len(key))
+}
+
+func (c *yamlConverter) merge(m *yaml.Node, path *yamlPath, out map[string]any) {
 	if m.Kind != yaml.SequenceNode {
 		c.mergeOne(m, path, out)
 		return
@@ -264,8 +351,12 @@ func (c *yamlConverter) merge(m *yaml.Node, path string, out map[string]any) {
 }
 
 // mergeOne accepts a mapping or an alias to a mapping and refuses any other node.
-func (c *yamlConverter) mergeOne(m *yaml.Node, path string, out map[string]any) {
-	if !c.spend(m, path) {
+func (c *yamlConverter) mergeOne(m *yaml.Node, path *yamlPath, out map[string]any) {
+	if !c.spend(path) {
+		return
+	}
+	defer c.ascend()
+	if !c.descend(path) {
 		return
 	}
 	target := m
@@ -287,10 +378,20 @@ func (c *yamlConverter) mergeOne(m *yaml.Node, path string, out map[string]any) 
 	apply(m)
 }
 
-func (c *yamlConverter) key(k *yaml.Node, path string) (string, bool) {
+// key converts a mapping key once per source node, however many aliases reach it.
+func (c *yamlConverter) key(k *yaml.Node, path *yamlPath) (string, bool) {
 	if k.Kind == yaml.AliasNode {
 		k = k.Alias
 	}
+	if cached, done := c.keys[k]; done {
+		return cached.text, cached.ok
+	}
+	text, ok := c.convertKey(k, path)
+	c.keys[k] = yamlKey{text: text, ok: ok}
+	return text, ok
+}
+
+func (c *yamlConverter) convertKey(k *yaml.Node, path *yamlPath) (string, bool) {
 	if k.Kind != yaml.ScalarNode {
 		c.fail(k, path, "invalid_key", "a mapping key must be a scalar")
 		return "", false
@@ -303,7 +404,7 @@ func (c *yamlConverter) key(k *yaml.Node, path string) (string, bool) {
 	return stringifyKey(v), true
 }
 
-func (c *yamlConverter) scalar(n *yaml.Node, path string) any {
+func (c *yamlConverter) scalar(n *yaml.Node, path *yamlPath) any {
 	switch n.ShortTag() {
 	case "!!int", "!!float":
 		if _, err := dec.Parse(n.Value); err != nil {

@@ -162,3 +162,17 @@ func TestParseRefusesTextLongerThanTheLimit(t *testing.T) {
 	_, err = Parse("1." + strings.Repeat("3", 62))
 	assert.NoError(t, err)
 }
+
+func TestParseAcceptsOnlyValuesWhoseTextReadsBack(t *testing.T) {
+	_, err := Parse("1.2345e-60")
+	require.EqualError(t, err, `decimal "1.2345e-60": its canonical text is 66 bytes long; the limit is 64`)
+	for _, text := range []string{"1e60", "-1e-60", "-1.5e-60", "9.99e59"} {
+		a, err := Parse(text)
+		require.NoError(t, err, text)
+		raw, err := json.Marshal(a)
+		require.NoError(t, err, text)
+		var back Amount
+		require.NoError(t, json.Unmarshal(raw, &back), text)
+		assert.True(t, a.Equal(back.Decimal), text)
+	}
+}

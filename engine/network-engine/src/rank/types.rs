@@ -108,6 +108,10 @@ pub enum EvaluationError {
     #[error("distributor {0} not found in tree '{1}'")]
     DistributorNotInTree(Uuid, String),
 
+    /// A tree member that rank evaluation needs has no entry in the inputs.
+    #[error("distributor {0} has no rank inputs")]
+    DistributorNotInInputs(Uuid),
+
     /// Fixpoint iteration in `evaluate_ranks` did not stabilize within the
     /// pass bound. Rank evaluation is monotone, so this is unreachable unless
     /// a non-monotone descendant-reading predicate was introduced — a bug,
@@ -201,6 +205,15 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "rank 'QD' references unknown threshold rank 'Director'"
+        );
+    }
+
+    #[test]
+    fn distributor_not_in_inputs_displays_the_id() {
+        let id = Uuid::from_u128(2);
+        assert_eq!(
+            EvaluationError::DistributorNotInInputs(id).to_string(),
+            format!("distributor {id} has no rank inputs")
         );
     }
 

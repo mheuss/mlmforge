@@ -206,6 +206,21 @@ acceptance test is not. Ask of every acceptance test: if the fixture stopped
 producing the state in this test's name, would it still pass? If yes, the test
 needs a guard on that state, checked before the thing under test runs.
 
+### Tree member order is not stable
+
+`user_ids` on every tree type, and on `TreeNavigator`, reads a `HashMap`. The
+order changes from run to run. A test that only passes when one member comes
+first passes or fails at random.
+
+HEU-965 hit this. A test for "the error names the lowest missing ID" placed
+node 3 before node 2. A mutant that reported the first missing ID instead of
+the lowest still passed it 10 runs in 20, because placement order is not
+listing order.
+
+Fix the order the test relies on. Wrap the tree in a test-local
+`TreeNavigator` that delegates every method and returns `user_ids` in the
+order you need, then assert that order before the call under test.
+
 ### The assertion can be wrong rather than the code
 
 Two shapes of this cost time on HEU-797. Both produce a failing test against
@@ -393,6 +408,8 @@ The `evaluate_ranks` worker handler registers tree navigators only for structure
 So a plan whose higher ranks name no structure gives every distributor the lowest rank. No higher rank is reached. A test that needs a higher rank must create a structure and place the distributor in it. A rank above the lowest must name that structure.
 
 A distributor in no registered tree is never evaluated against a higher rank whose qualification names no structure. HEU-953 tracks it.
+
+Every member of a tree whose structure a rank above the lowest names must have an entry in `distributors`. `evaluate_ranks` refuses a request that leaves one out. The error is `EVALUATION_ERROR` and it names the lowest missing user ID (HEU-965). A test that places a node in such a tree must give that node inputs, even when its rank is not asserted.
 
 ## Contract-Test Harness: `setup_raw` for Byte-Sensitive Fixtures
 
@@ -798,7 +815,8 @@ separate matter; HEU-632 tracks the three that remain, listed below.
   `active_products` are required and null-tolerant. `RankDriver.EvaluatePeriod`
   still normalizes nil to empty before the call; that is now belt and braces
   rather than the thing keeping it working, and it only ever bound Go callers.
-  A real `PeriodInputProvider` (HEU-505) may hand over nils safely.
+  A real `PeriodInputProvider` (HEU-505) may hand over nils without an
+  `INVALID_PARAMS` error.
 - The six other commission handlers — `snapshots` and `volume` are required and
   null-tolerant; `carry_forward` is optional and no longer depends on Go's
   `omitempty` to stay correct. Binary pairing's `ownership` is left alone: it is

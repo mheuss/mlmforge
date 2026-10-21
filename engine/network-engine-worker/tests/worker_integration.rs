@@ -90,7 +90,7 @@ fn ping_returns_protocol_version() {
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(parsed["id"], "1");
-    assert_eq!(parsed["result"]["protocol_version"], 21);
+    assert_eq!(parsed["result"]["protocol_version"], 22);
 
     drop(child.stdin.take());
     child.wait().unwrap();
@@ -5359,8 +5359,8 @@ fn load_plan_accepts_a_rank_with_no_per_leg_cap() {
     let resp = common::send_receive(
         &mut child,
         &format!(
-            r#"{{"id":"ev","op":"evaluate_ranks","params":{{"distributors":{{"{}":{{"personal_volume":60.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":[]}}}},"volume_sources":[{{"source_id":"{}","cv_amount":100.0}}]}}}}"#,
-            ROOT, CHILD
+            r#"{{"id":"ev","op":"evaluate_ranks","params":{{"distributors":{{"{}":{{"personal_volume":60.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":[]}},"{}":{{"personal_volume":0.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":[]}}}},"volume_sources":[{{"source_id":"{}","cv_amount":100.0}}]}}}}"#,
+            ROOT, CHILD, CHILD
         ),
     );
     drop(child.stdin.take());
@@ -5370,6 +5370,46 @@ fn load_plan_accepts_a_rank_with_no_per_leg_cap() {
     assert_eq!(
         parsed["result"]["ranks"][ROOT],
         serde_json::json!({"kind": "qualified", "rank": "silver", "ordinal": 2}),
+        "got: {}",
+        parsed
+    );
+}
+
+/// CHILD is placed under ROOT and only ROOT has inputs. The request is refused
+/// with EVALUATION_ERROR naming CHILD.
+#[test]
+fn evaluate_ranks_refuses_a_tree_member_with_no_inputs() {
+    let mut child = common::spawn_worker();
+    load_rank_plan_with_root(&mut child);
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"child","op":"add_node","params":{{"structure":"Test","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":200}}}}"#,
+            CHILD, ROOT, ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_node failed: {}", resp);
+
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"ev","op":"evaluate_ranks","params":{{"distributors":{{"{}":{{"personal_volume":60.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":[]}}}},"volume_sources":[]}}}}"#,
+            ROOT
+        ),
+    );
+    drop(child.stdin.take());
+    child.wait().unwrap();
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(parsed["ok"].as_bool(), Some(false), "got: {}", parsed);
+    assert_eq!(
+        parsed["error"]["code"], "EVALUATION_ERROR",
+        "got: {}",
+        parsed
+    );
+    assert_eq!(
+        parsed["error"]["message"],
+        format!("distributor {} has no rank inputs", CHILD),
         "got: {}",
         parsed
     );
@@ -5492,8 +5532,9 @@ fn evaluate_ranks_honors_window_history() {
 // --- evaluate_ranks null tolerance (HEU-626) ---
 //
 // The library tests in `rank/types.rs` prove `EvaluationInputs` deserializes.
-// These prove the op dispatches and returns the INVALID_PARAMS protocol shape,
-// which a library test cannot observe.
+// These prove the op dispatches, reads an explicit null as empty, and returns
+// the INVALID_PARAMS protocol shape for a missing key. A library test cannot
+// observe that.
 
 /// Loads `RANK_TEST_PLAN_JSON`, creates the "Test" tree, and adds ROOT as its
 /// root — the setup every `evaluate_ranks` test needs before it can reach the
@@ -5513,9 +5554,8 @@ fn load_rank_plan_with_root(child: &mut std::process::Child) {
     assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
 }
 
-/// The two top-level collections read an explicit null as empty.
-///
-/// The Go twin is `TestEngineClient_EvaluateRanks_NilCollections`.
+/// Explicit null `distributors` and `volume_sources` against a populated tree
+/// are refused with EVALUATION_ERROR naming ROOT, not INVALID_PARAMS.
 #[test]
 fn evaluate_ranks_accepts_null_collections() {
     let mut child = common::spawn_worker();
@@ -5525,17 +5565,15 @@ fn evaluate_ranks_accepts_null_collections() {
     let resp = common::send_receive(&mut child, req);
     let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
     assert_eq!(
-        parsed["ok"].as_bool(),
-        Some(true),
-        "null collections must read as empty, got: {}",
+        parsed["error"]["code"], "EVALUATION_ERROR",
+        "expected EVALUATION_ERROR for null collections against a populated tree, got: {}",
         resp
     );
-    // Pins the "as empty" half: an empty distributors map evaluates nobody, so
-    // ranks comes back empty rather than merely parsing.
+    // Pins the "as empty" half: the refusal names ROOT.
     assert_eq!(
-        parsed["result"]["ranks"],
-        serde_json::json!({}),
-        "no distributors means no ranks, got: {}",
+        parsed["error"]["message"],
+        format!("distributor {} has no rank inputs", ROOT),
+        "got: {}",
         resp
     );
 

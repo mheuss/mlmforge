@@ -108,8 +108,7 @@ pub enum EvaluationError {
     #[error("distributor {0} not found in tree '{1}'")]
     DistributorNotInTree(Uuid, String),
 
-    /// A member of a tree in `trees` whose structure a rank above the lowest
-    /// names has no entry in `distributors`.
+    /// A tree member that rank evaluation needs has no entry in the inputs.
     #[error("distributor {0} has no rank inputs")]
     DistributorNotInInputs(Uuid),
 

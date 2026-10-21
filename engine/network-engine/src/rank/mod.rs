@@ -116,7 +116,7 @@ fn require_every_tree_member(
 }
 
 /// Return the structure names that a rank above the lowest names in its
-/// qualification. A `BTreeSet`, so callers iterate in name order.
+/// qualification. The set iterates in name order.
 pub fn structures_above_lowest_rank(plan: &CompensationPlan) -> BTreeSet<&str> {
     let mut ladder: Vec<&RankDefinition> = plan.ranks.iter().collect();
     // Stable, so of two ranks tied at the lowest ordinal the first is skipped.

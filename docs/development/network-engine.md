@@ -394,7 +394,7 @@ So a plan whose higher ranks name no structure gives every distributor the lowes
 
 A distributor in no registered tree is never evaluated against a higher rank whose qualification names no structure. HEU-953 tracks it.
 
-Every member of a tree whose structure a rank above the lowest names must have an entry in `distributors`. `evaluate_ranks` refuses a request that leaves one out, with `EVALUATION_ERROR` naming the lowest missing user ID (HEU-965). A test that places a node in such a tree must give that node inputs, even when its rank is not asserted.
+Every member of a tree whose structure a rank above the lowest names must have an entry in `distributors`. `evaluate_ranks` refuses a request that leaves one out. The error is `EVALUATION_ERROR` and it names the lowest missing user ID (HEU-965). A test that places a node in such a tree must give that node inputs, even when its rank is not asserted.
 
 ## Contract-Test Harness: `setup_raw` for Byte-Sensitive Fixtures
 

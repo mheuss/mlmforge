@@ -66,7 +66,7 @@ Each rank defines requirements. A distributor must meet ALL of them simultaneous
 | **Group volume** | float | Minimum GV on a specified structure. "Gold requires 10,000 GV." |
 | **Group volume structure** | structure ref | Which structure to evaluate GV on. Required when group volume is set. |
 | **Max group volume per leg** | float | Cap on any single leg's contribution to GV, as a fixed volume. Prevents qualifying on one strong leg. "No leg counts for more than 6,000 GV." |
-| **Max group volume per leg fraction** | float | The same cap as a fraction of the rank's GV requirement, in [0, 1]. Not set together with the fixed cap. "No leg counts for more than 60% of the GV requirement." |
+| **Max group volume per leg fraction** | float | The same cap as a fraction of the rank's GV requirement, in [0, 1]. For values of up to 15 significant digits, the resulting cap equals the fixed cap it stands for. 29% of 100,000 caps at exactly 29,000. Not set together with the fixed cap. "No leg counts for more than 60% of the GV requirement." |
 | **Min retail volume** | float | Minimum PV from retail customers. Ensures rank is not achieved through self-purchases alone. |
 
 **Distributor count requirements:**

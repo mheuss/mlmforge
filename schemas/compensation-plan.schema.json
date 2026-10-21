@@ -124,7 +124,7 @@
         "volume_to_dollar_multiplier": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Multiplier to convert volume points to dollar amounts."
+          "description": "Multiplier to convert volume points to dollar amounts. Absolute value below 10^15, with at most 10 decimal places."
         },
         "deduct_qualifying_volume": {
           "type": "boolean",
@@ -221,8 +221,8 @@
       "not": {
         "required": ["max_group_volume_per_leg", "max_group_volume_per_leg_fraction"],
         "properties": {
-          "max_group_volume_per_leg": { "type": "number", "exclusiveMinimum": 0 },
-          "max_group_volume_per_leg_fraction": { "type": "number", "exclusiveMinimum": 0 }
+          "max_group_volume_per_leg": { "type": "number", "description": "Absolute value below 10^15, with at most 10 decimal places.", "exclusiveMinimum": 0 },
+          "max_group_volume_per_leg_fraction": { "type": "number", "description": "Absolute value below 10^15, with at most 10 decimal places.", "exclusiveMinimum": 0 }
         }
       },
       "properties": {
@@ -233,28 +233,28 @@
         "personal_volume": {
           "type": "number",
           "minimum": 0,
-          "description": "Minimum personal volume required."
+          "description": "Minimum personal volume required. Absolute value below 10^15, with at most 10 decimal places."
         },
         "group_volume": {
           "type": "number",
           "minimum": 0,
-          "description": "Minimum group volume required."
+          "description": "Minimum group volume required. Absolute value below 10^15, with at most 10 decimal places."
         },
         "max_group_volume_per_leg": {
           "type": "number",
           "minimum": 0,
-          "description": "Prevents a single strong leg from carrying the entire requirement. Counts at most this much from any one leg toward group volume. 0, or an absent field, means no cap."
+          "description": "Prevents a single strong leg from carrying the entire requirement. Counts at most this much from any one leg toward group volume. 0, or an absent field, means no cap. Absolute value below 10^15, with at most 10 decimal places."
         },
         "max_group_volume_per_leg_fraction": {
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "The per-leg cap as a fraction of group_volume, in [0, 1]. For values of up to 15 significant digits, the resulting cap equals the fixed cap it stands for. 0, or an absent field, means no cap. Not set together with max_group_volume_per_leg."
+          "description": "The per-leg cap as a fraction of group_volume, in [0, 1]. 0, or an absent field, means no cap. Not set together with max_group_volume_per_leg. Absolute value below 10^15, with at most 10 decimal places."
         },
         "min_retail_volume": {
           "type": "number",
           "minimum": 0,
-          "description": "Minimum retail volume required."
+          "description": "Minimum retail volume required. Absolute value below 10^15, with at most 10 decimal places."
         },
         "distributor_count": {
           "oneOf": [
@@ -317,7 +317,7 @@
         "min_leg_group_volume": {
           "type": "number",
           "minimum": 0,
-          "description": "Minimum group volume in each qualifying leg."
+          "description": "Minimum group volume in each qualifying leg. Absolute value below 10^15, with at most 10 decimal places."
         }
       }
     },
@@ -371,7 +371,7 @@
             "min_personal_volume": {
               "type": "number",
               "minimum": 0,
-              "description": "Leg must contain a node whose personal volume is at least this value."
+              "description": "Leg must contain a node whose personal volume is at least this value. Absolute value below 10^15, with at most 10 decimal places."
             }
           },
           "required": ["min_personal_volume"]
@@ -474,7 +474,7 @@
         "min_personal_volume": {
           "type": "number",
           "minimum": 0,
-          "description": "Minimum personal volume to be eligible for commissions."
+          "description": "Minimum personal volume to be eligible for commissions. Absolute value below 10^15, with at most 10 decimal places."
         },
         "require_order_in_period": {
           "type": "boolean",
@@ -690,12 +690,13 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "Flat commission rate applied across all levels."
+          "description": "Flat commission rate applied across all levels. Absolute value below 10^15, with at most 10 decimal places."
         },
         "volume_to_dollar_multiplier": {
           "oneOf": [
             {
               "type": "number",
+              "description": "Absolute value below 10^15, with at most 10 decimal places.",
               "exclusiveMinimum": 0
             },
             {
@@ -747,6 +748,7 @@
           "oneOf": [
             {
               "type": "number",
+              "description": "Absolute value below 10^15, with at most 10 decimal places.",
               "exclusiveMinimum": 0
             },
             {
@@ -821,12 +823,13 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "Flat commission rate applied across all levels."
+          "description": "Flat commission rate applied across all levels. Absolute value below 10^15, with at most 10 decimal places."
         },
         "volume_to_dollar_multiplier": {
           "oneOf": [
             {
               "type": "number",
+              "description": "Absolute value below 10^15, with at most 10 decimal places.",
               "exclusiveMinimum": 0
             },
             {
@@ -867,12 +870,13 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "Flat commission rate applied across all levels."
+          "description": "Flat commission rate applied across all levels. Absolute value below 10^15, with at most 10 decimal places."
         },
         "volume_to_dollar_multiplier": {
           "oneOf": [
             {
               "type": "number",
+              "description": "Absolute value below 10^15, with at most 10 decimal places.",
               "exclusiveMinimum": 0
             },
             {
@@ -928,12 +932,13 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "Flat commission rate applied across all levels."
+          "description": "Flat commission rate applied across all levels. Absolute value below 10^15, with at most 10 decimal places."
         },
         "volume_to_dollar_multiplier": {
           "oneOf": [
             {
               "type": "number",
+              "description": "Absolute value below 10^15, with at most 10 decimal places.",
               "exclusiveMinimum": 0
             },
             {
@@ -993,6 +998,7 @@
           "oneOf": [
             {
               "type": "number",
+              "description": "Absolute value below 10^15, with at most 10 decimal places.",
               "exclusiveMinimum": 0
             },
             {
@@ -1036,6 +1042,7 @@
         "type": "object",
         "additionalProperties": {
           "type": "number",
+          "description": "Absolute value below 10^15, with at most 10 decimal places.",
           "minimum": 0,
           "maximum": 1
         },
@@ -1104,7 +1111,7 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "Commission percentage on paired volume."
+          "description": "Commission percentage on paired volume. Absolute value below 10^15, with at most 10 decimal places."
         },
         "calculation": {
           "type": "string",
@@ -1115,6 +1122,7 @@
           "oneOf": [
             {
               "type": "number",
+              "description": "Absolute value below 10^15, with at most 10 decimal places.",
               "minimum": 0
             },
             {
@@ -1132,6 +1140,7 @@
           "oneOf": [
             {
               "type": "number",
+              "description": "Absolute value below 10^15, with at most 10 decimal places.",
               "minimum": 0
             },
             {
@@ -1168,14 +1177,14 @@
         },
         "cap_per_period": {
           "oneOf": [
-            { "type": "number", "minimum": 0 },
+            { "type": "number", "description": "Absolute value below 10^15, with at most 10 decimal places.", "minimum": 0 },
             { "type": "null" }
           ],
           "description": "Maximum commission per period. Null means uncapped."
         },
         "carry_forward_cap": {
           "oneOf": [
-            { "type": "number", "minimum": 0 },
+            { "type": "number", "description": "Absolute value below 10^15, with at most 10 decimal places.", "minimum": 0 },
             { "type": "null" }
           ],
           "description": "Maximum volume that can carry forward into the next period. Null means unlimited."
@@ -1196,12 +1205,12 @@
         "threshold": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Volume threshold to trigger this step."
+          "description": "Volume threshold to trigger this step. Absolute value below 10^15, with at most 10 decimal places."
         },
         "amount": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Commission amount paid when threshold is reached."
+          "description": "Commission amount paid when threshold is reached. Absolute value below 10^15, with at most 10 decimal places."
         }
       }
     },
@@ -1346,7 +1355,7 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "Override rate paid on the leg's breakaway volume when this tier applies."
+          "description": "Override rate paid on the leg's breakaway volume when this tier applies. Absolute value below 10^15, with at most 10 decimal places."
         }
       }
     },
@@ -1359,6 +1368,7 @@
           "type": "object",
           "additionalProperties": {
             "type": "number",
+            "description": "Absolute value below 10^15, with at most 10 decimal places.",
             "minimum": 0,
             "maximum": 1
           },
@@ -1376,7 +1386,7 @@
       "additionalProperties": false,
       "properties": {
         "type": { "type": "string", "enum": ["rate", "currency"] },
-        "value": { "type": "number", "minimum": 0 }
+        "value": { "type": "number", "description": "Absolute value below 10^15, with at most 10 decimal places.", "minimum": 0 }
       },
       "oneOf": [
         {
@@ -1401,6 +1411,7 @@
           "type": "object",
           "additionalProperties": {
             "type": "number",
+            "description": "Absolute value below 10^15, with at most 10 decimal places.",
             "minimum": 0,
             "maximum": 1
           },
@@ -1423,6 +1434,7 @@
           "type": "object",
           "additionalProperties": {
             "type": "number",
+            "description": "Absolute value below 10^15, with at most 10 decimal places.",
             "minimum": 0,
             "maximum": 1
           },
@@ -1467,6 +1479,7 @@
           "type": "object",
           "additionalProperties": {
             "type": "number",
+            "description": "Absolute value below 10^15, with at most 10 decimal places.",
             "minimum": 0,
             "maximum": 1
           },
@@ -1492,6 +1505,7 @@
           "oneOf": [
             {
               "type": "number",
+              "description": "Absolute value below 10^15, with at most 10 decimal places.",
               "exclusiveMinimum": 0
             },
             {
@@ -1520,7 +1534,7 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "Commission rate for this streamline level, as a fraction in [0, 1] (e.g. 0.05 = 5%), not a whole-number percent. Matches the Rust engine's fraction contract."
+          "description": "Commission rate for this streamline level, as a fraction in [0, 1] (e.g. 0.05 = 5%), not a whole-number percent. Matches the Rust engine's fraction contract. Absolute value below 10^15, with at most 10 decimal places."
         }
       }
     },
@@ -1739,6 +1753,7 @@
           "type": "object",
           "additionalProperties": {
             "type": "number",
+            "description": "Absolute value below 10^15, with at most 10 decimal places.",
             "minimum": 0,
             "maximum": 1
           },
@@ -1764,7 +1779,7 @@
         "amount": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Bonus amount or percentage."
+          "description": "Bonus amount or percentage. Absolute value below 10^15, with at most 10 decimal places."
         },
         "amount_type": {
           "type": "string",
@@ -1806,6 +1821,7 @@
           "type": "object",
           "additionalProperties": {
             "type": "number",
+            "description": "Absolute value below 10^15, with at most 10 decimal places.",
             "minimum": 0
           },
           "description": "Bonus amount per rank achieved."
@@ -1831,6 +1847,7 @@
           "type": "object",
           "additionalProperties": {
             "type": "number",
+            "description": "Absolute value below 10^15, with at most 10 decimal places.",
             "minimum": 0,
             "maximum": 1
           },
@@ -1860,6 +1877,7 @@
           "oneOf": [
             {
               "type": "number",
+              "description": "Absolute value below 10^15, with at most 10 decimal places.",
               "minimum": 0,
               "maximum": 1
             },
@@ -1875,6 +1893,7 @@
               "type": "object",
               "additionalProperties": {
                 "type": "number",
+                "description": "Absolute value below 10^15, with at most 10 decimal places.",
                 "minimum": 0,
                 "maximum": 1
               },
@@ -1909,6 +1928,7 @@
             "properties": {
               "flat_rate": {
                 "type": "number",
+                "description": "Absolute value below 10^15, with at most 10 decimal places.",
                 "minimum": 0,
                 "maximum": 1
               }
@@ -1931,6 +1951,7 @@
                 "type": "object",
                 "additionalProperties": {
                   "type": "number",
+                  "description": "Absolute value below 10^15, with at most 10 decimal places.",
                   "minimum": 0,
                   "maximum": 1
                 },
@@ -1970,7 +1991,7 @@
         "amount": {
           "type": "number",
           "minimum": 0,
-          "description": "Monthly lifestyle bonus amount."
+          "description": "Monthly lifestyle bonus amount. Absolute value below 10^15, with at most 10 decimal places."
         },
         "grace_periods": {
           "type": "integer",
@@ -1999,7 +2020,7 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "Percentage of company revenue allocated to this pool."
+          "description": "Percentage of company revenue allocated to this pool. Absolute value below 10^15, with at most 10 decimal places."
         },
         "qualification": {
           "$ref": "#/$defs/PoolQualification",
@@ -2116,7 +2137,7 @@
         "volume_target": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Volume target to achieve within the timeframe."
+          "description": "Volume target to achieve within the timeframe. Absolute value below 10^15, with at most 10 decimal places."
         },
         "timeframe": {
           "type": "string",
@@ -2173,6 +2194,7 @@
           "oneOf": [
             {
               "type": "number",
+              "description": "Absolute value below 10^15, with at most 10 decimal places.",
               "exclusiveMinimum": 0
             },
             {
@@ -2192,6 +2214,7 @@
           "type": "object",
           "additionalProperties": {
             "type": "number",
+            "description": "Absolute value below 10^15, with at most 10 decimal places.",
             "minimum": 0
           },
           "propertyNames": {
@@ -2202,7 +2225,7 @@
         "full_matrix": {
           "type": "number",
           "minimum": 0,
-          "description": "Bonus for completing the entire matrix."
+          "description": "Bonus for completing the entire matrix. Absolute value below 10^15, with at most 10 decimal places."
         }
       }
     },
@@ -2214,7 +2237,7 @@
         "amount": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Bonus amount or percentage."
+          "description": "Bonus amount or percentage. Absolute value below 10^15, with at most 10 decimal places."
         },
         "amount_type": {
           "type": "string",
@@ -2235,7 +2258,7 @@
         "cycle_commission": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "Fixed dollar amount earned when cycling out of a board."
+          "description": "Fixed dollar amount earned when cycling out of a board. Absolute value below 10^15, with at most 10 decimal places."
         },
         "re_entry_enabled": {
           "type": "boolean",
@@ -2339,7 +2362,7 @@
         "minimum_amount": {
           "type": "number",
           "minimum": 0,
-          "description": "Minimum commission amount before a payout is issued."
+          "description": "Minimum commission amount before a payout is issued. Absolute value below 10^15, with at most 10 decimal places."
         },
         "split_payouts_enabled": {
           "type": "boolean",
@@ -2367,7 +2390,7 @@
         "fee": {
           "type": "number",
           "minimum": 0,
-          "description": "Fee charged for this payment method."
+          "description": "Fee charged for this payment method. Absolute value below 10^15, with at most 10 decimal places."
         }
       }
     },
@@ -2384,6 +2407,7 @@
           "oneOf": [
             {
               "type": "number",
+              "description": "Absolute value below 10^15, with at most 10 decimal places.",
               "minimum": 0
             },
             {
@@ -2396,7 +2420,7 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "Maximum percentage of company revenue paid as commissions."
+          "description": "Maximum percentage of company revenue paid as commissions. Absolute value below 10^15, with at most 10 decimal places."
         },
         "cap_enforcement": {
           "type": "string",

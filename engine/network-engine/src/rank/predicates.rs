@@ -71,10 +71,11 @@ pub(crate) fn effective_leg_cap(sq: &StructureQualification) -> Option<f64> {
         return Some(sq.max_group_volume_per_leg);
     }
     let raw = sq.max_group_volume_per_leg_fraction * sq.group_volume;
-    // Round to 1e-6: the f64 product can land one ulp off the cap the fraction names.
-    // Keep the raw product when rounding gives 0 or overflows, because None means uncapped.
+    // Round to 1e-6 only within float noise: the f64 product can land a few ulps off the
+    // cap the fraction names. A larger difference is a real decimal, so keep the raw product.
+    // That also keeps a cap that would round to 0 or overflow, because None means uncapped.
     let snapped = (raw * 1e6).round() / 1e6;
-    let cap = if snapped.is_finite() && snapped > 0.0 {
+    let cap = if (snapped - raw).abs() <= 8.0 * f64::EPSILON * raw.abs() {
         snapped
     } else {
         raw
@@ -696,6 +697,17 @@ mod tests {
         assert_eq!(
             effective_leg_cap(&sq_with_caps(1e308, 0.0, 0.5)),
             Some(5e307)
+        );
+    }
+
+    #[test]
+    fn effective_leg_cap_keeps_a_fraction_cap_with_more_than_six_decimals() {
+        let cap = effective_leg_cap(&sq_with_caps(100.0, 0.0, 0.333333334));
+        assert_eq!(cap, Some(0.333333334 * 100.0));
+
+        let (tree, idx) = root_with_legs(&[33.34, 33.34, 33.34]);
+        assert!(
+            capped_gv_meets(100.0, cap, uid(1), &tree, &idx, &primitives_with_pv(0.0)).unwrap()
         );
     }
 

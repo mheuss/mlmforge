@@ -5492,8 +5492,9 @@ fn evaluate_ranks_honors_window_history() {
 // --- evaluate_ranks null tolerance (HEU-626) ---
 //
 // The library tests in `rank/types.rs` prove `EvaluationInputs` deserializes.
-// These prove the op dispatches and returns the INVALID_PARAMS protocol shape,
-// which a library test cannot observe.
+// These prove the op dispatches, reads an explicit null as empty, and returns
+// the INVALID_PARAMS protocol shape for a missing key. A library test cannot
+// observe that.
 
 /// Loads `RANK_TEST_PLAN_JSON`, creates the "Test" tree, and adds ROOT as its
 /// root — the setup every `evaluate_ranks` test needs before it can reach the

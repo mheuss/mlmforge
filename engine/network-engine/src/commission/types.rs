@@ -125,6 +125,10 @@ pub enum CalculationError {
     #[error("config error: {0}")]
     ConfigError(String),
 
+    /// An arithmetic step has no exact result the engine can hold.
+    #[error("{0}")]
+    Numeric(#[from] crate::decimal::NumericError),
+
     /// The tree's topology does not match the structure config it pays against.
     /// Paying against a mismatched tree computes commissions on the wrong shape.
     #[error(
@@ -735,5 +739,15 @@ mod tests {
         let id = uuid_from_index(4);
         let err = CalculationError::DistributorNotInSnapshot(id);
         assert_eq!(err.to_string(), format!("distributor {id} has no snapshot"));
+    }
+
+    #[test]
+    fn a_numeric_error_reads_through_a_calculation_error() {
+        let one: crate::decimal::Dec = "1".parse().unwrap();
+        let err = one.floor_div(crate::decimal::Dec::ZERO).unwrap_err();
+        assert_eq!(
+            CalculationError::from(err).to_string(),
+            "cannot floor-divide 1 and 0: the divisor is zero"
+        );
     }
 }

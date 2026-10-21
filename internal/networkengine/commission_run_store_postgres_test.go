@@ -1,7 +1,9 @@
 package networkengine
 
 import (
+	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -105,4 +107,25 @@ func TestPostgresCommissionRunStore(t *testing.T) {
 	runCommissionRunStoreSuite(t, func(t *testing.T) CommissionRunStore {
 		return NewPostgresCommissionRunStore(pgContainer.NewPool(t))
 	})
+}
+
+// The table CHECK keeps non-finite values out, so the rows are built in the
+// query rather than read from the table.
+func TestScanCommissionResultsRefusesNonFiniteText(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("postgres container unavailable")
+	}
+	pool := pgContainer.NewPool(t)
+	ctx := context.Background()
+	for _, text := range []string{"NaN", "Infinity", "-Infinity"} {
+		rows, err := pool.Query(ctx, `SELECT 1::bigint, $1::uuid, 'primary'::text, $2::uuid, $3::numeric::text, '{"v":1}'::jsonb`, uuid.New(), uuid.New(), text)
+		if err != nil {
+			t.Fatalf("query: %v", err)
+		}
+		_, err = scanCommissionResults(rows)
+		rows.Close()
+		if err == nil || !strings.Contains(err.Error(), `dollar_amount "`+text+`"`) {
+			t.Fatalf("dollar_amount %q: want a refusal naming the text, got %v", text, err)
+		}
+	}
 }

@@ -1587,17 +1587,17 @@ func TestEngineClient_CalculateUnilevel(t *testing.T) {
 	assert.Equal(t, leafID, midEarning.SourceID)
 	assert.Equal(t, uint8(1), midEarning.Level)
 	require.NotNil(t, midEarning.Rate, "a rate-produced earning carries a rate")
-	assert.Equal(t, "0.05", midEarning.Rate.String())
-	assert.Equal(t, "100", midEarning.CVAmount.String())
-	assert.Equal(t, "2", midEarning.DollarAmount.String())
+	assert.InDelta(t, 0.05, midEarning.Rate.InexactFloat64(), 1e-9)
+	assert.InDelta(t, 100.0, midEarning.CVAmount.InexactFloat64(), 1e-9)
+	assert.InDelta(t, 2.0, midEarning.DollarAmount.InexactFloat64(), 1e-9)
 
 	require.NotNil(t, rootEarning, "root should have an earning")
 	assert.Equal(t, leafID, rootEarning.SourceID)
 	assert.Equal(t, uint8(2), rootEarning.Level)
 	require.NotNil(t, rootEarning.Rate, "a rate-produced earning carries a rate")
-	assert.Equal(t, "0.05", rootEarning.Rate.String())
-	assert.Equal(t, "100", rootEarning.CVAmount.String())
-	assert.Equal(t, "2", rootEarning.DollarAmount.String())
+	assert.InDelta(t, 0.05, rootEarning.Rate.InexactFloat64(), 1e-9)
+	assert.InDelta(t, 100.0, rootEarning.CVAmount.InexactFloat64(), 1e-9)
+	assert.InDelta(t, 2.0, rootEarning.DollarAmount.InexactFloat64(), 1e-9)
 }
 
 func TestEngineClient_CalculateUnilevel_EmptyVolume(t *testing.T) {

@@ -67,10 +67,6 @@ const (
 // different key order and different whitespace. The fixtures still catch what
 // matters — a renamed, added, dropped, or retyped field — but do not compare
 // them against a SELECT.
-//
-// Numbers survive that trip exactly. jsonb stores them as numeric, so a
-// number written here reads back with the same value even though Postgres may
-// reformat the text (1e21 becomes 1000000000000000000000).
 
 // commissionEarningDetail is the shape for calculate_unilevel,
 // calculate_matrix, calculate_stairstep, calculate_generation, and

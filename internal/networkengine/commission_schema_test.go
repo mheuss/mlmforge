@@ -352,9 +352,8 @@ func TestCommissionResultsSchema(t *testing.T) {
 	})
 
 	// Every non-finite numeric, not just NaN. Postgres 14+ accepts Infinity
-	// in a NUMERIC column, and strconv.FormatFloat(math.Inf(1), 'f', -1, 64)
-	// emits "+Inf" — the exact text this design routes float64 amounts
-	// through. One such row makes SUM over the whole run return NaN forever.
+	// in a NUMERIC column. One such row makes SUM over the whole run return
+	// NaN forever.
 	t.Run("a non-finite dollar_amount is rejected", func(t *testing.T) {
 		for _, bad := range []string{"NaN", "Infinity", "-Infinity", "+Inf", "-Inf"} {
 			_, err := pool.Exec(ctx, insert, runID, "primary", uuid.New(), bad, `{"v":1}`)

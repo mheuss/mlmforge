@@ -365,6 +365,9 @@ func validateResultInputs(structure string, results []CommissionResultInput) err
 		if r.EarnerID == uuid.Nil {
 			return fmt.Errorf("commission results: row %d has a nil earner id", i)
 		}
+		if _, err := dec.Parse(r.DollarAmount.String()); err != nil {
+			return fmt.Errorf("commission results: row %d (earner %s): dollar_amount: %w", i, r.EarnerID, err)
+		}
 		// A nil or empty Detail is rejected by checkJSONObject. That mirrors
 		// detail JSONB NOT NULL. Unlike carry_forward there is deliberately
 		// no shortcut here letting it pass: an earning with no detail is a

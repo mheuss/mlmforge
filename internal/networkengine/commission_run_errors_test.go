@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mlmforge/mlmforge/internal/dec"
+	"github.com/shopspring/decimal"
 )
 
 func TestLiveRunExistsErrorCarriesTheWinner(t *testing.T) {
@@ -225,6 +226,8 @@ func TestValidateResultInputs(t *testing.T) {
 			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1.5"), Detail: json.RawMessage(`{"v":1}`)}, true},
 		{"structure that is not valid UTF-8", "prim\xffary",
 			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1.5"), Detail: json.RawMessage(`{"v":1}`)}, true},
+		{"amount whose text the reader refuses", "primary",
+			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: dec.Amount{Decimal: decimal.New(1, 70)}, Detail: json.RawMessage(`{"v":1}`)}, true},
 		{"nil earner id", "primary",
 			CommissionResultInput{EarnerID: uuid.Nil, DollarAmount: dec.MustParse("1"), Detail: json.RawMessage(`{"v":1}`)}, true},
 		{"array detail", "primary",

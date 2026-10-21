@@ -1222,14 +1222,22 @@ const envelopeMaxScale = 10
 func validateEnvelope(plan *CompensationPlan) []ValidationError {
 	var errs []ValidationError
 	check := func(path string, a dec.Amount) {
-		if a.Abs().GreaterThanOrEqual(envelopeLimit) || a.Scale() > envelopeMaxScale {
-			errs = append(errs, ValidationError{
-				Path:     path,
-				Code:     "out_of_envelope",
-				Message:  fmt.Sprintf("%s is outside the authored range: the absolute value must be below 10^15 with at most 10 decimal places", a.String()),
-				Severity: SeverityError,
-			})
+		written := a.StringFixed(a.Scale())
+		var message string
+		switch {
+		case a.Abs().GreaterThanOrEqual(envelopeLimit):
+			message = fmt.Sprintf("%s is not below 10^15 in absolute value", written)
+		case a.Scale() > envelopeMaxScale:
+			message = fmt.Sprintf("%s has %d decimal places, and an authored value may have at most %d", written, a.Scale(), envelopeMaxScale)
+		default:
+			return
 		}
+		errs = append(errs, ValidationError{
+			Path:     path,
+			Code:     "out_of_envelope",
+			Message:  message,
+			Severity: SeverityError,
+		})
 	}
 	walkAmounts(reflect.ValueOf(plan).Elem(), "", check)
 	for i, s := range plan.Structures {
@@ -1246,7 +1254,7 @@ var (
 )
 
 // walkAmounts calls visit for every dec.Amount reachable from v. The path is
-// built from yaml tags, as the schema step reports paths.
+// built from yaml tags.
 func walkAmounts(v reflect.Value, path string, visit func(string, dec.Amount)) {
 	switch v.Kind() {
 	case reflect.Pointer, reflect.Interface:

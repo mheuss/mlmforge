@@ -2303,3 +2303,40 @@ func TestRulesNameACommissionRateOutsideTheEnvelope(t *testing.T) {
 	require.Len(t, envelope, 1)
 	assert.Equal(t, "/structures/0/commission/rate_table/Associate/1", envelope[0].Path)
 }
+
+func envelopeErrors(plan *CompensationPlan) []ValidationError {
+	var envelope []ValidationError
+	for _, e := range validateBusinessRules(plan) {
+		if e.Code == "out_of_envelope" {
+			envelope = append(envelope, e)
+		}
+	}
+	return envelope
+}
+
+func TestRulesRefuseANegativeValueOfTenToTheFifteenth(t *testing.T) {
+	plan := minimalPlan()
+	plan.Volume.VolumeToDollarMultiplier = dec.MustParse("-1000000000000000")
+
+	envelope := envelopeErrors(plan)
+
+	require.Len(t, envelope, 1)
+	assert.Equal(t, "/volume/volume_to_dollar_multiplier", envelope[0].Path)
+}
+
+func TestRulesAcceptTheNegativeEnvelopeEdge(t *testing.T) {
+	plan := minimalPlan()
+	plan.Volume.VolumeToDollarMultiplier = dec.MustParse("-999999999999999.9999999999")
+
+	assert.Empty(t, envelopeErrors(plan))
+}
+
+func TestRulesShowTheWrittenValueAndTheLimitItBreaks(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Qualification.Structures[0].PersonalVolume = dec.MustParse("0.10000000000")
+
+	envelope := envelopeErrors(plan)
+
+	require.Len(t, envelope, 1)
+	assert.Equal(t, "0.10000000000 has 11 decimal places, and an authored value may have at most 10", envelope[0].Message)
+}

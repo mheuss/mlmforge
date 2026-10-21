@@ -96,3 +96,23 @@ func TestConfigContractFixturesMatchPipeline(t *testing.T) {
 		})
 	}
 }
+// The unilevel golden carries no leg-cap fraction, so an explicit zero must
+// produce the same bytes as an absent field.
+func TestAnExplicitZeroPerLegCapFractionMatchesTheUnilevelGolden(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	committed, err := os.ReadFile(filepath.Join("..", "..", "engine", "testdata", "config_contract", "fixtures", "unilevel.json"))
+	require.NoError(t, err)
+
+	withZero := replaceInYAML(t, readFixture(t, "valid/full-unilevel.yaml"),
+		"          group_volume: 500",
+		"          group_volume: 500\n          max_group_volume_per_leg_fraction: 0")
+	engineJSON, errs, err := p.LoadAndValidate(withZero)
+	require.NoError(t, err)
+	require.Empty(t, errs)
+
+	var buf bytes.Buffer
+	require.NoError(t, json.Indent(&buf, engineJSON, "", "  "))
+	buf.WriteByte('\n')
+	require.Equal(t, string(committed), buf.String())
+}

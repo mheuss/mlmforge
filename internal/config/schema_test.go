@@ -1,11 +1,14 @@
 package config
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // --- Valid fixtures: should produce zero errors ---
@@ -608,22 +611,6 @@ func TestSchemaRejectsTenurePeriodsZero(t *testing.T) {
 	)
 }
 
-func TestConvertYAMLToJSONMapAnyAny(t *testing.T) {
-	// Simulate a map[any]any input (yaml.v3 safety net path).
-	input := map[any]any{
-		"name":    "test",
-		42:        "numeric key",
-		int64(99): "int64 key",
-	}
-	result := convertYAMLToJSON(input)
-
-	m, ok := result.(map[string]any)
-	require.True(t, ok, "result should be map[string]any")
-	assert.Equal(t, "test", m["name"])
-	assert.Equal(t, "numeric key", m["42"])
-	assert.Equal(t, "int64 key", m["99"])
-}
-
 // A bare number carries no unit, and the same digits mean a percentage under
 // one reading and currency under the other. HEU-699.
 func TestSchemaRejectsABareMinOverride(t *testing.T) {
@@ -634,4 +621,93 @@ func TestSchemaRejectsABareMinOverride(t *testing.T) {
 	tagged := "min_override:\n              type: currency\n              value: 10.00"
 	bare := replaceInYAML(t, base, tagged, "min_override: 10.00")
 	require.NotEmpty(t, p.validateSchema(bare), "a bare min_override must be rejected")
+}
+
+func convertYAML(t *testing.T, src string) (string, []ValidationError) {
+	t.Helper()
+	var root yaml.Node
+	require.NoError(t, yaml.Unmarshal([]byte(src), &root))
+	doc, errs := yamlNodeToJSON(&root)
+	out, err := json.Marshal(doc)
+	require.NoError(t, err)
+	return string(out), errs
+}
+
+func TestYAMLNumbersKeepTheirTextAsJSONNumbers(t *testing.T) {
+	out, errs := convertYAML(t, "a: 30.30\nb: 1e-7\nc: [1, 2.50]\nrates:\n  1: 0.10\n  2: 0.05\n")
+	require.Empty(t, errs)
+	assert.Equal(t, `{"a":30.30,"b":1e-7,"c":[1,2.50],"rates":{"1":0.10,"2":0.05}}`, out)
+}
+
+func TestYAMLNumericFormsOutsideJSONAreRefused(t *testing.T) {
+	for _, form := range []string{".inf", "-.inf", ".nan", "0x10", "0o17", "1_000", "+5", ".5", "1.", "01"} {
+		_, errs := convertYAML(t, "a: "+form+"\n")
+		require.Len(t, errs, 1, form)
+		assert.Equal(t, "/a", errs[0].Path, form)
+		assert.Equal(t, "invalid_number", errs[0].Code, form)
+		assert.Equal(t, SeverityError, errs[0].Severity, form)
+	}
+}
+
+func TestYAMLMergeKeepsExplicitKeysAndTheFirstMergedValue(t *testing.T) {
+	out, errs := convertYAML(t, "one: &o {x: 1}\ntwo: &t {x: 2, z: 9}\nboth:\n  <<: [*o, *t]\n  y: 3\nover:\n  <<: *o\n  x: 5\n")
+	require.Empty(t, errs)
+	assert.Equal(t, `{"both":{"x":1,"y":3,"z":9},"one":{"x":1},"over":{"x":5},"two":{"x":2,"z":9}}`, out)
+}
+
+func TestYAMLAliasCarriesTheAnchoredNumber(t *testing.T) {
+	out, errs := convertYAML(t, "base: &rate 0.07\nuse: *rate\n")
+	require.Empty(t, errs)
+	assert.Equal(t, `{"base":0.07,"use":0.07}`, out)
+}
+
+func TestYAMLNumericKeysAreStringified(t *testing.T) {
+	out, errs := convertYAML(t, "rates:\n  1: 0.10\n  12: 0.02\n")
+	require.Empty(t, errs)
+	assert.Equal(t, `{"rates":{"1":0.10,"12":0.02}}`, out)
+}
+
+func TestYAMLKeysThatCollideAfterStringifyingAreRefused(t *testing.T) {
+	_, errs := convertYAML(t, "m:\n  1: a\n  \"1\": b\n")
+	require.Len(t, errs, 1)
+	assert.Equal(t, "/m/1", errs[0].Path)
+	assert.Equal(t, "duplicate_key", errs[0].Code)
+}
+
+func TestYAMLSelfReferentialAliasIsRefused(t *testing.T) {
+	_, errs := convertYAML(t, "a: &a\n  b: *a\n")
+	require.NotEmpty(t, errs)
+	assert.Equal(t, "alias_cycle", errs[0].Code)
+}
+
+func TestYAMLMergeCycleIsRefused(t *testing.T) {
+	_, errs := convertYAML(t, "a: &a\n  <<: *a\n  x: 1\n")
+	require.NotEmpty(t, errs)
+	assert.Equal(t, "alias_cycle", errs[0].Code)
+}
+
+func TestYAMLAliasAmplificationStopsAtTheBudget(t *testing.T) {
+	src := "l0: &l0 [x, x, x, x, x, x, x, x, x, x]\n"
+	for i := 1; i <= 7; i++ {
+		prev := fmt.Sprintf("*l%d", i-1)
+		src += fmt.Sprintf("l%d: &l%d [%s%s]\n", i, i, strings.Repeat(prev+", ", 9), prev)
+	}
+	_, errs := convertYAML(t, src)
+	require.NotEmpty(t, errs)
+	assert.Equal(t, "document_too_large", errs[len(errs)-1].Code)
+}
+
+func TestYAMLHugeExponentIsRefused(t *testing.T) {
+	_, errs := convertYAML(t, "a: 0e-2147483648\n")
+	require.Len(t, errs, 1)
+	assert.Equal(t, "invalid_number", errs[0].Code)
+}
+
+func TestSchemaBoundsCompareExactly(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/leg-cap-fraction-plan.yaml")
+	require.Empty(t, p.validateSchema(base))
+	over := replaceInYAML(t, base, "max_group_volume_per_leg_fraction: 0.6", "max_group_volume_per_leg_fraction: 1.00000000000000000001")
+	require.NotEmpty(t, p.validateSchema(over), "a fraction above 1 by 1e-20 must fail the schema maximum")
 }

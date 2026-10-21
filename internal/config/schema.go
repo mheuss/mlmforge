@@ -1,10 +1,12 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/mlmforge/mlmforge/internal/dec"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/santhosh-tekuri/jsonschema/v6/kind"
 	"gopkg.in/yaml.v3"
@@ -14,8 +16,8 @@ import (
 // It returns a slice of ValidationError for each schema violation found.
 // An empty slice means the document passed schema validation.
 func (p *Pipeline) validateSchema(yamlBytes []byte) []ValidationError {
-	var doc any
-	if err := yaml.Unmarshal(yamlBytes, &doc); err != nil {
+	var root yaml.Node
+	if err := yaml.Unmarshal(yamlBytes, &root); err != nil {
 		return []ValidationError{{
 			Path:     "",
 			Code:     "yaml_parse_error",
@@ -24,7 +26,10 @@ func (p *Pipeline) validateSchema(yamlBytes []byte) []ValidationError {
 		}}
 	}
 
-	doc = convertYAMLToJSON(doc)
+	doc, convErrs := yamlNodeToJSON(&root)
+	if len(convErrs) > 0 {
+		return convErrs
+	}
 
 	err := p.schema.Validate(doc)
 	if err == nil {
@@ -92,40 +97,154 @@ func buildInstancePath(tokens []string) string {
 	return "/" + strings.Join(tokens, "/")
 }
 
-// convertYAMLToJSON converts YAML-decoded values to JSON Schema-compatible
-// types. YAML v3 decodes maps as map[string]any, but numeric keys
-// in rate tables may produce map[any]any in some cases.
-// YAML also decodes whole numbers as int, while JSON Schema expects float64.
-func convertYAMLToJSON(v any) any {
-	switch val := v.(type) {
-	case map[string]any:
-		result := make(map[string]any, len(val))
-		for k, v := range val {
-			result[k] = convertYAMLToJSON(v)
+// maxYAMLNodes bounds how many nodes alias expansion may visit.
+const maxYAMLNodes = 1_000_000
+
+type yamlConverter struct {
+	errs    []ValidationError
+	active  map[*yaml.Node]bool
+	visited uint
+}
+
+// yamlNodeToJSON converts a decoded YAML tree into the value shapes the
+// schema validator reads. Numbers become json.Number holding their exact text.
+func yamlNodeToJSON(root *yaml.Node) (any, []ValidationError) {
+	c := &yamlConverter{active: map[*yaml.Node]bool{}}
+	v := c.node(root, "")
+	return v, c.errs
+}
+
+func (c *yamlConverter) fail(path, code, message string) {
+	c.errs = append(c.errs, ValidationError{Path: path, Code: code, Message: message, Severity: SeverityError})
+}
+
+// alias follows an alias node, refusing one that refers to itself.
+func (c *yamlConverter) alias(n *yaml.Node, path string, follow func(*yaml.Node) any) any {
+	if c.active[n.Alias] {
+		c.fail(path, "alias_cycle", "an alias refers to a node that contains it")
+		return nil
+	}
+	c.active[n.Alias] = true
+	defer delete(c.active, n.Alias)
+	return follow(n.Alias)
+}
+
+func (c *yamlConverter) node(n *yaml.Node, path string) any {
+	c.visited++
+	if c.visited == maxYAMLNodes+1 {
+		c.fail(path, "document_too_large", fmt.Sprintf("the document expands to more than %d nodes", maxYAMLNodes))
+	}
+	if c.visited > maxYAMLNodes {
+		return nil
+	}
+	switch n.Kind {
+	case yaml.DocumentNode:
+		if len(n.Content) == 0 {
+			return nil
 		}
-		return result
-	case map[any]any: // yaml.v3 always produces map[string]any; this is a safety net for edge cases.
-		result := make(map[string]any, len(val))
-		for k, v := range val {
-			result[stringifyKey(k)] = convertYAMLToJSON(v)
+		return c.node(n.Content[0], path)
+	case yaml.AliasNode:
+		return c.alias(n, path, func(target *yaml.Node) any { return c.node(target, path) })
+	case yaml.SequenceNode:
+		out := make([]any, len(n.Content))
+		for i, item := range n.Content {
+			out[i] = c.node(item, path+"/"+strconv.Itoa(i))
 		}
-		return result
-	case []any:
-		result := make([]any, len(val))
-		for i, item := range val {
-			result[i] = convertYAMLToJSON(item)
-		}
-		return result
-	case int:
-		return float64(val)
-	case int64:
-		// Safety net: yaml.v3 typically produces int for integers, not int64.
-		// Retained for defensive coverage against library version changes.
-		return float64(val)
-	// yaml.v3 does not produce uint, uint64, or float32. If the YAML library
-	// changes, the default case below will pass them through. JSON Schema
-	// validation will catch any type mismatches.
+		return out
+	case yaml.MappingNode:
+		return c.mapping(n, path)
+	case yaml.ScalarNode:
+		return c.scalar(n, path)
 	default:
+		return nil
+	}
+}
+
+func isMergeKey(k *yaml.Node) bool {
+	return k.Kind == yaml.ScalarNode && k.Value == "<<" && (k.Tag == "" || k.Tag == "!" || k.ShortTag() == "!!merge")
+}
+
+// mapping applies yaml.v3's merge rule: an explicit key wins over a merged
+// one, and among merged mappings the first to supply a key wins.
+func (c *yamlConverter) mapping(n *yaml.Node, path string) map[string]any {
+	out := make(map[string]any, len(n.Content)/2)
+	var merges []*yaml.Node
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		k, v := n.Content[i], n.Content[i+1]
+		if isMergeKey(k) {
+			merges = append(merges, v)
+			continue
+		}
+		key, ok := c.key(k, path)
+		if !ok {
+			continue
+		}
+		if _, dup := out[key]; dup {
+			c.fail(path+"/"+key, "duplicate_key", fmt.Sprintf("mapping key %q appears more than once after conversion to JSON", key))
+			continue
+		}
+		out[key] = c.node(v, path+"/"+key)
+	}
+	for _, m := range merges {
+		c.merge(m, path, out)
+	}
+	return out
+}
+
+func (c *yamlConverter) merge(m *yaml.Node, path string, out map[string]any) {
+	if m.Kind == yaml.AliasNode {
+		c.alias(m, path, func(target *yaml.Node) any {
+			c.merge(target, path, out)
+			return nil
+		})
+		return
+	}
+	switch m.Kind {
+	case yaml.MappingNode:
+		for k, v := range c.mapping(m, path) {
+			if _, exists := out[k]; !exists {
+				out[k] = v
+			}
+		}
+	case yaml.SequenceNode:
+		for _, item := range m.Content {
+			c.merge(item, path, out)
+		}
+	default:
+		c.fail(path, "invalid_merge", "a << merge must name a mapping or a list of mappings")
+	}
+}
+
+func (c *yamlConverter) key(k *yaml.Node, path string) (string, bool) {
+	if k.Kind == yaml.AliasNode {
+		k = k.Alias
+	}
+	if k.Kind != yaml.ScalarNode {
+		c.fail(path, "invalid_key", "a mapping key must be a scalar")
+		return "", false
+	}
+	var v any
+	if err := k.Decode(&v); err != nil {
+		c.fail(path, "invalid_key", err.Error())
+		return "", false
+	}
+	return stringifyKey(v), true
+}
+
+func (c *yamlConverter) scalar(n *yaml.Node, path string) any {
+	switch n.ShortTag() {
+	case "!!int", "!!float":
+		if _, err := dec.Parse(n.Value); err != nil {
+			c.fail(path, "invalid_number", err.Error())
+			return nil
+		}
+		return json.Number(n.Value)
+	default:
+		var v any
+		if err := n.Decode(&v); err != nil {
+			c.fail(path, "yaml_parse_error", err.Error())
+			return nil
+		}
 		return v
 	}
 }

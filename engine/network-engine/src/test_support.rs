@@ -178,14 +178,15 @@ pub fn like<T: FromLiteral>(_like: &T, text: &str) -> T {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! assert_d {
-    (@check $actual:expr, $text:expr $(, $($message:tt)+)?) => {{
-        let actual = &$actual;
-        assert_eq!(
-            actual,
-            &$crate::test_support::like(actual, &$text.replace('_', ""))
-            $(, $($message)+)?
-        );
-    }};
+    (@check $actual:expr, $text:expr $(, $($message:tt)+)?) => {
+        match &$actual {
+            actual => ::core::assert_eq!(
+                actual,
+                &$crate::test_support::like(actual, &$text.replace('_', ""))
+                $(, $($message)+)?
+            ),
+        }
+    };
     ($actual:expr, - $literal:literal $(, $($message:tt)+)?) => {
         $crate::assert_d!(@check $actual, ::std::concat!("-", ::std::stringify!($literal)) $(, $($message)+)?)
     };
@@ -220,6 +221,11 @@ mod tests {
     fn assert_d_reports_its_message_on_a_mismatch() {
         let rate: f64 = 0.07;
         crate::assert_d!(rate, 0.08, "rate for level {}", 1);
+    }
+
+    #[test]
+    fn assert_d_keeps_a_temporary_alive_for_the_comparison() {
+        crate::assert_d!(*std::cell::RefCell::new(0.07f64).borrow(), 0.07);
     }
 
     #[test]

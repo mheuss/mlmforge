@@ -212,6 +212,8 @@ result, err := client.EvaluateRanks(ctx, networkengine.EvaluateRanksRequest{...}
 
 The worker handler registers tree navigators only for structures that a rank above the lowest names in its `qualification.structures`. A distributor in none of those trees is not evaluated and holds the lowest rank. The network-engine development note "Rank Evaluation: Empty `qualification.structures`" covers what that means for tests.
 
+Every member of those trees must have an entry in `distributors`. `evaluate_ranks` refuses a request that leaves one out and names the lowest missing user ID (HEU-965). `structures_above_lowest_rank` gives the set of structures, and the worker handler and `evaluate_ranks` both use it.
+
 ---
 
 ### UC-NET-006: Per-leg structural rank qualification

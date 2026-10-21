@@ -394,6 +394,8 @@ So a plan whose higher ranks name no structure gives every distributor the lowes
 
 A distributor in no registered tree is never evaluated against a higher rank whose qualification names no structure. HEU-953 tracks it.
 
+Every member of a tree whose structure a rank above the lowest names must have an entry in `distributors`. `evaluate_ranks` refuses a request that leaves one out, with `EVALUATION_ERROR` naming the lowest missing user ID (HEU-965). A test that places a node in such a tree must give that node inputs, even when its rank is not asserted.
+
 ## Contract-Test Harness: `setup_raw` for Byte-Sensitive Fixtures
 
 `engine/network-engine-worker/tests/contract_tests.rs` and `internal/networkengine/contract_test.go` round-trip fixture setup steps through `serde_json::Value` / `map[string]any`, which sorts object keys. Go's `json.Marshal` always sorts, and the Rust side sorts too since `serde_json::Value` is a `BTreeMap`.

@@ -5,13 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
-	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mlmforge/mlmforge/internal/dec"
 )
 
 // Compile-time check.
@@ -395,14 +394,7 @@ func (s *PostgresCommissionRunStore) SaveResults(ctx context.Context, runID uuid
 // It follows qualificationHistoryCopySource, the reference adapter for bulk
 // writes in this package.
 //
-// DollarAmount is formatted with strconv.FormatFloat(v, 'f', -1, 64), the
-// shortest decimal string that round-trips the float exactly.
-//
-// pgx's own float64-to-numeric encoder happens to call the same function
-// today, so this is not a correction of the driver. It pins the behavior in
-// this package rather than depending on a pgx internal that could change in a
-// patch release, and it keeps NaN and infinities from being quietly encoded
-// as numeric NaN/Infinity and pushed down to the table CHECK.
+// DollarAmount is written as its exact decimal text.
 type commissionResultCopySource struct {
 	runID     uuid.UUID
 	structure string
@@ -436,9 +428,6 @@ func (s *commissionResultCopySource) Values() ([]any, error) {
 	if r.EarnerID == uuid.Nil {
 		return nil, fmt.Errorf("row %d: earner id must not be nil", s.idx)
 	}
-	if math.IsNaN(r.DollarAmount) || math.IsInf(r.DollarAmount, 0) {
-		return nil, fmt.Errorf("earner %s: dollar_amount must be finite, got %v", r.EarnerID, r.DollarAmount)
-	}
 	// Not defaulted to {}. detail is NOT NULL with a jsonb_typeof = 'object'
 	// CHECK, and substituting an empty object here would turn a caller bug
 	// into a persisted row that looks deliberate.
@@ -449,7 +438,7 @@ func (s *commissionResultCopySource) Values() ([]any, error) {
 		s.runID,
 		s.structure,
 		r.EarnerID,
-		strconv.FormatFloat(r.DollarAmount, 'f', -1, 64),
+		r.DollarAmount.String(),
 		r.Detail,
 	}, nil
 }
@@ -478,9 +467,8 @@ func (s *PostgresCommissionRunStore) GetResults(ctx context.Context, runID uuid.
 	return scanCommissionResults(rows)
 }
 
-// scanCommissionResults reads dollar_amount as text and parses it, rather
-// than letting the driver map NUMERIC to a float. The text is the exact
-// stored decimal, so ParseFloat reproduces the original float64.
+// scanCommissionResults reads dollar_amount as text and parses it as an exact
+// decimal, rather than letting the driver map NUMERIC to a float.
 func scanCommissionResults(rows pgx.Rows) ([]CommissionResult, error) {
 	var out []CommissionResult
 	for rows.Next() {
@@ -489,17 +477,9 @@ func scanCommissionResults(rows pgx.Rows) ([]CommissionResult, error) {
 		if err := rows.Scan(&r.ID, &r.RunID, &r.Structure, &r.EarnerID, &amount, &r.Detail); err != nil {
 			return nil, fmt.Errorf("scan commission_results row: %w", err)
 		}
-		v, err := strconv.ParseFloat(amount, 64)
+		v, err := dec.Parse(amount)
 		if err != nil {
-			return nil, fmt.Errorf("scan commission_results row: dollar_amount %q: %w", amount, err)
-		}
-		// ParseFloat accepts "NaN", "Infinity" and "+Inf". The table CHECK
-		// should mean no such row exists, but the write path guards this twice
-		// and the read path guarded it zero times. One such value silently
-		// destroys every SUM over the run, so refuse it rather than return it.
-		if math.IsNaN(v) || math.IsInf(v, 0) {
-			return nil, fmt.Errorf(
-				"scan commission_results row %d: dollar_amount %q is not finite", r.ID, amount)
+			return nil, fmt.Errorf("scan commission_results row %d: dollar_amount %q: %w", r.ID, amount, err)
 		}
 		r.DollarAmount = v
 		out = append(out, r)

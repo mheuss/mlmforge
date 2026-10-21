@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/mlmforge/mlmforge/internal/dec"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mlmforge/mlmforge/internal/config"
@@ -121,7 +122,7 @@ func assertIdentityMatchesAcrossTheWire(t *testing.T, pipeline *config.Pipeline,
 
 	snapshot := DistributorSnapshotDTO{
 		Rank:             "Associate",
-		PersonalVolume:   100,
+		PersonalVolume:   dec.MustParse("100"),
 		Status:           "active",
 		HasOrderInPeriod: true,
 	}
@@ -132,7 +133,7 @@ func assertIdentityMatchesAcrossTheWire(t *testing.T, pipeline *config.Pipeline,
 			midID:  snapshot,
 			leafID: snapshot,
 		},
-		Volume: []VolumeSourceDTO{{SourceID: leafID, CVAmount: 100}},
+		Volume: []VolumeSourceDTO{{SourceID: leafID, CVAmount: dec.MustParse("100")}},
 	})
 	require.NoError(t, err)
 

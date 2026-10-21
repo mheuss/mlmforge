@@ -3,6 +3,8 @@ package networkengine
 import (
 	"context"
 	"testing"
+
+	"github.com/mlmforge/mlmforge/internal/dec"
 )
 
 // Compile-time assertion: MemoryPeriodInputProvider implements PeriodInputProvider.
@@ -12,7 +14,7 @@ func TestMemoryPeriodInputProvider_ReturnsSetInputs(t *testing.T) {
 	p := NewMemoryPeriodInputProvider()
 	in := PeriodInputs{
 		Distributors: map[string]DistributorPrimitivesDTO{
-			"dist-1": {PersonalVolume: 100.0, Status: "active"},
+			"dist-1": {PersonalVolume: dec.MustParse("100.0"), Status: "active"},
 		},
 	}
 
@@ -43,7 +45,7 @@ func TestMemoryPeriodInputProvider_ZeroValueSafe(t *testing.T) {
 	p := &MemoryPeriodInputProvider{}
 	in := PeriodInputs{
 		Distributors: map[string]DistributorPrimitivesDTO{
-			"dist-1": {PersonalVolume: 50.0},
+			"dist-1": {PersonalVolume: dec.MustParse("50.0")},
 		},
 	}
 

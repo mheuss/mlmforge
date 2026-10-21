@@ -2,7 +2,7 @@ package networkengine
 
 import (
 	"encoding/json"
-	"math"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/mlmforge/mlmforge/internal/dec"
 )
 
 // goldenDetail reads a stored-shape fixture. Byte equality is the point: a
@@ -43,9 +44,9 @@ func TestResultFromCommissionEarning(t *testing.T) {
 		EarnerID:     earner.String(),
 		SourceID:     "33333333-3333-3333-3333-333333333333",
 		Level:        3,
-		Rate:         ptrTo(0.05),
-		CVAmount:     120,
-		DollarAmount: 6,
+		Rate:         ptrTo(dec.MustParse("0.05")),
+		CVAmount:     dec.MustParse("120"),
+		DollarAmount: dec.MustParse("6"),
 	}
 
 	got, err := ResultFromCommissionEarning(in)
@@ -55,7 +56,7 @@ func TestResultFromCommissionEarning(t *testing.T) {
 	if got.EarnerID != earner {
 		t.Fatalf("EarnerID = %s, want %s", got.EarnerID, earner)
 	}
-	if got.DollarAmount != 6 {
+	if !got.DollarAmount.Equal(dec.MustParse("6").Decimal) {
 		t.Fatalf("DollarAmount = %v, want 6", got.DollarAmount)
 	}
 	if want := goldenDetail(t, "commission_earning.json"); string(got.Detail) != want {
@@ -68,12 +69,12 @@ func TestResultFromBinaryEarning(t *testing.T) {
 	in := BinaryCommissionEarningDTO{
 		EarnerID:      earner.String(),
 		PositionID:    "44444444-4444-4444-4444-444444444444",
-		LeftVolume:    500,
-		RightVolume:   300,
-		MatchedVolume: 300,
-		Ratio:         1,
-		Percent:       0.1,
-		DollarAmount:  30,
+		LeftVolume:    dec.MustParse("500"),
+		RightVolume:   dec.MustParse("300"),
+		MatchedVolume: dec.MustParse("300"),
+		Ratio:         dec.MustParse("1"),
+		Percent:       dec.MustParse("0.1"),
+		DollarAmount:  dec.MustParse("30"),
 		Capped:        false,
 	}
 
@@ -84,7 +85,7 @@ func TestResultFromBinaryEarning(t *testing.T) {
 	if got.EarnerID != earner {
 		t.Fatalf("EarnerID = %s, want %s", got.EarnerID, earner)
 	}
-	if got.DollarAmount != 30 {
+	if !got.DollarAmount.Equal(dec.MustParse("30").Decimal) {
 		t.Fatalf("DollarAmount = %v, want 30", got.DollarAmount)
 	}
 	if want := goldenDetail(t, "binary.json"); string(got.Detail) != want {
@@ -97,7 +98,7 @@ func TestResultFromBoardCycleEarning(t *testing.T) {
 	in := BoardCycleEarningDTO{
 		EarnerID:     earner.String(),
 		BoardID:      "55555555-5555-5555-5555-555555555555",
-		DollarAmount: 25,
+		DollarAmount: dec.MustParse("25"),
 		CycleNumber:  2,
 		Capped:       true,
 	}
@@ -109,7 +110,7 @@ func TestResultFromBoardCycleEarning(t *testing.T) {
 	if got.EarnerID != earner {
 		t.Fatalf("EarnerID = %s, want %s", got.EarnerID, earner)
 	}
-	if got.DollarAmount != 25 {
+	if !got.DollarAmount.Equal(dec.MustParse("25").Decimal) {
 		t.Fatalf("DollarAmount = %v, want 25", got.DollarAmount)
 	}
 	if want := goldenDetail(t, "board.json"); string(got.Detail) != want {
@@ -256,19 +257,19 @@ func TestMappedResultsSurviveTheWritePath(t *testing.T) {
 	source := uuid.MustParse("33333333-3333-3333-3333-333333333333")
 
 	unilevel, err := ResultFromCommissionEarning(CommissionEarningDTO{
-		EarnerID: earner.String(), SourceID: source.String(), Level: 1, Rate: ptrTo(0.1), CVAmount: 10, DollarAmount: 1,
+		EarnerID: earner.String(), SourceID: source.String(), Level: 1, Rate: ptrTo(dec.MustParse("0.1")), CVAmount: dec.MustParse("10"), DollarAmount: dec.MustParse("1"),
 	})
 	if err != nil {
 		t.Fatalf("commission earning: %v", err)
 	}
 	binary, err := ResultFromBinaryEarning(BinaryCommissionEarningDTO{
-		EarnerID: earner.String(), PositionID: source.String(), DollarAmount: 2,
+		EarnerID: earner.String(), PositionID: source.String(), DollarAmount: dec.MustParse("2"),
 	})
 	if err != nil {
 		t.Fatalf("binary: %v", err)
 	}
 	board, err := ResultFromBoardCycleEarning(BoardCycleEarningDTO{
-		EarnerID: earner.String(), BoardID: source.String(), DollarAmount: 3, CycleNumber: 1,
+		EarnerID: earner.String(), BoardID: source.String(), DollarAmount: dec.MustParse("3"), CycleNumber: 1,
 	})
 	if err != nil {
 		t.Fatalf("board: %v", err)
@@ -309,41 +310,12 @@ func TestResultMappersRejectABadEarnerID(t *testing.T) {
 	}
 }
 
-// dollar_amount gets three explicit finite checks. A non-finite value in a
-// detail field is caught only by json.Marshal refusing it, which is real but
-// incidental, so it is pinned here — and the error has to name the earner, or
-// a failure in a 500k-row batch has no starting point.
-func TestNonFiniteDetailFieldIsRejectedWithTheEarner(t *testing.T) {
-	earner := uuid.MustParse("11111111-1111-1111-1111-111111111111")
-	cases := []struct {
-		name  string
-		value float64
-	}{
-		{"NaN", math.NaN()},
-		{"positive infinity", math.Inf(1)},
-		{"negative infinity", math.Inf(-1)},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := ResultFromCommissionEarning(CommissionEarningDTO{
-				EarnerID: earner.String(), Rate: ptrTo(tc.value), DollarAmount: 1,
-			})
-			if err == nil {
-				t.Fatal("expected a non-finite detail field to be rejected")
-			}
-			if !strings.Contains(err.Error(), earner.String()) {
-				t.Fatalf("error should name the earner, got %q", err.Error())
-			}
-		})
-	}
-}
-
 // uuid.Parse accepts the all-zero UUID, so a mapper cannot catch it. The
 // store does, at the write. Pinned so the division of labor is deliberate
 // rather than an oversight: a nil earner fails loudly, just one layer later.
 func TestNilEarnerIDSurvivesMappingAndIsCaughtByTheStore(t *testing.T) {
 	got, err := ResultFromCommissionEarning(CommissionEarningDTO{
-		EarnerID: uuid.Nil.String(), DollarAmount: 1,
+		EarnerID: uuid.Nil.String(), DollarAmount: dec.MustParse("1"),
 	})
 	if err != nil {
 		t.Fatalf("mapping a nil earner id should succeed; the store is the gate: %v", err)
@@ -371,7 +343,7 @@ func TestCommissionEarningDTOKeepsANullRateDistinctFromZero(t *testing.T) {
 	if nullRate.Rate != nil {
 		t.Fatalf("a null rate decoded to %v, want nil", *nullRate.Rate)
 	}
-	if zeroRate.Rate == nil || *zeroRate.Rate != 0 {
+	if zeroRate.Rate == nil || !zeroRate.Rate.Equal(dec.MustParse("0").Decimal) {
 		t.Fatalf("a zero rate decoded to %v, want a pointer to 0", zeroRate.Rate)
 	}
 }
@@ -384,8 +356,8 @@ func TestResultFromCommissionEarningStoresANullRateAsNull(t *testing.T) {
 		SourceID:     "33333333-3333-3333-3333-333333333333",
 		Level:        1,
 		Rate:         nil,
-		CVAmount:     100,
-		DollarAmount: 10,
+		CVAmount:     dec.MustParse("100"),
+		DollarAmount: dec.MustParse("10"),
 	})
 	if err != nil {
 		t.Fatalf("ResultFromCommissionEarning: %v", err)
@@ -419,11 +391,11 @@ func TestNullRateSurvivesFromTheWireIntoTheStoredRow(t *testing.T) {
 		SourceID:     "00000000-0000-0000-0000-000000000002",
 		Level:        1,
 		Rate:         nil,
-		CVAmount:     1000,
-		DollarAmount: 5,
+		CVAmount:     dec.MustParse("1000"),
+		DollarAmount: dec.MustParse("5"),
 		Walk:         nil,
 	}
-	if !reflect.DeepEqual(dto, want) {
+	if fmt.Sprintf("%+v", dto) != fmt.Sprintf("%+v", want) {
 		t.Fatalf("decoded = %+v, want %+v", dto, want)
 	}
 
@@ -434,7 +406,7 @@ func TestNullRateSurvivesFromTheWireIntoTheStoredRow(t *testing.T) {
 	if want := goldenDetail(t, "commission_earning_wire_null_rate.json"); string(got.Detail) != want {
 		t.Fatalf("detail =\n%s\nwant\n%s", got.Detail, want)
 	}
-	if got.DollarAmount != 5 {
+	if !got.DollarAmount.Equal(dec.MustParse("5").Decimal) {
 		t.Fatalf("DollarAmount = %v, want 5", got.DollarAmount)
 	}
 }

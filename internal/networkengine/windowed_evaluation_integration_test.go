@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/mlmforge/mlmforge/internal/dec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -218,7 +219,7 @@ func evaluateWithHistory(t *testing.T, store QualificationHistoryStore, userID u
 	req := EvaluateRanksRequest{
 		Distributors: map[string]DistributorPrimitivesDTO{
 			userStr: {
-				PersonalVolume:   100.0,
+				PersonalVolume:   dec.MustParse("100.0"),
 				Status:           "active",
 				HasOrderInPeriod: true,
 				ActiveProducts:   []string{},
@@ -293,8 +294,8 @@ func TestWindowedEvaluation_BackwardCompat_EmptyHistoryEqualsOmitted(t *testing.
 	require.NoError(t, client.AddNode(ctx, structureName, childID, rootID, rootID, 200))
 
 	distributors := map[string]DistributorPrimitivesDTO{
-		rootID:  {PersonalVolume: 100.0, Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}},
-		childID: {PersonalVolume: 100.0, Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}},
+		rootID:  {PersonalVolume: dec.MustParse("100.0"), Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}},
+		childID: {PersonalVolume: dec.MustParse("100.0"), Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}},
 	}
 
 	// Request with the history fields left at their zero value (omitted on wire).

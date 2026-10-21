@@ -553,7 +553,7 @@ func TestStreamlineFixtureDecodesIntoStreamlineDTO(t *testing.T) {
 	assert.Equal(t, 0, skip.VolumeIndex, "volume_index tag has drifted from %s", path)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000002", skip.SourceID,
 		"source_id tag has drifted from %s", path)
-	assert.Equal(t, 100.0, skip.CVAmount, "cv_amount tag has drifted from %s", path)
+	assert.Equal(t, "100", skip.CVAmount.String(), "cv_amount tag has drifted from %s", path)
 	assert.Equal(t, uint32(1), skip.StreamID, "stream_id tag has drifted from %s", path)
 
 	// The embedded type decodes through the same promotion, so a broken

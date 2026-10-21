@@ -1,7 +1,11 @@
 // Package networkengine wire_types.go defines DTOs that mirror the Rust engine's NDJSON wire format.
 package networkengine
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/mlmforge/mlmforge/internal/dec"
+)
 
 // EngineNode represents a tree node returned by the Rust engine.
 // Mirrors the wire format of the Rust NodeResponse struct.
@@ -35,17 +39,17 @@ type CalculateUnilevelRequest struct {
 // DistributorSnapshotDTO is the wire format for distributor period data.
 // Matches the Rust DistributorSnapshot struct.
 type DistributorSnapshotDTO struct {
-	Rank             string  `json:"rank"`
-	PersonalVolume   float64 `json:"personal_volume"`
-	Status           string  `json:"status"`
-	HasOrderInPeriod bool    `json:"has_order_in_period"`
+	Rank             string     `json:"rank"`
+	PersonalVolume   dec.Amount `json:"personal_volume"`
+	Status           string     `json:"status"`
+	HasOrderInPeriod bool       `json:"has_order_in_period"`
 }
 
 // VolumeSourceDTO is the wire format for a volume event.
 // Matches the Rust VolumeSource struct.
 type VolumeSourceDTO struct {
-	SourceID string  `json:"source_id"`
-	CVAmount float64 `json:"cv_amount"`
+	SourceID string     `json:"source_id"`
+	CVAmount dec.Amount `json:"cv_amount"`
 }
 
 // WalkStepDTO is one visited node in a traversal. Matches the Rust WalkStep.
@@ -101,12 +105,11 @@ type CommissionEarningDTO struct {
 	// uint8, not int, to mirror the Rust u8. See TestWireTypesNarrowMirrors.
 	Level uint8 `json:"level"`
 	// Null means no rate was applied, and it is not the same as a zero rate.
-	// A bare float64 collapses the two: encoding/json leaves the field
-	// untouched on a null and returns no error, so it would arrive as 0.
+	// The pointer keeps the two apart.
 	// No omitempty, for the same reason given on Walk below.
-	Rate         *float64 `json:"rate"`
-	CVAmount     float64  `json:"cv_amount"`
-	DollarAmount float64  `json:"dollar_amount"`
+	Rate         *dec.Amount `json:"rate"`
+	CVAmount     dec.Amount  `json:"cv_amount"`
+	DollarAmount dec.Amount  `json:"dollar_amount"`
 	// Index of the walk that produced this earning, and null when none was
 	// recorded. No omitempty: stairstep Walk 2 earnings are null, and dropping
 	// the key would make that indistinguishable from a missing field.
@@ -150,26 +153,26 @@ type CalculateBinaryPairingRequest struct {
 // LegVolumesDTO is the wire format for binary carry-forward leg volumes.
 // Matches the Rust LegVolumes struct.
 type LegVolumesDTO struct {
-	Left  float64 `json:"left"`
-	Right float64 `json:"right"`
+	Left  dec.Amount `json:"left"`
+	Right dec.Amount `json:"right"`
 }
 
 // BinaryCommissionEarningDTO is the wire format for a single binary pairing
 // or cycle-step earning. Matches the Rust BinaryCommissionEarning struct.
 type BinaryCommissionEarningDTO struct {
-	EarnerID      string  `json:"earner_id"`
-	PositionID    string  `json:"position_id"`
-	LeftVolume    float64 `json:"left_volume"`
-	RightVolume   float64 `json:"right_volume"`
-	MatchedVolume float64 `json:"matched_volume"`
+	EarnerID      string     `json:"earner_id"`
+	PositionID    string     `json:"position_id"`
+	LeftVolume    dec.Amount `json:"left_volume"`
+	RightVolume   dec.Amount `json:"right_volume"`
+	MatchedVolume dec.Amount `json:"matched_volume"`
 	// Ratio echoes the balance ratio used for the match: 1.0 for weaker-leg,
 	// the leg min/max ratio for volume-ratio mode. Cycle-step mode reports 0.0.
-	Ratio float64 `json:"ratio"`
+	Ratio dec.Amount `json:"ratio"`
 	// Percent echoes the configured pairing commission rate as a fraction in [0, 1] (0.10 = 10%).
 	// Cycle-step mode has no per-earning rate and reports 0.0.
-	Percent      float64 `json:"percent"`
-	DollarAmount float64 `json:"dollar_amount"`
-	Capped       bool    `json:"capped"`
+	Percent      dec.Amount `json:"percent"`
+	DollarAmount dec.Amount `json:"dollar_amount"`
+	Capped       bool       `json:"capped"`
 }
 
 // BinaryCalculationResultDTO is the wire format for binary pairing calculation results.
@@ -331,11 +334,11 @@ type BoardMemberInfoDTO struct {
 // BoardCycleEarningDTO is the wire format for a single board cycle earning.
 // Matches the Rust BoardCycleEarning struct.
 type BoardCycleEarningDTO struct {
-	EarnerID     string  `json:"earner_id"`
-	BoardID      string  `json:"board_id"`
-	DollarAmount float64 `json:"dollar_amount"`
-	CycleNumber  uint32  `json:"cycle_number"`
-	Capped       bool    `json:"capped"`
+	EarnerID     string     `json:"earner_id"`
+	BoardID      string     `json:"board_id"`
+	DollarAmount dec.Amount `json:"dollar_amount"`
+	CycleNumber  uint32     `json:"cycle_number"`
+	Capped       bool       `json:"capped"`
 }
 
 // BoardCommissionResultDTO is the wire format for board commission calculation results.
@@ -465,11 +468,11 @@ type EvaluateRanksRequest struct {
 // DistributorPrimitivesDTO is the per-distributor input for rank evaluation.
 // Mirrors the Rust DistributorPrimitives struct.
 type DistributorPrimitivesDTO struct {
-	PersonalVolume   float64  `json:"personal_volume"`
-	RetailVolume     float64  `json:"retail_volume"`
-	Status           string   `json:"status"`
-	HasOrderInPeriod bool     `json:"has_order_in_period"`
-	ActiveProducts   []string `json:"active_products"`
+	PersonalVolume   dec.Amount `json:"personal_volume"`
+	RetailVolume     dec.Amount `json:"retail_volume"`
+	Status           string     `json:"status"`
+	HasOrderInPeriod bool       `json:"has_order_in_period"`
+	ActiveProducts   []string   `json:"active_products"`
 }
 
 // EvaluatedRankDTO is one distributor's evaluated rank.
@@ -506,8 +509,8 @@ type StreamlineCalculationResultDTO struct {
 // contributed nothing. A record is scoped to the pair. It does not mean the
 // volume entry earned nothing overall.
 type FrozenStreamSkipDTO struct {
-	VolumeIndex int     `json:"volume_index"`
-	SourceID    string  `json:"source_id"`
-	CVAmount    float64 `json:"cv_amount"`
-	StreamID    uint32  `json:"stream_id"`
+	VolumeIndex int        `json:"volume_index"`
+	SourceID    string     `json:"source_id"`
+	CVAmount    dec.Amount `json:"cv_amount"`
+	StreamID    uint32     `json:"stream_id"`
 }

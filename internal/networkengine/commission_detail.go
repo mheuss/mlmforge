@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/mlmforge/mlmforge/internal/dec"
 )
 
 // detailVersion tags every stored detail object. It costs one key and means a
@@ -68,7 +69,7 @@ const (
 // them against a SELECT.
 //
 // Numbers survive that trip exactly. jsonb stores them as numeric, so a
-// float64 written here reads back bit-identical even though Postgres may
+// number written here reads back with the same value even though Postgres may
 // reformat the text (1e21 becomes 1000000000000000000000).
 
 // commissionEarningDetail is the shape for calculate_unilevel,
@@ -84,8 +85,8 @@ type commissionEarningDetail struct {
 	// for years to settle disputes, so the two must stay distinguishable.
 	//
 	// No omitempty, for the same reason given on Walk below.
-	Rate     *float64 `json:"rate"`
-	CVAmount float64  `json:"cv_amount"`
+	Rate     *dec.Amount `json:"rate"`
+	CVAmount dec.Amount  `json:"cv_amount"`
 	// Index of the walk that produced this earning, into the walks array of
 	// the same response. Null where none was recorded, which today means
 	// stairstep Walk 2: design 029 excludes that traversal, so the null is a
@@ -105,15 +106,15 @@ type commissionEarningDetail struct {
 // invariant is thin ground for a row retained for years to settle disputes.
 // Fixing it needs the engine to emit the mode; tracked on the HEU-555 plan.
 type binaryPairingDetail struct {
-	V             int     `json:"v"`
-	Kind          string  `json:"kind"`
-	PositionID    string  `json:"position_id"`
-	LeftVolume    float64 `json:"left_volume"`
-	RightVolume   float64 `json:"right_volume"`
-	MatchedVolume float64 `json:"matched_volume"`
-	Ratio         float64 `json:"ratio"`
-	Percent       float64 `json:"percent"`
-	Capped        bool    `json:"capped"`
+	V             int        `json:"v"`
+	Kind          string     `json:"kind"`
+	PositionID    string     `json:"position_id"`
+	LeftVolume    dec.Amount `json:"left_volume"`
+	RightVolume   dec.Amount `json:"right_volume"`
+	MatchedVolume dec.Amount `json:"matched_volume"`
+	Ratio         dec.Amount `json:"ratio"`
+	Percent       dec.Amount `json:"percent"`
+	Capped        bool       `json:"capped"`
 }
 
 // boardCycleDetail is the shape for board_calculate_commissions.
@@ -173,15 +174,11 @@ func ResultFromBoardCycleEarning(e BoardCycleEarningDTO) (CommissionResultInput,
 // marshal the shape, assemble the row. The shape structs stay separate and
 // explicit because they are the persisted format; only these four mechanical
 // steps are shared, so a fix lands once rather than three times.
-func newResultInput(earnerID string, amount float64, shape any) (CommissionResultInput, error) {
+func newResultInput(earnerID string, amount dec.Amount, shape any) (CommissionResultInput, error) {
 	earner, err := parseEarnerID(earnerID)
 	if err != nil {
 		return CommissionResultInput{}, err
 	}
-	// This is also where a non-finite float in a detail field is caught:
-	// json.Marshal refuses NaN and infinities. dollar_amount gets three
-	// explicit guards, so name the earner here rather than surfacing a bare
-	// "unsupported value: NaN" with nothing to trace it to.
 	detail, err := json.Marshal(shape)
 	if err != nil {
 		return CommissionResultInput{}, fmt.Errorf("earner %s: marshal %T: %w", earner, shape, err)

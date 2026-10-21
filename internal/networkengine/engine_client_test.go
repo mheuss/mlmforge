@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/mlmforge/mlmforge/internal/dec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1171,13 +1171,13 @@ func TestEngineClient_CalculateUnilevel_MockParams(t *testing.T) {
 		Snapshots: map[string]DistributorSnapshotDTO{
 			"00000000-0000-0000-0000-000000000001": {
 				Rank:             "member",
-				PersonalVolume:   100.0,
+				PersonalVolume:   dec.MustParse("100.0"),
 				Status:           "active",
 				HasOrderInPeriod: true,
 			},
 		},
 		Volume: []VolumeSourceDTO{
-			{SourceID: "00000000-0000-0000-0000-000000000002", CVAmount: 100.0},
+			{SourceID: "00000000-0000-0000-0000-000000000002", CVAmount: dec.MustParse("100.0")},
 		},
 	}
 
@@ -1191,9 +1191,9 @@ func TestEngineClient_CalculateUnilevel_MockParams(t *testing.T) {
 	assert.Equal(t, "00000000-0000-0000-0000-000000000002", earnings[0].SourceID)
 	assert.Equal(t, uint8(1), earnings[0].Level)
 	require.NotNil(t, earnings[0].Rate, "a rate-produced earning carries a rate")
-	assert.InDelta(t, 0.05, *earnings[0].Rate, 1e-9)
-	assert.InDelta(t, 100.0, earnings[0].CVAmount, 1e-9)
-	assert.InDelta(t, 2.0, earnings[0].DollarAmount, 1e-9)
+	assert.InDelta(t, 0.05, earnings[0].Rate.InexactFloat64(), 1e-9)
+	assert.InDelta(t, 100.0, earnings[0].CVAmount.InexactFloat64(), 1e-9)
+	assert.InDelta(t, 2.0, earnings[0].DollarAmount.InexactFloat64(), 1e-9)
 }
 
 func TestEngineClient_CalculateUnilevel_EmptyEarnings(t *testing.T) {
@@ -1227,13 +1227,13 @@ func TestEngineClient_CalculateGeneration_MockParams(t *testing.T) {
 		Snapshots: map[string]DistributorSnapshotDTO{
 			"00000000-0000-0000-0000-000000000001": {
 				Rank:             "director",
-				PersonalVolume:   150.0,
+				PersonalVolume:   dec.MustParse("150.0"),
 				Status:           "active",
 				HasOrderInPeriod: true,
 			},
 		},
 		Volume: []VolumeSourceDTO{
-			{SourceID: "00000000-0000-0000-0000-000000000002", CVAmount: 100.0},
+			{SourceID: "00000000-0000-0000-0000-000000000002", CVAmount: dec.MustParse("100.0")},
 		},
 	}
 
@@ -1247,9 +1247,9 @@ func TestEngineClient_CalculateGeneration_MockParams(t *testing.T) {
 	assert.Equal(t, "00000000-0000-0000-0000-000000000002", earnings[0].SourceID)
 	assert.Equal(t, uint8(1), earnings[0].Level)
 	require.NotNil(t, earnings[0].Rate, "a rate-produced earning carries a rate")
-	assert.InDelta(t, 0.10, *earnings[0].Rate, 1e-9)
-	assert.InDelta(t, 100.0, earnings[0].CVAmount, 1e-9)
-	assert.InDelta(t, 10.0, earnings[0].DollarAmount, 1e-9)
+	assert.InDelta(t, 0.10, earnings[0].Rate.InexactFloat64(), 1e-9)
+	assert.InDelta(t, 100.0, earnings[0].CVAmount.InexactFloat64(), 1e-9)
+	assert.InDelta(t, 10.0, earnings[0].DollarAmount.InexactFloat64(), 1e-9)
 }
 
 func TestEngineClient_CalculateGeneration_EmptyEarnings(t *testing.T) {
@@ -1283,13 +1283,13 @@ func TestEngineClient_CalculateMatrix_MockParams(t *testing.T) {
 		Snapshots: map[string]DistributorSnapshotDTO{
 			"00000000-0000-0000-0000-000000000001": {
 				Rank:             "member",
-				PersonalVolume:   100.0,
+				PersonalVolume:   dec.MustParse("100.0"),
 				Status:           "active",
 				HasOrderInPeriod: true,
 			},
 		},
 		Volume: []VolumeSourceDTO{
-			{SourceID: "00000000-0000-0000-0000-000000000002", CVAmount: 100.0},
+			{SourceID: "00000000-0000-0000-0000-000000000002", CVAmount: dec.MustParse("100.0")},
 		},
 	}
 
@@ -1301,7 +1301,7 @@ func TestEngineClient_CalculateMatrix_MockParams(t *testing.T) {
 	assert.Equal(t, "calculate_matrix", mock.lastOp)
 	assert.JSONEq(t, `{"structure":"Test","snapshots":{"00000000-0000-0000-0000-000000000001":{"rank":"member","personal_volume":100,"status":"active","has_order_in_period":true}},"volume":[{"source_id":"00000000-0000-0000-0000-000000000002","cv_amount":100}]}`, string(mock.lastParams))
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", earnings[0].EarnerID)
-	assert.InDelta(t, 2.0, earnings[0].DollarAmount, 1e-9)
+	assert.InDelta(t, 2.0, earnings[0].DollarAmount.InexactFloat64(), 1e-9)
 }
 
 func TestEngineClient_CalculateMatrix_EmptyEarnings(t *testing.T) {
@@ -1333,13 +1333,13 @@ func TestEngineClient_CalculateStairstep_MockParams(t *testing.T) {
 		Snapshots: map[string]DistributorSnapshotDTO{
 			"00000000-0000-0000-0000-000000000001": {
 				Rank:             "member",
-				PersonalVolume:   100.0,
+				PersonalVolume:   dec.MustParse("100.0"),
 				Status:           "active",
 				HasOrderInPeriod: true,
 			},
 		},
 		Volume: []VolumeSourceDTO{
-			{SourceID: "00000000-0000-0000-0000-000000000003", CVAmount: 100.0},
+			{SourceID: "00000000-0000-0000-0000-000000000003", CVAmount: dec.MustParse("100.0")},
 		},
 	}
 
@@ -1351,7 +1351,7 @@ func TestEngineClient_CalculateStairstep_MockParams(t *testing.T) {
 	assert.Equal(t, "calculate_stairstep", mock.lastOp)
 	assert.JSONEq(t, `{"structure":"Test","snapshots":{"00000000-0000-0000-0000-000000000001":{"rank":"member","personal_volume":100,"status":"active","has_order_in_period":true}},"volume":[{"source_id":"00000000-0000-0000-0000-000000000003","cv_amount":100}]}`, string(mock.lastParams))
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", earnings[0].EarnerID)
-	assert.InDelta(t, 2.0, earnings[0].DollarAmount, 1e-9)
+	assert.InDelta(t, 2.0, earnings[0].DollarAmount.InexactFloat64(), 1e-9)
 }
 
 func TestEngineClient_CalculateStairstep_EmptyEarnings(t *testing.T) {
@@ -1551,7 +1551,7 @@ func TestEngineClient_CalculateUnilevel(t *testing.T) {
 	//    Dollar amount per earning: 100 * 0.40 * 1.0 * 0.05 = 2.0
 	snap := DistributorSnapshotDTO{
 		Rank:             "member",
-		PersonalVolume:   100.0,
+		PersonalVolume:   dec.MustParse("100.0"),
 		Status:           "active",
 		HasOrderInPeriod: true,
 	}
@@ -1563,7 +1563,7 @@ func TestEngineClient_CalculateUnilevel(t *testing.T) {
 			leafID: snap,
 		},
 		Volume: []VolumeSourceDTO{
-			{SourceID: leafID, CVAmount: 100.0},
+			{SourceID: leafID, CVAmount: dec.MustParse("100.0")},
 		},
 	}
 
@@ -1587,19 +1587,17 @@ func TestEngineClient_CalculateUnilevel(t *testing.T) {
 	assert.Equal(t, leafID, midEarning.SourceID)
 	assert.Equal(t, uint8(1), midEarning.Level)
 	require.NotNil(t, midEarning.Rate, "a rate-produced earning carries a rate")
-	assert.InDelta(t, 0.05, *midEarning.Rate, 1e-9)
-	assert.InDelta(t, 100.0, midEarning.CVAmount, 1e-9)
-	assert.True(t, math.Abs(midEarning.DollarAmount-2.0) < 1e-9,
-		"mid dollar_amount should be 2.0, got %f", midEarning.DollarAmount)
+	assert.Equal(t, "0.05", midEarning.Rate.String())
+	assert.Equal(t, "100", midEarning.CVAmount.String())
+	assert.Equal(t, "2", midEarning.DollarAmount.String())
 
 	require.NotNil(t, rootEarning, "root should have an earning")
 	assert.Equal(t, leafID, rootEarning.SourceID)
 	assert.Equal(t, uint8(2), rootEarning.Level)
 	require.NotNil(t, rootEarning.Rate, "a rate-produced earning carries a rate")
-	assert.InDelta(t, 0.05, *rootEarning.Rate, 1e-9)
-	assert.InDelta(t, 100.0, rootEarning.CVAmount, 1e-9)
-	assert.True(t, math.Abs(rootEarning.DollarAmount-2.0) < 1e-9,
-		"root dollar_amount should be 2.0, got %f", rootEarning.DollarAmount)
+	assert.Equal(t, "0.05", rootEarning.Rate.String())
+	assert.Equal(t, "100", rootEarning.CVAmount.String())
+	assert.Equal(t, "2", rootEarning.DollarAmount.String())
 }
 
 func TestEngineClient_CalculateUnilevel_EmptyVolume(t *testing.T) {
@@ -1618,7 +1616,7 @@ func TestEngineClient_CalculateUnilevel_EmptyVolume(t *testing.T) {
 	req := CalculateUnilevelRequest{
 		StructureName: "Test",
 		Snapshots: map[string]DistributorSnapshotDTO{
-			rootID: {Rank: "member", PersonalVolume: 100.0, Status: "active", HasOrderInPeriod: true},
+			rootID: {Rank: "member", PersonalVolume: dec.MustParse("100.0"), Status: "active", HasOrderInPeriod: true},
 		},
 		Volume: []VolumeSourceDTO{},
 	}
@@ -1669,7 +1667,7 @@ func TestEngineClient_CalculateStreamline(t *testing.T) {
 	//    Dollar amount: 100 * 1.0 (broad) * 1.0 (multiplier) * 0.10 (level 1) = 10.0
 	snap := DistributorSnapshotDTO{
 		Rank:             "member",
-		PersonalVolume:   100.0,
+		PersonalVolume:   dec.MustParse("100.0"),
 		Status:           "active",
 		HasOrderInPeriod: true,
 	}
@@ -1680,7 +1678,7 @@ func TestEngineClient_CalculateStreamline(t *testing.T) {
 			member2: snap,
 		},
 		Volume: []VolumeSourceDTO{
-			{SourceID: member2, CVAmount: 100.0},
+			{SourceID: member2, CVAmount: dec.MustParse("100.0")},
 		},
 	}
 
@@ -1695,9 +1693,9 @@ func TestEngineClient_CalculateStreamline(t *testing.T) {
 	assert.Equal(t, member2, earning.SourceID)
 	assert.Equal(t, uint8(1), earning.Level)
 	require.NotNil(t, earning.Rate, "a rate-produced earning carries a rate")
-	assert.InDelta(t, 0.10, *earning.Rate, 1e-9)
-	assert.InDelta(t, 100.0, earning.CVAmount, 1e-9)
-	assert.InDelta(t, 10.0, earning.DollarAmount, 1e-9)
+	assert.InDelta(t, 0.10, earning.Rate.InexactFloat64(), 1e-9)
+	assert.InDelta(t, 100.0, earning.CVAmount.InexactFloat64(), 1e-9)
+	assert.InDelta(t, 10.0, earning.DollarAmount.InexactFloat64(), 1e-9)
 }
 
 // --- Streamline commission calculation test (mock) ---
@@ -1716,13 +1714,13 @@ func TestEngineClient_CalculateStreamline_MockParams(t *testing.T) {
 		Snapshots: map[string]DistributorSnapshotDTO{
 			"00000000-0000-0000-0000-000000000001": {
 				Rank:             "member",
-				PersonalVolume:   100.0,
+				PersonalVolume:   dec.MustParse("100.0"),
 				Status:           "active",
 				HasOrderInPeriod: true,
 			},
 		},
 		Volume: []VolumeSourceDTO{
-			{SourceID: "00000000-0000-0000-0000-000000000002", CVAmount: 100.0},
+			{SourceID: "00000000-0000-0000-0000-000000000002", CVAmount: dec.MustParse("100.0")},
 		},
 	}
 
@@ -1764,7 +1762,7 @@ func TestCalculateStreamlineDecodesFrozenStreamSkips(t *testing.T) {
 	require.Len(t, got.FrozenStreamSkips, 1)
 	assert.Equal(t, 0, got.FrozenStreamSkips[0].VolumeIndex)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000011", got.FrozenStreamSkips[0].SourceID)
-	assert.Equal(t, 100.0, got.FrozenStreamSkips[0].CVAmount)
+	assert.Equal(t, "100", got.FrozenStreamSkips[0].CVAmount.String())
 	assert.Equal(t, uint32(2), got.FrozenStreamSkips[0].StreamID)
 }
 
@@ -1811,16 +1809,16 @@ func TestEngineClient_CalculateBinaryPairing_MockParams(t *testing.T) {
 		Snapshots: map[string]DistributorSnapshotDTO{
 			"00000000-0000-0000-0000-000000000001": {
 				Rank:             "associate",
-				PersonalVolume:   150.0,
+				PersonalVolume:   dec.MustParse("150.0"),
 				Status:           "active",
 				HasOrderInPeriod: true,
 			},
 		},
 		Volume: []VolumeSourceDTO{
-			{SourceID: "00000000-0000-0000-0000-000000000002", CVAmount: 500.0},
+			{SourceID: "00000000-0000-0000-0000-000000000002", CVAmount: dec.MustParse("500.0")},
 		},
 		CarryForward: map[string]LegVolumesDTO{
-			"00000000-0000-0000-0000-000000000001": {Left: 100.0, Right: 200.0},
+			"00000000-0000-0000-0000-000000000001": {Left: dec.MustParse("100.0"), Right: dec.MustParse("200.0")},
 		},
 	}
 
@@ -1831,18 +1829,18 @@ func TestEngineClient_CalculateBinaryPairing_MockParams(t *testing.T) {
 	assert.Equal(t, "calculate_binary_pairing", mock.lastOp)
 	require.Len(t, result.Earnings, 1)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.Earnings[0].EarnerID)
-	assert.InDelta(t, 500.0, result.Earnings[0].LeftVolume, 1e-9)
-	assert.InDelta(t, 500.0, result.Earnings[0].RightVolume, 1e-9)
-	assert.InDelta(t, 500.0, result.Earnings[0].MatchedVolume, 1e-9)
-	assert.InDelta(t, 1.0, result.Earnings[0].Ratio, 1e-9)
-	assert.InDelta(t, 0.10, result.Earnings[0].Percent, 1e-9)
-	assert.InDelta(t, 50.0, result.Earnings[0].DollarAmount, 1e-9)
+	assert.InDelta(t, 500.0, result.Earnings[0].LeftVolume.InexactFloat64(), 1e-9)
+	assert.InDelta(t, 500.0, result.Earnings[0].RightVolume.InexactFloat64(), 1e-9)
+	assert.InDelta(t, 500.0, result.Earnings[0].MatchedVolume.InexactFloat64(), 1e-9)
+	assert.InDelta(t, 1.0, result.Earnings[0].Ratio.InexactFloat64(), 1e-9)
+	assert.InDelta(t, 0.10, result.Earnings[0].Percent.InexactFloat64(), 1e-9)
+	assert.InDelta(t, 50.0, result.Earnings[0].DollarAmount.InexactFloat64(), 1e-9)
 	assert.False(t, result.Earnings[0].Capped)
 
 	require.Contains(t, result.CarryForward, "00000000-0000-0000-0000-000000000001")
 	cf := result.CarryForward["00000000-0000-0000-0000-000000000001"]
-	assert.InDelta(t, 0.0, cf.Left, 1e-9)
-	assert.InDelta(t, 0.0, cf.Right, 1e-9)
+	assert.InDelta(t, 0.0, cf.Left.InexactFloat64(), 1e-9)
+	assert.InDelta(t, 0.0, cf.Right.InexactFloat64(), 1e-9)
 
 	// Verify carry_forward was sent in params.
 	assert.Contains(t, string(mock.lastParams), "carry_forward")
@@ -1875,7 +1873,7 @@ func TestEngineClient_EvaluateRanks_MockParams(t *testing.T) {
 	req := EvaluateRanksRequest{
 		Distributors: map[string]DistributorPrimitivesDTO{
 			"00000000-0000-0000-0000-000000000001": {
-				PersonalVolume: 0.0,
+				PersonalVolume: dec.MustParse("0.0"),
 				Status:         "active",
 				ActiveProducts: []string{},
 			},
@@ -2028,15 +2026,15 @@ func TestEngineClient_EvaluateRanks(t *testing.T) {
 	req := EvaluateRanksRequest{
 		Distributors: map[string]DistributorPrimitivesDTO{
 			rootID: {
-				PersonalVolume:   100.0,
-				RetailVolume:     0.0,
+				PersonalVolume:   dec.MustParse("100.0"),
+				RetailVolume:     dec.MustParse("0.0"),
 				Status:           "active",
 				HasOrderInPeriod: true,
 				ActiveProducts:   []string{},
 			},
 			childID: {
-				PersonalVolume:   100.0,
-				RetailVolume:     0.0,
+				PersonalVolume:   dec.MustParse("100.0"),
+				RetailVolume:     dec.MustParse("0.0"),
 				Status:           "active",
 				HasOrderInPeriod: true,
 				ActiveProducts:   []string{},
@@ -2517,7 +2515,7 @@ func TestEngineClient_CalculateBoardCommissions_MockParams(t *testing.T) {
 	require.Len(t, result.Earnings, 1)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.Earnings[0].EarnerID)
 	assert.Equal(t, "board-001", result.Earnings[0].BoardID)
-	assert.InDelta(t, 25.50, result.Earnings[0].DollarAmount, 1e-9)
+	assert.InDelta(t, 25.50, result.Earnings[0].DollarAmount.InexactFloat64(), 1e-9)
 	assert.Equal(t, uint32(2), result.Earnings[0].CycleNumber)
 	assert.False(t, result.Earnings[0].Capped)
 
@@ -2943,7 +2941,7 @@ func TestEngineClient_EvaluateRanks_NilActiveProducts(t *testing.T) {
 	_, err := client.EvaluateRanks(context.Background(), EvaluateRanksRequest{
 		Distributors: map[string]DistributorPrimitivesDTO{
 			"00000000-0000-0000-0000-000000000001": {
-				PersonalVolume: 0.0,
+				PersonalVolume: dec.MustParse("0.0"),
 				Status:         "active",
 				ActiveProducts: nil,
 			},

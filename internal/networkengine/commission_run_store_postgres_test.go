@@ -2,10 +2,10 @@ package networkengine
 
 import (
 	"encoding/json"
-	"math"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/mlmforge/mlmforge/internal/dec"
 )
 
 // The copy source is the bypass path named by docs/development/config-types.md:
@@ -20,14 +20,11 @@ func TestCommissionResultCopySourceRejectsBadRows(t *testing.T) {
 	}{
 		// The one field with no CHECK behind it. Everything else here would
 		// also be caught by the database; a nil earner would not.
-		{"nil earner id", CommissionResultInput{EarnerID: uuid.Nil, DollarAmount: 1, Detail: json.RawMessage(`{"v":1}`)}},
-		{"NaN", CommissionResultInput{EarnerID: uuid.New(), DollarAmount: math.NaN(), Detail: json.RawMessage(`{"v":1}`)}},
-		{"positive infinity", CommissionResultInput{EarnerID: uuid.New(), DollarAmount: math.Inf(1), Detail: json.RawMessage(`{"v":1}`)}},
-		{"negative infinity", CommissionResultInput{EarnerID: uuid.New(), DollarAmount: math.Inf(-1), Detail: json.RawMessage(`{"v":1}`)}},
+		{"nil earner id", CommissionResultInput{EarnerID: uuid.Nil, DollarAmount: dec.MustParse("1"), Detail: json.RawMessage(`{"v":1}`)}},
 		// Must not become {}. detail is NOT NULL with a jsonb_typeof CHECK,
 		// and defaulting would persist a caller bug as if it were deliberate.
-		{"nil detail", CommissionResultInput{EarnerID: uuid.New(), DollarAmount: 1, Detail: nil}},
-		{"empty detail", CommissionResultInput{EarnerID: uuid.New(), DollarAmount: 1, Detail: json.RawMessage{}}},
+		{"nil detail", CommissionResultInput{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: nil}},
+		{"empty detail", CommissionResultInput{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: json.RawMessage{}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -46,22 +43,20 @@ func TestCommissionResultCopySourceRejectsBadRows(t *testing.T) {
 // exactly what Go had rather than whatever textual form the driver picks.
 func TestCommissionResultCopySourceFormatsAmounts(t *testing.T) {
 	cases := []struct {
-		amount float64
+		amount string
 		want   string
 	}{
-		{10.5, "10.5"},
-		{-12.34, "-12.34"},
-		{0, "0"},
-		{0.1, "0.1"},
-		// Would render as 1e-07 under %v, which NUMERIC also accepts but which
-		// hides the exact value from anyone reading the table.
-		{0.0000001, "0.0000001"},
-		{1234567890.123456, "1234567890.123456"},
+		{"10.5", "10.5"},
+		{"-12.34", "-12.34"},
+		{"0", "0"},
+		{"0.1", "0.1"},
+		{"1e-7", "0.0000001"},
+		{"1234567890.123456", "1234567890.123456"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.want, func(t *testing.T) {
 			src := newCommissionResultCopySource(uuid.New(), "primary", []CommissionResultInput{
-				{EarnerID: uuid.New(), DollarAmount: tc.amount, Detail: json.RawMessage(`{"v":1}`)},
+				{EarnerID: uuid.New(), DollarAmount: dec.MustParse(tc.amount), Detail: json.RawMessage(`{"v":1}`)},
 			})
 			if !src.Next() {
 				t.Fatal("Next should yield the one row")
@@ -81,7 +76,7 @@ func TestCommissionResultCopySourceFormatsAmounts(t *testing.T) {
 // CopyFrom drives it until it returns false.
 func TestCommissionResultCopySourceStopsAtTheEnd(t *testing.T) {
 	src := newCommissionResultCopySource(uuid.New(), "primary", []CommissionResultInput{
-		{EarnerID: uuid.New(), DollarAmount: 1, Detail: json.RawMessage(`{"v":1}`)},
+		{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: json.RawMessage(`{"v":1}`)},
 	})
 	if !src.Next() {
 		t.Fatal("first Next should yield the row")

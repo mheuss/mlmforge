@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/mlmforge/mlmforge/internal/dec"
 )
 
 func TestLiveRunExistsErrorCarriesTheWinner(t *testing.T) {
@@ -218,32 +218,25 @@ func TestValidateResultInputs(t *testing.T) {
 		wantErr   bool
 	}{
 		{"valid", "primary",
-			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: 1.5, Detail: json.RawMessage(`{"v":1}`)}, false},
+			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1.5"), Detail: json.RawMessage(`{"v":1}`)}, false},
 		{"empty structure", "",
-			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: 1.5, Detail: json.RawMessage(`{"v":1}`)}, true},
+			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1.5"), Detail: json.RawMessage(`{"v":1}`)}, true},
 		{"structure with a NUL byte", "pri\x00mary",
-			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: 1.5, Detail: json.RawMessage(`{"v":1}`)}, true},
+			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1.5"), Detail: json.RawMessage(`{"v":1}`)}, true},
 		{"structure that is not valid UTF-8", "prim\xffary",
-			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: 1.5, Detail: json.RawMessage(`{"v":1}`)}, true},
+			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1.5"), Detail: json.RawMessage(`{"v":1}`)}, true},
 		{"nil earner id", "primary",
-			CommissionResultInput{EarnerID: uuid.Nil, DollarAmount: 1, Detail: json.RawMessage(`{"v":1}`)}, true},
-		{"NaN amount", "primary",
-			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: math.NaN(), Detail: json.RawMessage(`{"v":1}`)}, true},
-		{"positive infinity", "primary",
-			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: math.Inf(1), Detail: json.RawMessage(`{"v":1}`)}, true},
-		// The migration's lower bound exists for this case specifically.
-		{"negative infinity", "primary",
-			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: math.Inf(-1), Detail: json.RawMessage(`{"v":1}`)}, true},
+			CommissionResultInput{EarnerID: uuid.Nil, DollarAmount: dec.MustParse("1"), Detail: json.RawMessage(`{"v":1}`)}, true},
 		{"array detail", "primary",
-			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: 1, Detail: json.RawMessage(`[1,2]`)}, true},
+			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: json.RawMessage(`[1,2]`)}, true},
 		// detail is JSONB NOT NULL, so unlike carry_forward there is no
 		// absent-value case to allow.
 		{"nil detail", "primary",
-			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: 1, Detail: nil}, true},
+			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: nil}, true},
 		{"empty detail", "primary",
-			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: 1, Detail: json.RawMessage(``)}, true},
+			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: json.RawMessage(``)}, true},
 		{"JSON null detail", "primary",
-			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: 1, Detail: json.RawMessage(`null`)}, true},
+			CommissionResultInput{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: json.RawMessage(`null`)}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -298,9 +291,9 @@ func TestValidateResultInputsAllowsAnEmptyBatch(t *testing.T) {
 // CHECK only excludes non-finite values. A tightening to >= 0 in either
 // layer has to fail a test.
 func TestValidateResultInputsAllowsNegativeAndZero(t *testing.T) {
-	for _, amount := range []float64{-12.34, 0, 12.34} {
+	for _, amount := range []string{"-12.34", "0", "12.34"} {
 		err := validateResultInputs("primary", []CommissionResultInput{
-			{EarnerID: uuid.New(), DollarAmount: amount, Detail: json.RawMessage(`{"v":1}`)},
+			{EarnerID: uuid.New(), DollarAmount: dec.MustParse(amount), Detail: json.RawMessage(`{"v":1}`)},
 		})
 		if err != nil {
 			t.Fatalf("dollar amount %v should be allowed, got: %v", amount, err)

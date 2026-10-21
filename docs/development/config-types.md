@@ -213,3 +213,11 @@ Two things follow:
 
 Still unguarded: `PlanHash` fed bytes that never came from `json.Marshal` at
 all, carrying a raw `&`. A jsonb round trip would produce that shape. (HEU-641)
+
+## A schema `not` built from numeric keywords also matches a mistyped value
+
+`minimum`, `maximum`, `exclusiveMinimum` and `exclusiveMaximum` apply only to numbers. A value of another type passes them.
+
+So a `not` that requires two fields, each with `exclusiveMinimum: 0`, also matches when one field is `"abc"` or `null` and the other is above 0. The plan then gets a second error that reports a rule it did not break, beside the real type error.
+
+Put `"type": "number"` beside each keyword inside the `not`. Then the `not` matches only when both values are numbers above 0. (HEU-960)

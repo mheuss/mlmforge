@@ -433,6 +433,14 @@ The trap is not specific to contract tests. Any name filter that matches nothing
 
 A filter selects on the *test function's* name, and a suite's tests are not all named after the thing they test. Read the `N passed` count against the number of tests you expect, or run unfiltered. `0 passed` is the loud case; the quiet one is a filter that catches most of a group and drops one.
 
+## For A Mutation Check, Read The Go Contract Runner
+
+The Rust contract runner is one test. It panics on the first fixture that does not match, so it names one failure and hides the rest.
+
+The Go `TestContractFixtures` runs each fixture as its own subtest. It names every fixture that fails. When you break a behaviour to see which fixtures pin it, read the Go runner.
+
+The Go runner talks to the built worker. Rebuild the worker after the mutation, and again after you restore the file. (HEU-960)
+
 ## A Determinism Test Only Bites On Streamline
 
 `walk_order::assign_indexes` sorts a response's walks into a total order, but
@@ -467,6 +475,12 @@ Float addition depends on order. `(0.1 + 0.2) + 0.3` and `0.1 + (0.2 + 0.3)` giv
 - `apply_aggregate_cap` adds each owner's earnings in `(earner_id, position_id)` order.
 
 The engine has to give the same `f64` bits from the same inputs. Go persists these values unrounded, so a different last bit is a different stored amount. (HEU-936)
+
+## `f64::min` Hides A NaN
+
+`f64::min` and `f64::max` return the other argument when one is NaN. So a clamp written as `leg.min(cap)` turns a NaN leg into exactly the cap. A rank that should fail can then pass.
+
+On a money path, write the clamp as a comparison: `if leg > cap { cap } else { leg }`. `NaN > cap` is false, so the NaN stays in the sum and the final `>=` fails. (HEU-960)
 
 ## sha2 0.11 Returns An Array With No `LowerHex`
 

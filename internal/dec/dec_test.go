@@ -1,6 +1,8 @@
 package dec
 
 import (
+	"bytes"
+	"encoding/gob"
 	"encoding/json"
 	"testing"
 
@@ -111,4 +113,29 @@ func TestParseRefusesNonFiniteText(t *testing.T) {
 		_, err := Parse(text)
 		assert.Error(t, err, text)
 	}
+}
+
+func TestGobRoundTripsThroughDecimalText(t *testing.T) {
+	type box struct{ A Amount }
+	var buf bytes.Buffer
+	require.NoError(t, gob.NewEncoder(&buf).Encode(box{A: MustParse("123456789012345678.123456789")}))
+	var out box
+	require.NoError(t, gob.NewDecoder(&buf).Decode(&out))
+	assert.Equal(t, "123456789012345678.123456789", out.A.String())
+}
+
+func TestBinaryDecodersReadOnlyDecimalText(t *testing.T) {
+	var a Amount
+	assert.Error(t, a.UnmarshalBinary([]byte("1e99")))
+	assert.Error(t, a.GobDecode([]byte("NaN")))
+	require.NoError(t, a.UnmarshalBinary([]byte("0.07")))
+	assert.Equal(t, "0.07", a.String())
+	require.NoError(t, a.GobDecode([]byte("2.50")))
+	assert.Equal(t, "2.5", a.String())
+}
+
+func TestUnusedDecodersRefuse(t *testing.T) {
+	var a Amount
+	assert.Error(t, a.DecodeSpanner("1.5"))
+	assert.Error(t, a.UnmarshalBSONValue(0x01, []byte{0, 0, 0, 0, 0, 0, 0xf8, 0x3f}))
 }

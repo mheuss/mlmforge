@@ -86,8 +86,7 @@ func (a *Amount) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// Scan reads database text through Parse, so a float or an unbounded exponent
-// cannot enter by that route.
+// Scan reads decimal text from a database and refuses any other type.
 func (a *Amount) Scan(value any) error {
 	var text string
 	switch v := value.(type) {
@@ -104,6 +103,36 @@ func (a *Amount) Scan(value any) error {
 	}
 	*a = parsed
 	return nil
+}
+
+// MarshalBinary writes the canonical decimal text.
+func (a Amount) MarshalBinary() ([]byte, error) {
+	return []byte(a.String()), nil
+}
+
+// UnmarshalBinary reads decimal text.
+func (a *Amount) UnmarshalBinary(data []byte) error {
+	return a.UnmarshalText(data)
+}
+
+// GobEncode writes the canonical decimal text.
+func (a Amount) GobEncode() ([]byte, error) {
+	return a.MarshalBinary()
+}
+
+// GobDecode reads decimal text.
+func (a *Amount) GobDecode(data []byte) error {
+	return a.UnmarshalText(data)
+}
+
+// DecodeSpanner refuses every value. Amount is not read from Spanner.
+func (a *Amount) DecodeSpanner(value any) error {
+	return fmt.Errorf("decimal: Amount does not decode from Spanner, got %T", value)
+}
+
+// UnmarshalBSONValue refuses every value. Amount is not read from BSON.
+func (a *Amount) UnmarshalBSONValue(typ byte, _ []byte) error {
+	return fmt.Errorf("decimal: Amount does not decode from BSON, got type 0x%02x", typ)
 }
 
 // Scale returns the number of decimal places the value was written with.

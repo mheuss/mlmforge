@@ -8,10 +8,15 @@ use network_engine::config::rank::{
 use network_engine::config::{CompensationPlan, StructureConfig, UnilevelStructureConfig};
 use network_engine::rank::{
     DistributorPrimitives, EvaluatedRank, EvaluationError, EvaluationInputs, evaluate_ranks,
+    structures_above_lowest_rank,
 };
+use network_engine::tree::error::TreeError;
 use network_engine::tree::navigator::TreeNavigator;
+use network_engine::tree::node::Node;
 use network_engine::tree::unilevel::UnilevelTree;
-use std::collections::HashMap;
+use network_engine::types::TreePosition;
+use std::collections::{BTreeSet, HashMap};
+use uuid::Uuid;
 
 fn primitives(pv: f64) -> DistributorPrimitives {
     DistributorPrimitives {
@@ -91,6 +96,33 @@ fn linear_plan() -> CompensationPlan {
     plan
 }
 
+/// `linear_plan`, with silver also requiring one leg holding a node at PV 100
+/// or more.
+fn leg_volume_plan() -> CompensationPlan {
+    let mut plan = linear_plan();
+    plan.ranks[1].qualification.structures[0].leg_quality = vec![LegQualityRequirement {
+        count: 1,
+        predicate: LegPredicate::ContainsPersonalVolume {
+            min_personal_volume: 100.0,
+        },
+    }];
+    plan
+}
+
+/// Root 1 with one child, node 2.
+fn root_and_child() -> UnilevelTree {
+    let mut tree = UnilevelTree::new();
+    tree.add_root(uuid_from_index(1), 0).unwrap();
+    tree.add_node(
+        uuid_from_index(2),
+        uuid_from_index(1),
+        uuid_from_index(1),
+        0,
+    )
+    .unwrap();
+    tree
+}
+
 #[test]
 fn evaluate_ranks_returns_per_distributor_rank() {
     let mut tree = UnilevelTree::new();
@@ -168,25 +200,76 @@ fn evaluate_ranks_gives_the_base_rank_without_evaluating_its_qualification() {
     );
 }
 
+/// Root 1 at PV 250 reaches silver when its one leg, node 2, is at PV 150.
 #[test]
-fn evaluate_ranks_omitting_primitives_omits_distributor() {
-    // Reproduces design risk #3 mitigation.
-    let mut tree = UnilevelTree::new();
-    tree.add_root(uuid_from_index(1), 0).unwrap();
-    tree.add_node(
-        uuid_from_index(2),
-        uuid_from_index(1),
-        uuid_from_index(1),
-        0,
-    )
-    .unwrap();
-
-    let plan = linear_plan();
+fn a_leg_with_enough_volume_lifts_its_upline_to_silver() {
+    let tree = root_and_child();
+    let plan = leg_volume_plan();
 
     let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
     nav.insert("Test".to_string(), &tree);
 
-    // Only distributor 1 has primitives.
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(250.0));
+    distributors.insert(uuid_from_index(2), primitives(150.0));
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+    assert_eq!(
+        result.ranks.get(&uuid_from_index(1)),
+        Some(&EvaluatedRank::Qualified {
+            rank: "silver".to_string(),
+            ordinal: 2
+        })
+    );
+}
+
+/// Root 1 at PV 250 stays at associate when its one leg, node 2, is at PV 50.
+#[test]
+fn a_leg_below_the_volume_leaves_its_upline_at_associate() {
+    let tree = root_and_child();
+    let plan = leg_volume_plan();
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &tree);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(250.0));
+    distributors.insert(uuid_from_index(2), primitives(50.0));
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+    assert_eq!(
+        result.ranks.get(&uuid_from_index(1)),
+        Some(&EvaluatedRank::Qualified {
+            rank: "associate".to_string(),
+            ordinal: 1
+        })
+    );
+}
+
+/// Root 1 at PV 250, with its one leg, node 2, left out of the inputs. The
+/// request is refused and names node 2.
+#[test]
+fn evaluate_ranks_refuses_an_omitted_leg() {
+    let tree = root_and_child();
+    let plan = leg_volume_plan();
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &tree);
+
     let mut distributors = HashMap::new();
     distributors.insert(uuid_from_index(1), primitives(250.0));
 
@@ -197,9 +280,247 @@ fn evaluate_ranks_omitting_primitives_omits_distributor() {
         history: HashMap::new(),
     };
 
+    assert_eq!(
+        evaluate_ranks(&plan, &nav, &inputs).unwrap_err(),
+        EvaluationError::DistributorNotInInputs(uuid_from_index(2))
+    );
+}
+
+/// A unilevel tree whose `user_ids` lists members in descending ID order.
+struct DescendingIds(UnilevelTree);
+
+impl TreeNavigator for DescendingIds {
+    fn contains(&self, user_id: Uuid) -> bool {
+        self.0.contains(user_id)
+    }
+    fn get_parent(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
+        self.0.get_parent(user_id)
+    }
+    fn get_children(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
+        self.0.get_children(user_id)
+    }
+    fn get_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+        self.0.get_upline(user_id, depth)
+    }
+    fn get_downline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+        self.0.get_downline(user_id, depth)
+    }
+    fn get_position(&self, user_id: Uuid) -> Result<TreePosition, TreeError> {
+        self.0.get_position(user_id)
+    }
+    fn get_branch(&self, user_id: Uuid, position: usize) -> Result<Vec<&Node>, TreeError> {
+        self.0.get_branch(user_id, position)
+    }
+    fn count_downline(&self, user_id: Uuid, depth: u32) -> Result<usize, TreeError> {
+        self.0.count_downline(user_id, depth)
+    }
+    fn count_branch(&self, user_id: Uuid, position: usize) -> Result<usize, TreeError> {
+        self.0.count_branch(user_id, position)
+    }
+    fn is_descendant_of(&self, user_id: Uuid, ancestor_id: Uuid) -> Result<bool, TreeError> {
+        self.0.is_descendant_of(user_id, ancestor_id)
+    }
+    fn get_sponsor(&self, user_id: Uuid) -> Result<Option<&Node>, TreeError> {
+        self.0.get_sponsor(user_id)
+    }
+    fn get_sponsor_upline(&self, user_id: Uuid, depth: u32) -> Result<Vec<&Node>, TreeError> {
+        self.0.get_sponsor_upline(user_id, depth)
+    }
+    fn get_sponsored(&self, user_id: Uuid) -> Result<Vec<&Node>, TreeError> {
+        self.0.get_sponsored(user_id)
+    }
+    fn user_ids(&self) -> Vec<Uuid> {
+        let mut ids = self.0.user_ids();
+        ids.sort();
+        ids.reverse();
+        ids
+    }
+}
+
+/// Nodes 3 and 2 are both left out, and the tree lists node 3 first. The
+/// refusal names node 2, the lower ID.
+#[test]
+fn evaluate_ranks_names_the_lowest_missing_distributor() {
+    let mut tree = UnilevelTree::new();
+    tree.add_root(uuid_from_index(1), 0).unwrap();
+    tree.add_node(
+        uuid_from_index(3),
+        uuid_from_index(1),
+        uuid_from_index(1),
+        0,
+    )
+    .unwrap();
+    tree.add_node(
+        uuid_from_index(2),
+        uuid_from_index(1),
+        uuid_from_index(1),
+        0,
+    )
+    .unwrap();
+    let tree = DescendingIds(tree);
+    assert_eq!(
+        tree.user_ids()[0],
+        uuid_from_index(3),
+        "node 3 must be listed first"
+    );
+
+    let plan = linear_plan();
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &tree);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(250.0));
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    assert_eq!(
+        evaluate_ranks(&plan, &nav, &inputs).unwrap_err(),
+        EvaluationError::DistributorNotInInputs(uuid_from_index(2))
+    );
+}
+
+/// Silver names "Alpha" and "Beta". "Alpha" leaves out node 3 and "Beta"
+/// leaves out node 2. The refusal names node 2, the lowest across both trees.
+#[test]
+fn evaluate_ranks_names_the_lowest_missing_distributor_across_trees() {
+    let mut alpha = UnilevelTree::new();
+    alpha.add_root(uuid_from_index(1), 0).unwrap();
+    alpha
+        .add_node(
+            uuid_from_index(3),
+            uuid_from_index(1),
+            uuid_from_index(1),
+            0,
+        )
+        .unwrap();
+    let mut beta = UnilevelTree::new();
+    beta.add_root(uuid_from_index(1), 0).unwrap();
+    beta.add_node(
+        uuid_from_index(2),
+        uuid_from_index(1),
+        uuid_from_index(1),
+        0,
+    )
+    .unwrap();
+
+    let mut plan = linear_plan();
+    let mut alpha_qual = plan.ranks[1].qualification.structures[0].clone();
+    alpha_qual.structure = "Alpha".to_string();
+    let mut beta_qual = alpha_qual.clone();
+    beta_qual.structure = "Beta".to_string();
+    plan.ranks[1].qualification.structures = vec![alpha_qual, beta_qual];
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Alpha".to_string(), &alpha);
+    nav.insert("Beta".to_string(), &beta);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(250.0));
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    assert_eq!(
+        evaluate_ranks(&plan, &nav, &inputs).unwrap_err(),
+        EvaluationError::DistributorNotInInputs(uuid_from_index(2))
+    );
+}
+
+/// Node 7 is in "Base", which only the lowest rank names, and has no inputs.
+/// The request succeeds.
+#[test]
+fn evaluate_ranks_does_not_require_members_of_a_tree_only_the_lowest_rank_names() {
+    let mut test_tree = UnilevelTree::new();
+    test_tree.add_root(uuid_from_index(1), 0).unwrap();
+    let mut base_tree = UnilevelTree::new();
+    base_tree.add_root(uuid_from_index(7), 0).unwrap();
+
+    let mut plan = linear_plan();
+    plan.ranks[0].qualification.structures[0].structure = "Base".to_string();
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &test_tree);
+    nav.insert("Base".to_string(), &base_tree);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(250.0));
+    assert!(
+        base_tree.contains(uuid_from_index(7)),
+        "node 7 must be in Base"
+    );
+    assert!(
+        !distributors.contains_key(&uuid_from_index(7)),
+        "node 7 must have no inputs"
+    );
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
     let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
-    // Distributor 2 must NOT appear in the result — they have no primitives.
-    assert!(!result.ranks.contains_key(&uuid_from_index(2)));
+    assert_eq!(
+        result.ranks.get(&uuid_from_index(1)),
+        Some(&EvaluatedRank::Qualified {
+            rank: "silver".to_string(),
+            ordinal: 2
+        })
+    );
+}
+
+/// Node 8 is in "Extra", which no rank names, and has no inputs. The request
+/// succeeds.
+#[test]
+fn evaluate_ranks_does_not_require_members_of_a_tree_no_rank_names() {
+    let mut test_tree = UnilevelTree::new();
+    test_tree.add_root(uuid_from_index(1), 0).unwrap();
+    let mut extra_tree = UnilevelTree::new();
+    extra_tree.add_root(uuid_from_index(8), 0).unwrap();
+
+    let plan = linear_plan();
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &test_tree);
+    nav.insert("Extra".to_string(), &extra_tree);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(250.0));
+    assert!(
+        extra_tree.contains(uuid_from_index(8)),
+        "node 8 must be in Extra"
+    );
+    assert!(
+        !distributors.contains_key(&uuid_from_index(8)),
+        "node 8 must have no inputs"
+    );
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+    assert_eq!(
+        result.ranks.get(&uuid_from_index(1)),
+        Some(&EvaluatedRank::Qualified {
+            rank: "silver".to_string(),
+            ordinal: 2
+        })
+    );
 }
 
 #[test]
@@ -317,7 +638,7 @@ fn evaluate_ranks_errors_on_unknown_min_rank() {
 /// — one `ContainsRank` and one `ContainsPersonalVolume` — is enforced through
 /// the public `evaluate_ranks` entry point.
 ///
-/// Tree layout (root 1 has no primitives and is not evaluated):
+/// Tree layout (root 1 is at PV 0 and its rank is not asserted):
 /// ```text
 /// root(1)
 /// ├── subject_a(2)  PV=50
@@ -416,9 +737,8 @@ fn evaluate_ranks_with_populated_leg_quality_gates_rank() {
         },
     ];
 
-    // Tree: root(1) is the structural parent. It has no primitives so it is
-    // not evaluated. subject_a(2) and subject_b(3) are root's children; each
-    // has two children of their own.
+    // Tree: root(1) is the structural parent. subject_a(2) and subject_b(3)
+    // are root's children; each has two children of their own.
     let mut tree = UnilevelTree::new();
     tree.add_root(uuid_from_index(1), 0).unwrap();
     // subject_a and its two legs
@@ -471,8 +791,9 @@ fn evaluate_ranks_with_populated_leg_quality_gates_rank() {
 
     // subject_a(2): PV=50. Its children: node 4 (PV=100), node 5 (PV=50).
     // subject_b(3): PV=50. Its children: node 6 (PV=50), node 7 (PV=50).
-    // Root(1) has no primitives — not evaluated.
+    // Root(1): PV=0.
     let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(0.0));
     distributors.insert(uuid_from_index(2), primitives(50.0));
     distributors.insert(uuid_from_index(3), primitives(50.0));
     distributors.insert(uuid_from_index(4), primitives(100.0));
@@ -1043,6 +1364,34 @@ fn evaluate_ranks_errors_when_windowed_rank_has_empty_history_window() {
     );
 }
 
+/// A windowed rank with an empty history_window, and node 2 left out of the
+/// inputs. The time-gate error is returned, not the missing input.
+#[test]
+fn evaluate_ranks_reports_a_missing_history_window_before_a_missing_input() {
+    let tree = root_and_child();
+    let plan = windowed_plan();
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &tree);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(0.0));
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    assert_eq!(
+        evaluate_ranks(&plan, &nav, &inputs).unwrap_err(),
+        EvaluationError::TimeGateWithoutHistory {
+            rank: "QD".to_string(),
+        }
+    );
+}
+
 #[test]
 fn evaluate_ranks_applies_windowed_rank_when_history_window_supplied() {
     // BR9 negative case: with a non-empty axis the empty-axis guard does not
@@ -1317,5 +1666,42 @@ fn evaluate_ranks_ignores_a_time_gate_on_the_base_rank() {
             rank: "associate".to_string(),
             ordinal: 1
         })
+    );
+}
+
+#[test]
+fn structures_above_lowest_rank_leaves_out_the_lowest_ranks_structures() {
+    let mut plan = linear_plan();
+    plan.ranks[0].qualification.structures[0].structure = "Base".to_string();
+
+    assert_eq!(
+        structures_above_lowest_rank(&plan),
+        BTreeSet::from(["Test"])
+    );
+}
+
+#[test]
+fn structures_above_lowest_rank_finds_the_lowest_rank_by_ordinal() {
+    let mut plan = linear_plan();
+    plan.ranks[0].qualification.structures[0].structure = "Base".to_string();
+    plan.ranks.reverse();
+
+    assert_eq!(
+        structures_above_lowest_rank(&plan),
+        BTreeSet::from(["Test"])
+    );
+}
+
+/// Both ranks share the lowest ordinal. The first in the plan is the lowest,
+/// so only the second rank's structure is returned.
+#[test]
+fn structures_above_lowest_rank_takes_the_first_of_tied_lowest_ordinals_as_the_lowest() {
+    let mut plan = linear_plan();
+    plan.ranks[0].qualification.structures[0].structure = "Base".to_string();
+    plan.ranks[1].ordinal = 1;
+
+    assert_eq!(
+        structures_above_lowest_rank(&plan),
+        BTreeSet::from(["Test"])
     );
 }

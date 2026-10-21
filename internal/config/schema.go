@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/santhosh-tekuri/jsonschema/v6/kind"
 	"gopkg.in/yaml.v3"
 )
 
@@ -63,7 +64,7 @@ func collectLeafErrors(ve *jsonschema.ValidationError, out *[]ValidationError) {
 		*out = append(*out, ValidationError{
 			Path:     path,
 			Code:     "schema_violation",
-			Message:  ve.Error(),
+			Message:  leafMessage(ve),
 			Severity: SeverityError,
 		})
 		return
@@ -71,6 +72,15 @@ func collectLeafErrors(ve *jsonschema.ValidationError, out *[]ValidationError) {
 	for _, cause := range ve.Causes {
 		collectLeafErrors(cause, out)
 	}
+}
+
+// leafMessage returns the message to report for a leaf schema violation.
+func leafMessage(ve *jsonschema.ValidationError) string {
+	// The library reports only "'not' failed", which names neither field.
+	if _, isNot := ve.ErrorKind.(*kind.Not); isNot && strings.HasSuffix(ve.SchemaURL, "#/$defs/StructureQualification") {
+		return "max_group_volume_per_leg and max_group_volume_per_leg_fraction must not both be above 0"
+	}
+	return ve.Error()
 }
 
 // buildInstancePath joins instance location tokens into a JSON Pointer path.

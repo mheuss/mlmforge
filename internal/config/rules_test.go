@@ -115,22 +115,34 @@ func TestRankQualificationStructureMustExist(t *testing.T) {
 	assert.Contains(t, errs[0].Path, "qualification/structures")
 }
 
-func TestMaxGroupVolumePerLegMustNotExceedGroupVolume(t *testing.T) {
-	plan := minimalPlan()
-	// Set max_group_volume_per_leg higher than group_volume.
-	plan.Ranks[1].Qualification.Structures = []StructureQualification{
-		{
-			Structure:            "Primary",
-			PersonalVolume:       100,
-			GroupVolume:          5000,
-			MaxGroupVolumePerLeg: 8000,
-		},
-	}
+func TestPerLegCapAtOrAboveGroupVolumeWarns(t *testing.T) {
+	for _, perLegCap := range []float64{5000, 8000, 5000.5} {
+		t.Run(fmt.Sprintf("cap %v", perLegCap), func(t *testing.T) {
+			plan := minimalPlan()
+			plan.Ranks[1].Qualification.Structures = []StructureQualification{
+				{
+					Structure:            "Primary",
+					PersonalVolume:       100,
+					GroupVolume:          5000,
+					MaxGroupVolumePerLeg: perLegCap,
+				},
+			}
 
-	errs := validateBusinessRules(plan)
-	require.Len(t, errs, 1)
-	assert.Equal(t, "cross_field_dependency", errs[0].Code)
-	assert.Equal(t, SeverityError, errs[0].Severity)
+			errs := validateBusinessRules(plan)
+			require.Len(t, errs, 1, "errors: %v", errs)
+			assert.Equal(t, "cross_field_dependency", errs[0].Code)
+			assert.Equal(t, SeverityWarning, errs[0].Severity)
+			assert.Equal(t, "/ranks/1/qualification/structures/0/max_group_volume_per_leg", errs[0].Path)
+			assert.Equal(t, fmt.Sprintf(`rank "Silver" structure "Primary" max_group_volume_per_leg (%v) is at or above group_volume (5000)`, perLegCap), errs[0].Message)
+		})
+	}
+}
+
+func TestPerLegCapBelowGroupVolumePasses(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Qualification.Structures[0].MaxGroupVolumePerLeg = 2999
+
+	assert.Empty(t, validateBusinessRules(plan))
 }
 
 func TestPayOnceOnlyRequiresTrackAchievedRank(t *testing.T) {
@@ -2204,4 +2216,65 @@ func TestZeroPerLegCapPasses(t *testing.T) {
 	plan.Ranks[1].Qualification.Structures[0].MaxGroupVolumePerLeg = 0
 
 	assert.Empty(t, validateBusinessRules(plan))
+}
+
+func TestOutOfRangePerLegCapFractionRejected(t *testing.T) {
+	tests := []struct {
+		name  string
+		value float64
+		shown string
+	}{
+		{"negative", -0.1, "-0.1"},
+		{"above one", 1.1, "1.1"},
+		{"NaN", math.NaN(), "NaN"},
+		{"+Inf", math.Inf(1), "+Inf"},
+		{"-Inf", math.Inf(-1), "-Inf"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := minimalPlan()
+			plan.Ranks[1].Qualification.Structures[0].MaxGroupVolumePerLegFraction = tt.value
+
+			errs := validateBusinessRules(plan)
+
+			require.Len(t, errs, 1, "errors: %v", errs)
+			assert.Equal(t, "value_out_of_range", errs[0].Code)
+			assert.Equal(t, "/ranks/1/qualification/structures/0/max_group_volume_per_leg_fraction", errs[0].Path)
+			assert.Contains(t, errs[0].Message, `rank "Silver" structure "Primary" max_group_volume_per_leg_fraction must be a fraction in [0, 1], got `+tt.shown)
+			assert.Equal(t, SeverityError, errs[0].Severity)
+		})
+	}
+}
+
+func TestPerLegCapFractionFromZeroToOnePasses(t *testing.T) {
+	for _, value := range []float64{0, 0.6, 1} {
+		t.Run(fmt.Sprintf("fraction %v", value), func(t *testing.T) {
+			plan := minimalPlan()
+			plan.Ranks[1].Qualification.Structures[0].MaxGroupVolumePerLegFraction = value
+
+			assert.Empty(t, validateBusinessRules(plan))
+		})
+	}
+}
+
+func TestPerLegCapFractionOnTheBaseRankPasses(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[0].Qualification.Structures[0].MaxGroupVolumePerLegFraction = 0.5
+
+	assert.Empty(t, validateBusinessRules(plan))
+}
+
+func TestBothPerLegCapsRejected(t *testing.T) {
+	plan := minimalPlan()
+	sq := &plan.Ranks[1].Qualification.Structures[0]
+	sq.MaxGroupVolumePerLeg = 1000
+	sq.MaxGroupVolumePerLegFraction = 0.5
+
+	errs := validateBusinessRules(plan)
+
+	require.Len(t, errs, 1, "errors: %v", errs)
+	assert.Equal(t, "cross_field_dependency", errs[0].Code)
+	assert.Equal(t, "/ranks/1/qualification/structures/0/max_group_volume_per_leg_fraction", errs[0].Path)
+	assert.Contains(t, errs[0].Message, `rank "Silver" structure "Primary" sets both max_group_volume_per_leg and max_group_volume_per_leg_fraction`)
+	assert.Equal(t, SeverityError, errs[0].Severity)
 }

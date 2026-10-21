@@ -67,7 +67,7 @@ When you add a field to a Go config struct that gets serialized:
 2. Add a fixture exercising it to `internal/config/testdata/valid/`
 3. Register the fixture in the hardcoded lists. `TestSchemaValidatesAllValidFixtures` (`schema_test.go`) and `TestPipelineAllValidFixtures` (`pipeline_test.go`) both iterate explicit slices. Fixtures are not auto-discovered.
 
-The schema is what tells plan authors when they typo a field name. Missing the schema declaration means typos produce empty/default values silently. The Go and Rust layers won't catch them either — neither uses `additionalProperties: false` today.
+The schema is what tells plan authors when they typo a field name. Missing the schema declaration means typos produce empty/default values silently. The Go and Rust layers do not catch them either. The exceptions are `StructureQualification` (HEU-960) and `MinOverride`. The schema closes both with `additionalProperties: false`, and Rust reads both with `deny_unknown_fields`.
 
 ### Invalid fixtures: mutate a valid one
 
@@ -213,3 +213,11 @@ Two things follow:
 
 Still unguarded: `PlanHash` fed bytes that never came from `json.Marshal` at
 all, carrying a raw `&`. A jsonb round trip would produce that shape. (HEU-641)
+
+## A schema `not` built from numeric keywords also matches a mistyped value
+
+`minimum`, `maximum`, `exclusiveMinimum` and `exclusiveMaximum` apply only to numbers. A value of another type passes them.
+
+So a `not` that requires two fields, each with `exclusiveMinimum: 0`, also matches when one field is `"abc"` or `null` and the other is above 0. The plan then gets a second error that reports a rule it did not break, beside the real type error.
+
+Put `"type": "number"` beside each keyword inside the `not`. Then the `not` matches only when both values are numbers above 0. (HEU-960)

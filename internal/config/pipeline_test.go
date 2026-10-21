@@ -33,6 +33,7 @@ func TestPipelineAllValidFixtures(t *testing.T) {
 		{"valid/leg-quality-plan.yaml", "Leg Quality Plan", []string{"unilevel"}},
 		{"valid/windowed-rank-plan.yaml", "Windowed Rank Plan", []string{"unilevel"}},
 		{"valid/tenure-rank-plan.yaml", "Tenure Rank Plan", []string{"unilevel"}},
+		{"valid/leg-cap-fraction-plan.yaml", "Leg Cap Fraction Plan", []string{"unilevel"}},
 	}
 
 	for _, tt := range tests {
@@ -415,4 +416,132 @@ func TestPipelineRefusesANegativePerLegCapAtTheSchema(t *testing.T) {
 	require.Len(t, errs, 1, "errors: %v", errs)
 	assert.Equal(t, "schema_violation", errs[0].Code)
 	assert.Equal(t, "/ranks/3/qualification/structures/0/max_group_volume_per_leg", errs[0].Path)
+}
+
+func TestPipelineRefusesAnUnknownStructureQualificationKey(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	doc := replaceInYAML(t, base, "max_group_volume_per_leg: 5000", "max_group_volume_per_leg: 5000\n          bogus_key: 1")
+
+	_, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	require.Len(t, errs, 1, "errors: %v", errs)
+	assert.Equal(t, "schema_violation", errs[0].Code)
+	assert.Equal(t, "/ranks/3/qualification/structures/0", errs[0].Path)
+	assert.Contains(t, errs[0].Message, "bogus_key")
+}
+
+func TestPipelineRefusesBothPerLegCapsAtTheSchema(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	doc := replaceInYAML(t, base, "max_group_volume_per_leg: 5000", "max_group_volume_per_leg: 5000\n          max_group_volume_per_leg_fraction: 0.5")
+
+	_, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	require.Len(t, errs, 1, "errors: %v", errs)
+	assert.Equal(t, "schema_violation", errs[0].Code)
+	assert.Equal(t, "/ranks/3/qualification/structures/0", errs[0].Path)
+	assert.Equal(t, "max_group_volume_per_leg and max_group_volume_per_leg_fraction must not both be above 0", errs[0].Message)
+}
+
+func TestPipelineRefusesAPerLegCapFractionAboveOneAtTheSchema(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	doc := replaceInYAML(t, base, "max_group_volume_per_leg: 5000", "max_group_volume_per_leg_fraction: 1.5")
+
+	_, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	require.Len(t, errs, 1, "errors: %v", errs)
+	assert.Equal(t, "schema_violation", errs[0].Code)
+	assert.Equal(t, "/ranks/3/qualification/structures/0/max_group_volume_per_leg_fraction", errs[0].Path)
+}
+
+func TestPipelineCarriesAPerLegCapFractionToTheEngine(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	doc := replaceInYAML(t, base, "max_group_volume_per_leg: 5000", "max_group_volume_per_leg_fraction: 0.5")
+
+	jsonBytes, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	require.Empty(t, errs)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(jsonBytes, &out))
+	sq := out["ranks"].([]any)[3].(map[string]any)["qualification"].(map[string]any)["structures"].([]any)[0].(map[string]any)
+	assert.Equal(t, 0.5, sq["max_group_volume_per_leg_fraction"])
+	assert.Equal(t, 0.0, sq["max_group_volume_per_leg"])
+}
+
+func TestPipelineAcceptsBothPerLegCapsAtZero(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	doc := replaceInYAML(t, base, "max_group_volume_per_leg: 5000", "max_group_volume_per_leg: 0\n          max_group_volume_per_leg_fraction: 0")
+
+	jsonBytes, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	require.Empty(t, errs)
+	require.NotNil(t, jsonBytes)
+}
+
+func TestPipelineReportsOnlyATypeErrorForAMistypedCapBesideAFraction(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	doc := replaceInYAML(t, base, "max_group_volume_per_leg: 5000", "max_group_volume_per_leg: abc\n          max_group_volume_per_leg_fraction: 0.5")
+
+	_, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	require.Len(t, errs, 1, "errors: %v", errs)
+	assert.Equal(t, "schema_violation", errs[0].Code)
+	assert.Equal(t, "/ranks/3/qualification/structures/0/max_group_volume_per_leg", errs[0].Path)
+}
+
+func TestPipelineReportsOnlyATypeErrorForAMistypedFractionBesideACap(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	doc := replaceInYAML(t, base, "max_group_volume_per_leg: 5000", "max_group_volume_per_leg: 5000\n          max_group_volume_per_leg_fraction: half")
+
+	_, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	require.Len(t, errs, 1, "errors: %v", errs)
+	assert.Equal(t, "schema_violation", errs[0].Code)
+	assert.Equal(t, "/ranks/3/qualification/structures/0/max_group_volume_per_leg_fraction", errs[0].Path)
+}
+
+func TestPipelineAcceptsAZeroCapBesideAPositiveFraction(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	doc := replaceInYAML(t, base, "max_group_volume_per_leg: 5000", "max_group_volume_per_leg: 0\n          max_group_volume_per_leg_fraction: 0.5")
+
+	jsonBytes, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	require.Empty(t, errs)
+	require.NotNil(t, jsonBytes)
+}
+
+func TestPipelineAcceptsAZeroFractionBesideAPositiveCap(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	doc := replaceInYAML(t, base, "max_group_volume_per_leg: 5000", "max_group_volume_per_leg: 5000\n          max_group_volume_per_leg_fraction: 0")
+
+	jsonBytes, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	require.Empty(t, errs)
+	require.NotNil(t, jsonBytes)
 }

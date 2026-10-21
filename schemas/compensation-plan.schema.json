@@ -217,6 +217,14 @@
       "type": "object",
       "description": "Qualification requirements for a specific compensation structure.",
       "required": ["structure"],
+      "additionalProperties": false,
+      "not": {
+        "required": ["max_group_volume_per_leg", "max_group_volume_per_leg_fraction"],
+        "properties": {
+          "max_group_volume_per_leg": { "type": "number", "exclusiveMinimum": 0 },
+          "max_group_volume_per_leg_fraction": { "type": "number", "exclusiveMinimum": 0 }
+        }
+      },
       "properties": {
         "structure": {
           "type": "string",
@@ -235,7 +243,13 @@
         "max_group_volume_per_leg": {
           "type": "number",
           "minimum": 0,
-          "description": "Prevents a single strong leg from carrying the entire requirement. 0, or an absent field, means no cap."
+          "description": "Prevents a single strong leg from carrying the entire requirement. Counts at most this much from any one leg toward group volume. 0, or an absent field, means no cap."
+        },
+        "max_group_volume_per_leg_fraction": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "The per-leg cap as a fraction of group_volume, in [0, 1]. 0, or an absent field, means no cap. Not set together with max_group_volume_per_leg."
         },
         "min_retail_volume": {
           "type": "number",

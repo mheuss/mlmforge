@@ -29,6 +29,7 @@ func TestSchemaValidatesAllValidFixtures(t *testing.T) {
 		"valid/leg-quality-plan.yaml",
 		"valid/windowed-rank-plan.yaml",
 		"valid/tenure-rank-plan.yaml",
+		"valid/leg-cap-fraction-plan.yaml",
 	}
 	for _, f := range fixtures {
 		t.Run(f, func(t *testing.T) {

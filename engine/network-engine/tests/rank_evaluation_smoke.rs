@@ -54,6 +54,7 @@ fn build_seven_rank_plan() -> CompensationPlan {
                     personal_volume: (i as f64) * 50.0,
                     group_volume: 0.0,
                     max_group_volume_per_leg: f64::MAX,
+                    max_group_volume_per_leg_fraction: 0.0,
                     min_retail_volume: 0.0,
                     distributor_count: None,
                     leg_quality: vec![],

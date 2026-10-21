@@ -30,7 +30,7 @@ A single JSON Schema file (`schemas/compensation-plan.schema.json`) validates co
 
 **Descriptions on every property.** Each field has a 1-3 sentence description so plan authors get inline help without opening documentation.
 
-**`additionalProperties: false` off by default.** Extra fields are silently accepted almost everywhere. This favors forward compatibility over typo detection. A few definitions opt in and are closed: `BoardCyclingConfig`, `BoardPlanStructureParams`, `BoardPlanCommission`, and `MinOverride`. They are the "selectively later" case this decision left room for.
+**`additionalProperties: false` off by default.** Extra fields are silently accepted almost everywhere. This favors forward compatibility over typo detection. A few definitions opt in and are closed: `BoardCyclingConfig`, `BoardPlanStructureParams`, `BoardPlanCommission`, `MinOverride`, and `StructureQualification`. They are the "selectively later" case this decision left room for.
 
 **Nullable fields use `oneOf`.** Fields that accept null in YAML use `"oneOf": [{"$ref": "..."}, {"type": "null"}]`.
 
@@ -63,15 +63,17 @@ The schema and Go have distinct responsibilities. The schema validates structure
 
 | Check | Example |
 |-------|---------|
-| Cross-field dependencies | `max_group_volume_per_leg <= group_volume` |
+| Cross-field dependencies | `max_group_volume_per_leg` and `max_group_volume_per_leg_fraction` are not both above 0 |
 | Cross-section references | `qualified_structures` references defined structure names |
 | Cross-section dependencies | `pay_once_only` requires `track_achieved_rank: true` |
 | Referential integrity | `min_rank` references a rank with lower ordinal |
 | Ordering constraints | Ranks sorted by ordinal, tiers sorted by `min_active_legs` |
 | Base rank | The lowest rank sets no personal, group or retail volume, no distributor count and no leg quality. It requires no products and has no window or tenure |
 | External lookups | Product IDs reference valid catalog products |
-| Semantic warnings | `payout_lag_days > 30`, `matrix width^height > 1M` |
+| Semantic warnings | `payout_lag_days > 30`, `matrix width^height > 1M`, `max_group_volume_per_leg >= group_volume` when `group_volume > 0` |
 | Rate table completeness | Every defined rank should have a rate table entry |
+
+When no volume is negative, a per-leg cap at or above `group_volume` never binds. Go warns about such a fixed cap when `group_volume` is above 0, rather than refusing it.
 
 The schema catches structural mistakes immediately. Wrong type, missing field, bad enum value. Go catches logical mistakes that require understanding relationships between sections.
 

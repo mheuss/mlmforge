@@ -339,20 +339,37 @@ func validateRanks(plan *CompensationPlan, structs map[string]bool) []Validation
 				})
 			}
 
-			// max_group_volume_per_leg must be finite and non-negative, and must not
-			// exceed group_volume when both are set.
+			capPath := fmt.Sprintf("/ranks/%d/qualification/structures/%d/max_group_volume_per_leg", i, j)
+			fractionPath := fmt.Sprintf("/ranks/%d/qualification/structures/%d/max_group_volume_per_leg_fraction", i, j)
+			fraction := sq.MaxGroupVolumePerLegFraction
 			if sq.MaxGroupVolumePerLeg < 0 || math.IsNaN(sq.MaxGroupVolumePerLeg) || math.IsInf(sq.MaxGroupVolumePerLeg, 0) {
 				errs = append(errs, ValidationError{
-					Path:     fmt.Sprintf("/ranks/%d/qualification/structures/%d/max_group_volume_per_leg", i, j),
+					Path:     capPath,
 					Code:     "value_out_of_range",
 					Message:  fmt.Sprintf("rank %q structure %q max_group_volume_per_leg must be finite and non-negative, got %v", r.Name, sq.Structure, sq.MaxGroupVolumePerLeg),
 					Severity: SeverityError,
 				})
-			} else if sq.MaxGroupVolumePerLeg > 0 && sq.GroupVolume > 0 && sq.MaxGroupVolumePerLeg > sq.GroupVolume {
+			} else if sq.MaxGroupVolumePerLeg > 0 && sq.GroupVolume > 0 && sq.MaxGroupVolumePerLeg >= sq.GroupVolume {
 				errs = append(errs, ValidationError{
-					Path:     fmt.Sprintf("/ranks/%d/qualification/structures/%d/max_group_volume_per_leg", i, j),
+					Path:     capPath,
 					Code:     "cross_field_dependency",
-					Message:  fmt.Sprintf("rank %q max_group_volume_per_leg (%.0f) exceeds group_volume (%.0f)", r.Name, sq.MaxGroupVolumePerLeg, sq.GroupVolume),
+					Message:  fmt.Sprintf("rank %q structure %q max_group_volume_per_leg (%v) is at or above group_volume (%v)", r.Name, sq.Structure, sq.MaxGroupVolumePerLeg, sq.GroupVolume),
+					Severity: SeverityWarning,
+				})
+			}
+			if math.IsNaN(fraction) || fraction < 0 || fraction > 1 {
+				errs = append(errs, ValidationError{
+					Path:     fractionPath,
+					Code:     "value_out_of_range",
+					Message:  fmt.Sprintf("rank %q structure %q max_group_volume_per_leg_fraction must be a fraction in [0, 1], got %v", r.Name, sq.Structure, fraction),
+					Severity: SeverityError,
+				})
+			}
+			if sq.MaxGroupVolumePerLeg > 0 && fraction > 0 {
+				errs = append(errs, ValidationError{
+					Path:     fractionPath,
+					Code:     "cross_field_dependency",
+					Message:  fmt.Sprintf("rank %q structure %q sets both max_group_volume_per_leg and max_group_volume_per_leg_fraction", r.Name, sq.Structure),
 					Severity: SeverityError,
 				})
 			}

@@ -206,6 +206,21 @@ acceptance test is not. Ask of every acceptance test: if the fixture stopped
 producing the state in this test's name, would it still pass? If yes, the test
 needs a guard on that state, checked before the thing under test runs.
 
+### Tree member order is not stable
+
+`user_ids` on every tree type, and on `TreeNavigator`, reads a `HashMap`. The
+order changes from run to run. A test that only passes when one member comes
+first passes or fails at random.
+
+HEU-965 hit this. A test for "the error names the lowest missing ID" placed
+node 3 before node 2. A mutant that reported the first missing ID instead of
+the lowest still passed it 10 runs in 20, because placement order is not
+listing order.
+
+Fix the order the test relies on. Wrap the tree in a test-local
+`TreeNavigator` that delegates every method and returns `user_ids` in the
+order you need, then assert that order before the call under test.
+
 ### The assertion can be wrong rather than the code
 
 Two shapes of this cost time on HEU-797. Both produce a failing test against

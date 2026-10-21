@@ -200,6 +200,27 @@ fn parse_exact(text: &str) -> Result<(Decimal, i64), ParseDecError> {
     Ok((value, written_scale))
 }
 
+fn wide(d: Decimal) -> (I512, u32) {
+    (I512::from(d.mantissa()), d.scale())
+}
+
+fn fast_add(a: Decimal, b: Decimal, negate_b: bool) -> Option<Decimal> {
+    let s = a.scale().max(b.scale());
+    let ma = a
+        .mantissa()
+        .checked_mul(10i128.checked_pow(s - a.scale())?)?;
+    let mb = b
+        .mantissa()
+        .checked_mul(10i128.checked_pow(s - b.scale())?)?;
+    let mb = if negate_b { mb.checked_neg()? } else { mb };
+    Decimal::try_from_i128_with_scale(ma.checked_add(mb)?, s).ok()
+}
+
+fn fast_mul(a: Decimal, b: Decimal) -> Option<Decimal> {
+    let m = a.mantissa().checked_mul(b.mantissa())?;
+    Decimal::try_from_i128_with_scale(m, a.scale() + b.scale()).ok()
+}
+
 impl Dec {
     pub const ZERO: Dec = Dec(Decimal::ZERO);
     pub const ONE: Dec = Dec(Decimal::ONE);
@@ -215,6 +236,60 @@ impl Dec {
 
     pub fn is_negative(self) -> bool {
         self.0 < Decimal::ZERO
+    }
+}
+
+impl Dec {
+    fn error(self, op: NumericOp, rhs: Dec, kind: NumericErrorKind) -> NumericError {
+        NumericError {
+            op,
+            lhs: self,
+            rhs,
+            kind,
+        }
+    }
+
+    fn wide_add(self, rhs: Dec, op: NumericOp) -> Result<Dec, NumericError> {
+        let ((ma, sa), (mb, sb)) = (wide(self.0), wide(rhs.0));
+        let s = sa.max(sb);
+        let (a, b) = (ma * pow10(s - sa), mb * pow10(s - sb));
+        let m = if op == NumericOp::Sub { a - b } else { a + b };
+        fit(m, s).map(Dec).map_err(|kind| self.error(op, rhs, kind))
+    }
+
+    /// The exact sum, or an error when it cannot be held.
+    pub fn try_add(self, rhs: impl Into<Dec>) -> Result<Dec, NumericError> {
+        let rhs = rhs.into();
+        match fast_add(self.0, rhs.0, false) {
+            Some(sum) => Ok(Dec(sum)),
+            None => self.wide_add(rhs, NumericOp::Add),
+        }
+    }
+
+    /// The exact difference, or an error when it cannot be held.
+    pub fn try_sub(self, rhs: impl Into<Dec>) -> Result<Dec, NumericError> {
+        let rhs = rhs.into();
+        match fast_add(self.0, rhs.0, true) {
+            Some(diff) => Ok(Dec(diff)),
+            None => self.wide_add(rhs, NumericOp::Sub),
+        }
+    }
+
+    /// The exact product, or an error when it cannot be held.
+    pub fn try_mul(self, rhs: impl Into<Dec>) -> Result<Dec, NumericError> {
+        let rhs = rhs.into();
+        if let Some(product) = fast_mul(self.0, rhs.0) {
+            return Ok(Dec(product));
+        }
+        let ((ma, sa), (mb, sb)) = (wide(self.0), wide(rhs.0));
+        fit(ma * mb, sa + sb)
+            .map(Dec)
+            .map_err(|kind| self.error(NumericOp::Mul, rhs, kind))
+    }
+
+    /// The exact sum of `values`, or the first error.
+    pub fn sum<I: IntoIterator<Item = Dec>>(values: I) -> Result<Dec, NumericError> {
+        values.into_iter().try_fold(Dec::ZERO, Dec::try_add)
     }
 }
 
@@ -483,6 +558,139 @@ mod tests {
         #[test]
         fn a_leading_zero_is_refused(text in "-?0[0-9]{1,5}(\\.[0-9]{1,3})?") {
             prop_assert!(text.parse::<Dec>().is_err(), "{}", text);
+        }
+    }
+
+    #[test]
+    fn threshold_sums_and_products_are_exact() {
+        assert_eq!(d("10.10").try_add(d("20.20")).unwrap(), d("30.30"));
+        assert_eq!(d("100").try_mul(d("0.07")).unwrap(), d("7"));
+        assert_eq!(d("0.29").try_mul(d("100000")).unwrap(), d("29000"));
+    }
+
+    #[test]
+    fn zero_results_are_exact() {
+        assert_eq!(d("0").try_mul(d("0.05")).unwrap(), Dec::ZERO);
+        assert_eq!(d("1.5").try_sub(d("1.5")).unwrap(), Dec::ZERO);
+    }
+
+    #[test]
+    fn a_lossless_scale_reduction_is_exact() {
+        let product = d("0.00000000000001")
+            .try_mul(d("0.00000000000002"))
+            .unwrap();
+        assert_eq!(product, d("0.0000000000000000000000000002"));
+    }
+
+    #[test]
+    fn a_sum_beyond_the_range_is_an_overflow() {
+        let max = d("79228162514264337593543950335");
+        let err = max.try_add(d("1")).unwrap_err();
+        assert_eq!(err.kind, NumericErrorKind::Overflow);
+        assert_eq!(err.op, NumericOp::Add);
+        assert_eq!(
+            err.to_string(),
+            "cannot add 79228162514264337593543950335 and 1: the result is beyond the decimal range"
+        );
+    }
+
+    #[test]
+    fn a_product_needing_more_than_28_places_is_a_precision_error() {
+        let tiny = d("0.0000000000000001");
+        let err = tiny.try_mul(tiny).unwrap_err();
+        assert_eq!(err.kind, NumericErrorKind::Precision);
+    }
+
+    #[test]
+    fn a_four_factor_payout_is_exact() {
+        let payout = d("1234.56")
+            .try_mul(d("0.40"))
+            .and_then(|v| v.try_mul(d("1.25")))
+            .and_then(|v| v.try_mul(d("0.07")))
+            .unwrap();
+        assert_eq!(payout, d("43.2096"));
+    }
+
+    #[test]
+    fn a_hundred_thousand_cent_values_sum_exactly() {
+        let values = (0..100_000).map(|i| d(&format!("{}.{:02}", i % 997, i % 100)));
+        let expected: i64 = (0..100_000i64).map(|i| (i % 997) * 100 + i % 100).sum();
+        assert_eq!(
+            Dec::sum(values).unwrap(),
+            d(&format!("{}.{:02}", expected / 100, expected % 100))
+        );
+    }
+
+    fn arb_dec() -> impl Strategy<Value = Dec> {
+        prop_oneof![
+            Just(Dec::ZERO),
+            Just(d("79228162514264337593543950335")),
+            Just(d("-79228162514264337593543950335")),
+            Just(d("0.0000000000000000000000000001")),
+            (any::<i128>(), 0u32..=28)
+                .prop_map(|(m, s)| Dec(Decimal::from_i128_with_scale(m % (1i128 << 96), s))),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn add_sub_mul_agree_with_an_arbitrary_precision_oracle(a in arb_dec(), b in arb_dec()) {
+            for (result, exact) in [
+                (a.try_add(b), big(a) + big(b)),
+                (a.try_sub(b), big(a) - big(b)),
+                (a.try_mul(b), big(a) * big(b)),
+            ] {
+                match result {
+                    Ok(value) => prop_assert_eq!(big(value), exact),
+                    Err(e) => prop_assert!(exceeds_the_decimal_range(&exact), "refused {:?} but {} fits", e, exact),
+                }
+            }
+        }
+    }
+
+    fn small_dec() -> impl Strategy<Value = Dec> {
+        (-(1i128 << 47)..(1i128 << 47), 0u32..=10)
+            .prop_map(|(m, s)| Dec(Decimal::from_i128_with_scale(m, s)))
+    }
+
+    fn wide_mantissa() -> impl Strategy<Value = i128> {
+        ((1i128 << 94)..(1i128 << 96) - 1, any::<bool>())
+            .prop_map(|(m, negative)| if negative { -m } else { m })
+    }
+
+    proptest! {
+        #[test]
+        fn small_operands_take_the_i128_path_and_agree_with_the_oracle(a in small_dec(), b in small_dec()) {
+            prop_assert!(fast_add(a.0, b.0, false).is_some());
+            prop_assert!(fast_add(a.0, b.0, true).is_some());
+            prop_assert!(fast_mul(a.0, b.0).is_some());
+            prop_assert_eq!(big(a.try_add(b).unwrap()), big(a) + big(b));
+            prop_assert_eq!(big(a.try_sub(b).unwrap()), big(a) - big(b));
+            prop_assert_eq!(big(a.try_mul(b).unwrap()), big(a) * big(b));
+        }
+
+        #[test]
+        fn wide_operands_take_the_bnum_path_and_agree_with_the_oracle(
+            ma in wide_mantissa(),
+            mb in wide_mantissa(),
+            scale in 0u32..=14,
+        ) {
+            // A 2^94 mantissa rescaled by 10^14 needs more than 127 bits.
+            let a = Dec(Decimal::from_i128_with_scale(ma, scale));
+            let b = Dec(Decimal::from_i128_with_scale(mb, scale + 14));
+            prop_assert!(fast_add(a.0, b.0, false).is_none());
+            prop_assert!(fast_add(a.0, b.0, true).is_none());
+            prop_assert!(fast_mul(a.0, b.0).is_none());
+            for (result, exact) in [
+                (a.try_add(b), big(a) + big(b)),
+                (a.try_sub(b), big(a) - big(b)),
+                (a.try_mul(b), big(a) * big(b)),
+            ] {
+                match result {
+                    Ok(value) => prop_assert_eq!(big(value), exact),
+                    Err(e) => prop_assert!(exceeds_the_decimal_range(&exact), "refused {:?} but {} fits", e, exact),
+                }
+            }
         }
     }
 }

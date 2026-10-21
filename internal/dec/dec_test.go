@@ -61,8 +61,21 @@ func TestParseRefusesAnExponentPastSixty(t *testing.T) {
 		require.Error(t, err, text)
 		assert.Contains(t, err.Error(), "exponent", text)
 	}
-	_, err := Parse("1e60")
-	assert.NoError(t, err)
+	for _, text := range []string{"1e60", "1e-60"} {
+		_, err := Parse(text)
+		assert.NoError(t, err, text)
+	}
+}
+
+func TestScanAcceptsOnlyDecimalText(t *testing.T) {
+	var a Amount
+	require.NoError(t, a.Scan("12.50"))
+	assert.Equal(t, "12.5", a.String())
+	require.NoError(t, a.Scan([]byte("0.07")))
+	assert.Equal(t, "0.07", a.String())
+	assert.Error(t, a.Scan(0.1))
+	assert.Error(t, a.Scan("1e99"))
+	assert.Error(t, a.Scan("NaN"))
 }
 
 func TestAmountOmitsAZeroFieldTaggedOmitzero(t *testing.T) {

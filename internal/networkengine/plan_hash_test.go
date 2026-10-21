@@ -211,7 +211,7 @@ func TestPlanHashRejectsInvalidJSON(t *testing.T) {
 	}
 }
 
-// A changed entry changes the stored identity of every run made under that plan.
+// Changing an entry asserts that plan's hash has changed.
 var pinnedPlanHashes = map[string]string{
 	"binary-cycle-step-plan.yaml":    "sha256:f1e32c655e1c783449d334963fe16015bf755f94b9b9ab35027bfeb02ea4dea2",
 	"binary-plan.yaml":               "sha256:72401cb132657ec3abf0fdadd65b6b4420ff11b78d4d81e9f16ec98889b464bf",

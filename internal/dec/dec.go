@@ -19,8 +19,8 @@ type Amount struct {
 
 var numberText = regexp.MustCompile(`^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$`)
 
-// maxExponent bounds the written exponent. Beyond it, shopspring's text and
-// comparison methods allocate in proportion to the exponent.
+// maxExponent bounds the written exponent, so a short input cannot stand for a
+// value with a vast number of digits.
 const maxExponent = 60
 
 // Parse reads plain decimal text such as "12.50" or "1e-7".
@@ -79,6 +79,26 @@ func (a *Amount) UnmarshalJSON(data []byte) error {
 // UnmarshalText reads a YAML scalar's text.
 func (a *Amount) UnmarshalText(text []byte) error {
 	parsed, err := Parse(string(text))
+	if err != nil {
+		return err
+	}
+	*a = parsed
+	return nil
+}
+
+// Scan reads database text through Parse, so a float or an unbounded exponent
+// cannot enter by that route.
+func (a *Amount) Scan(value any) error {
+	var text string
+	switch v := value.(type) {
+	case string:
+		text = v
+	case []byte:
+		text = string(v)
+	default:
+		return fmt.Errorf("decimal: cannot scan %T; want decimal text", value)
+	}
+	parsed, err := Parse(text)
 	if err != nil {
 		return err
 	}

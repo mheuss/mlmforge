@@ -97,8 +97,7 @@ func TestConfigContractFixturesMatchPipeline(t *testing.T) {
 	}
 }
 
-// The unilevel golden carries no leg-cap fraction, so an explicit zero must
-// produce the same bytes as an absent field.
+// An explicit zero leg-cap fraction must produce the same bytes as an absent one.
 func TestAnExplicitZeroPerLegCapFractionMatchesTheUnilevelGolden(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)

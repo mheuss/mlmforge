@@ -429,11 +429,10 @@ impl StreamlineCommissionConfig {
         // The message names the offending entry rather than echoing the table,
         // which is attacker-sized here.
         //
-        // Duplicates are parity too, not an added rule. Go keys the table by
-        // string, and a key may carry leading zeros, so "1" and "01" are both
-        // valid keys naming level 1. A duplicate is representable in Go,
-        // and Go rejects it through non_sequential_levels: the sorted list
-        // becomes [1, 1, ...] and fails n != j+1 at index 1.
+        // Duplicates are parity too, not an added rule. Keys may carry leading
+        // zeros, so "1" and "01" are both valid keys naming level 1. A duplicate
+        // is representable, and Go rejects it through non_sequential_levels: the
+        // sorted list becomes [1, 1, ...] and fails n != j+1 at index 1.
         //
         // Note it is caught there and nowhere else. The duplicate_value guard
         // in validateU8MapKeys (rules.go:118) never sees dynamic_compression:

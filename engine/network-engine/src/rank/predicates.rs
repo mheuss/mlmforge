@@ -761,20 +761,21 @@ mod tests {
         ]);
         let primitives = primitives_with_pv(50.0);
 
-        assert!(capped_gv_meets(150.0, None, uid(2), &tree, &idx, &primitives).unwrap());
-        assert!(!capped_gv_meets(150.01, None, uid(2), &tree, &idx, &primitives).unwrap());
+        for cap in [None, Some(1000.0)] {
+            assert!(capped_gv_meets(150.0, cap, uid(2), &tree, &idx, &primitives).unwrap());
+            assert!(!capped_gv_meets(150.01, cap, uid(2), &tree, &idx, &primitives).unwrap());
+        }
     }
 
     #[test]
     fn capped_gv_meets_fails_at_the_threshold_under_a_fraction_that_rounds_low() {
-        // Pins today's fail-closed result. HEU-966 tracks making the fraction match the fixed cap.
+        // Pins the current fail-closed result (HEU-966).
         let (tree, idx) = root_with_legs(&[29000.0, 29000.0, 29000.0, 13000.0]);
         let primitives = primitives_with_pv(0.0);
+        let fixed_cap = effective_leg_cap(&sq_with_caps(100000.0, 29000.0, 0.0));
         let fraction_cap = effective_leg_cap(&sq_with_caps(100000.0, 0.0, 0.29));
 
-        assert!(
-            capped_gv_meets(100000.0, Some(29000.0), uid(1), &tree, &idx, &primitives).unwrap()
-        );
+        assert!(capped_gv_meets(100000.0, fixed_cap, uid(1), &tree, &idx, &primitives).unwrap());
         assert!(
             !capped_gv_meets(100000.0, fraction_cap, uid(1), &tree, &idx, &primitives).unwrap()
         );

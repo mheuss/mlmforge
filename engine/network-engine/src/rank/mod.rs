@@ -29,12 +29,10 @@ pub fn evaluate_ranks(
     // Sort ranks by ordinal ascending once.
     let mut ranks_sorted: Vec<&crate::config::rank::RankDefinition> = plan.ranks.iter().collect();
     ranks_sorted.sort_by_key(|r| r.ordinal);
-    // Re-bind to owned RankDefinition slice for predicate lifetimes.
-    // (RankDefinition is Clone via the derive on its fields.)
+    // Own the sorted ranks so their fraction caps can be resolved without touching the plan.
     let mut ranks_owned: Vec<crate::config::rank::RankDefinition> =
         ranks_sorted.iter().map(|r| (*r).clone()).collect();
-    // Resolve fraction caps once per evaluation. The exact product is too slow to compute
-    // per distributor.
+    // Resolve fraction caps once per evaluation, not per distributor.
     predicates::resolve_fraction_caps(&mut ranks_owned);
 
     // BR9 empty-axis guard: a time gate cannot be evaluated without an axis.

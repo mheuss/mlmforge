@@ -121,7 +121,7 @@ fn evaluate_ranks_completes_in_reasonable_time_on_10k_distributors() {
 
     assert_eq!(result.ranks.len(), N);
     assert!(
-        elapsed.as_secs_f64() < d!(5.0),
+        elapsed.as_secs_f64() < 5.0,
         "evaluation of {} distributors took {:?}; budget is 5s in debug",
         N,
         elapsed,

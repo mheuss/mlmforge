@@ -145,3 +145,40 @@ pub fn test_plan_identity() -> crate::commission::PlanIdentity {
         hash: format!("sha256:{}", "0".repeat(64)),
     }
 }
+
+/// Builds a decimal test value from its literal text.
+pub trait FromLiteral {
+    fn from_literal(text: &str) -> Self;
+}
+
+impl FromLiteral for f64 {
+    fn from_literal(text: &str) -> f64 {
+        text.parse()
+            .unwrap_or_else(|e| panic!("test literal {text:?}: {e}"))
+    }
+}
+
+/// A decimal test literal whose type comes from context: `d!(10.10)`, `d!(-0.5)`.
+#[macro_export]
+macro_rules! d {
+    ($($literal:tt)+) => {
+        <_ as $crate::test_support::FromLiteral>::from_literal(
+            &::std::stringify!($($literal)+).replace([' ', '_'], ""),
+        )
+    };
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn d_builds_the_value_its_literal_names() {
+        let positive: f64 = crate::d!(10.10);
+        let negative: f64 = crate::d!(-0.5);
+        let exponent: f64 = crate::d!(1e-9);
+        let grouped: f64 = crate::d!(10_000.25);
+        assert_eq!(
+            (positive, negative, exponent, grouped),
+            (10.10, -0.5, 1e-9, 10_000.25)
+        );
+    }
+}

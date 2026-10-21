@@ -16,9 +16,11 @@ use network_engine::config::{
     BinaryStructureConfig, CompensationPlan, StairstepStructureConfig, StructureConfig,
     UnilevelStructureConfig,
 };
+use network_engine::test_support::FromLiteral;
 use network_engine::test_support::{build_test_plan, make_rank};
 #[allow(unused_imports)]
 pub use network_engine::test_support::{member_snapshot, snapshot_with_rank, uuid_from_index};
+use proptest::prelude::*;
 use std::collections::BTreeMap;
 
 // ---------------------------------------------------------------------------
@@ -633,4 +635,9 @@ pub fn walk_order_fingerprint(walks: &[Walk]) -> Vec<WalkOrderKey> {
         .iter()
         .map(|w| (w.kind, w.stream_id, w.rank.clone(), w.source_id, w.index))
         .collect()
+}
+
+/// Whole cents in `[lo, hi)`, as any decimal test type.
+pub fn cents<T: FromLiteral + std::fmt::Debug>(lo: u64, hi: u64) -> impl Strategy<Value = T> {
+    (lo..hi).prop_map(|c| T::from_literal(&format!("{}.{:02}", c / 100, c % 100)))
 }

@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -327,7 +331,9 @@ func assertJSONFieldEqual(t *testing.T, fixture, field string, expected, actual 
 	}
 	act, ok := actual[field]
 	require.True(t, ok, "[%s] expected field '%s' in response", fixture, field)
-	assert.JSONEq(t, string(exp), string(act), "[%s] field '%s' mismatch", fixture, field)
+	if err := decimalJSONEqual(string(exp), string(act)); err != nil {
+		assert.Fail(t, fmt.Sprintf("[%s] field '%s' mismatch: %v", fixture, field, err))
+	}
 }
 
 // --- Board plan contract tests ---
@@ -724,4 +730,97 @@ func TestCheckExpectedErrorCodeIsOptional(t *testing.T) {
 	expected["message_contains"] = json.RawMessage(`"NOTPRESENT"`)
 	assert.Error(t, checkExpectedError("fx", expected, actual),
 		"the message check must still bite when no code is asserted")
+}
+func TestDecimalJSONEqualComparesNumbersByValue(t *testing.T) {
+	assert.NoError(t, decimalJSONEqual(`{"a":2.0,"b":[1,0.50]}`, `{"b":[1.00,0.5],"a":2}`))
+}
+
+func TestDecimalJSONEqualSeesASubCentDifference(t *testing.T) {
+	err := decimalJSONEqual(`{"a":0.1}`, `{"a":0.1000000000000000055511151231257827}`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "/a")
+}
+
+func TestDecimalJSONEqualKeepsStringsAndNumbersApart(t *testing.T) {
+	assert.Error(t, decimalJSONEqual(`{"a":"2"}`, `{"a":2}`))
+}
+
+func TestDecimalJSONEqualReportsAMissingKey(t *testing.T) {
+	err := decimalJSONEqual(`{"a":1,"b":2}`, `{"a":1}`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "/b")
+}
+
+// decimalJSONEqual compares two JSON documents, treating numbers as exact
+// decimals. It returns the JSON Pointer of the first difference.
+func decimalJSONEqual(expected, actual string) error {
+	exp, err := decodeUseNumber(expected)
+	if err != nil {
+		return fmt.Errorf("expected: %w", err)
+	}
+	act, err := decodeUseNumber(actual)
+	if err != nil {
+		return fmt.Errorf("actual: %w", err)
+	}
+	return compareJSON("", exp, act)
+}
+
+func decodeUseNumber(s string) (any, error) {
+	d := json.NewDecoder(strings.NewReader(s))
+	d.UseNumber()
+	var v any
+	err := d.Decode(&v)
+	return v, err
+}
+
+func compareJSON(path string, exp, act any) error {
+	switch e := exp.(type) {
+	case json.Number:
+		a, ok := act.(json.Number)
+		if !ok {
+			return fmt.Errorf("%s: expected the number %s, got %v", path, e, act)
+		}
+		ed, err1 := decimal.NewFromString(e.String())
+		ad, err2 := decimal.NewFromString(a.String())
+		if err1 != nil || err2 != nil || !ed.Equal(ad) {
+			return fmt.Errorf("%s: expected %s, got %s", path, e, a)
+		}
+		return nil
+	case map[string]any:
+		a, ok := act.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s: expected an object, got %v", path, act)
+		}
+		for _, k := range slices.Sorted(maps.Keys(e)) {
+			av, present := a[k]
+			if !present {
+				return fmt.Errorf("%s/%s: expected key is absent", path, k)
+			}
+			if err := compareJSON(path+"/"+k, e[k], av); err != nil {
+				return err
+			}
+		}
+		for _, k := range slices.Sorted(maps.Keys(a)) {
+			if _, present := e[k]; !present {
+				return fmt.Errorf("%s/%s: unexpected key", path, k)
+			}
+		}
+		return nil
+	case []any:
+		a, ok := act.([]any)
+		if !ok || len(a) != len(e) {
+			return fmt.Errorf("%s: expected an array of %d, got %v", path, len(e), act)
+		}
+		for i := range e {
+			if err := compareJSON(fmt.Sprintf("%s/%d", path, i), e[i], a[i]); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		if !reflect.DeepEqual(exp, act) {
+			return fmt.Errorf("%s: expected %v, got %v", path, exp, act)
+		}
+		return nil
+	}
 }

@@ -8,11 +8,12 @@ pub use types::{
     DistributorPrimitives, EvaluatedRank, EvaluationError, EvaluationInputs, EvaluationResult,
 };
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use uuid::Uuid;
 
 use crate::config::CompensationPlan;
+use crate::config::rank::RankDefinition;
 use crate::tree::navigator::TreeNavigator;
 
 use self::evaluator::{EvalCtx, VolumeIndex, evaluation_order_for_users, iterate_to_fixpoint};
@@ -89,4 +90,18 @@ pub fn evaluate_ranks(
     // Move into a BTreeMap so the result serializes with sorted keys.
     let ranks: std::collections::BTreeMap<Uuid, EvaluatedRank> = already.into_iter().collect();
     Ok(EvaluationResult { ranks })
+}
+
+/// Return the structure names that a rank above the lowest names in its
+/// qualification. A `BTreeSet`, so callers iterate in name order.
+pub fn structures_above_lowest_rank(plan: &CompensationPlan) -> BTreeSet<&str> {
+    let mut ladder: Vec<&RankDefinition> = plan.ranks.iter().collect();
+    // Stable, so of two ranks tied at the lowest ordinal the first is skipped.
+    ladder.sort_by_key(|r| r.ordinal);
+    ladder
+        .into_iter()
+        .skip(1)
+        .flat_map(|r| r.qualification.structures.iter())
+        .map(|sq| sq.structure.as_str())
+        .collect()
 }

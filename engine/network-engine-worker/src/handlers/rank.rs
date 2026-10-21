@@ -1,7 +1,6 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 
-use network_engine::config::rank::RankDefinition;
-use network_engine::rank::{EvaluationInputs, evaluate_ranks};
+use network_engine::rank::{EvaluationInputs, evaluate_ranks, structures_above_lowest_rank};
 use network_engine::tree::navigator::TreeNavigator;
 
 use super::common::require_plan;
@@ -19,25 +18,11 @@ pub(crate) fn handle_evaluate_ranks(state: &WorkerState, request: &Request) -> R
         Err(e) => return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string()),
     };
 
-    // Collect every structure name referenced by a rank above the lowest.
-    // The stable sort keeps the first of tied lowest ordinals as the one
-    // skipped. BTreeSet for deterministic iteration order so
-    // STRUCTURE_NOT_FOUND errors surface the same missing structure across
-    // runs (test stability, reproducible failures).
-    let mut ladder: Vec<&RankDefinition> = plan.ranks.iter().collect();
-    ladder.sort_by_key(|r| r.ordinal);
-    let mut needed: BTreeSet<&str> = BTreeSet::new();
-    for rank in ladder.iter().skip(1) {
-        for sq in &rank.qualification.structures {
-            needed.insert(sq.structure.as_str());
-        }
-    }
-
     // Build navigator map. Structures that don't expose TreeNavigator
     // (board_plan, streamline) are not supported by HEU-443. If a needed
     // structure is one, or has no tree, surface STRUCTURE_NOT_FOUND.
     let mut navigators: HashMap<String, &dyn TreeNavigator> = HashMap::new();
-    for structure_name in needed {
+    for structure_name in structures_above_lowest_rank(plan) {
         match state
             .trees
             .get(structure_name)

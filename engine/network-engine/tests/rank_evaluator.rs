@@ -8,10 +8,11 @@ use network_engine::config::rank::{
 use network_engine::config::{CompensationPlan, StructureConfig, UnilevelStructureConfig};
 use network_engine::rank::{
     DistributorPrimitives, EvaluatedRank, EvaluationError, EvaluationInputs, evaluate_ranks,
+    structures_above_lowest_rank,
 };
 use network_engine::tree::navigator::TreeNavigator;
 use network_engine::tree::unilevel::UnilevelTree;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 fn primitives(pv: f64) -> DistributorPrimitives {
     DistributorPrimitives {
@@ -1317,5 +1318,42 @@ fn evaluate_ranks_ignores_a_time_gate_on_the_base_rank() {
             rank: "associate".to_string(),
             ordinal: 1
         })
+    );
+}
+
+#[test]
+fn structures_above_lowest_rank_leaves_out_the_lowest_ranks_structures() {
+    let mut plan = linear_plan();
+    plan.ranks[0].qualification.structures[0].structure = "Base".to_string();
+
+    assert_eq!(
+        structures_above_lowest_rank(&plan),
+        BTreeSet::from(["Test"])
+    );
+}
+
+#[test]
+fn structures_above_lowest_rank_finds_the_lowest_rank_by_ordinal() {
+    let mut plan = linear_plan();
+    plan.ranks[0].qualification.structures[0].structure = "Base".to_string();
+    plan.ranks.reverse();
+
+    assert_eq!(
+        structures_above_lowest_rank(&plan),
+        BTreeSet::from(["Test"])
+    );
+}
+
+/// Associate and silver both have ordinal 1. Associate comes first in the
+/// plan, so it is the lowest and only silver's structure is returned.
+#[test]
+fn structures_above_lowest_rank_takes_the_first_of_tied_lowest_ordinals_as_the_lowest() {
+    let mut plan = linear_plan();
+    plan.ranks[0].qualification.structures[0].structure = "Base".to_string();
+    plan.ranks[1].ordinal = 1;
+
+    assert_eq!(
+        structures_above_lowest_rank(&plan),
+        BTreeSet::from(["Test"])
     );
 }

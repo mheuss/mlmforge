@@ -1,6 +1,5 @@
 //! Times rank evaluation and the unilevel, binary and stairstep calculators on
-//! generated trees. Every volume and money input is built through JSON, so the
-//! same source builds against either number representation.
+//! generated trees.
 //!
 //! Run: `cargo run --release -p network-engine --example bench_calculators -- 100000`
 
@@ -22,7 +21,7 @@ use serde_json::{Value, json};
 
 const TESTDATA: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../testdata");
 
-/// A fixed-seed generator so every run builds the same tree and volume.
+/// A small deterministic generator for tree shape and volume.
 struct Lcg(u64);
 
 impl Lcg {
@@ -64,8 +63,9 @@ fn timed<R>(label: &str, n: usize, iters: usize, mut run: impl FnMut() -> R) -> 
     let mut last = None;
     for _ in 0..iters {
         let start = Instant::now();
-        last = Some(black_box(run()));
+        let out = run();
         samples.push(start.elapsed().as_secs_f64() * 1e3);
+        last = Some(black_box(out));
     }
     samples.sort_by(|a, b| a.total_cmp(b));
     println!(
@@ -151,6 +151,13 @@ fn rank_and_unilevel(n: usize, iters: usize) {
     let ranks = timed("evaluate_ranks", n, iters, || {
         evaluate_ranks(&plan, &trees, &inputs).unwrap()
     });
+    let mut qualified = std::collections::BTreeMap::<String, usize>::new();
+    for evaluated in ranks.ranks.values() {
+        if let network_engine::rank::EvaluatedRank::Qualified { rank, .. } = evaluated {
+            *qualified.entry(rank.clone()).or_default() += 1;
+        }
+    }
+    println!("n={n} evaluate_ranks qualified: {qualified:?}");
 
     let lowest = plan.ranks[0].name.clone();
     let snapshots: HashMap<_, DistributorSnapshot> = parse(snapshots_json(&cents, |i| match ranks

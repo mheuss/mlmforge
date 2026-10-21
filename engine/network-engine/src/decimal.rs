@@ -102,9 +102,8 @@ fn fit(mut m: I512, mut s: u32) -> Result<Decimal, NumericErrorKind> {
         let m = i128::try_from(m).expect("a 96-bit mantissa fits i128");
         return Ok(Decimal::from_i128_with_scale(m, s));
     }
-    // 10^154 is beyond I512, and every I512 value is below it, so at such a
-    // scale the integer part is zero.
-    if s > 153 || fits_96_bits(m / pow10(s)) {
+    // When 10^s is beyond I512, every I512 value is below it, so the integer part is zero.
+    if I512::TEN.checked_pow(s).is_none_or(|p| fits_96_bits(m / p)) {
         Err(NumericErrorKind::Precision)
     } else {
         Err(NumericErrorKind::Overflow)
@@ -582,6 +581,9 @@ mod tests {
         let (a, b) = (d("0.000000000000000100"), d("0.0000000000100"));
         assert!(fast_mul(a.0, b.0).is_none());
         assert_eq!(a.try_mul(b).unwrap(), d("1e-27"));
+        let negative = d("-0.000000000000000100");
+        assert!(fast_mul(negative.0, b.0).is_none());
+        assert_eq!(negative.try_mul(b).unwrap(), d("-1e-27"));
     }
 
     #[test]

@@ -109,8 +109,6 @@ func TestPostgresCommissionRunStore(t *testing.T) {
 	})
 }
 
-// The table CHECK keeps non-finite values out, so the rows are built in the
-// query rather than read from the table.
 func TestScanCommissionResultsRefusesNonFiniteText(t *testing.T) {
 	if pgContainer == nil {
 		t.Skip("postgres container unavailable")

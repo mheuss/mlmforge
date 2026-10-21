@@ -5359,8 +5359,8 @@ fn load_plan_accepts_a_rank_with_no_per_leg_cap() {
     let resp = common::send_receive(
         &mut child,
         &format!(
-            r#"{{"id":"ev","op":"evaluate_ranks","params":{{"distributors":{{"{}":{{"personal_volume":60.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":[]}}}},"volume_sources":[{{"source_id":"{}","cv_amount":100.0}}]}}}}"#,
-            ROOT, CHILD
+            r#"{{"id":"ev","op":"evaluate_ranks","params":{{"distributors":{{"{}":{{"personal_volume":60.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":[]}},"{}":{{"personal_volume":0.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":[]}}}},"volume_sources":[{{"source_id":"{}","cv_amount":100.0}}]}}}}"#,
+            ROOT, CHILD, CHILD
         ),
     );
     drop(child.stdin.take());
@@ -5513,9 +5513,9 @@ fn load_rank_plan_with_root(child: &mut std::process::Child) {
     assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
 }
 
-/// The two top-level collections read an explicit null as empty.
-///
-/// The Go twin is `TestEngineClient_EvaluateRanks_NilCollections`.
+/// The two top-level collections read an explicit null as empty. An empty
+/// `distributors` map leaves ROOT, a member of "Test", with no inputs, so the
+/// request is refused with EVALUATION_ERROR rather than INVALID_PARAMS.
 #[test]
 fn evaluate_ranks_accepts_null_collections() {
     let mut child = common::spawn_worker();
@@ -5525,22 +5525,60 @@ fn evaluate_ranks_accepts_null_collections() {
     let resp = common::send_receive(&mut child, req);
     let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
     assert_eq!(
-        parsed["ok"].as_bool(),
-        Some(true),
-        "null collections must read as empty, got: {}",
+        parsed["error"]["code"], "EVALUATION_ERROR",
+        "null collections must parse, got: {}",
         resp
     );
-    // Pins the "as empty" half: an empty distributors map evaluates nobody, so
-    // ranks comes back empty rather than merely parsing.
+    // Pins the "as empty" half: the refusal names ROOT.
     assert_eq!(
-        parsed["result"]["ranks"],
-        serde_json::json!({}),
-        "no distributors means no ranks, got: {}",
+        parsed["error"]["message"],
+        format!("distributor {} has no rank inputs", ROOT),
+        "got: {}",
         resp
     );
 
     drop(child.stdin.take());
     child.wait().unwrap();
+}
+
+/// ROOT and CHILD are in "Test" and only ROOT has inputs. The request is
+/// refused with EVALUATION_ERROR naming CHILD.
+#[test]
+fn evaluate_ranks_refuses_a_tree_member_with_no_inputs() {
+    let mut child = common::spawn_worker();
+    load_rank_plan_with_root(&mut child);
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"child","op":"add_node","params":{{"structure":"Test","user_id":"{}","parent_id":"{}","sponsor_id":"{}","enrolled_at":200}}}}"#,
+            CHILD, ROOT, ROOT
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "add_node failed: {}", resp);
+
+    let resp = common::send_receive(
+        &mut child,
+        &format!(
+            r#"{{"id":"ev","op":"evaluate_ranks","params":{{"distributors":{{"{}":{{"personal_volume":60.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":[]}}}},"volume_sources":[]}}}}"#,
+            ROOT
+        ),
+    );
+    drop(child.stdin.take());
+    child.wait().unwrap();
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(parsed["ok"].as_bool(), Some(false), "got: {}", parsed);
+    assert_eq!(
+        parsed["error"]["code"], "EVALUATION_ERROR",
+        "got: {}",
+        parsed
+    );
+    assert_eq!(
+        parsed["error"]["message"],
+        format!("distributor {} has no rank inputs", CHILD),
+        "got: {}",
+        parsed
+    );
 }
 
 /// The nested field plus both optional ones, in a single request.

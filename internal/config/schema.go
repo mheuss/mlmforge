@@ -97,31 +97,46 @@ func buildInstancePath(tokens []string) string {
 	return "/" + strings.Join(tokens, "/")
 }
 
-// maxYAMLNodes bounds how many nodes alias expansion may visit.
+// maxYAMLNodes bounds how many nodes and merges conversion may visit.
 const maxYAMLNodes = 1_000_000
 
 type yamlConverter struct {
-	errs    []ValidationError
-	active  map[*yaml.Node]bool
-	visited uint
+	errs     []ValidationError
+	active   map[*yaml.Node]bool
+	reported map[*yaml.Node]bool
+	visited  uint
 }
 
 // yamlNodeToJSON converts a decoded YAML tree into the value shapes the
 // schema validator reads. Numbers become json.Number holding their exact text.
 func yamlNodeToJSON(root *yaml.Node) (any, []ValidationError) {
-	c := &yamlConverter{active: map[*yaml.Node]bool{}}
+	c := &yamlConverter{active: map[*yaml.Node]bool{}, reported: map[*yaml.Node]bool{}}
 	v := c.node(root, "")
 	return v, c.errs
 }
 
-func (c *yamlConverter) fail(path, code, message string) {
+// fail records one error per source node, so alias expansion does not repeat it.
+func (c *yamlConverter) fail(n *yaml.Node, path, code, message string) {
+	if c.reported[n] {
+		return
+	}
+	c.reported[n] = true
 	c.errs = append(c.errs, ValidationError{Path: path, Code: code, Message: message, Severity: SeverityError})
+}
+
+// spend counts one step against the budget and reports whether any remains.
+func (c *yamlConverter) spend(n *yaml.Node, path string) bool {
+	c.visited++
+	if c.visited == maxYAMLNodes+1 {
+		c.fail(n, path, "document_too_large", fmt.Sprintf("the document expands to more than %d nodes", maxYAMLNodes))
+	}
+	return c.visited <= maxYAMLNodes
 }
 
 // alias follows an alias node, refusing one that refers to itself.
 func (c *yamlConverter) alias(n *yaml.Node, path string, follow func(*yaml.Node) any) any {
 	if c.active[n.Alias] {
-		c.fail(path, "alias_cycle", "an alias refers to a node that contains it")
+		c.fail(n, path, "alias_cycle", "an alias refers to a node that contains it")
 		return nil
 	}
 	c.active[n.Alias] = true
@@ -130,11 +145,7 @@ func (c *yamlConverter) alias(n *yaml.Node, path string, follow func(*yaml.Node)
 }
 
 func (c *yamlConverter) node(n *yaml.Node, path string) any {
-	c.visited++
-	if c.visited == maxYAMLNodes+1 {
-		c.fail(path, "document_too_large", fmt.Sprintf("the document expands to more than %d nodes", maxYAMLNodes))
-	}
-	if c.visited > maxYAMLNodes {
+	if !c.spend(n, path) {
 		return nil
 	}
 	switch n.Kind {
@@ -164,15 +175,19 @@ func isMergeKey(k *yaml.Node) bool {
 	return k.Kind == yaml.ScalarNode && k.Value == "<<" && (k.Tag == "" || k.Tag == "!" || k.ShortTag() == "!!merge")
 }
 
-// mapping applies yaml.v3's merge rule: an explicit key wins over a merged
-// one, and among merged mappings the first to supply a key wins.
+// mapping applies the merge rule: an explicit key wins over a merged one, and
+// among merged mappings the first to supply a key wins.
 func (c *yamlConverter) mapping(n *yaml.Node, path string) map[string]any {
 	out := make(map[string]any, len(n.Content)/2)
-	var merges []*yaml.Node
+	var merge *yaml.Node
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		k, v := n.Content[i], n.Content[i+1]
 		if isMergeKey(k) {
-			merges = append(merges, v)
+			if merge != nil {
+				c.fail(k, path+"/<<", "duplicate_key", "mapping key \"<<\" appears more than once")
+				continue
+			}
+			merge = v
 			continue
 		}
 		key, ok := c.key(k, path)
@@ -180,39 +195,53 @@ func (c *yamlConverter) mapping(n *yaml.Node, path string) map[string]any {
 			continue
 		}
 		if _, dup := out[key]; dup {
-			c.fail(path+"/"+key, "duplicate_key", fmt.Sprintf("mapping key %q appears more than once after conversion to JSON", key))
+			c.fail(k, path+"/"+key, "duplicate_key", fmt.Sprintf("mapping key %q appears more than once after conversion to JSON", key))
 			continue
 		}
 		out[key] = c.node(v, path+"/"+key)
 	}
-	for _, m := range merges {
-		c.merge(m, path, out)
+	if merge != nil {
+		c.merge(merge, path, out)
 	}
 	return out
 }
 
+// merge accepts a mapping, an alias to a mapping, or a list of either.
 func (c *yamlConverter) merge(m *yaml.Node, path string, out map[string]any) {
-	if m.Kind == yaml.AliasNode {
-		c.alias(m, path, func(target *yaml.Node) any {
-			c.merge(target, path, out)
-			return nil
-		})
+	if m.Kind != yaml.SequenceNode {
+		c.mergeOne(m, path, out)
 		return
 	}
-	switch m.Kind {
-	case yaml.MappingNode:
-		for k, v := range c.mapping(m, path) {
+	for _, item := range m.Content {
+		c.mergeOne(item, path, out)
+	}
+}
+
+func (c *yamlConverter) mergeOne(m *yaml.Node, path string, out map[string]any) {
+	if !c.spend(m, path) {
+		return
+	}
+	target := m
+	if m.Kind == yaml.AliasNode {
+		target = m.Alias
+	}
+	if target == nil || target.Kind != yaml.MappingNode {
+		c.fail(m, path, "invalid_merge", "a << merge must name a mapping or a list of mappings")
+		return
+	}
+	apply := func(target *yaml.Node) any {
+		for k, v := range c.mapping(target, path) {
 			if _, exists := out[k]; !exists {
 				out[k] = v
 			}
 		}
-	case yaml.SequenceNode:
-		for _, item := range m.Content {
-			c.merge(item, path, out)
-		}
-	default:
-		c.fail(path, "invalid_merge", "a << merge must name a mapping or a list of mappings")
+		return nil
 	}
+	if m.Kind == yaml.AliasNode {
+		c.alias(m, path, apply)
+		return
+	}
+	apply(m)
 }
 
 func (c *yamlConverter) key(k *yaml.Node, path string) (string, bool) {
@@ -220,12 +249,12 @@ func (c *yamlConverter) key(k *yaml.Node, path string) (string, bool) {
 		k = k.Alias
 	}
 	if k.Kind != yaml.ScalarNode {
-		c.fail(path, "invalid_key", "a mapping key must be a scalar")
+		c.fail(k, path, "invalid_key", "a mapping key must be a scalar")
 		return "", false
 	}
 	var v any
 	if err := k.Decode(&v); err != nil {
-		c.fail(path, "invalid_key", err.Error())
+		c.fail(k, path, "invalid_key", err.Error())
 		return "", false
 	}
 	return stringifyKey(v), true
@@ -235,14 +264,14 @@ func (c *yamlConverter) scalar(n *yaml.Node, path string) any {
 	switch n.ShortTag() {
 	case "!!int", "!!float":
 		if _, err := dec.Parse(n.Value); err != nil {
-			c.fail(path, "invalid_number", err.Error())
+			c.fail(n, path, "invalid_number", err.Error())
 			return nil
 		}
 		return json.Number(n.Value)
 	default:
 		var v any
 		if err := n.Decode(&v); err != nil {
-			c.fail(path, "yaml_parse_error", err.Error())
+			c.fail(n, path, "yaml_parse_error", err.Error())
 			return nil
 		}
 		return v

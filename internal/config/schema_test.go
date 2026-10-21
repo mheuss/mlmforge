@@ -711,3 +711,41 @@ func TestSchemaBoundsCompareExactly(t *testing.T) {
 	over := replaceInYAML(t, base, "max_group_volume_per_leg_fraction: 0.6", "max_group_volume_per_leg_fraction: 1.00000000000000000001")
 	require.NotEmpty(t, p.validateSchema(over), "a fraction above 1 by 1e-20 must fail the schema maximum")
 }
+
+func TestYAMLMergeAmplificationStopsAtTheBudget(t *testing.T) {
+	src := "m0: &m0 {}\n"
+	for i := 1; i <= 8; i++ {
+		prev := fmt.Sprintf("*m%d", i-1)
+		src += fmt.Sprintf("m%d: &m%d {<<: [%s%s]}\n", i, i, strings.Repeat(prev+", ", 9), prev)
+	}
+	_, errs := convertYAML(t, src)
+	require.NotEmpty(t, errs)
+	assert.Equal(t, "document_too_large", errs[len(errs)-1].Code)
+}
+
+func TestYAMLMergeFormsOutsideTheMergeRuleAreRefused(t *testing.T) {
+	cases := map[string]string{
+		"s: &s [{x: 1}]\nm:\n  <<: *s\n":         "invalid_merge",
+		"a: &a {x: 1}\nm:\n  <<: [[*a]]\n":       "invalid_merge",
+		"s: &s [{x: 1}]\nm:\n  <<: [*s]\n":       "invalid_merge",
+		"m:\n  <<: 1\n":                          "invalid_merge",
+		"a: &a {x: 1}\nm:\n  <<: *a\n  <<: *a\n": "duplicate_key",
+	}
+	for src, code := range cases {
+		_, errs := convertYAML(t, src)
+		require.Len(t, errs, 1, src)
+		assert.Equal(t, code, errs[0].Code, src)
+	}
+}
+
+func TestYAMLErrorIsReportedOncePerSourceNode(t *testing.T) {
+	cases := map[string]string{
+		"x: &x .inf\ny: [*x, *x, *x]\n":                      "invalid_number",
+		"a: &a {1: x, \"1\": y}\nb: {<<: *a}\nc: {<<: *a}\n": "duplicate_key",
+	}
+	for src, code := range cases {
+		_, errs := convertYAML(t, src)
+		require.Len(t, errs, 1, src)
+		assert.Equal(t, code, errs[0].Code, src)
+	}
+}

@@ -347,7 +347,7 @@ proptest! {
         let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         for earning in &result {
             prop_assert!(
-                earning.dollar_amount >= 0.0,
+                earning.dollar_amount >= d!(0.0),
                 "Negative earning: {}",
                 earning.dollar_amount
             );
@@ -553,7 +553,7 @@ proptest! {
         let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         for earning in &result {
             prop_assert!(
-                earning.dollar_amount >= 0.0,
+                earning.dollar_amount >= d!(0.0),
                 "SameRank: negative earning: {}",
                 earning.dollar_amount
             );

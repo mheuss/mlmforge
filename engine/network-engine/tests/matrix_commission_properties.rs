@@ -187,7 +187,7 @@ proptest! {
 
         for earning in &result {
             prop_assert!(
-                earning.dollar_amount >= 0.0,
+                earning.dollar_amount >= d!(0.0),
                 "Negative dollar_amount: {}",
                 earning.dollar_amount
             );

@@ -70,17 +70,37 @@ pub(crate) fn effective_leg_cap(sq: &StructureQualification) -> Option<f64> {
     if sq.max_group_volume_per_leg > 0.0 {
         return Some(sq.max_group_volume_per_leg);
     }
-    let raw = sq.max_group_volume_per_leg_fraction * sq.group_volume;
-    // Snap to 1e-6 only when that moves the product by float noise, and never by more than
-    // 5e-8. Otherwise keep the raw product, so a real seventh decimal keeps its value.
-    let snapped = (raw * 1e6).round() / 1e6;
-    let tolerance = (8.0 * f64::EPSILON * raw.abs()).min(5e-8);
-    let cap = if (snapped - raw).abs() <= tolerance {
-        snapped
-    } else {
-        raw
-    };
+    // Multiply the decimals the plan wrote, not their binary values, so that 0.29 of 100000
+    // is exactly 29000 rather than 28999.999999999996.
+    let cap = decimal_product(sq.max_group_volume_per_leg_fraction, sq.group_volume);
     (cap > 0.0).then_some(cap)
+}
+
+/// Return the f64 nearest the exact product of the shortest decimals `a` and `b` print as.
+fn decimal_product(a: f64, b: f64) -> f64 {
+    if !a.is_finite() || !b.is_finite() || a == 0.0 || b == 0.0 {
+        return a * b;
+    }
+    let (a_digits, a_exponent) = decimal_parts(a);
+    let (b_digits, b_exponent) = decimal_parts(b);
+    let sign = if (a < 0.0) != (b < 0.0) { "-" } else { "" };
+    format!("{sign}{}e{}", a_digits * b_digits, a_exponent + b_exponent)
+        .parse()
+        .expect("a digit string with an integer exponent parses as f64")
+}
+
+/// Split a finite, nonzero `x` into the digits and power-of-ten exponent of its shortest decimal.
+fn decimal_parts(x: f64) -> (u128, i32) {
+    let formatted = format!("{:e}", x.abs());
+    let (mantissa, exponent) = formatted
+        .split_once('e')
+        .expect("LowerExp output has an exponent");
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let digits = format!("{whole}{fraction}")
+        .parse()
+        .expect("a shortest f64 mantissa fits in u128");
+    let exponent: i32 = exponent.parse().expect("a LowerExp exponent fits in i32");
+    (digits, exponent - fraction.len() as i32)
 }
 
 /// Pass when personal volume plus each first-level leg's CV, capped at `cap`, meets `required`.
@@ -686,15 +706,15 @@ mod tests {
     }
 
     #[test]
-    fn effective_leg_cap_keeps_a_tiny_fraction_cap_that_rounds_to_zero() {
+    fn effective_leg_cap_gives_the_exact_cap_for_a_tiny_fraction() {
         assert_eq!(
             effective_leg_cap(&sq_with_caps(100.0, 0.0, 1e-9)),
-            Some(1e-9 * 100.0)
+            Some(1e-7)
         );
     }
 
     #[test]
-    fn effective_leg_cap_keeps_a_huge_fraction_cap_that_overflows_when_scaled() {
+    fn effective_leg_cap_gives_the_exact_cap_for_a_huge_group_volume() {
         assert_eq!(
             effective_leg_cap(&sq_with_caps(1e308, 0.0, 0.5)),
             Some(5e307)
@@ -702,9 +722,9 @@ mod tests {
     }
 
     #[test]
-    fn effective_leg_cap_keeps_a_fraction_cap_with_more_than_six_decimals() {
+    fn effective_leg_cap_gives_the_exact_cap_for_a_fraction_with_more_than_six_decimals() {
         let cap = effective_leg_cap(&sq_with_caps(100.0, 0.0, 0.333333334));
-        assert_eq!(cap, Some(0.333333334 * 100.0));
+        assert_eq!(cap, Some(33.3333334));
 
         let (tree, idx) = root_with_legs(&[33.34, 33.34, 33.34]);
         assert!(
@@ -713,7 +733,7 @@ mod tests {
     }
 
     #[test]
-    fn effective_leg_cap_keeps_a_seventh_decimal_on_a_large_cap() {
+    fn effective_leg_cap_gives_the_exact_cap_for_a_seventh_decimal_on_a_large_cap() {
         let cap = effective_leg_cap(&sq_with_caps(60000000.0000001, 0.0, 1.0));
         assert_eq!(cap, Some(60000000.0000001));
 
@@ -732,11 +752,66 @@ mod tests {
     }
 
     #[test]
-    fn effective_leg_cap_keeps_a_sub_micro_digit_on_a_large_fraction_cap() {
+    fn effective_leg_cap_gives_the_exact_cap_for_a_sub_micro_digit_on_a_large_fraction_cap() {
         assert_eq!(
             effective_leg_cap(&sq_with_caps(1e9, 0.0, 0.2900000000000004)),
             Some(290000000.0000004)
         );
+    }
+
+    #[test]
+    fn effective_leg_cap_gives_the_exact_cap_for_an_eighth_decimal_on_a_mid_sized_cap() {
+        let cap = effective_leg_cap(&sq_with_caps(29000000.00000004, 0.0, 1.0));
+        assert_eq!(cap, Some(29000000.00000004));
+
+        let (tree, idx) = root_with_legs(&[29000000.00000004]);
+        assert!(
+            capped_gv_meets(
+                29000000.00000004,
+                cap,
+                uid(1),
+                &tree,
+                &idx,
+                &primitives_with_pv(0.0)
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn effective_leg_cap_gives_the_exact_cap_for_a_ninth_decimal_fraction() {
+        let cap = effective_leg_cap(&sq_with_caps(2000001.0, 0.0, 0.500000001));
+        assert_eq!(cap, Some(1000000.502000001));
+
+        let (tree, idx) = root_with_legs(&[1000000.5020000009]);
+        let primitives = primitives_with_pv(1000000.4979999991);
+        assert!(capped_gv_meets(2000001.0, cap, uid(1), &tree, &idx, &primitives).unwrap());
+    }
+
+    #[test]
+    fn effective_leg_cap_gives_the_exact_cap_for_a_fraction_that_rounds_high_on_a_large_cap() {
+        assert_eq!(
+            effective_leg_cap(&sq_with_caps(1.4e9, 0.0, 0.07)),
+            Some(98000000.0)
+        );
+    }
+
+    proptest! {
+        /// The fraction cap equals the f64 nearest the exact decimal product.
+        #[test]
+        fn prop_fraction_cap_matches_the_exact_decimal_product(
+            basis_points in 1u64..=10_000,
+            cents in 1u64..=100_000_000_000,
+        ) {
+            let fraction: f64 = format!("{basis_points}e-4").parse().unwrap();
+            let group_volume: f64 = format!("{cents}e-2").parse().unwrap();
+            let exact: f64 = format!("{}e-6", basis_points * cents).parse().unwrap();
+
+            prop_assert_eq!(
+                effective_leg_cap(&sq_with_caps(group_volume, 0.0, fraction)),
+                Some(exact)
+            );
+        }
     }
 
     #[test]

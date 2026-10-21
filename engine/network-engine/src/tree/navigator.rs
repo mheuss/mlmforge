@@ -34,9 +34,6 @@ pub trait TreeNavigator {
 
 /// Generates the TreeNavigator trait implementation by delegating
 /// to the tree type's inherent methods.
-///
-/// Every tree type has the same delegation. This macro eliminates the
-/// boilerplate per tree type.
 macro_rules! impl_tree_navigator {
     ($tree_type:ty) => {
         impl crate::tree::navigator::TreeNavigator for $tree_type {

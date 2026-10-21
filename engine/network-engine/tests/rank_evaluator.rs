@@ -385,6 +385,57 @@ fn evaluate_ranks_names_the_lowest_missing_distributor() {
     );
 }
 
+/// Silver names "Alpha" and "Beta". "Alpha" leaves out node 3 and "Beta"
+/// leaves out node 2. The refusal names node 2, the lowest across both trees.
+#[test]
+fn evaluate_ranks_names_the_lowest_missing_distributor_across_trees() {
+    let mut alpha = UnilevelTree::new();
+    alpha.add_root(uuid_from_index(1), 0).unwrap();
+    alpha
+        .add_node(
+            uuid_from_index(3),
+            uuid_from_index(1),
+            uuid_from_index(1),
+            0,
+        )
+        .unwrap();
+    let mut beta = UnilevelTree::new();
+    beta.add_root(uuid_from_index(1), 0).unwrap();
+    beta.add_node(
+        uuid_from_index(2),
+        uuid_from_index(1),
+        uuid_from_index(1),
+        0,
+    )
+    .unwrap();
+
+    let mut plan = linear_plan();
+    let mut alpha_qual = plan.ranks[1].qualification.structures[0].clone();
+    alpha_qual.structure = "Alpha".to_string();
+    let mut beta_qual = alpha_qual.clone();
+    beta_qual.structure = "Beta".to_string();
+    plan.ranks[1].qualification.structures = vec![alpha_qual, beta_qual];
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Alpha".to_string(), &alpha);
+    nav.insert("Beta".to_string(), &beta);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(250.0));
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    assert_eq!(
+        evaluate_ranks(&plan, &nav, &inputs).unwrap_err(),
+        EvaluationError::DistributorNotInInputs(uuid_from_index(2))
+    );
+}
+
 /// Node 7 is in "Base", which only the lowest rank names, and has no inputs.
 /// The request succeeds.
 #[test]

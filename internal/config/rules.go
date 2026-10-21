@@ -3,10 +3,13 @@ package config
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/mlmforge/mlmforge/internal/dec"
 	"github.com/shopspring/decimal"
@@ -26,6 +29,7 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 	ranks := rankNames(plan)
 	structs := structureNames(plan)
 
+	errs = append(errs, validateEnvelope(plan)...)
 	errs = append(errs, validateRankNames(plan)...)
 	errs = append(errs, validateStructureNames(plan)...)
 	errs = append(errs, validatePeriod(plan)...)
@@ -1207,4 +1211,80 @@ func validateCrossFieldRules(plan *CompensationPlan, ranks map[string]bool) []Va
 	}
 
 	return errs
+}
+
+var envelopeLimit = decimal.New(1, 15)
+
+const envelopeMaxScale = 10
+
+// validateEnvelope refuses any authored decimal at or beyond 10^15 in
+// magnitude, or with more than 10 decimal places.
+func validateEnvelope(plan *CompensationPlan) []ValidationError {
+	var errs []ValidationError
+	check := func(path string, a dec.Amount) {
+		if a.Abs().GreaterThanOrEqual(envelopeLimit) || a.Scale() > envelopeMaxScale {
+			errs = append(errs, ValidationError{
+				Path:     path,
+				Code:     "out_of_envelope",
+				Message:  fmt.Sprintf("%s is outside the authored range: the absolute value must be below 10^15 with at most 10 decimal places", a.String()),
+				Severity: SeverityError,
+			})
+		}
+	}
+	walkAmounts(reflect.ValueOf(plan).Elem(), "", check)
+	for i, s := range plan.Structures {
+		if s.resolvedCommission != nil {
+			walkAmounts(reflect.ValueOf(s.resolvedCommission), fmt.Sprintf("/structures/%d/commission", i), check)
+		}
+	}
+	return errs
+}
+
+var (
+	amountType   = reflect.TypeOf(dec.Amount{})
+	yamlNodeType = reflect.TypeOf(yaml.Node{})
+)
+
+// walkAmounts calls visit for every dec.Amount reachable from v. The path is
+// built from yaml tags, as the schema step reports paths.
+func walkAmounts(v reflect.Value, path string, visit func(string, dec.Amount)) {
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		if !v.IsNil() {
+			walkAmounts(v.Elem(), path, visit)
+		}
+	case reflect.Struct:
+		if v.Type() == amountType {
+			visit(path, v.Interface().(dec.Amount))
+			return
+		}
+		if v.Type() == yamlNodeType {
+			return
+		}
+		t := v.Type()
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			if !f.IsExported() {
+				continue
+			}
+			name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+			if name == "-" {
+				continue
+			}
+			if name == "" {
+				name = strings.ToLower(f.Name)
+			}
+			walkAmounts(v.Field(i), path+"/"+name, visit)
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			walkAmounts(v.Index(i), path+"/"+strconv.Itoa(i), visit)
+		}
+	case reflect.Map:
+		keys := v.MapKeys()
+		sort.Slice(keys, func(i, j int) bool { return fmt.Sprint(keys[i]) < fmt.Sprint(keys[j]) })
+		for _, k := range keys {
+			walkAmounts(v.MapIndex(k), path+"/"+fmt.Sprint(k), visit)
+		}
+	}
 }

@@ -2259,3 +2259,47 @@ func TestBothPerLegCapsRejected(t *testing.T) {
 	assert.Contains(t, errs[0].Message, `rank "Silver" structure "Primary" sets both max_group_volume_per_leg and max_group_volume_per_leg_fraction`)
 	assert.Equal(t, SeverityError, errs[0].Severity)
 }
+func TestRulesRefuseAnAuthoredValueOfTenToTheFifteenth(t *testing.T) {
+	plan := minimalPlan()
+	plan.Volume.VolumeToDollarMultiplier = dec.MustParse("1000000000000000")
+
+	errs := validateBusinessRules(plan)
+
+	require.Len(t, errs, 1)
+	assert.Equal(t, "/volume/volume_to_dollar_multiplier", errs[0].Path)
+	assert.Equal(t, "out_of_envelope", errs[0].Code)
+	assert.Contains(t, errs[0].Message, "1000000000000000")
+}
+
+func TestRulesRefuseAnAuthoredValueWithElevenDecimalPlaces(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Qualification.Structures[0].PersonalVolume = dec.MustParse("0.00000000001")
+
+	errs := validateBusinessRules(plan)
+
+	require.Len(t, errs, 1)
+	assert.Equal(t, "/ranks/1/qualification/structures/0/personal_volume", errs[0].Path)
+	assert.Equal(t, "out_of_envelope", errs[0].Code)
+}
+
+func TestRulesAcceptTheEnvelopeEdges(t *testing.T) {
+	plan := minimalPlan()
+	plan.Volume.VolumeToDollarMultiplier = dec.MustParse("999999999999999.9999999999")
+
+	assert.Empty(t, validateBusinessRules(plan))
+}
+
+func TestRulesNameACommissionRateOutsideTheEnvelope(t *testing.T) {
+	plan := minimalPlanWithCommission()
+	plan.Structures[0].resolvedCommission.(*UnilevelCommission).RateTable["Associate"]["1"] = dec.MustParse("0.00000000001")
+
+	var envelope []ValidationError
+	for _, e := range validateBusinessRules(plan) {
+		if e.Code == "out_of_envelope" {
+			envelope = append(envelope, e)
+		}
+	}
+
+	require.Len(t, envelope, 1)
+	assert.Equal(t, "/structures/0/commission/rate_table/Associate/1", envelope[0].Path)
+}

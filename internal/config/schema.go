@@ -152,7 +152,7 @@ func (p *yamlPath) String() string {
 	var b strings.Builder
 	for i := len(segments) - 1; i >= 0; i-- {
 		b.WriteString("/")
-		b.WriteString(segments[i])
+		b.WriteString(shortKey(segments[i]))
 	}
 	return b.String()
 }
@@ -258,6 +258,9 @@ func (c *yamlConverter) node(n *yaml.Node, path *yamlPath) any {
 	case yaml.SequenceNode:
 		out := make([]any, len(n.Content))
 		for i, item := range n.Content {
+			if c.stopped {
+				break
+			}
 			out[i] = c.node(item, path.child(strconv.Itoa(i)))
 		}
 		return out
@@ -302,7 +305,7 @@ func (c *yamlConverter) fill(n *yaml.Node, path *yamlPath, out map[string]any) {
 		if !ok {
 			continue
 		}
-		at := path.child(shortKey(key))
+		at := path.child(key)
 		if seen[key] {
 			c.fail(k, at, "duplicate_key", fmt.Sprintf("mapping key %s appears more than once after conversion to JSON", quoteKey(key)))
 			continue
@@ -431,8 +434,8 @@ func (c *yamlConverter) scalar(n *yaml.Node, path *yamlPath) any {
 	return v
 }
 
-// isNumber reports whether a scalar is an authored number. A plain scalar
-// that YAML resolved to a string, such as 1e400, counts when it has number form.
+// isNumber reports whether a scalar is an authored number. A plain string
+// scalar counts when it has number form.
 func isNumber(n *yaml.Node) bool {
 	switch n.ShortTag() {
 	case "!!int", "!!float":

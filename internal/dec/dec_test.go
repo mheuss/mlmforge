@@ -176,3 +176,12 @@ func TestParseAcceptsOnlyValuesWhoseTextReadsBack(t *testing.T) {
 		assert.True(t, a.Equal(back.Decimal), text)
 	}
 }
+
+func TestLooksLikeNumberMatchesThePlainDecimalPattern(t *testing.T) {
+	for _, text := range []string{"0", "-12.50", "1e400", "1E-7", "1" + strings.Repeat("0", 400)} {
+		assert.True(t, LooksLikeNumber(text), text)
+	}
+	for _, text := range []string{"", "+1", ".5", "1.", "007", "0x10", "1_000", "USD", "2026-01-01", " 1"} {
+		assert.False(t, LooksLikeNumber(text), text)
+	}
+}

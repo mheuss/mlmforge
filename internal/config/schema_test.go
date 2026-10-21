@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
@@ -896,12 +897,17 @@ func TestYAMLDeepErrorsKeepLittleText(t *testing.T) {
 	assert.Less(t, errorTextSize(errs), 1<<20)
 }
 
-func TestYAMLAliasedNumericKeyIsConvertedOnce(t *testing.T) {
-	src := "k: &k 1." + strings.Repeat("3", 100000) + "\nl: [" + strings.Repeat("{*k : 0}, ", 2999) + "{*k : 0}]\n"
+func TestYAMLAliasedKeyIsConvertedOnce(t *testing.T) {
+	keys := make([]string, 900)
+	for i := range keys {
+		keys[i] = "  ? !!binary " + base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%0768d", i))) + "\n  : 0\n"
+	}
+	src := "m: &m\n" + strings.Join(keys, "") + "r: [" + strings.Repeat("*m, ", 499) + "*m]\n"
 
-	_, allocated, _ := walkerCost(t, src)
+	errs, allocated, _ := walkerCost(t, src)
 
-	assert.Less(t, allocated, uint64(64<<20))
+	require.Empty(t, errs)
+	assert.Less(t, allocated, uint64(384<<20))
 }
 
 // hostileShape is one generated document and the error code its shape must
@@ -939,7 +945,9 @@ func aliasList(name string, count int) string {
 	return "[" + strings.Repeat("*"+name+", ", count-1) + "*" + name + "]"
 }
 
-// hostileYAML builds a document of at most about 1 MB in one of seven shapes.
+const hostileShapeCount = 7
+
+// hostileYAML builds a document of at most about 1 MB in the given shape.
 // Each shape's parameters are drawn so the shape reaches the code it names.
 func hostileYAML(r *rand.Rand, shape int) hostileShape {
 	switch shape {
@@ -985,8 +993,8 @@ func hostileYAML(r *rand.Rand, shape int) hostileShape {
 
 func TestYAMLWalkerStaysBoundedOnHostileDocuments(t *testing.T) {
 	r := rand.New(rand.NewPCG(969, 1))
-	for i := range 28 {
-		doc := hostileYAML(r, i%7)
+	for i := range 4 * hostileShapeCount {
+		doc := hostileYAML(r, i%hostileShapeCount)
 		require.LessOrEqual(t, len(doc.src), 1<<20, "document %d (%s)", i, doc.name)
 
 		errs, allocated, elapsed := walkerCost(t, doc.src)

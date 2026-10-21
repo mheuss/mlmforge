@@ -27,8 +27,7 @@ const maxTextLength = 64
 // value with a vast number of digits.
 const maxExponent = 60
 
-// LooksLikeNumber reports whether text has the decimal form Parse reads,
-// before Parse applies its length and exponent limits.
+// LooksLikeNumber reports whether text matches the plain decimal pattern.
 func LooksLikeNumber(text string) bool {
 	return numberText.MatchString(text)
 }

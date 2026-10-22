@@ -32,21 +32,37 @@ fn cents(c: u64) -> AuthoredDec {
 
 fn to_cents(value: AuthoredDec) -> u64 {
     let hundred: Dec = "100".parse().unwrap();
-    value
-        .dec()
-        .try_mul(hundred)
-        .unwrap()
+    let scaled = value.dec().try_mul(hundred).unwrap();
+    scaled
         .to_string()
         .parse()
-        .unwrap()
+        .unwrap_or_else(|e| panic!("expected {value} to be a whole number of cents: {e}"))
 }
 
 /// The personal and group volume, in cents, that `plan().ranks[1]` requires
-/// on its first structure.
+/// on its only structure, when nothing else gates that rank.
 fn second_rank_thresholds() -> (u64, u64) {
     let rank = &plan().ranks[1];
-    let q = &rank.qualification.structures[0];
-    (to_cents(q.personal_volume), to_cents(q.group_volume))
+    let gates = &rank.qualification;
+    assert!(
+        gates.structures.len() == 1 && gates.required_products.is_empty(),
+        "expected ranks[1] to have one structure and no required products, got {gates:?}"
+    );
+    let q = &gates.structures[0];
+    assert!(
+        q.max_group_volume_per_leg.dec().is_zero()
+            && q.max_group_volume_per_leg_fraction.dec().is_zero()
+            && q.min_retail_volume.dec().is_zero()
+            && q.distributor_count.is_none()
+            && q.leg_quality.is_empty(),
+        "expected ranks[1] to gate on personal and group volume only, got {q:?}"
+    );
+    let (pv, gv) = (to_cents(q.personal_volume), to_cents(q.group_volume));
+    assert!(
+        pv + 1 < gv,
+        "expected personal volume at least 2 cents below group volume, got {pv} and {gv}"
+    );
+    (pv, gv)
 }
 
 fn build_tree(parents: &[usize]) -> UnilevelTree {
@@ -185,6 +201,12 @@ fn run(
         .map(earning_key)
         .collect();
     walkless.sort();
+    let placed = walks.iter().map(|(_, cited)| cited.len()).sum::<usize>() + walkless.len();
+    assert_eq!(
+        placed,
+        result.earnings.len(),
+        "earnings placed under a walk or as walkless, against all earnings"
+    );
     (ranks, walks, walkless)
 }
 
@@ -214,10 +236,8 @@ fn any_case() -> impl Strategy<Value = Case> {
         })
 }
 
-/// A root whose group volume is exactly the second rank's group-volume
-/// threshold, or one cent under it. It is the root's own personal volume plus
-/// a child's volume: one part repeated two or three times, and the rest split
-/// into random cent parts.
+/// A root whose personal volume plus its child's volume entries sum to the
+/// second rank's group-volume threshold, or one cent under it.
 fn threshold_case() -> impl Strategy<Value = Case> {
     let (pv_min, gv) = second_rank_thresholds();
     (

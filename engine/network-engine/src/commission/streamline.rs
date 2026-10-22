@@ -49,7 +49,7 @@ pub fn calculate_streamline(
     // the worst failure mode. Without this it falls through: max_level is 0,
     // slots is empty, the gap map over an empty vec yields Ok, and the walk
     // gets dynamic_thresholds: Some(&[]) — no level gated, no rate in the
-    // table, so every rate falls to 0.0 and the call pays nobody without
+    // table, so every rate falls to zero and the call pays nobody without
     // saying why. validate() rejects it at load; this covers the direct
     // caller (HEU-670).
     if structure.streamline_commission.levels.is_empty() {

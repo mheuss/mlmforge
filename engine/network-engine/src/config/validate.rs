@@ -436,9 +436,9 @@ impl StreamlineCommissionConfig {
         // sorted list becomes [1, 1, ...] and fails n != j+1 at index 1.
         //
         // Note it is caught there and nowhere else. The duplicate_value guard
-        // in validateU8MapKeys (rules.go:118) never sees dynamic_compression:
+        // in validateU8MapKeys never sees dynamic_compression:
         // it takes a map[string]dec.Amount and is reached only through
-        // getRateTable (rules.go:98), whose switch returns nil for
+        // getRateTable, whose switch returns nil for
         // StreamlineCommission. So a "1"/"01" collision here surfaces as a
         // sequencing error, not a duplicate one.
         for (idx, level) in self.levels.iter().enumerate() {

@@ -324,7 +324,7 @@ The walk function does not sort its output, and since HEU-641 the five commissio
 
 The walk takes a `&mut Vec<Walk>` collector as its last parameter and pushes one walk record per volume source as it goes. It records one step per node at each of the three sites that consume a level, and a stop on every walk, naming the break site when one fired.
 
-Three consuming sites, four `steps.push` calls. The loop tail is one site with two mutually exclusive branches: a node with a rate is `Paid`, and a node whose rate table has no entry at its level falls back to 0.0 and is `Forfeited`. Both consume the level, so one node yields one step either way. Counting the pushes instead of the sites gives four and is the wrong number, which has now caught two readers.
+Three consuming sites, four `steps.push` calls. The loop tail is one site with two mutually exclusive branches: a node with a rate is `Paid`, and a node whose rate table has no entry at its level falls back to zero and is `Forfeited`. Both consume the level, so one node yields one step either way. Counting the pushes instead of the sites gives four and is the wrong number, which has now caught two readers.
 
 The walk can also fail. A node that reaches its snapshot lookup with no snapshot returns `UplineNotInSnapshot` and no walk is pushed for that source. Walks already pushed for earlier sources stay in the caller's collector, which the caller discards along with the error rather than handing to `walk_order::assemble`.
 
@@ -417,7 +417,7 @@ Every member of a tree whose structure a rank above the lowest names must have a
 
 Use `setup_raw` when the fixture needs to control its own bytes. Malformed JSON, duplicate keys, or a specific key order the assertion depends on — none of those survive a round-trip through a map. `setup_raw` lines are sent verbatim as NDJSON. `setup` and `setup_raw` are mutually exclusive per fixture, and the harness asserts it.
 
-It is no longer required just because a fixture loads a plan. That rule existed because sorting puts `config` before `type` in an adjacently-tagged `StructureConfig`, which made serde buffer the content, which stripped the string-to-`u8` coercion that `rate_table: BTreeMap<u8, f64>` needs. Loading a plan through `setup` failed outright. HEU-648 fixed that with `deserialize_with` helpers in `engine/network-engine/src/serde_helpers.rs`, so either key order parses now.
+It is no longer required just because a fixture loads a plan. That rule existed because sorting puts `config` before `type` in an adjacently-tagged `StructureConfig`, which made serde buffer the content, which stripped the string-to-`u8` coercion that a `rate_table` keyed by `u8` needs. Loading a plan through `setup` failed outright. HEU-648 fixed that with `deserialize_with` helpers in `engine/network-engine/src/serde_helpers.rs`, so either key order parses now.
 
 Existing plan fixtures still use `setup_raw`. Leave them: changing a fixture's encoding path changes the bytes the worker sees, which is not a change worth making without a reason.
 
@@ -1183,13 +1183,13 @@ Anchored by content rather than by line number. These have rotted three times.
 | -- | -- |
 | `saturating_add` with the `// forfeit level` comment | Node is ineligible and was not compressed |
 | `saturating_add` under the `max_earning_depth` check | Per-distributor depth cap from active leg tiers |
-| the trailing `saturating_add` at the bottom of the node loop, **when `rate == 0.0`** | Eligible, uncompressed, but the rate table has no entry for this rank at this level |
+| the trailing `saturating_add` at the bottom of the node loop, **when `rate` is zero** | Eligible, uncompressed, but the rate table has no entry for this rank at this level |
 
 **The third is the one that reads as safe, and the ticket, the plan and the
 implementation brief all missed it.** The others `continue`, so they look like
 the exceptional paths. The third is the unconditional increment every surviving
 node reaches, and it forfeits only when the rate lookup falls back to
-`unwrap_or(0.0)`.
+`unwrap_or(AuthoredDec::ZERO)`.
 
 Missing it leaves `steps.len()` short by one for every zero-rate node. That
 compiles, passes every existing fixture, and silently breaks the one property

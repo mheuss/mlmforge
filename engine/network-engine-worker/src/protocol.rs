@@ -30,7 +30,7 @@ pub struct Request {
     ///
     /// It used to be load-bearing for correctness too: `Value` sorts keys, and
     /// the sorted order made serde buffer an adjacently-tagged enum's content,
-    /// which stripped the string-to-integer coercion that `BTreeMap<u8, f64>`
+    /// which stripped the string-to-integer coercion that `u8`-keyed
     /// rate tables need. HEU-648 fixed that in the config types, so a `Value`
     /// round-trip no longer breaks a plan. `RawValue` stays for the reasons
     /// above.

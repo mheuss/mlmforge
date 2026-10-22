@@ -1558,3 +1558,20 @@ Each step is one set-based statement, to keep a large removal inside the store's
 The store does not show the holding tank. The engine rebuilt by replay or from a snapshot does.
 
 The engine refuses to place a user who is in the holding tank. `add_root`, `add_node`, `add_node_at` and a `check_mutation` for `add_root` or `add_node_at` answer `USER_IN_HOLDING_TANK` (HEU-930). `place_from_tank` is the only way out of the tank, and the event path has no event for it.
+
+## Rounding A Rounded Quotient Can Invent A Tie
+
+`checked_div` already rounds, at whatever scale its 96-bit coefficient allows. Rounding that result again at 13 places gives the right answer in almost every case. It goes wrong when the first rounding lands exactly on a 13-place midpoint. The true quotient was a little above or below that midpoint, but the second rounding sees a tie and breaks it to even. That can pick the wrong neighbour.
+
+E2 sends any quotient that lands on a 13-place midpoint to the wide path, which divides exactly (HEU-969).
+
+When testing a rounding step that follows another rounding, build fake ties in both directions and both signs. A true value just above the midpoint and one just below must round apart.
+
+## `arbitrary_precision` Changes Some Serde Error Text
+
+The engine enables serde_json's `arbitrary_precision` feature, so it can read numbers exactly. That changes some error messages:
+
+- A bare number where an internally tagged enum is expected reports ``missing field `type` ``. Before the feature was on, the message named the enum (HEU-988).
+- serde_json re-spells `1e15` as `1e+15` before `AuthoredDec` sees the text. A refusal then quotes `1e+15`, which the caller never wrote (HEU-985).
+
+Assert the text you observe.

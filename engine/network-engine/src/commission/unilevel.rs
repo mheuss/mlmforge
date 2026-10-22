@@ -460,6 +460,58 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_rate_table_and_one_of_empty_ranks_give_identical_results() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        tree.add_node(test_uuid(3), test_uuid(2), test_uuid(2), 0)
+            .unwrap();
+
+        let plan = test_plan(default_eligibility());
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), eligible_snapshot());
+        snapshots.insert(
+            test_uuid(2),
+            DistributorSnapshot {
+                rank: "associate".to_string(),
+                ..eligible_snapshot()
+            },
+        );
+        snapshots.insert(test_uuid(3), eligible_snapshot());
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(3),
+            cv_amount: d!(100.0),
+        }];
+
+        let run = |rate_table| {
+            calculate_unilevel(
+                &tree,
+                &plan,
+                &test_structure(rate_table),
+                &snapshots,
+                &volume,
+                &crate::test_support::test_plan_identity(),
+            )
+            .unwrap()
+        };
+
+        // Without this, the comparison below could pass on a fixture that never pays.
+        assert!(
+            !run(test_rate_table()).earnings.is_empty(),
+            "the fixture must pay under a populated table"
+        );
+
+        let empty = run(BTreeMap::new());
+        let empty_ranks = run(BTreeMap::from([
+            ("associate".to_string(), BTreeMap::new()),
+            ("silver".to_string(), BTreeMap::new()),
+        ]));
+        assert!(empty.earnings.is_empty());
+        assert_eq!(empty, empty_ranks);
+    }
+
+    #[test]
     fn calculate_unilevel_rejects_a_rank_not_in_the_ladder() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();

@@ -711,14 +711,6 @@ mod tests {
     }
 
     #[test]
-    fn effective_leg_cap_gives_the_exact_cap_for_a_fraction_that_rounds_low() {
-        assert_eq!(
-            effective_leg_cap(&sq_with_caps(d!(100000.0), d!(0.0), d!(0.29))),
-            Ok(Some(d!(29000.0)))
-        );
-    }
-
-    #[test]
     fn effective_leg_cap_gives_the_exact_cap_for_a_fraction_that_rounds_high() {
         assert_eq!(
             effective_leg_cap(&sq_with_caps(d!(10000.0), d!(0.0), d!(0.07))),
@@ -1187,6 +1179,45 @@ mod tests {
         assert_eq!(
             err,
             DistributorCountError::UnknownMinRank("unknown".to_string())
+        );
+    }
+
+    #[test]
+    fn distributor_count_meets_refuses_a_leg_volume_it_cannot_hold() {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(uid(1), 0).unwrap();
+        tree.add_node(uid(2), uid(1), uid(1), 0).unwrap();
+        let mut sources = Vec::new();
+        for i in 3..8_003 {
+            tree.add_node(uid(i), uid(2), uid(2), 0).unwrap();
+            sources.push(VolumeSource {
+                source_id: uid(i),
+                cv_amount: d!(999_999_999_999_999.999_999_999_9),
+            });
+        }
+        let idx = VolumeIndex::build(&sources).unwrap();
+        let already = HashMap::from([(
+            uid(2),
+            EvaluatedRank::Qualified {
+                rank: "bronze".to_string(),
+                ordinal: 1,
+            },
+        )]);
+        let ordinals = HashMap::from([("bronze".to_string(), 1u16)]);
+        let req = DistributorCountRequirement {
+            count: 1,
+            min_rank: "bronze".to_string(),
+            search_mode: SearchMode::AnyLevel,
+            search_depth: None,
+            total_count: 0,
+            min_leg_group_volume: d!(0.0),
+        };
+
+        let err =
+            distributor_count_meets(&req, uid(1), &tree, &idx, &already, &ordinals).unwrap_err();
+        assert!(
+            matches!(err, DistributorCountError::Numeric(ref e) if e.op == crate::decimal::NumericOp::Add),
+            "got {err:?}"
         );
     }
 

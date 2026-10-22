@@ -1,13 +1,14 @@
 mod common;
 
 use common::uuid_from_index;
+use network_engine::commission::VolumeSource;
 use network_engine::config::rank::{
     DemotionPolicy, LegPredicate, LegQualityRequirement, RankDefinition, RankQualification,
     RankQualificationWindow, StructureQualification, TenureRequirement,
 };
 use network_engine::config::{CompensationPlan, StructureConfig, UnilevelStructureConfig};
 use network_engine::d;
-use network_engine::decimal::AuthoredDec;
+use network_engine::decimal::{AuthoredDec, NumericOp};
 use network_engine::rank::{
     DistributorPrimitives, EvaluatedRank, EvaluationError, EvaluationInputs, evaluate_ranks,
     structures_above_lowest_rank,
@@ -1705,5 +1706,67 @@ fn structures_above_lowest_rank_takes_the_first_of_tied_lowest_ordinals_as_the_l
     assert_eq!(
         structures_above_lowest_rank(&plan),
         BTreeSet::from(["Test"])
+    );
+}
+#[test]
+fn evaluate_ranks_refuses_a_volume_total_it_cannot_hold() {
+    let mut tree = UnilevelTree::new();
+    tree.add_root(uuid_from_index(1), 0).unwrap();
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &tree);
+
+    let volume_sources = (0..8_000)
+        .map(|_| VolumeSource {
+            source_id: uuid_from_index(1),
+            cv_amount: d!(999_999_999_999_999.999_999_999_9),
+        })
+        .collect();
+    let inputs = EvaluationInputs {
+        distributors: HashMap::from([(uuid_from_index(1), primitives(d!(250.0)))]),
+        volume_sources,
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    let err = evaluate_ranks(&linear_plan(), &nav, &inputs).unwrap_err();
+    assert!(
+        matches!(err, EvaluationError::Numeric(ref e) if e.op == NumericOp::Add),
+        "got {err:?}"
+    );
+}
+
+#[test]
+fn evaluate_ranks_refuses_a_group_volume_it_cannot_hold() {
+    let mut tree = UnilevelTree::new();
+    tree.add_root(uuid_from_index(1), 0).unwrap();
+    let mut distributors = HashMap::from([(uuid_from_index(1), primitives(d!(250.0)))]);
+    let mut volume_sources = Vec::new();
+    for i in 2..8_002 {
+        tree.add_node(
+            uuid_from_index(i),
+            uuid_from_index(1),
+            uuid_from_index(1),
+            i as i64,
+        )
+        .unwrap();
+        distributors.insert(uuid_from_index(i), primitives(d!(0.0)));
+        volume_sources.push(VolumeSource {
+            source_id: uuid_from_index(i),
+            cv_amount: d!(999_999_999_999_999.999_999_999_9),
+        });
+    }
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &tree);
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources,
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    let err = evaluate_ranks(&linear_plan(), &nav, &inputs).unwrap_err();
+    assert!(
+        matches!(err, EvaluationError::Numeric(ref e) if e.op == NumericOp::Add),
+        "got {err:?}"
     );
 }

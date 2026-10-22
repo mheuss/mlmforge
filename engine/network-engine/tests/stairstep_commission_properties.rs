@@ -873,7 +873,6 @@ fn stairstep_walk_two_amounts_do_not_depend_on_snapshot_map_order() {
         assert_eq!(from_breakaway[0].earner_id, uuid_from_index(0));
         seen.insert((from_breakaway[0].cv_amount, from_breakaway[0].dollar_amount));
     }
-    // 1.3 group volume * 0.40 broad_pct * 1.0 multiplier * 0.05 gap
     assert_eq!(
         seen,
         BTreeSet::from([(d!(1.3), d!(0.026))]),

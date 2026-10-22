@@ -103,7 +103,7 @@ fn accumulate_leg_volumes(
         .iter()
         .map(|(uid, &idx)| (idx, *uid, arena.node(idx).depth))
         .collect();
-    nodes_by_depth.sort_by_key(|n| std::cmp::Reverse(n.2));
+    nodes_by_depth.sort_by_key(|n| (std::cmp::Reverse(n.2), n.1));
 
     // Subtree totals: personal volume + children's subtree totals.
     let mut subtree_totals: HashMap<NodeIndex, Dec> = HashMap::new();
@@ -144,6 +144,13 @@ fn accumulate_leg_volumes(
     Ok(leg_volumes)
 }
 
+/// The positions in `legs`, in ascending id order.
+fn sorted_positions(legs: &HashMap<Uuid, LegVolumes>) -> Vec<Uuid> {
+    let mut positions: Vec<Uuid> = legs.keys().copied().collect();
+    positions.sort_unstable();
+    positions
+}
+
 /// Sorts `earnings` by `(earner_id, position_id)`, then scales each owner's
 /// earnings pro rata when their total exceeds `cap`.
 fn apply_aggregate_cap(
@@ -182,7 +189,7 @@ fn apply_aggregate_cap(
 /// snapshot names a rank the plan does not define, if a snapshot's
 /// personal_volume is negative, if the owner of any position in the tree has
 /// no snapshot, if a volume source is not found in the tree, if a volume source
-/// has an invalid cv_amount, or if an amount leaves the numeric envelope.
+/// has an invalid cv_amount, or if an exact result cannot be held.
 pub fn calculate_binary_pairing(
     tree: &BinaryTree,
     plan: &CompensationPlan,
@@ -238,11 +245,14 @@ pub fn calculate_binary_pairing(
     let volume_totals = aggregate_volume(tree, snapshots, volume, ownership)?;
     let eligibility_cache = evaluate_eligibility(snapshots, &plan.eligibility);
     let working_legs = accumulate_leg_volumes(tree, &volume_totals, carry_forward)?;
+    // Visit positions in id order so a failed calculation names the same operands every run.
+    let positions = sorted_positions(&working_legs);
 
     // Phase 2: Calculate
     let mut earnings = Vec::new();
 
-    for (uid, legs) in &working_legs {
+    for uid in &positions {
+        let legs = &working_legs[uid];
         let owner = resolve_owner(uid, ownership);
         let eligible = eligibility_cache.get(&owner).copied().unwrap_or(false);
         if !eligible {
@@ -275,11 +285,9 @@ pub fn calculate_binary_pairing(
             PairingCalculation::WeakerLeg => {
                 matched.try_mul(pairing.percent)?.try_mul(multiplier)?
             }
-            PairingCalculation::VolumeRatio if max_leg > Dec::ZERO => matched
-                .try_mul(pairing.percent)?
-                .try_mul(multiplier)?
-                .try_mul(min_leg)?
-                .div_ratio(max_leg)?,
+            PairingCalculation::VolumeRatio if max_leg > Dec::ZERO => {
+                matched.mul_div_ratio(pairing.percent, multiplier, min_leg, max_leg)?
+            }
             PairingCalculation::VolumeRatio => Dec::ZERO,
         };
 
@@ -330,7 +338,8 @@ pub fn calculate_binary_pairing(
     // Phase 3: Post-payout carry-forward
     let mut new_carry_forward = HashMap::new();
 
-    for (uid, legs) in &working_legs {
+    for uid in &positions {
+        let legs = &working_legs[uid];
         let matched = legs.left.min(legs.right);
         let owner = resolve_owner(uid, ownership);
         let eligible = eligibility_cache.get(&owner).copied().unwrap_or(false);
@@ -424,6 +433,8 @@ fn calculate_binary_cycle_step(
     let volume_totals = aggregate_volume(tree, snapshots, volume, ownership)?;
     let eligibility_cache = evaluate_eligibility(snapshots, &plan.eligibility);
     let working_legs = accumulate_leg_volumes(tree, &volume_totals, carry_forward)?;
+    // Visit positions in id order so a failed calculation names the same operands every run.
+    let positions = sorted_positions(&working_legs);
 
     // Steps are sorted by validate() above. Use the validated copy.
     let steps = &validated_config.steps;
@@ -433,7 +444,8 @@ fn calculate_binary_cycle_step(
     let mut post_cycle_legs: HashMap<Uuid, (Dec, Dec)> = HashMap::new();
     let mut earnings = Vec::new();
 
-    for (uid, legs) in &working_legs {
+    for uid in &positions {
+        let legs = &working_legs[uid];
         let owner = resolve_owner(uid, ownership);
         let eligible = eligibility_cache.get(&owner).copied().unwrap_or(false);
 
@@ -3963,7 +3975,8 @@ mod tests {
 
                 let total_payout = Dec::sum(result.earnings.iter().map(|e| e.dollar_amount)).unwrap();
                 let matched = left_vol.min(right_vol);
-                let theoretical_max = matched.dec().try_mul(like(&Dec::ZERO, "0.10")).unwrap(); // percent * multiplier
+                let percent: Dec = d!(0.10);
+                let theoretical_max = matched.dec().try_mul(percent).unwrap();
 
                 prop_assert!(
                     total_payout <= theoretical_max,
@@ -4205,7 +4218,8 @@ mod tests {
                 // Total input volume across both periods.
                 let total_left = left_p1.dec().try_add(left_p2).unwrap();
                 let total_right = right_p1.dec().try_add(right_p2).unwrap();
-                let theoretical_max = total_left.min(total_right).try_mul(like(&Dec::ZERO, "0.10")).unwrap();
+                let percent: Dec = d!(0.10);
+                let theoretical_max = total_left.min(total_right).try_mul(percent).unwrap();
 
                 prop_assert!(
                     total_paid <= theoretical_max,
@@ -4393,6 +4407,190 @@ mod tests {
         let earning = &result.earnings[0];
         assert_d!(earning.dollar_amount, 7);
         assert!(!earning.capped);
+    }
+
+    fn volume_ratio_payout(
+        percent: AuthoredDec,
+        multiplier: Option<AuthoredDec>,
+        left: AuthoredDec,
+        right: AuthoredDec,
+    ) -> Dec {
+        let structure = BinaryStructureConfig {
+            name: "Test Binary".to_string(),
+            binary_commission: BinaryCommissionConfig {
+                volume_to_dollar_multiplier: multiplier,
+                mode: BinaryCommissionMode::Pairing(PairingConfig {
+                    percent,
+                    calculation: PairingCalculation::VolumeRatio,
+                    ..test_pairing_config()
+                }),
+            },
+        };
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+        let snapshots = HashMap::from([
+            (test_uuid(1), eligible_snapshot()),
+            (test_uuid(2), eligible_snapshot()),
+            (test_uuid(3), eligible_snapshot()),
+        ]);
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: left,
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: right,
+            },
+        ];
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap();
+        result.earnings[0].dollar_amount
+    }
+
+    #[test]
+    fn pairing_names_the_same_failing_position_on_every_run() {
+        let structure = BinaryStructureConfig {
+            name: "Test Binary".to_string(),
+            binary_commission: BinaryCommissionConfig {
+                volume_to_dollar_multiplier: Some(d!(20)),
+                mode: BinaryCommissionMode::Pairing(test_pairing_config()),
+            },
+        };
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+        let mut seen = std::collections::BTreeSet::new();
+        // Rebuilt inside the loop so each pass samples a fresh HashMap order.
+        for _ in 0..32 {
+            let tree = three_node_tree();
+            let snapshots = HashMap::from([
+                (test_uuid(1), eligible_snapshot()),
+                (test_uuid(2), eligible_snapshot()),
+                (test_uuid(3), eligible_snapshot()),
+            ]);
+            let carry_forward = HashMap::from([
+                (
+                    test_uuid(2),
+                    LegVolumes {
+                        left: d!(70000000000000000000000000000),
+                        right: d!(70000000000000000000000000000),
+                    },
+                ),
+                (
+                    test_uuid(3),
+                    LegVolumes {
+                        left: d!(60000000000000000000000000000),
+                        right: d!(60000000000000000000000000000),
+                    },
+                ),
+            ]);
+            let err = calculate_binary_pairing(
+                &tree,
+                &plan,
+                &structure,
+                &snapshots,
+                &[],
+                &carry_forward,
+                None,
+            )
+            .unwrap_err();
+            seen.insert(err.to_string());
+        }
+        assert_eq!(seen.len(), 1, "distinct errors across runs: {seen:?}");
+        let only = seen.first().unwrap();
+        assert!(only.contains("7000000000000000000000000000"), "{only}");
+    }
+
+    #[test]
+    fn leg_accumulation_names_the_same_failing_position_on_every_run() {
+        let structure = test_binary_structure();
+        let plan = test_plan(default_eligibility());
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(4),
+                cv_amount: d!(1),
+            },
+            VolumeSource {
+                source_id: test_uuid(5),
+                cv_amount: d!(2),
+            },
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        // Rebuilt inside the loop so each pass samples a fresh HashMap order.
+        for _ in 0..32 {
+            let mut tree = BinaryTree::new();
+            tree.add_root(test_uuid(1), 1000).unwrap();
+            tree.add_node(test_uuid(2), test_uuid(1), 0, test_uuid(1), 2000)
+                .unwrap();
+            tree.add_node(test_uuid(3), test_uuid(1), 1, test_uuid(1), 3000)
+                .unwrap();
+            tree.add_node(test_uuid(4), test_uuid(2), 0, test_uuid(2), 4000)
+                .unwrap();
+            tree.add_node(test_uuid(5), test_uuid(3), 0, test_uuid(3), 5000)
+                .unwrap();
+            let snapshots: HashMap<Uuid, DistributorSnapshot> = (1..=5)
+                .map(|i| (test_uuid(i), eligible_snapshot()))
+                .collect();
+            let carry_forward = HashMap::from([
+                (
+                    test_uuid(2),
+                    LegVolumes {
+                        left: d!(79228162514264337593543950335),
+                        right: Dec::ZERO,
+                    },
+                ),
+                (
+                    test_uuid(3),
+                    LegVolumes {
+                        left: d!(79228162514264337593543950334),
+                        right: Dec::ZERO,
+                    },
+                ),
+            ]);
+            let err = calculate_binary_pairing(
+                &tree,
+                &plan,
+                &structure,
+                &snapshots,
+                &volume,
+                &carry_forward,
+                None,
+            )
+            .unwrap_err();
+            seen.insert(err.to_string());
+        }
+        assert_eq!(seen.len(), 1, "distinct errors across runs: {seen:?}");
+        let only = seen.first().unwrap();
+        assert!(only.contains("79228162514264337593543950335"), "{only}");
+    }
+
+    #[test]
+    fn volume_ratio_pays_legs_of_nine_hundred_trillion_at_ten_percent() {
+        let paid = volume_ratio_payout(
+            d!(0.1),
+            None,
+            d!(900_000_000_000_000),
+            d!(900_000_000_000_000),
+        );
+        assert_d!(paid, 90_000_000_000_000);
+    }
+
+    #[test]
+    fn volume_ratio_pays_a_ten_place_percent_and_multiplier() {
+        let paid = volume_ratio_payout(
+            d!(0.0333333333),
+            Some(d!(0.8333333333)),
+            d!(1700.37),
+            d!(2500.11),
+        );
+        assert_d!(paid, 32.123676934804774564804152234);
     }
 
     #[test]

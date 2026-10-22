@@ -21,8 +21,8 @@ use super::{walk, walk_order};
 /// Returns `CalculationError` if a snapshot names a rank the plan does not
 /// define, if a snapshot's personal_volume is negative, if a distributor in the
 /// tree has no snapshot, if a volume source is not found in the tree, if a
-/// volume source's cv_amount is negative, or if an amount leaves the numeric
-/// envelope.
+/// volume source's cv_amount is negative, or if an exact result cannot be
+/// held.
 pub fn calculate_unilevel(
     tree: &UnilevelTree,
     plan: &CompensationPlan,

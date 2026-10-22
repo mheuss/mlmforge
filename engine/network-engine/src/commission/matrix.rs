@@ -23,9 +23,9 @@ use super::{walk, walk_order};
 /// `spillover` disagrees with `structure.matrix_params` — checked before any
 /// other work, so it precedes volume/snapshot validation. Otherwise returns
 /// `CalculationError` if a snapshot names a rank the plan does not define, if
-/// a snapshot's `personal_volume` is negative, if a placed node
-/// has no snapshot, if a volume source is not found in the tree, or if a volume
-/// source has an invalid `cv_amount`.
+/// a snapshot's `personal_volume` is negative, if a placed node has no
+/// snapshot, if a volume source is not found in the tree, if a volume source
+/// has an invalid `cv_amount`, or if an exact result cannot be held.
 pub fn calculate_matrix(
     tree: &MatrixTree,
     plan: &CompensationPlan,

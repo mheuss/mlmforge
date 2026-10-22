@@ -3,7 +3,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use bnum::types::{I512, U512};
+use bnum::types::{I512, U512, U1024};
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use thiserror::Error;
@@ -22,10 +22,14 @@ pub struct AuthoredDec(Decimal);
 
 /// Why a number's text was refused.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
-#[error("{text:?} is not a decimal the engine can hold exactly: {reason}")]
+#[error(
+    "{text:?} {verdict}: {reason}",
+    verdict = if *.unrepresentable { "is not a decimal the engine can hold exactly" } else { "was refused" }
+)]
 pub struct ParseDecError {
     text: String,
     reason: &'static str,
+    unrepresentable: bool,
 }
 
 /// The arithmetic operation that failed.
@@ -35,7 +39,15 @@ pub enum NumericOp {
     Sub,
     Mul,
     DivRatio,
-    MulDivTrunc { divisor: Dec, scale: u32 },
+    MulDivTrunc {
+        divisor: Dec,
+        scale: u32,
+    },
+    MulDivRatio {
+        first: Dec,
+        second: Dec,
+        divisor: Dec,
+    },
     FloorDiv,
 }
 
@@ -77,6 +89,11 @@ impl fmt::Display for NumericOp {
             NumericOp::MulDivTrunc { divisor, scale } => {
                 write!(f, "divide by {divisor} at scale {scale} the product of")
             }
+            NumericOp::MulDivRatio {
+                first,
+                second,
+                divisor,
+            } => write!(f, "divide by {divisor} the product of {first}, {second},"),
             NumericOp::FloorDiv => f.write_str("floor-divide"),
         }
     }
@@ -128,6 +145,7 @@ fn parse_exact(text: &str) -> Result<(Decimal, i64), ParseDecError> {
     let refuse = |reason| ParseDecError {
         text: text.to_string(),
         reason,
+        unrepresentable: reason == RANGE || reason == PRECISION,
     };
     let (body, negative) = match text.strip_prefix('-') {
         Some(rest) => (rest, true),
@@ -209,6 +227,48 @@ fn parse_exact(text: &str) -> Result<(Decimal, i64), ParseDecError> {
         })
     })?;
     Ok((value, written_scale))
+}
+
+/// The magnitude `(num / 10^num_scale) ÷ (den / 10^den_scale)`, rounded half to
+/// even at the largest scale of 28 or below whose coefficient fits 96 bits.
+fn round_quotient(
+    negative: bool,
+    num: U1024,
+    num_scale: i64,
+    den: U1024,
+    den_scale: i64,
+) -> Result<Decimal, NumericErrorKind> {
+    let shift = i64::from(MAX_SCALE) + den_scale - num_scale;
+    let (num, den) = if shift >= 0 {
+        (num * U1024::TEN.pow(shift as u32), den)
+    } else {
+        (num, den * U1024::TEN.pow(shift.unsigned_abs() as u32))
+    };
+    let (quotient, remainder) = (num / den, num % den);
+    let limit = U1024::ONE << 96u32;
+    for drop in 0..=MAX_SCALE {
+        let unit = U1024::TEN.pow(drop);
+        let mut kept = quotient / unit;
+        if kept / U1024::TEN >= limit {
+            continue;
+        }
+        // Twice the discarded part against one unit, in units of 1/den.
+        let twice_dropped = ((quotient % unit) * den + remainder) * U1024::TWO;
+        let whole_unit = unit * den;
+        if twice_dropped > whole_unit
+            || (twice_dropped == whole_unit && kept % U1024::TWO == U1024::ONE)
+        {
+            kept += U1024::ONE;
+        }
+        if kept < limit {
+            let m = i128::try_from(kept).expect("a 96-bit coefficient fits i128");
+            return Ok(Decimal::from_i128_with_scale(
+                if negative { -m } else { m },
+                MAX_SCALE - drop,
+            ));
+        }
+    }
+    Err(NumericErrorKind::Overflow)
 }
 
 fn wide(d: Decimal) -> (I512, u32) {
@@ -317,6 +377,44 @@ impl Dec {
             .ok_or_else(|| self.error(NumericOp::DivRatio, rhs, NumericErrorKind::Overflow))
     }
 
+    /// E2: `self × b × c × d ÷ divisor`, with the product held exactly and the
+    /// quotient rounded once by `div_ratio`'s rule.
+    pub fn mul_div_ratio(
+        self,
+        b: impl Into<Dec>,
+        c: impl Into<Dec>,
+        d: impl Into<Dec>,
+        divisor: impl Into<Dec>,
+    ) -> Result<Dec, NumericError> {
+        let (b, c, d, divisor) = (b.into(), c.into(), d.into(), divisor.into());
+        let error = |kind| NumericError {
+            op: NumericOp::MulDivRatio {
+                first: self,
+                second: b,
+                divisor,
+            },
+            lhs: c,
+            rhs: d,
+            kind,
+        };
+        if divisor.is_zero() {
+            return Err(error(NumericErrorKind::DivisionByZero));
+        }
+        let factors = [self, b, c, d];
+        let negative = factors.iter().filter(|f| f.is_negative()).count() % 2 == 1;
+        let mut num = U1024::ONE;
+        let mut num_scale = 0i64;
+        for factor in factors {
+            num *= U1024::from(factor.0.mantissa().unsigned_abs());
+            num_scale += i64::from(factor.0.scale());
+        }
+        let den = U1024::from(divisor.0.mantissa().unsigned_abs());
+        let negative = negative != divisor.is_negative();
+        round_quotient(negative, num, num_scale, den, i64::from(divisor.0.scale()))
+            .map(Dec)
+            .map_err(error)
+    }
+
     /// E3: `self × b ÷ c`, truncated toward zero at `scale` decimal places.
     pub fn mul_div_trunc(
         self,
@@ -400,6 +498,7 @@ impl AuthoredDec {
         let refuse = |reason| ParseDecError {
             text: text.to_string(),
             reason,
+            unrepresentable: false,
         };
         if written_scale > i64::from(ENVELOPE_MAX_SCALE) {
             return Err(refuse(
@@ -565,6 +664,25 @@ mod tests {
         assert!("-1e15".parse::<AuthoredDec>().is_err());
         let eleven = "0.00000000001".parse::<AuthoredDec>().unwrap_err();
         assert!(eleven.to_string().contains("at most 10 decimal places"));
+    }
+
+    #[test]
+    fn only_an_unrepresentable_value_is_called_unholdable() {
+        let envelope = "0.00000000001".parse::<AuthoredDec>().unwrap_err();
+        assert_eq!(
+            envelope.to_string(),
+            "\"0.00000000001\" was refused: an authored value may have at most 10 decimal places"
+        );
+        let grammar = "1..2".parse::<Dec>().unwrap_err();
+        assert_eq!(
+            grammar.to_string(),
+            "\"1..2\" was refused: not a JSON number"
+        );
+        let range = "1e99".parse::<Dec>().unwrap_err();
+        assert_eq!(
+            range.to_string(),
+            "\"1e99\" is not a decimal the engine can hold exactly: the value is beyond the decimal range"
+        );
     }
 
     #[test]
@@ -903,9 +1021,64 @@ mod tests {
             d("1").div_ratio(Dec::ZERO).unwrap_err(),
             d("1").mul_div_trunc(d("2"), Dec::ZERO, 13).unwrap_err(),
             d("1").floor_div(Dec::ZERO).unwrap_err(),
+            d("1")
+                .mul_div_ratio(d("2"), d("3"), d("4"), Dec::ZERO)
+                .unwrap_err(),
         ] {
             assert_eq!(err.kind, NumericErrorKind::DivisionByZero);
         }
+    }
+
+    #[test]
+    fn mul_div_ratio_divides_a_one_third_ratio_last() {
+        let paid = d("100").mul_div_ratio(d("0.3"), d("1"), d("100"), d("300"));
+        assert_eq!(paid.unwrap(), d("10"));
+    }
+
+    #[test]
+    fn mul_div_ratio_rounds_a_one_third_ratio_once() {
+        let paid = d("100").mul_div_ratio(d("0.1"), d("1"), d("100"), d("300"));
+        assert_eq!(paid.unwrap().to_string(), "3.3333333333333333333333333333");
+    }
+
+    #[test]
+    fn mul_div_ratio_rounds_a_tie_to_even_like_div_ratio() {
+        let one = Dec::ONE;
+        for (a, even) in [
+            (
+                "79228162514264337593543950333",
+                "39614081257132168796771975166",
+            ),
+            (
+                "-79228162514264337593543950333",
+                "-39614081257132168796771975166",
+            ),
+        ] {
+            let paid = d(a).mul_div_ratio(one, one, one, d("2")).unwrap();
+            assert_eq!(paid, d(even));
+            assert_eq!(paid, d(a).div_ratio(d("2")).unwrap());
+        }
+    }
+
+    #[test]
+    fn mul_div_ratio_holds_a_product_past_96_bits() {
+        let leg = d("900000000000000");
+        let paid = leg.mul_div_ratio(d("0.1"), d("1"), leg, leg);
+        assert_eq!(paid.unwrap(), d("90000000000000"));
+    }
+
+    #[test]
+    fn mul_div_ratio_beyond_the_range_is_an_overflow() {
+        let max = d("79228162514264337593543950335");
+        let err = max
+            .mul_div_ratio(d("1"), d("1"), d("1"), d("0.5"))
+            .unwrap_err();
+        assert_eq!(err.kind, NumericErrorKind::Overflow);
+        assert_eq!(
+            err.to_string(),
+            "cannot divide by 0.5 the product of 79228162514264337593543950335, 1, 1 and 1: \
+             the result is beyond the decimal range"
+        );
     }
 
     #[test]
@@ -1020,6 +1193,50 @@ mod tests {
         let err = max.div_ratio(d("0.5")).unwrap_err();
         assert_eq!(err.kind, NumericErrorKind::Overflow);
         assert_eq!(err.op, NumericOp::DivRatio);
+    }
+
+    fn factor_dec() -> impl Strategy<Value = Dec> {
+        (-(1i128 << 30)..(1i128 << 30), 0u32..=9)
+            .prop_map(|(m, s)| Dec(Decimal::from_i128_with_scale(m, s)))
+    }
+
+    fn full_width_dec() -> impl Strategy<Value = Dec> {
+        (-((1i128 << 96) - 1)..(1i128 << 96), 0u32..=28)
+            .prop_map(|(m, s)| Dec(Decimal::from_i128_with_scale(m, s)))
+    }
+
+    proptest! {
+        #[test]
+        fn mul_div_ratio_of_one_factor_follows_div_ratio(
+            a in full_width_dec(),
+            b in full_width_dec(),
+        ) {
+            prop_assume!(!b.is_zero());
+            let one = Dec::ONE;
+            match (a.div_ratio(b), a.mul_div_ratio(one, one, one, b)) {
+                (Ok(x), Ok(y)) => prop_assert_eq!(x, y, "{} / {}", a, b),
+                (Err(x), Err(y)) => prop_assert_eq!(x.kind, y.kind),
+                (x, y) => prop_assert!(false, "{} / {}: div_ratio {:?}, mul_div_ratio {:?}", a, b, x, y),
+            }
+        }
+
+        #[test]
+        fn mul_div_ratio_follows_div_ratio_of_a_held_product(
+            a in factor_dec(),
+            b in factor_dec(),
+            c in factor_dec(),
+            divisor in full_width_dec(),
+        ) {
+            prop_assume!(!divisor.is_zero());
+            let product = a.try_mul(b).and_then(|p| p.try_mul(c)).unwrap();
+            let expected = product.div_ratio(divisor);
+            let got = a.mul_div_ratio(b, c, Dec::ONE, divisor);
+            match (expected, got) {
+                (Ok(x), Ok(y)) => prop_assert_eq!(x, y),
+                (Err(x), Err(y)) => prop_assert_eq!(x.kind, y.kind),
+                (x, y) => prop_assert!(false, "expected {:?}, got {:?}", x, y),
+            }
+        }
     }
 
     fn signed_dec() -> impl Strategy<Value = Dec> {

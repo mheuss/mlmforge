@@ -269,8 +269,7 @@ fn emit_generation_earnings(
 /// define, if a snapshot's personal_volume is negative, if a distributor in the
 /// tree has no snapshot, if a volume source is not found in the tree, if a
 /// volume source has an invalid CV amount, if level commissions are enabled
-/// with no level commission config, or if an amount leaves the numeric
-/// envelope.
+/// with no level commission config, or if an exact result cannot be held.
 pub fn calculate_generation(
     tree: &UnilevelTree,
     plan: &CompensationPlan,

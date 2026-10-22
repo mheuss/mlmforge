@@ -21,8 +21,8 @@ use super::{walk, walk_order};
 /// plan does not define, a snapshot whose personal_volume is negative, and a
 /// stream member with no snapshot, frozen streams included. Also rejects volume
 /// it cannot pay: a source with a negative CV amount, or a source held by no
-/// stream. A source held only by a frozen stream
-/// is accepted and earns nothing.
+/// stream. A source held only by a frozen stream is accepted and earns nothing.
+/// Fails when an exact result cannot be held.
 ///
 /// Each unfrozen stream is walked independently. Dynamic compression
 /// thresholds gate per-level qualification by rank ordinal. Monoline

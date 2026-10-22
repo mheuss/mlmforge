@@ -118,6 +118,13 @@ fn build_group_volumes(
     Ok((group_volumes, group_leaders))
 }
 
+/// The ids in `set`, in ascending order.
+fn sorted_ids(set: &HashSet<Uuid>) -> Vec<Uuid> {
+    let mut ids: Vec<Uuid> = set.iter().copied().collect();
+    ids.sort_unstable();
+    ids
+}
+
 /// Find the group leader for a distributor.
 ///
 /// If the distributor is breakaway, they are their own group leader.
@@ -378,7 +385,8 @@ fn walk_single_overrides(
         )
     });
 
-    for &breakaway_id in &prep.breakaways {
+    // Visit breakaways in id order so a failed calculation names the same operands every run.
+    for breakaway_id in sorted_ids(&prep.breakaways) {
         let group_vol = prep
             .group_volumes
             .get(&breakaway_id)
@@ -568,7 +576,8 @@ fn walk_multi_tier_overrides(
     let mut earnings = Vec::new();
     let always_boundary = |_: Uuid| true;
 
-    for &source_id in &prep.breakaways {
+    // Visit breakaways in id order so a failed calculation names the same operands every run.
+    for source_id in sorted_ids(&prep.breakaways) {
         let group_vol = prep
             .group_volumes
             .get(&source_id)
@@ -658,8 +667,8 @@ fn walk_multi_tier_overrides(
 /// Returns [`CalculationError`] if a snapshot names a rank the plan does not
 /// define, if a snapshot has a negative personal_volume, if a distributor in
 /// the tree has no snapshot, if a volume source is not found in the tree, if a
-/// volume source has a negative cv_amount, or if an amount leaves the numeric
-/// envelope.
+/// volume source has a negative cv_amount, or if an exact result cannot be
+/// held.
 pub fn calculate_stairstep(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -2815,6 +2824,77 @@ mod tests {
                 overrides: OverrideStrategy::MultiTier(MultiTierConfig { tiers }),
             }),
         }
+    }
+
+    /// Calls `calculate_stairstep` 32 times on fresh snapshot maps and returns
+    /// each distinct error text.
+    fn errors_across_runs(
+        structure: &StairstepStructureConfig,
+        ranks_and_pvs: &[(&str, AuthoredDec)],
+    ) -> std::collections::BTreeSet<String> {
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+        let mut seen = std::collections::BTreeSet::new();
+        // Rebuilt inside the loop so each pass samples a fresh HashMap order.
+        for _ in 0..32 {
+            let tree = build_chain(ranks_and_pvs.len());
+            let snapshots: HashMap<Uuid, DistributorSnapshot> = ranks_and_pvs
+                .iter()
+                .enumerate()
+                .map(|(i, (rank, pv))| (uuid(i), snapshot_with_rank(rank, *pv)))
+                .collect();
+            let err = calculate_stairstep(
+                &tree,
+                &plan,
+                structure,
+                &snapshots,
+                &[],
+                &crate::test_support::test_plan_identity(),
+            )
+            .unwrap_err();
+            seen.insert(err.to_string());
+        }
+        seen
+    }
+
+    #[test]
+    fn single_walk_names_the_same_failing_breakaway_on_every_run() {
+        let mut structure = test_stairstep_structure();
+        structure.level_commission.volume_to_dollar_multiplier = Some(d!(900_000_000_000_000));
+        let seen = errors_across_runs(
+            &structure,
+            &[
+                ("senior_director", d!(150)),
+                ("director", d!(900_000_000_000_000)),
+                ("associate", d!(150)),
+                ("director", d!(800_000_000_000_000)),
+                ("associate", d!(150)),
+            ],
+        );
+        assert_eq!(seen.len(), 1, "distinct errors across runs: {seen:?}");
+        let only = seen.first().unwrap();
+        assert!(only.contains("360000000000060"), "{only}");
+    }
+
+    #[test]
+    fn multi_tier_names_the_same_failing_breakaway_on_every_run() {
+        let mut structure = test_multi_tier_structure(vec![BreakawayTier {
+            min_split_out_groups: 1,
+            rate: d!(0.05),
+        }]);
+        structure.level_commission.volume_to_dollar_multiplier = Some(d!(900_000_000_000_000));
+        let seen = errors_across_runs(
+            &structure,
+            &[
+                ("director", d!(150)),
+                ("director", d!(900_000_000_000_000)),
+                ("associate", d!(150)),
+                ("director", d!(800_000_000_000_000)),
+                ("associate", d!(150)),
+            ],
+        );
+        assert_eq!(seen.len(), 1, "distinct errors across runs: {seen:?}");
+        let only = seen.first().unwrap();
+        assert!(only.contains("900000000000150"), "{only}");
     }
 
     #[test]

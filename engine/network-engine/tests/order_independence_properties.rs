@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 
 use network_engine::commission::calculate_unilevel;
-use network_engine::commission::types::{DistributorSnapshot, VolumeSource, Walk};
+use network_engine::commission::types::{
+    CommissionEarning, DistributorSnapshot, VolumeSource, Walk,
+};
 use network_engine::config::{CompensationPlan, StructureConfig};
 use network_engine::decimal::{AuthoredDec, Dec};
 use network_engine::rank::{
@@ -28,6 +30,25 @@ fn cents(c: u64) -> AuthoredDec {
     format!("{}.{:02}", c / 100, c % 100).parse().unwrap()
 }
 
+fn to_cents(value: AuthoredDec) -> u64 {
+    let hundred: Dec = "100".parse().unwrap();
+    value
+        .dec()
+        .try_mul(hundred)
+        .unwrap()
+        .to_string()
+        .parse()
+        .unwrap()
+}
+
+/// The personal and group volume, in cents, that `plan().ranks[1]` requires
+/// on its first structure.
+fn second_rank_thresholds() -> (u64, u64) {
+    let rank = &plan().ranks[1];
+    let q = &rank.qualification.structures[0];
+    (to_cents(q.personal_volume), to_cents(q.group_volume))
+}
+
 fn build_tree(parents: &[usize]) -> UnilevelTree {
     let mut tree = UnilevelTree::new();
     tree.add_root(uuid_from_index(0), 0).unwrap();
@@ -39,8 +60,19 @@ fn build_tree(parents: &[usize]) -> UnilevelTree {
     tree
 }
 
-/// An earning without its walk index, carrying its walk's content instead.
-type EarningKey = (Uuid, Uuid, u8, Option<Dec>, Dec, Dec, Option<String>);
+/// An earning without its walk index.
+type EarningKey = (Uuid, Uuid, u8, Option<Dec>, Dec, Dec);
+
+fn earning_key(e: &CommissionEarning) -> EarningKey {
+    (
+        e.earner_id,
+        e.source_id,
+        e.level,
+        e.rate,
+        e.cv_amount,
+        e.dollar_amount,
+    )
+}
 
 /// A walk's JSON with its index removed.
 fn walk_content(walk: &Walk) -> String {
@@ -49,7 +81,13 @@ fn walk_content(walk: &Walk) -> String {
     value.to_string()
 }
 
-type Outcome = (HashMap<Uuid, EvaluatedRank>, Vec<EarningKey>, Vec<String>);
+/// Ranks, each walk's content with the earnings that cite it, and the
+/// earnings that cite no walk.
+type Outcome = (
+    HashMap<Uuid, EvaluatedRank>,
+    Vec<(String, Vec<EarningKey>)>,
+    Vec<EarningKey>,
+);
 
 fn run(
     plan: &CompensationPlan,
@@ -58,7 +96,10 @@ fn run(
     volume: &[(usize, u64)],
 ) -> Outcome {
     let StructureConfig::Unilevel(structure) = &plan.structures[0] else {
-        panic!("expected plan.structures[0] to be unilevel");
+        panic!(
+            "expected plan.structures[0] to be unilevel, got {:?}",
+            plan.structures[0]
+        );
     };
     let n = pv.len();
     let sources: Vec<VolumeSource> = volume
@@ -122,70 +163,43 @@ fn run(
         &test_plan_identity(),
     )
     .unwrap();
-    let walks: HashMap<u32, String> = result
+    let mut walks: Vec<(String, Vec<EarningKey>)> = result
         .walks
         .iter()
-        .map(|w| (w.index, walk_content(w)))
-        .collect();
-    let mut earnings: Vec<EarningKey> = result
-        .earnings
-        .iter()
-        .map(|e| {
-            (
-                e.earner_id,
-                e.source_id,
-                e.level,
-                e.rate,
-                e.cv_amount,
-                e.dollar_amount,
-                e.walk.map(|i| walks[&i].clone()),
-            )
+        .map(|w| {
+            let mut cited: Vec<EarningKey> = result
+                .earnings
+                .iter()
+                .filter(|e| e.walk == Some(w.index))
+                .map(earning_key)
+                .collect();
+            cited.sort();
+            (walk_content(w), cited)
         })
         .collect();
-    earnings.sort();
-    let mut walk_contents: Vec<String> = walks.into_values().collect();
-    walk_contents.sort();
-    (ranks, earnings, walk_contents)
+    walks.sort();
+    let mut walkless: Vec<EarningKey> = result
+        .earnings
+        .iter()
+        .filter(|e| e.walk.is_none())
+        .map(earning_key)
+        .collect();
+    walkless.sort();
+    (ranks, walks, walkless)
 }
 
 type Case = (Vec<usize>, Vec<u64>, Vec<(usize, u64)>);
 
-/// Any tree of up to 40 nodes, with any cent-valued volume.
+/// Any tree of up to 40 nodes, with any cent-valued volume, and up to two
+/// entries repeated exactly.
 fn any_case() -> impl Strategy<Value = Case> {
     (
         prop::collection::vec(any::<usize>(), 1..40),
         prop::collection::vec(0u64..500_000, 41),
         prop::collection::vec((any::<usize>(), 0u64..2_000_000), 1..120),
     )
-        .prop_map(|(parents, mut pv, volume)| {
+        .prop_flat_map(|(parents, mut pv, volume)| {
             pv.truncate(parents.len() + 1);
-            (parents, pv, volume)
-        })
-}
-
-/// A root whose group volume is exactly the Builder threshold of 500: its own
-/// personal volume plus a child's volume split into random cent parts.
-fn threshold_case() -> impl Strategy<Value = Case> {
-    (
-        10_000u64..50_000,
-        0u64..500_000,
-        prop::collection::vec(any::<u64>(), 1..8),
-    )
-        .prop_map(|(root_pv, child_pv, cuts)| {
-            let rest = 50_000 - root_pv;
-            let mut points: Vec<u64> = cuts.iter().map(|c| c % (rest + 1)).collect();
-            points.push(0);
-            points.push(rest);
-            points.sort_unstable();
-            let volume = points.windows(2).map(|w| (1, w[1] - w[0])).collect();
-            (vec![0], vec![root_pv, child_pv], volume)
-        })
-}
-
-/// A case, with some entries repeated exactly, and the same volume shuffled.
-fn ordered_and_shuffled() -> impl Strategy<Value = (Case, Vec<(usize, u64)>)> {
-    prop_oneof![any_case(), threshold_case()]
-        .prop_flat_map(|(parents, pv, volume)| {
             let len = volume.len();
             (
                 Just((parents, pv, volume)),
@@ -198,10 +212,45 @@ fn ordered_and_shuffled() -> impl Strategy<Value = (Case, Vec<(usize, u64)>)> {
             }
             (parents, pv, volume)
         })
-        .prop_flat_map(|case| {
-            let shuffled = Just(case.2.clone()).prop_shuffle();
-            (Just(case), shuffled)
+}
+
+/// A root whose group volume is exactly the second rank's group-volume
+/// threshold, or one cent under it. It is the root's own personal volume plus
+/// a child's volume: one part repeated two or three times, and the rest split
+/// into random cent parts.
+fn threshold_case() -> impl Strategy<Value = Case> {
+    let (pv_min, gv) = second_rank_thresholds();
+    (
+        prop_oneof![Just(gv), Just(gv - 1)],
+        pv_min..gv - 1,
+        0u64..500_000,
+        any::<u64>(),
+        2u64..4,
+        prop::collection::vec(any::<u64>(), 1..8),
+    )
+        .prop_map(|(target, root_pv, child_pv, seed, count, cuts)| {
+            let rest = target - root_pv;
+            let repeated = seed % (rest / count + 1);
+            let split = rest - repeated * count;
+            let mut points: Vec<u64> = cuts.iter().map(|c| c % (split + 1)).collect();
+            points.push(0);
+            points.push(split);
+            points.sort_unstable();
+            let mut volume: Vec<(usize, u64)> =
+                points.windows(2).map(|w| (1, w[1] - w[0])).collect();
+            for _ in 0..count {
+                volume.push((1, repeated));
+            }
+            (vec![0], vec![root_pv, child_pv], volume)
         })
+}
+
+/// A case, and the same volume shuffled.
+fn ordered_and_shuffled() -> impl Strategy<Value = (Case, Vec<(usize, u64)>)> {
+    prop_oneof![any_case(), threshold_case()].prop_flat_map(|case| {
+        let shuffled = Just(case.2.clone()).prop_shuffle();
+        (Just(case), shuffled)
+    })
 }
 
 proptest! {

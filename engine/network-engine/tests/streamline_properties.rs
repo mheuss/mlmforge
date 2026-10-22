@@ -623,9 +623,7 @@ proptest! {
         prop_assert_eq!(walk_order_fingerprint(&a.walks), walk_order_fingerprint(&b.walks));
         // The whole result, not just the walks: earnings and plan identity are
         // part of what must not move, and streamline appends each stream's
-        // earnings in that same iteration order. An append, not a sum. Were it
-        // ever a sum, float non-associativity plus the prop_assume above would
-        // make this flake rather than fail cleanly.
+        // earnings in that same iteration order.
         prop_assert_eq!(a, b);
     }
 }

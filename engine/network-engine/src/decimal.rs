@@ -10,6 +10,7 @@ use thiserror::Error;
 
 const MAX_SCALE: u32 = 28;
 const ENVELOPE_MAX_SCALE: u32 = 10;
+const RATIO_PAYOUT_SCALE: u32 = 13;
 const ENVELOPE_LIMIT: Decimal = dec!(1_000_000_000_000_000);
 
 /// An engine-derived decimal: sums, products, outputs and carried state.
@@ -234,8 +235,12 @@ fn parse_exact(text: &str) -> Result<(Decimal, i64), ParseDecError> {
 }
 
 /// The product of `factors` divided by `divisor`, computed in wide integers and
-/// rounded once by `round_quotient`.
-fn wide_mul_div_ratio(factors: [Dec; 4], divisor: Dec) -> Result<Decimal, NumericErrorKind> {
+/// rounded once by `round_quotient` at `max_scale` or below.
+fn wide_mul_div_ratio(
+    factors: [Dec; 4],
+    divisor: Dec,
+    max_scale: u32,
+) -> Result<Decimal, NumericErrorKind> {
     let negative = factors.iter().filter(|f| f.is_negative()).count() % 2 == 1;
     let mut num = U1024::ONE;
     let mut num_scale = 0i64;
@@ -245,19 +250,28 @@ fn wide_mul_div_ratio(factors: [Dec; 4], divisor: Dec) -> Result<Decimal, Numeri
     }
     let den = U1024::from(divisor.0.mantissa().unsigned_abs());
     let negative = negative != divisor.is_negative();
-    round_quotient(negative, num, num_scale, den, i64::from(divisor.0.scale()))
+    round_quotient(
+        negative,
+        num,
+        num_scale,
+        den,
+        i64::from(divisor.0.scale()),
+        max_scale,
+    )
 }
 
 /// The magnitude `(num / 10^num_scale) ÷ (den / 10^den_scale)`, rounded half to
-/// even at the largest scale of 28 or below whose coefficient fits 96 bits.
+/// even at the largest scale of `max_scale` or below whose coefficient fits 96
+/// bits.
 fn round_quotient(
     negative: bool,
     num: U1024,
     num_scale: i64,
     den: U1024,
     den_scale: i64,
+    max_scale: u32,
 ) -> Result<Decimal, NumericErrorKind> {
-    let shift = i64::from(MAX_SCALE) + den_scale - num_scale;
+    let shift = i64::from(max_scale) + den_scale - num_scale;
     let (num, den) = if shift >= 0 {
         (num * U1024::TEN.pow(shift as u32), den)
     } else {
@@ -265,7 +279,7 @@ fn round_quotient(
     };
     let (quotient, remainder) = (num / den, num % den);
     let limit = U1024::ONE << 96u32;
-    for drop in 0..=MAX_SCALE {
+    for drop in 0..=max_scale {
         let unit = U1024::TEN.pow(drop);
         let mut kept = quotient / unit;
         if kept / U1024::TEN >= limit {
@@ -283,7 +297,7 @@ fn round_quotient(
             let m = i128::try_from(kept).expect("a 96-bit coefficient fits i128");
             return Ok(Decimal::from_i128_with_scale(
                 if negative { -m } else { m },
-                MAX_SCALE - drop,
+                max_scale - drop,
             ));
         }
     }
@@ -383,7 +397,7 @@ impl Dec {
         values.into_iter().try_fold(Dec::ZERO, Dec::try_add)
     }
 
-    /// E1 and E2: rust_decimal 1.43's `checked_div`, the nearest-even value a
+    /// E1: rust_decimal 1.43's `checked_div`, the nearest-even value a
     /// 96-bit coefficient holds at scale 28 or below.
     pub fn div_ratio(self, rhs: impl Into<Dec>) -> Result<Dec, NumericError> {
         let rhs = rhs.into();
@@ -397,7 +411,7 @@ impl Dec {
     }
 
     /// E2: `self × b × c × d ÷ divisor`, with the product held exactly and the
-    /// quotient rounded once by `div_ratio`'s rule.
+    /// quotient rounded once, half to even, at 13 decimal places.
     pub fn mul_div_ratio(
         self,
         b: impl Into<Dec>,
@@ -419,14 +433,7 @@ impl Dec {
         if divisor.is_zero() {
             return Err(error(NumericErrorKind::DivisionByZero));
         }
-        let held = self
-            .try_mul(b)
-            .and_then(|p| p.try_mul(c))
-            .and_then(|p| p.try_mul(d));
-        if let Some(quotient) = held.ok().and_then(|p| p.0.checked_div(divisor.0)) {
-            return Ok(Dec(quotient.normalize()));
-        }
-        wide_mul_div_ratio([self, b, c, d], divisor)
+        wide_mul_div_ratio([self, b, c, d], divisor, RATIO_PAYOUT_SCALE)
             .map(|quotient| Dec(quotient.normalize()))
             .map_err(error)
     }
@@ -1054,7 +1061,28 @@ mod tests {
     #[test]
     fn mul_div_ratio_rounds_a_one_third_ratio_once() {
         let paid = d("100").mul_div_ratio(d("0.1"), d("1"), d("100"), d("300"));
-        assert_eq!(paid.unwrap().to_string(), "3.3333333333333333333333333333");
+        assert_eq!(paid.unwrap().to_string(), "3.3333333333333");
+    }
+
+    #[test]
+    fn mul_div_ratio_rounds_a_two_thirds_ratio_up() {
+        let paid = d("100").mul_div_ratio(d("0.1"), d("1"), d("200"), d("300"));
+        assert_eq!(paid.unwrap().to_string(), "6.6666666666667");
+    }
+
+    #[test]
+    fn mul_div_ratio_rounds_a_tie_to_even_at_thirteen_places() {
+        let one = Dec::ONE;
+        for (a, even) in [
+            ("0.0000000000001", "0"),
+            ("0.0000000000003", "0.0000000000002"),
+            ("0.0000000000005", "0.0000000000002"),
+            ("-0.0000000000003", "-0.0000000000002"),
+            ("-0.0000000000005", "-0.0000000000002"),
+        ] {
+            let paid = d(a).mul_div_ratio(one, one, one, d("2")).unwrap();
+            assert_eq!(paid, d(even), "{a}");
+        }
     }
 
     #[test]
@@ -1079,7 +1107,7 @@ mod tests {
             ),
         ] {
             assert_eq!(d(a).div_ratio(d("2")).unwrap(), d(even), "{a}");
-            let wide = wide_mul_div_ratio([d(a), one, one, one], d("2")).unwrap();
+            let wide = wide_mul_div_ratio([d(a), one, one, one], d("2"), MAX_SCALE).unwrap();
             assert_eq!(Dec(wide), d(even), "{a}");
             let paid = d(a).mul_div_ratio(d("10"), one, one, d("20")).unwrap();
             assert_eq!(paid, d(even), "{a}");
@@ -1087,7 +1115,7 @@ mod tests {
     }
 
     #[test]
-    fn mul_div_ratio_fast_path_returns_a_normalized_scale() {
+    fn mul_div_ratio_returns_a_normalized_scale() {
         let paid = d("100")
             .mul_div_ratio(d("0.10"), d("1.0"), d("100.00"), d("100"))
             .unwrap();
@@ -1234,7 +1262,7 @@ mod tests {
             .prop_map(|(m, s)| Dec(Decimal::from_i128_with_scale(m, s)))
     }
 
-    fn fast_path_factor() -> impl Strategy<Value = Dec> {
+    fn small_factor() -> impl Strategy<Value = Dec> {
         (-(1i128 << 20)..(1i128 << 20), 0u32..=5)
             .prop_map(|(m, s)| Dec(Decimal::from_i128_with_scale(m, s)))
     }
@@ -1252,7 +1280,7 @@ mod tests {
         ) {
             prop_assume!(!b.is_zero());
             let one = Dec::ONE;
-            match (a.div_ratio(b), wide_mul_div_ratio([a, one, one, one], b)) {
+            match (a.div_ratio(b), wide_mul_div_ratio([a, one, one, one], b, MAX_SCALE)) {
                 (Ok(x), Ok(y)) => prop_assert_eq!(x, Dec(y), "{} / {}", a, b),
                 (Err(x), Err(y)) => prop_assert_eq!(x.kind, y),
                 (x, y) => prop_assert!(false, "{} / {}: div_ratio {:?}, wide {:?}", a, b, x, y),
@@ -1260,18 +1288,21 @@ mod tests {
         }
 
         #[test]
-        fn mul_div_ratio_matches_the_wide_path_on_either_branch(
-            a in prop_oneof![fast_path_factor(), factor_dec()],
-            b in prop_oneof![fast_path_factor(), factor_dec()],
-            c in prop_oneof![fast_path_factor(), full_width_dec()],
-            d in prop_oneof![fast_path_factor(), full_width_dec()],
-            divisor in prop_oneof![fast_path_factor(), full_width_dec()],
+        fn mul_div_ratio_rounds_half_to_even_at_thirteen_places(
+            a in prop_oneof![small_factor(), factor_dec()],
+            b in prop_oneof![small_factor(), factor_dec()],
+            c in prop_oneof![small_factor(), factor_dec()],
+            d in prop_oneof![small_factor(), factor_dec()],
+            divisor in prop_oneof![
+                small_factor(),
+                full_width_dec(),
+                prop::sample::select(vec![2i128, 4, 8, 20, -2, -20])
+                    .prop_map(|m| Dec(Decimal::from_i128_with_scale(m, 0))),
+            ],
         ) {
             prop_assume!(!divisor.is_zero());
-            match (a.mul_div_ratio(b, c, d, divisor), wide_mul_div_ratio([a, b, c, d], divisor)) {
-                (Ok(x), Ok(y)) => prop_assert_eq!(x, Dec(y)),
-                (Err(x), Err(y)) => prop_assert_eq!(x.kind, y),
-                (x, y) => prop_assert!(false, "public {:?}, wide {:?}", x, y),
+            if let Some(expected) = half_even_at_thirteen([a, b, c, d], divisor) {
+                prop_assert_eq!(a.mul_div_ratio(b, c, d, divisor).unwrap(), expected);
             }
         }
 
@@ -1283,7 +1314,7 @@ mod tests {
         ) {
             let b = Dec(Decimal::from_i128_with_scale(divisor, scale));
             let one = Dec::ONE;
-            match (a.div_ratio(b), wide_mul_div_ratio([a, one, one, one], b)) {
+            match (a.div_ratio(b), wide_mul_div_ratio([a, one, one, one], b, MAX_SCALE)) {
                 (Ok(x), Ok(y)) => prop_assert_eq!(x, Dec(y), "{} / {}", a, b),
                 (Err(x), Err(y)) => prop_assert_eq!(x.kind, y),
                 (x, y) => prop_assert!(false, "{} / {}: div_ratio {:?}, wide {:?}", a, b, x, y),
@@ -1300,13 +1331,40 @@ mod tests {
             prop_assume!(!divisor.is_zero());
             let product = a.try_mul(b).and_then(|p| p.try_mul(c)).unwrap();
             let expected = product.div_ratio(divisor);
-            let got = wide_mul_div_ratio([a, b, c, Dec::ONE], divisor);
+            let got = wide_mul_div_ratio([a, b, c, Dec::ONE], divisor, MAX_SCALE);
             match (expected, got) {
                 (Ok(x), Ok(y)) => prop_assert_eq!(x, Dec(y)),
                 (Err(x), Err(y)) => prop_assert_eq!(x.kind, y),
                 (x, y) => prop_assert!(false, "expected {:?}, got {:?}", x, y),
             }
         }
+    }
+
+    /// The exact quotient rounded half to even at 13 places, or `None` when
+    /// that does not fit 96 bits.
+    fn half_even_at_thirteen(factors: [Dec; 4], divisor: Dec) -> Option<Dec> {
+        use bigdecimal::num_bigint::BigInt;
+        let ten = BigInt::from(10);
+        let mut num = BigInt::from(1);
+        let mut num_scale = 0;
+        for f in factors {
+            num *= BigInt::from(f.0.mantissa());
+            num_scale += f.0.scale();
+        }
+        let num = num * ten.pow(13 + divisor.0.scale());
+        let den = BigInt::from(divisor.0.mantissa()) * ten.pow(num_scale);
+        let negative = (num < BigInt::from(0)) != (den < BigInt::from(0));
+        let (num, den) = (num.magnitude().clone(), den.magnitude().clone());
+        let (mut q, r) = (&num / &den, &num % &den);
+        let twice = r * 2u32;
+        if twice > den || (twice == den && &q % 2u32 == 1u32.into()) {
+            q += 1u32;
+        }
+        let m = i128::try_from(q).ok().filter(|m| *m < (1i128 << 96))?;
+        Some(Dec(Decimal::from_i128_with_scale(
+            if negative { -m } else { m },
+            13,
+        )))
     }
 
     fn signed_dec() -> impl Strategy<Value = Dec> {

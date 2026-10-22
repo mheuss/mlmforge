@@ -4950,7 +4950,7 @@ mod tests {
             d!(1700.37),
             d!(2500.11),
         );
-        assert_d!(paid, 32.123676934804774564804152234);
+        assert_d!(paid, 32.1236769348048);
     }
 
     #[test]
@@ -5006,5 +5006,64 @@ mod tests {
             .expect("position 2 matches 100 against 100");
         assert_d!(earning.dollar_amount, 7);
         assert!(!earning.capped);
+    }
+
+    #[test]
+    fn two_non_terminating_volume_ratio_payouts_add_under_one_aggregate_owner() {
+        let structure = BinaryStructureConfig {
+            name: "Test Binary".to_string(),
+            binary_commission: BinaryCommissionConfig {
+                volume_to_dollar_multiplier: None,
+                mode: BinaryCommissionMode::Pairing(PairingConfig {
+                    percent: d!(1),
+                    calculation: PairingCalculation::VolumeRatio,
+                    cap_per_period: Some(d!(100)),
+                    multi_position_cap_mode: MultiPositionCapMode::Aggregate,
+                    ..test_pairing_config()
+                }),
+            },
+        };
+        let tree = multi_position_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+        let owner = test_uuid(100);
+        let ownership = HashMap::from([(test_uuid(2), owner), (test_uuid(3), owner)]);
+        let snapshots = HashMap::from([
+            (owner, eligible_snapshot()),
+            (test_uuid(1), eligible_snapshot()),
+            (test_uuid(4), eligible_snapshot()),
+            (test_uuid(5), eligible_snapshot()),
+            (test_uuid(6), eligible_snapshot()),
+            (test_uuid(7), eligible_snapshot()),
+        ]);
+        let volume = [(4, d!(10)), (5, d!(30)), (6, d!(20)), (7, d!(30))]
+            .map(|(node, cv_amount)| VolumeSource {
+                source_id: test_uuid(node),
+                cv_amount,
+            })
+            .to_vec();
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            Some(&ownership),
+        )
+        .unwrap();
+        let mut owned: Vec<_> = result
+            .earnings
+            .iter()
+            .filter(|e| e.earner_id == owner)
+            .map(|e| (e.position_id, e.dollar_amount))
+            .collect();
+        owned.sort();
+        assert_eq!(
+            owned,
+            [
+                (test_uuid(2), d!(3.3333333333333)),
+                (test_uuid(3), d!(13.3333333333333)),
+            ]
+        );
     }
 }

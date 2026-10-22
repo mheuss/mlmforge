@@ -476,7 +476,7 @@ vacuous. And two separately built maps get different `RandomState` keys but not
 necessarily a different order for a small table, so `prop_assume!` that the two
 emission orders actually differ, or roughly half the small cases prove nothing.
 
-Verified by deleting the sort and watching which tests failed. (HEU-641)
+Before HEU-969, this was verified by deleting the sort and watching which tests failed. (HEU-641)
 
 ## Numbers Are Exact Decimals
 

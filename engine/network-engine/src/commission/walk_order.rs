@@ -2,8 +2,7 @@
 //!
 //! Design 029 requires walk indexes to come from a defined total order across
 //! the whole response, never from the order walks happened to be emitted in.
-//! For streamline that emission order is a `HashMap` iteration, so two runs
-//! over identical input would otherwise produce different indexes and the
+//! Otherwise a change in emission order would change the indexes, and the
 //! persisted audit record would inherit the difference.
 //!
 //! The emitters stamp a collector id into `Walk::index`. This module sorts the
@@ -36,10 +35,8 @@ use super::types::{
 /// because within any group sharing keys 1 to 4 the walks came from a single
 /// traversal loop in `volume` order.
 ///
-/// That holds for streamline too, even though its collector ids come from a
-/// `HashMap` iteration. Key 2 groups walks by stream before key 5 is reached,
-/// and within one stream the ids are assigned in `volume` order. The absolute
-/// ids may differ between runs; their order within a stream does not.
+/// That holds for streamline too. Key 2 groups walks by stream before key 5
+/// is reached, and within one stream the ids are assigned in `volume` order.
 ///
 /// A source in `walks` that is absent from `volume` sorts last rather than
 /// panicking. That should not happen, and if it does the walk is still

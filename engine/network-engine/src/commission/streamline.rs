@@ -370,10 +370,8 @@ mod tests {
 
         assert!(!result.walks.is_empty(), "the fixture must produce a walk");
 
-        // Every streamline walk names the stream it came from. This is what
-        // walk_order sorts on, and without it the index order falls through to
-        // a collector id assigned in HashMap iteration order, which design 029
-        // forbids.
+        // Every streamline walk names the stream it came from, so walks from
+        // different streams never tie on the stream key.
         for w in &result.walks {
             assert!(
                 w.stream_id.is_some(),

@@ -4,7 +4,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use bnum::types::{I512, U512, U1024};
-use rust_decimal::Decimal;
+use rust_decimal::{Decimal, RoundingStrategy};
 use rust_decimal_macros::dec;
 use thiserror::Error;
 
@@ -235,6 +235,24 @@ fn parse_exact(text: &str) -> Result<(Decimal, i64), ParseDecError> {
     Ok((value, written_scale))
 }
 
+/// `product ÷ divisor` rounded half to even at `PAYOUT_SCALE`, when
+/// `checked_div` decides it, or `None` when the wide path must.
+fn round_held_quotient(product: Dec, divisor: Dec) -> Option<Decimal> {
+    let quotient = product.0.checked_div(divisor.0)?;
+    let scale = quotient.scale();
+    if scale <= PAYOUT_SCALE {
+        // Half to even at the largest scale that fits is E2's own rule at 13 places or fewer.
+        return Some(quotient);
+    }
+    // A result within one unit at its own scale sits on the same side of every
+    // 13-place midpoint as the exact quotient, unless it sits on the midpoint.
+    let unit = 10i128.pow(scale - PAYOUT_SCALE);
+    if (quotient.mantissa() % unit).abs() * 2 == unit {
+        return None;
+    }
+    Some(quotient.round_dp_with_strategy(PAYOUT_SCALE, RoundingStrategy::MidpointNearestEven))
+}
+
 /// The product of `factors` divided by `divisor`, computed in wide integers and
 /// rounded once by `round_quotient` at `max_scale` or below.
 fn wide_mul_div_ratio(
@@ -434,6 +452,13 @@ impl Dec {
         };
         if divisor.is_zero() {
             return Err(error(NumericErrorKind::DivisionByZero));
+        }
+        let held = self
+            .try_mul(b)
+            .and_then(|p| p.try_mul(c))
+            .and_then(|p| p.try_mul(d));
+        if let Some(quotient) = held.ok().and_then(|p| round_held_quotient(p, divisor)) {
+            return Ok(Dec(quotient.normalize()));
         }
         wide_mul_div_ratio([self, b, c, d], divisor, PAYOUT_SCALE)
             .map(|quotient| Dec(quotient.normalize()))
@@ -1089,6 +1114,24 @@ mod tests {
     }
 
     #[test]
+    fn mul_div_ratio_does_not_round_a_tie_made_by_an_earlier_rounding() {
+        let one = d("1");
+        let paid =
+            d("4499999999999999").mul_div_ratio(one, one, one, d("30000000000000000000000000000"));
+        assert_eq!(paid.unwrap().to_string(), "0.0000000000001");
+        let exact = round_held_quotient(d("4499999999999999"), d("30000000000000000000000000000"));
+        assert_eq!(exact, None);
+    }
+
+    #[test]
+    fn mul_div_ratio_returns_an_exact_quotient_without_the_wide_path() {
+        let held = round_held_quotient(d("12.5"), d("4"));
+        assert_eq!(held.map(|q| q.to_string()), Some("3.125".to_string()));
+        let paid = d("12.5").mul_div_ratio(d("1"), d("1"), d("1"), d("4"));
+        assert_eq!(paid.unwrap().to_string(), "3.125");
+    }
+
+    #[test]
     fn mul_div_ratio_rounds_a_two_thirds_ratio_up() {
         let paid = d("100").mul_div_ratio(d("0.1"), d("1"), d("200"), d("300"));
         assert_eq!(paid.unwrap().to_string(), "6.6666666666667");
@@ -1329,6 +1372,38 @@ mod tests {
                 (Some(expected), Ok(got)) => prop_assert_eq!(got, expected),
                 (None, Err(e)) => prop_assert_eq!(e.kind, NumericErrorKind::Overflow),
                 (expected, got) => prop_assert!(false, "expected {:?}, got {:?}", expected, got),
+            }
+        }
+
+        #[test]
+        fn mul_div_ratio_matches_the_wide_path_bit_for_bit(
+            a in prop_oneof![
+                small_factor(),
+                factor_dec(),
+                (-(1i128 << 50)..(1i128 << 50), 0u32..=20)
+                    .prop_map(|(m, s)| Dec(Decimal::from_i128_with_scale(m * 10 + 5, s))),
+            ],
+            b in prop_oneof![Just(Dec::ONE), small_factor()],
+            c in prop_oneof![Just(Dec::ONE), small_factor()],
+            d in prop_oneof![Just(Dec::ONE), small_factor(), factor_dec()],
+            divisor in prop_oneof![
+                small_factor(),
+                full_width_dec(),
+                (prop::sample::select(vec![2i128, 4, 8, 20, 40, 3, 7, -2, -3]), 0u32..=28)
+                    .prop_map(|(m, s)| Dec(Decimal::from_i128_with_scale(m, s))),
+                (prop::sample::select(vec![3i128, 7, 9, 11]), 0u32..=27)
+                    .prop_map(|(m, k)| Dec(Decimal::from_i128_with_scale(m * 10i128.pow(k), 0))),
+            ],
+        ) {
+            prop_assume!(!divisor.is_zero());
+            let wide = wide_mul_div_ratio([a, b, c, d], divisor, PAYOUT_SCALE).map(|q| q.normalize());
+            match (a.mul_div_ratio(b, c, d, divisor), wide) {
+                (Ok(x), Ok(y)) => prop_assert_eq!(
+                    (x.0.mantissa(), x.0.scale()),
+                    (y.mantissa(), y.scale())
+                ),
+                (Err(x), Err(y)) => prop_assert_eq!(x.kind, y),
+                (x, y) => prop_assert!(false, "public {:?}, wide {:?}", x, y),
             }
         }
 

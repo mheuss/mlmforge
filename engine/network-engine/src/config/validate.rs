@@ -405,7 +405,7 @@ impl StreamlineCommissionConfig {
             ));
         }
         // Go rejects an empty table (empty_compression_table,
-        // internal/config/rules.go:914). Mirror it. An empty table pays
+        // internal/config/rules.go). Mirror it. An empty table pays
         // nothing at any level, which is a config error rather than a valid
         // plan.
         if self.levels.is_empty() {
@@ -418,10 +418,10 @@ impl StreamlineCommissionConfig {
         //
         // Go splits that guarantee across two files, and the split matters if
         // you are checking parity. validateStreamlineCommission
-        // (internal/config/rules.go:923-946) enforces the *set*: it sorts a
+        // (internal/config/rules.go) enforces the *set*: it sorts a
         // copy of the level keys first, so it is indifferent to order and
         // would accept [2, 1]. The *order* comes from sortStreamlineLevels
-        // (internal/config/translate.go:290), which sorts ascending before the
+        // (internal/config/translate.go), which sorts ascending before the
         // array is handed to Rust. Reading rules.go alone makes this check look
         // stricter than Go. It is not, but only because that sort exists.
         //
@@ -437,8 +437,8 @@ impl StreamlineCommissionConfig {
         //
         // Note it is caught there and nowhere else. The duplicate_value guard
         // in validateU8MapKeys never sees dynamic_compression:
-        // it takes a map[string]dec.Amount and is reached only through
-        // getRateTable, whose switch returns nil for
+        // it takes a map[string]dec.Amount, and the rate-table path into it
+        // goes through getRateTable, whose switch returns nil for
         // StreamlineCommission. So a "1"/"01" collision here surfaces as a
         // sequencing error, not a duplicate one.
         for (idx, level) in self.levels.iter().enumerate() {
@@ -453,7 +453,7 @@ impl StreamlineCommissionConfig {
             }
         }
         // Go rejects depth < level count (depth_less_than_levels,
-        // internal/config/rules.go:969). Without this, a table of 255 levels
+        // internal/config/rules.go). Without this, a table of 255 levels
         // with depth 254 passes Rust and fails Go.
         if usize::from(self.max_depth) < self.levels.len() {
             return Err(format!(
@@ -807,7 +807,7 @@ mod tests {
 
     #[test]
     fn streamline_rejects_empty_compression_table() {
-        // Mirrors Go's empty_compression_table (internal/config/rules.go:914).
+        // Mirrors Go's empty_compression_table (internal/config/rules.go).
         // An empty table pays nothing at any level, which is a config error.
         let config = streamline_with_levels(&[], 3);
         let err = config.validate().unwrap_err();
@@ -819,7 +819,7 @@ mod tests {
 
     #[test]
     fn streamline_rejects_non_contiguous_levels() {
-        // Mirrors Go's non_sequential_levels (internal/config/rules.go:943).
+        // Mirrors Go's non_sequential_levels (internal/config/rules.go).
         // One check catches all three malformed shapes: out of order fails at
         // the first transposed entry, a gap at the entry after it, and a
         // duplicate at the second copy.
@@ -838,7 +838,7 @@ mod tests {
 
     #[test]
     fn streamline_rejects_depth_below_level_count() {
-        // Mirrors Go's depth_less_than_levels (internal/config/rules.go:969).
+        // Mirrors Go's depth_less_than_levels (internal/config/rules.go).
         let err = streamline_with_levels(&[1, 2], 1).validate().unwrap_err();
         assert!(
             err.contains("commissionable_depth"),

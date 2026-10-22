@@ -402,3 +402,189 @@ func TestTreeWriter_ARemovalProjectedAtTheVersionAnotherWriterReachedReportsWhat
 	assert.Equal(t, &ProjectionObservation{Version: 5, Found: true}, first.Observed)
 	assert.Equal(t, map[string]string{root: root, a: root, c: a}, activeSponsors(t, it.store, tree))
 }
+
+// pausedRemovalStore holds its first removal projection until release closes,
+// and closes reached once it is holding.
+type pausedRemovalStore struct {
+	TreeStore
+	reached chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *pausedRemovalStore) ProjectRemoval(ctx context.Context, treeID string, r RemovalProjection,
+	removalEventID string, eventVersion int64) error {
+	s.once.Do(func() {
+		close(s.reached)
+		<-s.release
+	})
+	return s.TreeStore.ProjectRemoval(ctx, treeID, r, removalEventID, eventVersion)
+}
+
+// guardReadStore records the projected version when an insert for user is
+// skipped as already projected, and runs meanwhile once, beside the first
+// tombstone-aware read for user.
+type guardReadStore struct {
+	TreeStore
+	user         string
+	beforeRead   bool
+	meanwhile    func()
+	once         sync.Once
+	skipped      bool
+	skippedAt    int64
+	skippedAtErr error
+	meanwhileRan bool
+}
+
+func (s *guardReadStore) ProjectInsert(ctx context.Context, node TreeNodeRow, eventVersion int64) error {
+	err := s.TreeStore.ProjectInsert(ctx, node, eventVersion)
+	if node.UserID == s.user && errors.Is(err, ErrNodeAlreadyProjected) {
+		s.skipped = true
+		s.skippedAt, _, s.skippedAtErr = s.ProjectedVersion(ctx, node.TreeID)
+	}
+	return err
+}
+
+func (s *guardReadStore) GetNodeIncludingRemoved(ctx context.Context, treeID, userID string) (*TreeNodeRow, error) {
+	if userID != s.user {
+		return s.TreeStore.GetNodeIncludingRemoved(ctx, treeID, userID)
+	}
+	run := func() { s.once.Do(func() { s.meanwhileRan = true; s.meanwhile() }) }
+	if s.beforeRead {
+		run()
+		return s.TreeStore.GetNodeIncludingRemoved(ctx, treeID, userID)
+	}
+	row, err := s.TreeStore.GetNodeIncludingRemoved(ctx, treeID, userID)
+	run()
+	return row, err
+}
+
+// guardRace is what a late placement and a removal of the same user reported.
+type guardRace struct {
+	first, second       WriteResult
+	firstErr, secondErr error
+	guard               *guardReadStore
+	lateEngine          *EngineClient
+}
+
+// raceTheReplayedInsertGuard has a first writer place x and lose its lock after
+// the append, then has a second writer remove x. The second writer's removal
+// projection is held until the first writer's store is asked for x's row.
+// beforeRead says which side of that read the removal projects on.
+func (it *writerIntegration) raceTheReplayedInsertGuard(t *testing.T, tree, root, x string, beforeRead bool) guardRace {
+	t.Helper()
+	ctx := context.Background()
+	it.addUnilevelRoot(t, tree, root)
+
+	type outcome struct {
+		res WriteResult
+		err error
+	}
+	paused := &pausedRemovalStore{TreeStore: it.store, reached: make(chan struct{}), release: make(chan struct{})}
+	second := NewTreeWriter(it.events, paused, NewMemorySnapshotStore(), it.engine(t), NewPostgresTreeLocker(it.dsn))
+	done := make(chan outcome, 1)
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(paused.release) }) }
+	t.Cleanup(release)
+
+	race := guardRace{lateEngine: it.engine(t)}
+	started := false
+	events := &lockKillingEvents{EventStore: it.events, t: t, pool: it.pool, meanwhile: func() {
+		started = true
+		go func() {
+			res, err := second.Remove(ctx, RemoveRequest{TreeID: tree, UserID: x, RemovedAt: writeTime.Add(2 * time.Hour)})
+			done <- outcome{res, err}
+		}()
+		select {
+		case <-paused.reached:
+		case o := <-done:
+			t.Fatalf("the second writer returned before its removal projection: %+v, %v", o.res, o.err)
+		case <-time.After(30 * time.Second):
+			t.Fatal("the second writer did not reach its removal projection within 30s")
+		}
+	}}
+	race.guard = &guardReadStore{TreeStore: it.store, user: x, beforeRead: beforeRead, meanwhile: func() {
+		release()
+		o := receive(t, done, 30*time.Second)
+		race.second, race.secondErr = o.res, o.err
+	}}
+	race.first, race.firstErr = NewTreeWriter(events, race.guard, NewMemorySnapshotStore(), race.lateEngine,
+		NewPostgresTreeLocker(it.dsn)).
+		Place(ctx, PlaceRequest{TreeID: tree, UserID: x, ParentID: root, SponsorID: root, EnrolledAt: writeTime.Add(time.Hour)})
+	if !started {
+		t.Fatalf("the first writer's append never ran its hook; Place returned %+v, %v", race.first, race.firstErr)
+	}
+	if !race.guard.meanwhileRan {
+		release()
+		o := receive(t, done, 30*time.Second)
+		race.second, race.secondErr = o.res, o.err
+	}
+	return race
+}
+
+// requireTheRaceRan checks that the first writer's insert was skipped at
+// version 2 and that its store was then asked for x's row, then checks what
+// both writers and the store report afterwards.
+func requireTheRaceRan(t *testing.T, it *writerIntegration, race guardRace, tree, root, x string) {
+	t.Helper()
+	require.NoError(t, race.firstErr)
+	require.NoError(t, race.secondErr)
+	require.True(t, race.guard.skipped, "the first writer's insert for %s was not skipped as already projected", x)
+	require.NoError(t, race.guard.skippedAtErr)
+	require.Equal(t, int64(2), race.guard.skippedAt, "projected version when the first writer's insert was skipped")
+	require.True(t, race.guard.meanwhileRan, "the first writer never read %s's row after its skipped insert", x)
+
+	assert.Equal(t, int64(2), race.first.Version)
+	assert.ErrorContains(t, race.first.ReleaseErr, "the pg_advisory_unlock query for tree "+tree+" failed")
+	assert.Equal(t, int64(3), race.second.Version)
+	require.NotNil(t, race.second.CaughtUp, "the second writer reported no caught-up event")
+	assert.Equal(t, race.first.EventID, race.second.CaughtUp.EventID)
+	assert.NoError(t, race.second.ProjectionErr)
+	assert.NoError(t, race.second.ReleaseErr)
+
+	assert.Equal(t, map[string]string{root: root}, activeSponsors(t, it.store, tree))
+	row, err := it.store.GetNodeIncludingRemoved(context.Background(), tree, x)
+	require.NoError(t, err)
+	require.NotNil(t, row, "no row at all for %s", x)
+	assert.Equal(t, race.first.EventID, row.ID)
+	assert.NotNil(t, row.RemovedAt, "the row for %s is active", x)
+	require.NotNil(t, row.RemovedByEventID, "the row for %s carries no removal stamp", x)
+	assert.True(t, sameUUID(*row.RemovedByEventID, race.second.EventID),
+		"the row for %s is stamped by removal event %s, want %s", x, *row.RemovedByEventID, race.second.EventID)
+	version, found, err := it.store.ProjectedVersion(context.Background(), tree)
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, int64(3), version)
+}
+
+func TestTreeWriter_AGuardReadAheadOfALateRemovalLetsTheLateEngineHoldThePlacement(t *testing.T) {
+	it := newWriterIntegration(t)
+	tree, root, x := testTreeUUID(316), testUserUUID(1), testUserUUID(2)
+
+	race := it.raceTheReplayedInsertGuard(t, tree, root, x, false)
+
+	requireTheRaceRan(t, it, race, tree, root, x)
+	assert.NoError(t, race.first.ProjectionErr)
+	pos, err := race.lateEngine.GetPosition(context.Background(), tree, x)
+	require.NoError(t, err, "GetPosition for %s on the first writer's engine", x)
+	require.NotNil(t, pos)
+	assert.Equal(t, uint32(1), pos.Depth)
+	require.NotNil(t, pos.ParentUserID)
+	assert.True(t, sameUUID(*pos.ParentUserID, root), "parent %s, want %s", *pos.ParentUserID, root)
+	require.NotNil(t, pos.SponsorUserID)
+	assert.True(t, sameUUID(*pos.SponsorUserID, root), "sponsor %s, want %s", *pos.SponsorUserID, root)
+}
+
+func TestTreeWriter_AGuardReadBehindALateRemovalRefusesThePlacement(t *testing.T) {
+	it := newWriterIntegration(t)
+	tree, root, x := testTreeUUID(317), testUserUUID(1), testUserUUID(2)
+
+	race := it.raceTheReplayedInsertGuard(t, tree, root, x, true)
+
+	requireTheRaceRan(t, it, race, tree, root, x)
+	assert.ErrorIs(t, race.first.ProjectionErr, ErrReplayedPlacement)
+	assert.Equal(t, &ProjectionObservation{Version: 3, Found: true}, race.first.Observed)
+	pos, err := race.lateEngine.GetPosition(context.Background(), tree, x)
+	assert.True(t, isEngineCode(err, engineCodeUserNotFound),
+		"GetPosition for %s on the first writer's engine returned position %+v and error %v", x, pos, err)
+}

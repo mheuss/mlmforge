@@ -79,12 +79,10 @@ CREATE TABLE commission_results (
     -- paths rule in docs/development/config-types.md.
     CHECK (earner_id <> '00000000-0000-0000-0000-000000000000'::uuid),
     -- Every non-finite value, not just NaN. Postgres 14+ accepts Infinity in
-    -- a NUMERIC column. The store writes exact decimal text, which cannot
-    -- hold Infinity, but manual SQL or a future writer could. One infinity
-    -- makes SUM over the run return Infinity; a mixed pair makes it NaN.
-    -- Either way the run's total is destroyed, which is what the NaN guard
-    -- alone failed to prevent. NaN sorts above Infinity in NUMERIC ordering,
-    -- so the upper bound rejects it too.
+    -- a NUMERIC column. One infinity makes SUM over the run return Infinity;
+    -- a mixed pair makes it NaN. Either way the run's total is destroyed.
+    -- NaN sorts above Infinity in NUMERIC ordering, so the upper bound
+    -- rejects it too.
     --
     -- Note this pins Postgres 14 or newer: 'Infinity'::numeric does not
     -- parse before 14, so the CREATE TABLE itself would fail. The test

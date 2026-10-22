@@ -235,8 +235,7 @@ fn parse_exact(text: &str) -> Result<(Decimal, i64), ParseDecError> {
     Ok((value, written_scale))
 }
 
-/// `product ÷ divisor` rounded half to even at `PAYOUT_SCALE`, when
-/// `checked_div` decides it, or `None` when the wide path must.
+/// The rounded quotient, or `None` when the narrow path cannot decide it.
 fn round_held_quotient(product: Dec, divisor: Dec) -> Option<Decimal> {
     let quotient = product.0.checked_div(divisor.0)?;
     let scale = quotient.scale();
@@ -347,7 +346,7 @@ impl Dec {
     pub const ZERO: Dec = Dec(Decimal::ZERO);
     pub const ONE: Dec = Dec(Decimal::ONE);
 
-    /// Wrap a `Decimal`, for constants built with `rust_decimal_macros::dec!`.
+    /// Wrap a `Decimal`.
     pub const fn new(value: Decimal) -> Self {
         Dec(value)
     }
@@ -415,7 +414,7 @@ impl Dec {
         values.into_iter().try_fold(Dec::ZERO, Dec::try_add)
     }
 
-    /// E1: rust_decimal 1.43's `checked_div`, the nearest-even value a
+    /// E1: `checked_div`, the nearest-even value a
     /// 96-bit coefficient holds at scale 28 or below.
     pub fn div_ratio(self, rhs: impl Into<Dec>) -> Result<Dec, NumericError> {
         let rhs = rhs.into();
@@ -516,7 +515,7 @@ impl Dec {
 impl AuthoredDec {
     pub const ZERO: AuthoredDec = AuthoredDec(Decimal::ZERO);
 
-    /// Wrap a `Decimal`, for constants built with `rust_decimal_macros::dec!`.
+    /// Wrap a `Decimal`.
     pub(crate) const fn new(value: Decimal) -> Self {
         AuthoredDec(value)
     }

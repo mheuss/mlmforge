@@ -474,7 +474,7 @@ pub(crate) fn handle_board_calculate_commissions(
     request: &Request,
 ) -> Response {
     // Config comes from the plan validated by handle_load_plan, never from
-    // request params (HEU-603, design rationale 028).
+    // request params (HEU-603).
     //
     // Unlike the six sibling handlers this one never reads state.trees. Cycle
     // events arrive on the request, so a tree lookup would add a precondition

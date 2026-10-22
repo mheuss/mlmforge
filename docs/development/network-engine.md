@@ -425,7 +425,7 @@ Pattern: `request_raw` exists for the same reason on the request side. If you fi
 
 ## Contract-Test Harness: Numbers Compare As Exact Decimals
 
-Both contract runners compare numbers by value, as exact decimals, so a fixture may write `500` or `500.0`. The worker writes every decimal in normalized form, with no trailing zeros. A string is never equal to a number, so a quoted `"500"` still fails against `500`.
+Both contract runners compare numbers as exact decimals. A fixture may write `500` or `500.0`. The worker writes every decimal in normalized form, with no trailing zeros. A string is never equal to a number, so a quoted `"500"` still fails against `500`.
 
 ## Contract-Test Harness: No Per-Fixture Filter
 
@@ -487,7 +487,7 @@ Verified by deleting the sort and watching which tests failed. (HEU-641)
   - E3 is `mul_div_trunc`, a capped share. It truncates toward zero at a given scale, which is 13 for the aggregate cap.
   - E4 is `floor_div`, a cycle count. It rounds down to an integer.
 - An authored value must have an absolute value below 10^15, with at most 10 decimal places.
-- serde_json's `arbitrary_precision` is a normal dependency of both crates, so a number on the wire never passes through `f64`.
+- serde_json's `arbitrary_precision` is a normal dependency of both crates. A number on the wire never passes through `f64`.
 - Tests write decimal values with `d!()`, and compare against a literal with `assert_d!`.
 - A request line that is not valid JSON gets `INVALID_REQUEST` with an empty `id`.
 

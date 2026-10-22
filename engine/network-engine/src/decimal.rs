@@ -1115,15 +1115,21 @@ mod tests {
     #[test]
     fn mul_div_ratio_does_not_round_a_tie_made_by_an_earlier_rounding() {
         let one = d("1");
-        let divisor = d("30000000000000000000000000000");
-        for (a, paid) in [
-            ("4499999999999999", "0.0000000000001"),
-            ("-4499999999999999", "-0.0000000000001"),
-            ("1500000000000001", "0.0000000000001"),
-            ("-1500000000000001", "-0.0000000000001"),
+        let e28 = "30000000000000000000000000000";
+        for (a, divisor, paid) in [
+            ("4499999999999999", e28, "0.0000000000001"),
+            ("-4499999999999999", e28, "-0.0000000000001"),
+            ("1500000000000001", e28, "0.0000000000001"),
+            ("-1500000000000001", e28, "-0.0000000000001"),
+            ("30000000000004499999999999999", e28, "1.0000000000001"),
+            ("-30000000000004499999999999999", e28, "-1.0000000000001"),
+            ("30.000000000000449999999999999", "3", "10.0000000000001"),
+            ("-30.000000000000449999999999999", "3", "-10.0000000000001"),
+            ("300000000004499999999999999", e28, "0.0100000000001"),
+            ("-300000000004499999999999999", e28, "-0.0100000000001"),
         ] {
-            assert_eq!(round_held_quotient(d(a), divisor), None, "{a}");
-            let got = d(a).mul_div_ratio(one, one, one, divisor).unwrap();
+            assert_eq!(round_held_quotient(d(a), d(divisor)), None, "{a}");
+            let got = d(a).mul_div_ratio(one, one, one, d(divisor)).unwrap();
             assert_eq!(got.to_string(), paid, "{a}");
         }
     }
@@ -1134,6 +1140,15 @@ mod tests {
         assert_eq!(held.map(|q| q.to_string()), Some("3.125".to_string()));
         let paid = d("12.5").mul_div_ratio(d("1"), d("1"), d("1"), d("4"));
         assert_eq!(paid.unwrap().to_string(), "3.125");
+    }
+
+    #[test]
+    fn round_held_quotient_rounds_a_third_itself() {
+        let held = round_held_quotient(d("1"), d("3"));
+        assert_eq!(
+            held.map(|q| q.to_string()),
+            Some("0.3333333333333".to_string())
+        );
     }
 
     #[test]

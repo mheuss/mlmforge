@@ -35,12 +35,18 @@ func TestNoFloatOnTheDecimalBoundary(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", f, err)
 		}
+		allowed := 0
 		for n, line := range strings.Split(string(data), "\n") {
 			code, _, _ := strings.Cut(line, "//")
 			trimmed := strings.TrimSpace(line)
-			if floatType.MatchString(code) && allowedFloatLines[f] != trimmed {
-				t.Errorf("%s:%d: %s", f, n+1, trimmed)
+			if !floatType.MatchString(code) {
+				continue
 			}
+			if allowedFloatLines[f] == trimmed && allowed == 0 {
+				allowed++
+				continue
+			}
+			t.Errorf("%s:%d: %s", f, n+1, trimmed)
 		}
 	}
 }

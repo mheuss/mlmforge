@@ -1,7 +1,10 @@
 //! Production code on the numeric boundary holds no f64 and no lossy conversion.
 //!
-//! A text scan cannot see an untyped float literal such as `try_from(0.07)`,
-//! or a float reached through a type alias defined outside the scanned files.
+//! This is a best-effort tripwire. The decimal newtypes and the exact JSON
+//! number reader are what keep floats out. A text scan only catches the
+//! obvious reintroduction. It cannot see an untyped float literal such as
+//! `try_from(0.07)`, or a float reached through a type alias defined outside
+//! the scanned files.
 
 use std::path::{Path, PathBuf};
 
@@ -16,8 +19,13 @@ const SCANNED: &[&str] = &[
     "../network-engine-worker/src/handlers",
 ];
 
-/// Test-only files inside a scanned directory.
-const TEST_ONLY: &[&str] = &["src/commission/test_helpers.rs"];
+/// Files left out of the scan, as (file, the module file declaring it, its
+/// declaration), where the declaration must be test-gated.
+const TEST_ONLY: &[(&str, &str, &str)] = &[(
+    "src/commission/test_helpers.rs",
+    "src/commission/mod.rs",
+    "mod test_helpers;",
+)];
 
 const FORBIDDEN: &[&str] = &[
     "f64", "f32", "to_f64", "as_f64", "from_f64", "to_f32", "as_f32", "from_f32",
@@ -37,7 +45,7 @@ fn rust_files(path: &Path, out: &mut Vec<PathBuf>) {
 #[derive(Clone, Copy, PartialEq)]
 enum Open {
     Code,
-    BlockComment,
+    BlockComment(usize),
     Str,
     RawStr(usize),
 }
@@ -52,9 +60,16 @@ fn code_only(line: &str, open: &mut Open) -> String {
         let c = chars[i];
         let next = chars.get(i + 1).copied();
         match *open {
-            Open::BlockComment => {
+            Open::BlockComment(depth) => {
                 if c == '*' && next == Some('/') {
-                    *open = Open::Code;
+                    *open = if depth == 1 {
+                        Open::Code
+                    } else {
+                        Open::BlockComment(depth - 1)
+                    };
+                    i += 1;
+                } else if c == '/' && next == Some('*') {
+                    *open = Open::BlockComment(depth + 1);
                     i += 1;
                 }
             }
@@ -74,27 +89,32 @@ fn code_only(line: &str, open: &mut Open) -> String {
                 }
             }
             Open::Code => {
-                let after_word = i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_');
+                let word_at = |k: usize| chars[k].is_alphanumeric() || chars[k] == '_';
+                let prefixed =
+                    i > 0 && matches!(chars[i - 1], 'b' | 'c') && !(i > 1 && word_at(i - 2));
+                let raw_start = i == 0 || !word_at(i - 1) || prefixed;
                 let hashes = chars[i + 1..].iter().take_while(|&&h| h == '#').count();
                 if c == '/' && next == Some('/') {
                     break;
                 } else if c == '/' && next == Some('*') {
-                    *open = Open::BlockComment;
+                    *open = Open::BlockComment(1);
                     i += 1;
-                } else if c == 'r' && !after_word && chars.get(i + 1 + hashes) == Some(&'"') {
+                } else if c == 'r' && raw_start && chars.get(i + 1 + hashes) == Some(&'"') {
                     *open = Open::RawStr(hashes);
                     out.push('"');
                     i += 1 + hashes;
                 } else if c == '"' {
                     *open = Open::Str;
                     out.push('"');
+                } else if c == '\'' && next == Some('\\') {
+                    let close = chars
+                        .get(i + 3..)
+                        .and_then(|rest| rest.iter().position(|&q| q == '\''));
+                    out.push_str("' '");
+                    i += close.map_or(1, |p| p + 3);
                 } else if c == '\'' && chars.get(i + 2) == Some(&'\'') {
                     out.push_str("' '");
                     i += 2;
-                } else if c == '\'' && next == Some('\\') {
-                    let close = chars[i + 2..].iter().position(|&q| q == '\'');
-                    out.push_str("' '");
-                    i += close.map_or(1, |p| p + 2);
                 } else {
                     out.push(c);
                 }
@@ -122,9 +142,15 @@ fn production_lines(text: &str) -> Vec<(usize, String)> {
         let mut depth = 0i32;
         let mut opened = false;
         while i < code.len() {
-            depth += code[i].matches('{').count() as i32 - code[i].matches('}').count() as i32;
+            let next =
+                depth + code[i].matches('{').count() as i32 - code[i].matches('}').count() as i32;
+            if next < 0 {
+                break;
+            }
+            depth = next;
             opened |= code[i].contains('{');
-            let ends_item = code[i].trim_end().ends_with(';') || code[i].trim_end().ends_with('}');
+            let end = code[i].trim_end();
+            let ends_item = end.ends_with(';') || end.ends_with('}') || end.ends_with(',');
             i += 1;
             if (opened && depth <= 0) || (!opened && ends_item) {
                 break;
@@ -132,6 +158,15 @@ fn production_lines(text: &str) -> Vec<(usize, String)> {
         }
     }
     out
+}
+
+/// Where a scan of `text` stands after its last line.
+fn end_state(text: &str) -> Open {
+    let mut open = Open::Code;
+    for line in text.lines() {
+        code_only(line, &mut open);
+    }
+    open
 }
 
 fn is_hit(code: &str, word: &str) -> bool {
@@ -154,13 +189,34 @@ fn violations() -> Vec<String> {
     let mut files = Vec::new();
     for scanned in SCANNED {
         let path = root.join(scanned);
-        assert!(path.exists(), "expected {} to exist", path.display());
+        let before = files.len();
         rust_files(&path, &mut files);
+        assert!(
+            files.len() > before,
+            "expected {} to hold at least one .rs file",
+            path.display()
+        );
     }
-    let test_only: Vec<PathBuf> = TEST_ONLY.iter().map(|p| root.join(p)).collect();
+    for (_, module, declaration) in TEST_ONLY {
+        let text = std::fs::read_to_string(root.join(module)).unwrap();
+        let ungated: Vec<_> = production_lines(&text)
+            .into_iter()
+            .filter(|(_, code)| code.contains(declaration))
+            .collect();
+        assert!(
+            ungated.is_empty(),
+            "expected `{declaration}` in {module} to be test-gated, found it ungated at {ungated:?}"
+        );
+    }
+    let test_only: Vec<PathBuf> = TEST_ONLY.iter().map(|(f, _, _)| root.join(f)).collect();
     let mut found = Vec::new();
     for file in files.iter().filter(|f| !test_only.contains(f)) {
         let text = std::fs::read_to_string(file).unwrap();
+        assert!(
+            end_state(&text) == Open::Code,
+            "expected the scan of {} to end outside any comment or string",
+            file.display()
+        );
         for (n, code) in production_lines(&text) {
             if FORBIDDEN.iter().any(|word| is_hit(&code, word)) {
                 found.push(format!("{}:{}: {}", file.display(), n, code.trim()));
@@ -195,28 +251,51 @@ fn a_cfg_test_item_hides_only_itself() {
         "const M: &str = \"multi\n",
         "line f64 } text\";\n",
         "fn d() -> f64 {}\n",
+        "struct S {\n",
+        "    #[cfg(test)]\n",
+        "    pub a: u32,\n",
+        "    pub b: f64,\n",
+        "}\n",
+        "enum E {\n",
+        "    #[cfg(test)]\n",
+        "    A,\n",
+        "    B(f64),\n",
+        "}\n",
+        "fn m(x: u8, #[cfg(test)] y: u8,\n",
+        "    #[cfg(test)]\n",
+        "    z: u8,\n",
+        "    w: f32) {\n",
+        "    match x {\n",
+        "        #[cfg(test)]\n",
+        "        0 => 1,\n",
+        "        _ => 2.0f64 as u8,\n",
+        "    };\n",
+        "}\n",
     );
     let lines: Vec<usize> = production_lines(text)
         .into_iter()
         .filter(|(_, code)| FORBIDDEN.iter().any(|w| is_hit(code, w)))
         .map(|(n, _)| n)
         .collect();
-    assert_eq!(lines, vec![3, 9, 12]);
+    assert_eq!(lines, vec![3, 9, 12, 16, 21, 26, 30]);
 }
 
 #[test]
 fn literal_suffixes_and_conversions_are_hits_and_text_is_not() {
-    let mut open = Open::Code;
     for code in [
         "x(0.07f64)",
         "x(0.07_f64)",
         "Decimal::from_f64(v)",
         "let v: f32 = 0.0;",
+        "let q = ('\\'', '\"'); let v: f64 = 0.0;",
+        "let q = ('\\'','\"'); let v: f64 = 0.0;",
+        "let p = br\"C:\\\"; let v: f64 = 0.0;",
+        "/* a /* b */ it's \" */ let v: f64 = 0.0;",
     ] {
         assert!(
             FORBIDDEN
                 .iter()
-                .any(|w| is_hit(&code_only(code, &mut open), w)),
+                .any(|w| is_hit(&code_only(code, &mut Open::Code), w)),
             "{code}"
         );
     }
@@ -231,7 +310,7 @@ fn literal_suffixes_and_conversions_are_hits_and_text_is_not() {
         assert!(
             !FORBIDDEN
                 .iter()
-                .any(|w| is_hit(&code_only(code, &mut open), w)),
+                .any(|w| is_hit(&code_only(code, &mut Open::Code), w)),
             "{code}"
         );
     }

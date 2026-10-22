@@ -10,7 +10,7 @@ use thiserror::Error;
 
 const MAX_SCALE: u32 = 28;
 const ENVELOPE_MAX_SCALE: u32 = 10;
-/// The scale E2 rounds payouts to and E3 truncates capped shares to.
+/// Decimal places a payout is held to.
 pub(crate) const PAYOUT_SCALE: u32 = 13;
 const ENVELOPE_LIMIT: Decimal = dec!(1_000_000_000_000_000);
 
@@ -1073,6 +1073,19 @@ mod tests {
         let leg = d("100000000000000");
         let paid = leg.mul_div_ratio(d("1"), d("1000"), leg, d("300000000000000"));
         assert_eq!(paid.unwrap().to_string(), "33333333333333333.333333333333");
+        let one = d("1");
+        let at_edge =
+            d("79228162514264337593543950335").mul_div_ratio(one, one, one, d("10000000000000"));
+        assert_eq!(
+            at_edge.unwrap().to_string(),
+            "7922816251426433.7593543950335"
+        );
+        let past_edge =
+            d("39614081257132168796771975168").mul_div_ratio(d("2"), one, one, d("10000000000000"));
+        assert_eq!(
+            past_edge.unwrap().to_string(),
+            "7922816251426433.759354395034"
+        );
     }
 
     #[test]

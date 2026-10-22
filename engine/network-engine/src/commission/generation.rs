@@ -455,7 +455,7 @@ pub fn calculate_generation(
                 .collect::<HashSet<_>>()
                 .into_iter()
                 .collect();
-            unique_ranks.sort_by_key(|(_, ord)| *ord);
+            unique_ranks.sort_unstable_by_key(|&(name, ord)| (ord, name));
 
             // The boundary check is rank-independent, so build it once and
             // reuse it across every per-rank walk.
@@ -2377,6 +2377,55 @@ mod calculate_tests {
         assert_eq!(earn_root.level, 1);
         assert_eq!(earn_root.rate, Some(d!(0.10)));
         assert_d!(earn_root.dollar_amount, 10.0);
+    }
+
+    #[test]
+    fn same_rank_gives_the_same_result_for_two_ranks_on_one_ordinal() {
+        let rates = BTreeMap::from([(1, d!(0.10)), (2, d!(0.05))]);
+        let mut structure = same_rank_structure(5, rates);
+        structure.generation_commission.max_generations_per_rank =
+            BTreeMap::from([("gold".to_string(), 1), ("silver".to_string(), 2)]);
+        let mut plan = three_rank_plan(structure.clone());
+        plan.ranks[2].name = "silver".to_string();
+        plan.ranks[2].ordinal = 2;
+        let volume = vec![VolumeSource {
+            source_id: uuid(3),
+            cv_amount: d!(100.0),
+        }];
+        let mut seen = std::collections::BTreeSet::new();
+        // Rebuilt inside the loop so each pass samples a fresh HashMap order.
+        for _ in 0..32 {
+            let tree = build_chain(4);
+            let snapshots = HashMap::from([
+                (uuid(0), gold_snapshot()),
+                (
+                    uuid(1),
+                    DistributorSnapshot {
+                        rank: "silver".to_string(),
+                        ..gold_snapshot()
+                    },
+                ),
+                (uuid(2), eligible_snapshot()),
+                (uuid(3), eligible_snapshot()),
+            ]);
+            let result = calculate_generation(
+                &tree,
+                &plan,
+                &structure,
+                &snapshots,
+                &volume,
+                &crate::test_support::test_plan_identity(),
+            )
+            .unwrap();
+            let ranks: std::collections::HashSet<_> =
+                result.walks.iter().filter_map(|w| w.rank.clone()).collect();
+            assert!(
+                ranks.contains("gold") && ranks.contains("silver"),
+                "walk ranks: {ranks:?}"
+            );
+            seen.insert(serde_json::to_string(&result).unwrap());
+        }
+        assert_eq!(seen.len(), 1, "distinct results across runs: {seen:?}");
     }
 
     /// Tree: root(Diamond) -> g1(Gold) -> g2(Gold) -> low(Associate) -> leaf(source).

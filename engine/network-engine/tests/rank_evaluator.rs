@@ -1708,6 +1708,7 @@ fn structures_above_lowest_rank_takes_the_first_of_tied_lowest_ordinals_as_the_l
         BTreeSet::from(["Test"])
     );
 }
+
 #[test]
 fn evaluate_ranks_refuses_a_volume_total_it_cannot_hold() {
     let mut tree = UnilevelTree::new();

@@ -145,7 +145,7 @@ fn parse_exact(text: &str) -> Result<(Decimal, i64), ParseDecError> {
     let refuse = |reason| ParseDecError {
         text: text.to_string(),
         reason,
-        unrepresentable: reason == RANGE || reason == PRECISION,
+        unrepresentable: true,
     };
     let (body, negative) = match text.strip_prefix('-') {
         Some(rest) => (rest, true),
@@ -166,7 +166,11 @@ fn parse_exact(text: &str) -> Result<(Decimal, i64), ParseDecError> {
         || fraction.is_some_and(|f| !all_digits(f))
         || exponent_digits.is_some_and(|e| !all_digits(e))
     {
-        return Err(refuse("not a JSON number"));
+        return Err(ParseDecError {
+            text: text.to_string(),
+            reason: "not a JSON number",
+            unrepresentable: false,
+        });
     }
     let fraction = fraction.unwrap_or("");
     let exponent_is_negative = exponent.is_some_and(|e| e.starts_with('-'));
@@ -227,6 +231,21 @@ fn parse_exact(text: &str) -> Result<(Decimal, i64), ParseDecError> {
         })
     })?;
     Ok((value, written_scale))
+}
+
+/// The product of `factors` divided by `divisor`, computed in wide integers and
+/// rounded once by `round_quotient`.
+fn wide_mul_div_ratio(factors: [Dec; 4], divisor: Dec) -> Result<Decimal, NumericErrorKind> {
+    let negative = factors.iter().filter(|f| f.is_negative()).count() % 2 == 1;
+    let mut num = U1024::ONE;
+    let mut num_scale = 0i64;
+    for factor in factors {
+        num *= U1024::from(factor.0.mantissa().unsigned_abs());
+        num_scale += i64::from(factor.0.scale());
+    }
+    let den = U1024::from(divisor.0.mantissa().unsigned_abs());
+    let negative = negative != divisor.is_negative();
+    round_quotient(negative, num, num_scale, den, i64::from(divisor.0.scale()))
 }
 
 /// The magnitude `(num / 10^num_scale) ÷ (den / 10^den_scale)`, rounded half to
@@ -400,18 +419,15 @@ impl Dec {
         if divisor.is_zero() {
             return Err(error(NumericErrorKind::DivisionByZero));
         }
-        let factors = [self, b, c, d];
-        let negative = factors.iter().filter(|f| f.is_negative()).count() % 2 == 1;
-        let mut num = U1024::ONE;
-        let mut num_scale = 0i64;
-        for factor in factors {
-            num *= U1024::from(factor.0.mantissa().unsigned_abs());
-            num_scale += i64::from(factor.0.scale());
+        let held = self
+            .try_mul(b)
+            .and_then(|p| p.try_mul(c))
+            .and_then(|p| p.try_mul(d));
+        if let Some(quotient) = held.ok().and_then(|p| p.0.checked_div(divisor.0)) {
+            return Ok(Dec(quotient.normalize()));
         }
-        let den = U1024::from(divisor.0.mantissa().unsigned_abs());
-        let negative = negative != divisor.is_negative();
-        round_quotient(negative, num, num_scale, den, i64::from(divisor.0.scale()))
-            .map(Dec)
+        wide_mul_div_ratio([self, b, c, d], divisor)
+            .map(|quotient| Dec(quotient.normalize()))
             .map_err(error)
     }
 
@@ -1042,7 +1058,7 @@ mod tests {
     }
 
     #[test]
-    fn mul_div_ratio_rounds_a_tie_to_even_like_div_ratio() {
+    fn mul_div_ratio_rounds_a_tie_to_even_in_both_directions() {
         let one = Dec::ONE;
         for (a, even) in [
             (
@@ -1050,13 +1066,23 @@ mod tests {
                 "39614081257132168796771975166",
             ),
             (
+                "79228162514264337593543950331",
+                "39614081257132168796771975166",
+            ),
+            (
                 "-79228162514264337593543950333",
                 "-39614081257132168796771975166",
             ),
+            (
+                "-79228162514264337593543950331",
+                "-39614081257132168796771975166",
+            ),
         ] {
-            let paid = d(a).mul_div_ratio(one, one, one, d("2")).unwrap();
-            assert_eq!(paid, d(even));
-            assert_eq!(paid, d(a).div_ratio(d("2")).unwrap());
+            assert_eq!(d(a).div_ratio(d("2")).unwrap(), d(even), "{a}");
+            let wide = wide_mul_div_ratio([d(a), one, one, one], d("2")).unwrap();
+            assert_eq!(Dec(wide), d(even), "{a}");
+            let paid = d(a).mul_div_ratio(d("10"), one, one, d("20")).unwrap();
+            assert_eq!(paid, d(even), "{a}");
         }
     }
 
@@ -1207,21 +1233,36 @@ mod tests {
 
     proptest! {
         #[test]
-        fn mul_div_ratio_of_one_factor_follows_div_ratio(
+        fn wide_mul_div_ratio_of_one_factor_follows_div_ratio(
             a in full_width_dec(),
             b in full_width_dec(),
         ) {
             prop_assume!(!b.is_zero());
             let one = Dec::ONE;
-            match (a.div_ratio(b), a.mul_div_ratio(one, one, one, b)) {
-                (Ok(x), Ok(y)) => prop_assert_eq!(x, y, "{} / {}", a, b),
-                (Err(x), Err(y)) => prop_assert_eq!(x.kind, y.kind),
-                (x, y) => prop_assert!(false, "{} / {}: div_ratio {:?}, mul_div_ratio {:?}", a, b, x, y),
+            match (a.div_ratio(b), wide_mul_div_ratio([a, one, one, one], b)) {
+                (Ok(x), Ok(y)) => prop_assert_eq!(x, Dec(y), "{} / {}", a, b),
+                (Err(x), Err(y)) => prop_assert_eq!(x.kind, y),
+                (x, y) => prop_assert!(false, "{} / {}: div_ratio {:?}, wide {:?}", a, b, x, y),
             }
         }
 
         #[test]
-        fn mul_div_ratio_follows_div_ratio_of_a_held_product(
+        fn wide_mul_div_ratio_follows_div_ratio_on_tie_prone_divisors(
+            a in full_width_dec(),
+            divisor in prop::sample::select(vec![2i128, 4, 8, 20, 25, 200, 2000, -2, -20]),
+            scale in 0u32..=28,
+        ) {
+            let b = Dec(Decimal::from_i128_with_scale(divisor, scale));
+            let one = Dec::ONE;
+            match (a.div_ratio(b), wide_mul_div_ratio([a, one, one, one], b)) {
+                (Ok(x), Ok(y)) => prop_assert_eq!(x, Dec(y), "{} / {}", a, b),
+                (Err(x), Err(y)) => prop_assert_eq!(x.kind, y),
+                (x, y) => prop_assert!(false, "{} / {}: div_ratio {:?}, wide {:?}", a, b, x, y),
+            }
+        }
+
+        #[test]
+        fn wide_mul_div_ratio_follows_div_ratio_of_a_held_product(
             a in factor_dec(),
             b in factor_dec(),
             c in factor_dec(),
@@ -1230,10 +1271,10 @@ mod tests {
             prop_assume!(!divisor.is_zero());
             let product = a.try_mul(b).and_then(|p| p.try_mul(c)).unwrap();
             let expected = product.div_ratio(divisor);
-            let got = a.mul_div_ratio(b, c, Dec::ONE, divisor);
+            let got = wide_mul_div_ratio([a, b, c, Dec::ONE], divisor);
             match (expected, got) {
-                (Ok(x), Ok(y)) => prop_assert_eq!(x, y),
-                (Err(x), Err(y)) => prop_assert_eq!(x.kind, y.kind),
+                (Ok(x), Ok(y)) => prop_assert_eq!(x, Dec(y)),
+                (Err(x), Err(y)) => prop_assert_eq!(x.kind, y),
                 (x, y) => prop_assert!(false, "expected {:?}, got {:?}", x, y),
             }
         }

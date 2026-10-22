@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use network_engine::commission::{
     BinaryCommissionEarning, DistributorSnapshot, LegVolumes, VolumeSource,
@@ -140,7 +140,7 @@ struct CalculateStairstepParams {
 #[derive(serde::Serialize)]
 struct BinaryCalculationResponse {
     earnings: Vec<BinaryCommissionEarning>,
-    carry_forward: HashMap<String, LegVolumes>,
+    carry_forward: BTreeMap<String, LegVolumes>,
 }
 
 // --- Commission handlers ---

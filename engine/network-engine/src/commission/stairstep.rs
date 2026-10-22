@@ -2826,8 +2826,7 @@ mod tests {
         }
     }
 
-    /// Calls `calculate_stairstep` 32 times on fresh snapshot maps and returns
-    /// each distinct error text.
+    /// Every distinct error text `calculate_stairstep` returns across repeated runs.
     fn errors_across_runs(
         structure: &StairstepStructureConfig,
         ranks_and_pvs: &[(&str, AuthoredDec)],

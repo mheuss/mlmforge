@@ -148,7 +148,10 @@ pub fn calculate_streamline(
     // stream's walks, so their ids stay unique across the response.
     let mut walks = Vec::new();
 
-    for stream in engine.active_streams() {
+    // Visit streams in id order so a failed calculation names the same operands every run.
+    let mut streams: Vec<_> = engine.active_streams().collect();
+    streams.sort_unstable_by_key(|stream| stream.id);
+    for stream in streams {
         let eligibility_cache =
             walk::evaluate_eligibility(snapshots, &stream.tree, &plan.eligibility);
 
@@ -1548,5 +1551,92 @@ mod tests {
             result.unwrap_err(),
             CalculationError::DistributorNotInSnapshot(test_uuid(3))
         );
+    }
+
+    /// One stream holding `a` and its child `b`, as snapshot JSON.
+    fn one_stream_snapshot(a: u8, b: u8) -> serde_json::Value {
+        let config = StreamlineConfig {
+            assignment_mode: StreamAssignmentMode::SponsorStream,
+            enrollment_stream_choice: false,
+            freeze_on_demotion: true,
+        };
+        let mut engine = StreamlineEngine::new(config, 1000);
+        engine
+            .add_member(test_uuid(a), test_uuid(99), 1000, None)
+            .unwrap();
+        engine
+            .add_member(test_uuid(b), test_uuid(a), 1001, None)
+            .unwrap();
+        serde_json::to_value(&engine).unwrap()
+    }
+
+    /// Two active streams, 1 -> 2 as stream 1 and 3 -> 4 as stream 2.
+    fn two_stream_snapshot() -> String {
+        let mut first = one_stream_snapshot(1, 2);
+        let second = one_stream_snapshot(3, 4);
+        let mut stream = second["streams"]["1"].clone();
+        stream["id"] = serde_json::json!(2);
+        first["streams"]["2"] = stream;
+        for user in [3u8, 4] {
+            first["user_streams"][test_uuid(user).to_string()] = serde_json::json!([2]);
+        }
+        first["stream_owners"][test_uuid(3).to_string()] = serde_json::json!([2]);
+        first["next_stream_id"] = serde_json::json!(3);
+        first.to_string()
+    }
+
+    #[test]
+    fn streams_name_the_same_failing_operands_on_every_run() {
+        let structure = StreamlineStructureConfig {
+            name: "test_streamline".to_string(),
+            streamline_commission: StreamlineCommissionConfig {
+                volume_to_dollar_multiplier: Some(d!(0.0000000001)),
+                max_depth: 5,
+                levels: vec![StreamlineLevel {
+                    level: 1,
+                    min_rank: "associate".to_string(),
+                    percent: d!(0.0000000001),
+                }],
+                stream_config: None,
+            },
+        };
+        let plan = test_helpers::build_test_plan(
+            test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Streamline(structure.clone()),
+            "test_streamline",
+        );
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: d!(0.0000000001),
+            },
+            VolumeSource {
+                source_id: test_uuid(4),
+                cv_amount: d!(0.0000000003),
+            },
+        ];
+        let json = two_stream_snapshot();
+        let mut seen = std::collections::BTreeSet::new();
+        // Restored inside the loop so each pass samples a fresh HashMap order.
+        for _ in 0..32 {
+            let engine: StreamlineEngine = serde_json::from_str(&json).unwrap();
+            engine.validate_restored().unwrap();
+            let snapshots: HashMap<Uuid, DistributorSnapshot> = (1..=4)
+                .map(|i| (test_uuid(i), test_helpers::eligible_snapshot()))
+                .collect();
+            let err = calculate_streamline(
+                &engine,
+                &plan,
+                &structure,
+                &snapshots,
+                &volume,
+                &crate::test_support::test_plan_identity(),
+            )
+            .unwrap_err();
+            seen.insert(err.to_string());
+        }
+        assert_eq!(seen.len(), 1, "distinct errors across runs: {seen:?}");
+        let only = seen.first().unwrap();
+        assert!(only.contains("0.00000000000000000001 and"), "{only}");
     }
 }

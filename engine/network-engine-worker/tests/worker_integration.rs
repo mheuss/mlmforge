@@ -1069,11 +1069,7 @@ fn calculate_unilevel_three_node_chain() {
     assert_eq!(mid_earning["level"].as_u64().unwrap(), 1);
     assert_eq!(mid_earning["source_id"].as_str().unwrap(), GRANDCHILD);
     let mid_dollar = number_text(&mid_earning["dollar_amount"]);
-    assert!(
-        mid_dollar == "2",
-        "mid dollar_amount should be 2.0, got {}",
-        mid_dollar
-    );
+    assert_eq!(mid_dollar, "2", "mid dollar_amount");
 
     // Find root(001) earning at level 2
     let root_earning = earnings
@@ -1083,11 +1079,7 @@ fn calculate_unilevel_three_node_chain() {
     assert_eq!(root_earning["level"].as_u64().unwrap(), 2);
     assert_eq!(root_earning["source_id"].as_str().unwrap(), GRANDCHILD);
     let root_dollar = number_text(&root_earning["dollar_amount"]);
-    assert!(
-        root_dollar == "2",
-        "root dollar_amount should be 2.0, got {}",
-        root_dollar
-    );
+    assert_eq!(root_dollar, "2", "root dollar_amount");
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -2139,6 +2131,31 @@ fn build_binary_calc_tree(worker: &mut std::process::Child) {
 }
 
 #[test]
+fn calculate_binary_pairing_writes_the_same_bytes_in_every_worker() {
+    let snap = r#"{"rank":"associate","personal_volume":150.0,"status":"active","has_order_in_period":true}"#;
+    let request = format!(
+        r#"{{"id":"bp-1","op":"calculate_binary_pairing","params":{{"structure":"BinaryCalc","snapshots":{{"{a}":{snap},"{b}":{snap},"{c}":{snap}}},"volume":[{{"source_id":"{b}","cv_amount":500.0}},{{"source_id":"{c}","cv_amount":300.0}}]}}}}"#,
+        a = NODE_A,
+        b = NODE_B,
+        c = NODE_C,
+        snap = snap,
+    );
+    let mut seen = std::collections::BTreeSet::new();
+    // A fresh process per pass, so each samples a fresh HashMap order.
+    for _ in 0..8 {
+        let mut worker = common::spawn_worker();
+        load_binary_test_plan(&mut worker);
+        build_binary_calc_tree(&mut worker);
+        let resp = common::send_receive(&mut worker, &request);
+        assert!(resp.contains(r#""ok":true"#), "calculate failed: {}", resp);
+        seen.insert(resp);
+        drop(worker.stdin.take());
+        worker.wait().unwrap();
+    }
+    assert_eq!(seen.len(), 1, "distinct responses across workers: {seen:?}");
+}
+
+#[test]
 fn calculate_binary_pairing_balanced_legs() {
     let mut worker = common::spawn_worker();
 
@@ -2186,11 +2203,7 @@ fn calculate_binary_pairing_balanced_legs() {
     assert_eq!(number_text(&earning["percent"]), "0.1");
 
     let dollar = number_text(&earning["dollar_amount"]);
-    assert!(
-        dollar == "50",
-        "dollar_amount should be 50.0, got {}",
-        dollar
-    );
+    assert_eq!(dollar, "50", "dollar_amount");
     assert!(!earning["capped"].as_bool().unwrap());
 
     // Verify carry_forward is present.
@@ -2454,10 +2467,9 @@ fn calculate_binary_pairing_applies_populated_carry_forward() {
     assert_eq!(number_text(&earning["right_volume"]), "500");
     assert_eq!(number_text(&earning["matched_volume"]), "500");
     let dollar = number_text(&earning["dollar_amount"]);
-    assert!(
-        dollar == "50",
-        "carry of 500/500 at 10% should pay 50.0, got {} in: {}",
-        dollar,
+    assert_eq!(
+        dollar, "50",
+        "dollar_amount for a carry of 500/500 at 10% in: {}",
         resp
     );
 
@@ -2785,10 +2797,10 @@ fn calculate_binary_pairing_multi_position_ownership() {
             .map(|e| number_text(&e["dollar_amount"]).parse::<Dec>().unwrap()),
     )
     .unwrap();
-    assert!(
-        owner_a_total == "500".parse::<Dec>().unwrap(),
-        "owner_a aggregate should be exactly 500.0 after pro-rata cap, got {}",
-        owner_a_total
+    assert_eq!(
+        owner_a_total,
+        "500".parse::<Dec>().unwrap(),
+        "owner_a aggregate after the pro-rata cap"
     );
 
     // Owner B's earnings (pos3).
@@ -3092,11 +3104,7 @@ fn calculate_unilevel_pass_up_skips_first_recruits() {
         "S should earn at level 1 (A skipped without consuming a level)"
     );
     let s_r1_dollar = number_text(&r1_earnings[0]["dollar_amount"]);
-    assert!(
-        s_r1_dollar == "2",
-        "S dollar_amount from R1 should be 2.0, got {}",
-        s_r1_dollar
-    );
+    assert_eq!(s_r1_dollar, "2", "S dollar_amount from R1");
 
     // --- Verify R3 volume: A earns at level 1, S earns at level 2 ---
     let r3_earnings: Vec<&serde_json::Value> = earnings
@@ -3116,11 +3124,7 @@ fn calculate_unilevel_pass_up_skips_first_recruits() {
         .expect("A should earn from R3 volume");
     assert_eq!(a_from_r3["level"].as_u64().unwrap(), 1);
     let a_r3_dollar = number_text(&a_from_r3["dollar_amount"]);
-    assert!(
-        a_r3_dollar == "2",
-        "A dollar_amount from R3 should be 2.0, got {}",
-        a_r3_dollar
-    );
+    assert_eq!(a_r3_dollar, "2", "A dollar_amount from R3");
 
     let s_from_r3 = r3_earnings
         .iter()
@@ -3128,11 +3132,7 @@ fn calculate_unilevel_pass_up_skips_first_recruits() {
         .expect("S should earn from R3 volume");
     assert_eq!(s_from_r3["level"].as_u64().unwrap(), 2);
     let s_r3_dollar = number_text(&s_from_r3["dollar_amount"]);
-    assert!(
-        s_r3_dollar == "2",
-        "S dollar_amount from R3 should be 2.0, got {}",
-        s_r3_dollar
-    );
+    assert_eq!(s_r3_dollar, "2", "S dollar_amount from R3");
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -4016,29 +4016,25 @@ fn board_calculate_ignores_request_scoped_config() {
     assert_eq!(earnings.len(), 4, "expected four earnings, got: {}", resp);
 
     let first = number_text(&earnings[0]["dollar_amount"]);
-    assert!(
-        first == "500",
-        "the request-scoped cycle_commission reached the calculator, got {}: {}",
-        first,
-        resp
-    );
+    assert_eq!(first, "500", "first cycle dollar_amount in: {}", resp);
 
     // Pins the cap at exactly 3, not merely somewhere in 1..=3. The
     // fourth-cycle check alone stays green under a drifted cap of 1 or 2. It
     // also stays green if the `>` at `commission/board_plan.rs:35` became
     // `>=`. Only this assertion catches either.
     let third = number_text(&earnings[2]["dollar_amount"]);
+    assert_eq!(third, "500", "third cycle dollar_amount in: {}", resp);
     assert!(
-        third == "500" && !earnings[2]["capped"].as_bool().expect(&resp),
+        !earnings[2]["capped"].as_bool().expect(&resp),
         "the third cycle is within the plan's cap of 3 and must pay, got: {}",
         resp
     );
 
     let fourth = number_text(&earnings[3]["dollar_amount"]);
+    assert_eq!(fourth, "0", "fourth cycle dollar_amount in: {}", resp);
     assert!(
-        fourth == "0" && earnings[3]["capped"].as_bool().expect(&resp),
-        "the request-scoped max_cycles_per_period reached the calculator; the \
-         fourth cycle should be capped under the plan's cap of 3, got: {}",
+        earnings[3]["capped"].as_bool().expect(&resp),
+        "the fourth cycle should be capped under the plan's cap of 3, got: {}",
         resp
     );
 
@@ -4096,12 +4092,7 @@ fn board_calculate_ignores_malformed_request_config() {
         resp
     );
     let dollar = number_text(&parsed["result"]["earnings"][0]["dollar_amount"]);
-    assert!(
-        dollar == "500",
-        "expected the plan's 500.0, got {}: {}",
-        dollar,
-        resp
-    );
+    assert_eq!(dollar, "500", "dollar_amount in: {}", resp);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -4739,16 +4730,9 @@ fn calculate_streamline_uses_the_loaded_plan_structure() {
     assert_eq!(earnings[0]["earner_id"].as_str().expect(&resp), SL_USER1);
     assert_eq!(earnings[0]["source_id"].as_str().expect(&resp), SL_USER2);
     assert_eq!(earnings[0]["level"].as_u64().expect(&resp), 1);
-    // 100 CV * 1.0 multiplier * 0.10 level-1 percent = 10.0. Compared with a
-    // tolerance so a change to the multiplication order inside the calculator
-    // can't fail this test by one ULP — the config source is what it guards.
+    // 100 CV * 1.0 multiplier * 0.10 level-1 percent = 10.0.
     let dollar = number_text(&earnings[0]["dollar_amount"]);
-    assert!(
-        dollar == "10",
-        "dollar_amount should be 10.0, got {}: {}",
-        dollar,
-        resp
-    );
+    assert_eq!(dollar, "10", "dollar_amount in: {}", resp);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -4811,12 +4795,7 @@ fn calculate_streamline_ignores_request_scoped_config() {
         resp
     );
     let dollar = number_text(&earnings[0]["dollar_amount"]);
-    assert!(
-        dollar == "10",
-        "the request-scoped percent reached the calculator, got {}: {}",
-        dollar,
-        resp
-    );
+    assert_eq!(dollar, "10", "dollar_amount in: {}", resp);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -5879,11 +5858,7 @@ fn calculate_matrix_pays_upline() {
     assert_eq!(root_earning["level"].as_u64().unwrap(), 1);
     assert_eq!(root_earning["source_id"].as_str().unwrap(), CHILD);
     let root_dollar = number_text(&root_earning["dollar_amount"]);
-    assert!(
-        root_dollar == "2",
-        "root dollar_amount should be 2.0, got {}",
-        root_dollar
-    );
+    assert_eq!(root_dollar, "2", "root dollar_amount");
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -6250,11 +6225,7 @@ fn calculate_stairstep_pays_upline() {
     assert_eq!(child_earning["level"].as_u64().unwrap(), 1);
     assert_eq!(child_earning["source_id"].as_str().unwrap(), GRANDCHILD);
     let child_dollar = number_text(&child_earning["dollar_amount"]);
-    assert!(
-        child_dollar == "2",
-        "child dollar_amount should be 2.0, got {}",
-        child_dollar
-    );
+    assert_eq!(child_dollar, "2", "child dollar_amount");
     let root_earning = earnings
         .iter()
         .find(|e| e["earner_id"].as_str().unwrap() == ROOT)
@@ -6262,11 +6233,7 @@ fn calculate_stairstep_pays_upline() {
     assert_eq!(root_earning["level"].as_u64().unwrap(), 2);
     assert_eq!(root_earning["source_id"].as_str().unwrap(), GRANDCHILD);
     let root_dollar = number_text(&root_earning["dollar_amount"]);
-    assert!(
-        root_dollar == "2",
-        "root dollar_amount should be 2.0, got {}",
-        root_dollar
-    );
+    assert_eq!(root_dollar, "2", "root dollar_amount");
 
     drop(worker.stdin.take());
     worker.wait().unwrap();

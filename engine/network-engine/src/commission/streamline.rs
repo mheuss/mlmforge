@@ -193,10 +193,7 @@ pub fn calculate_streamline(
             &mut walks,
         )?;
 
-        // Stamp the stream on exactly the walks it produced. This is what
-        // makes the index order deterministic: `active_streams` iterates a
-        // HashMap, so without `stream_id` the total order would fall through
-        // to a collector id assigned in hash order, which design 029 forbids.
+        // Stamp the stream on exactly the walks it produced.
         for w in &mut walks[stream_walks_from..] {
             w.stream_id = Some(stream.id);
         }

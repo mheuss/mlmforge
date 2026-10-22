@@ -1226,6 +1226,11 @@ mod tests {
             .prop_map(|(m, s)| Dec(Decimal::from_i128_with_scale(m, s)))
     }
 
+    fn fast_path_factor() -> impl Strategy<Value = Dec> {
+        (-(1i128 << 20)..(1i128 << 20), 0u32..=5)
+            .prop_map(|(m, s)| Dec(Decimal::from_i128_with_scale(m, s)))
+    }
+
     fn full_width_dec() -> impl Strategy<Value = Dec> {
         (-((1i128 << 96) - 1)..(1i128 << 96), 0u32..=28)
             .prop_map(|(m, s)| Dec(Decimal::from_i128_with_scale(m, s)))
@@ -1243,6 +1248,22 @@ mod tests {
                 (Ok(x), Ok(y)) => prop_assert_eq!(x, Dec(y), "{} / {}", a, b),
                 (Err(x), Err(y)) => prop_assert_eq!(x.kind, y),
                 (x, y) => prop_assert!(false, "{} / {}: div_ratio {:?}, wide {:?}", a, b, x, y),
+            }
+        }
+
+        #[test]
+        fn mul_div_ratio_matches_the_wide_path_on_either_branch(
+            a in prop_oneof![fast_path_factor(), factor_dec()],
+            b in prop_oneof![fast_path_factor(), factor_dec()],
+            c in prop_oneof![fast_path_factor(), full_width_dec()],
+            d in prop_oneof![fast_path_factor(), full_width_dec()],
+            divisor in prop_oneof![fast_path_factor(), full_width_dec()],
+        ) {
+            prop_assume!(!divisor.is_zero());
+            match (a.mul_div_ratio(b, c, d, divisor), wide_mul_div_ratio([a, b, c, d], divisor)) {
+                (Ok(x), Ok(y)) => prop_assert_eq!(x, Dec(y)),
+                (Err(x), Err(y)) => prop_assert_eq!(x.kind, y),
+                (x, y) => prop_assert!(false, "public {:?}, wide {:?}", x, y),
             }
         }
 

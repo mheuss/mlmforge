@@ -3783,6 +3783,34 @@ fn board_calculate_accepts_absent_period_cycle_counts() {
     worker.wait().unwrap();
 }
 
+#[test]
+fn board_calculate_writes_the_same_bytes_in_every_worker() {
+    let events = (1..=4)
+        .map(|i| {
+            format!(
+                r#"{{"board_id":"00000000-0000-0000-0000-000000000010","cycled_member":"00000000-0000-0000-0000-00000000000{i}","new_boards":[],"re_entry_board":null}}"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let request = format!(
+        r#"{{"id":"bp-bytes","op":"board_calculate_commissions","params":{{"structure":"{}","cycle_events":[{}],"period_cycle_counts":{{}}}}}}"#,
+        BP_STRUCTURE, events
+    );
+    let mut seen = std::collections::BTreeSet::new();
+    // A fresh process per pass, so each samples a fresh HashMap order.
+    for _ in 0..8 {
+        let mut worker = common::spawn_worker();
+        load_board_test_plan(&mut worker);
+        let resp = common::send_receive(&mut worker, &request);
+        assert!(resp.contains(r#""ok":true"#), "calculate failed: {}", resp);
+        seen.insert(resp);
+        drop(worker.stdin.take());
+        worker.wait().unwrap();
+    }
+    assert_eq!(seen.len(), 1, "distinct responses across workers: {seen:?}");
+}
+
 /// Omitting `cycle_events` altogether stays an error. This is the other half of
 /// `board_calculate_accepts_null_collections`: widening null must not quietly
 /// widen absent, or a caller that forgets the field gets a zero payout instead
@@ -3976,8 +4004,7 @@ fn board_calculate_rejects_legacy_shape_without_structure() {
 ///
 /// Both hostile values differ from the plan's, and both are asserted. The
 /// commission proves `cycle_commission` comes from the plan; the cap proves
-/// `max_cycles_per_period` does too. The calculator reads exactly these two
-/// fields (`commission/board_plan.rs:35-36`), so together they cover it.
+/// `max_cycles_per_period` does too.
 ///
 /// `config` has since been deleted from `Params`. This test still sends it,
 /// and that is the point: nothing sets `deny_unknown_fields`, so the worker
@@ -4019,14 +4046,12 @@ fn board_calculate_ignores_request_scoped_config() {
     assert_eq!(first, "500", "first cycle dollar_amount in: {}", resp);
 
     // Pins the cap at exactly 3, not merely somewhere in 1..=3. The
-    // fourth-cycle check alone stays green under a drifted cap of 1 or 2. It
-    // also stays green if the `>` at `commission/board_plan.rs:35` became
-    // `>=`. Only this assertion catches either.
+    // fourth-cycle check alone stays green under a drifted cap of 1 or 2.
     let third = number_text(&earnings[2]["dollar_amount"]);
     assert_eq!(third, "500", "third cycle dollar_amount in: {}", resp);
     assert!(
         !earnings[2]["capped"].as_bool().expect(&resp),
-        "the third cycle is within the plan's cap of 3 and must pay, got: {}",
+        "third cycle capped flag in: {}",
         resp
     );
 

@@ -6,7 +6,7 @@
 //! paid cycles a member can accumulate. Cycles beyond the cap are
 //! recorded with `capped=true` and `dollar_amount=0`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use uuid::Uuid;
 
@@ -25,7 +25,10 @@ pub fn calculate_board_commissions(
     period_cycle_counts: &HashMap<Uuid, u32>,
     config: &BoardPlanConfig,
 ) -> BoardCommissionResult {
-    let mut counts: HashMap<Uuid, u32> = period_cycle_counts.clone();
+    let mut counts: BTreeMap<Uuid, u32> = period_cycle_counts
+        .iter()
+        .map(|(member, count)| (*member, *count))
+        .collect();
     let mut earnings = Vec::new();
 
     for event in cycle_events {

@@ -2379,6 +2379,8 @@ mod calculate_tests {
         assert_d!(earn_root.dollar_amount, 10.0);
     }
 
+    /// Guards that tied ordinals give a stable result. It reproduces no defect,
+    /// and it does not check the amounts are right: HEU-646.
     #[test]
     fn same_rank_gives_the_same_result_for_two_ranks_on_one_ordinal() {
         let rates = BTreeMap::from([(1, d!(0.10)), (2, d!(0.05))]);

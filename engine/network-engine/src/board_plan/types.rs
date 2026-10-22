@@ -2,7 +2,7 @@
 
 use crate::decimal::Dec;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 /// Result of adding a member to a board.
@@ -146,5 +146,5 @@ pub struct BoardCommissionResult {
     pub earnings: Vec<BoardCycleEarning>,
 
     /// Updated cycle counts per member. Keyed by user_id.
-    pub updated_cycle_counts: HashMap<Uuid, u32>,
+    pub updated_cycle_counts: BTreeMap<Uuid, u32>,
 }

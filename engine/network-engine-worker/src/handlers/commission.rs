@@ -133,10 +133,6 @@ struct CalculateStairstepParams {
 }
 
 /// Wire response for a binary pairing calculation result.
-///
-/// The library's `BinaryCalculationResult` is not Serialize (carry_forward
-/// uses `HashMap<Uuid, LegVolumes>` which we convert to string-keyed JSON).
-/// This struct owns the wire-safe shape.
 #[derive(serde::Serialize)]
 struct BinaryCalculationResponse {
     earnings: Vec<BinaryCommissionEarning>,

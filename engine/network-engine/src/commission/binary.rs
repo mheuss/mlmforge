@@ -4552,6 +4552,110 @@ mod tests {
         );
     }
 
+    fn one_third_ratio_payout(cap: Option<AuthoredDec>) -> BinaryCalculationResult {
+        let structure = BinaryStructureConfig {
+            name: "Test Binary".to_string(),
+            binary_commission: BinaryCommissionConfig {
+                volume_to_dollar_multiplier: None,
+                mode: BinaryCommissionMode::Pairing(PairingConfig {
+                    percent: d!(0.3),
+                    calculation: PairingCalculation::VolumeRatio,
+                    cap_per_period: cap,
+                    ..test_pairing_config()
+                }),
+            },
+        };
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+        let snapshots = HashMap::from([
+            (test_uuid(1), eligible_snapshot()),
+            (test_uuid(2), eligible_snapshot()),
+            (test_uuid(3), eligible_snapshot()),
+        ]);
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: d!(100),
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: d!(300),
+            },
+        ];
+        calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_one_third_ratio_payout_divides_last() {
+        for cap in [None, Some(d!(10.01)), Some(d!(10))] {
+            let earning = &one_third_ratio_payout(cap).earnings[0];
+            assert_eq!(earning.ratio, d!(0.3333333333333333333333333333));
+            assert_eq!(earning.dollar_amount, d!(10), "cap {cap:?}");
+            assert!(!earning.capped, "cap {cap:?}");
+        }
+    }
+
+    #[test]
+    fn a_one_third_ratio_payout_just_over_the_cap_is_capped() {
+        let earning = &one_third_ratio_payout(Some(d!(9.99))).earnings[0];
+        assert_eq!(earning.ratio, d!(0.3333333333333333333333333333));
+        assert_eq!(earning.dollar_amount, d!(9.99));
+        assert!(earning.capped);
+    }
+
+    #[test]
+    fn a_one_third_ratio_payout_gives_the_same_bytes_every_run() {
+        let first = serde_json::to_string(&one_third_ratio_payout(Some(d!(10))).earnings).unwrap();
+        for _ in 0..20 {
+            assert_eq!(
+                serde_json::to_string(&one_third_ratio_payout(Some(d!(10))).earnings).unwrap(),
+                first
+            );
+        }
+    }
+
+    #[test]
+    fn weaker_leg_reports_a_ratio_of_exactly_one() {
+        let structure = test_binary_structure();
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+        let snapshots = HashMap::from([
+            (test_uuid(1), eligible_snapshot()),
+            (test_uuid(2), eligible_snapshot()),
+            (test_uuid(3), eligible_snapshot()),
+        ]);
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: d!(100),
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: d!(300),
+            },
+        ];
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(result.earnings[0].ratio, Dec::ONE);
+    }
+
     fn volume_ratio_payout(
         percent: AuthoredDec,
         multiplier: Option<AuthoredDec>,

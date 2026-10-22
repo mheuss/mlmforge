@@ -752,4 +752,69 @@ mod tests {
             "cannot floor-divide 1 by 0: the divisor is zero"
         );
     }
+
+    #[test]
+    fn every_output_type_writes_normalized_numbers() {
+        let two: Dec = d!(2.000000);
+        let zero: Dec = d!(-0.0);
+        let texts = [
+            serde_json::to_string(&CommissionEarning {
+                earner_id: uuid_from_index(1),
+                source_id: uuid_from_index(2),
+                level: 1,
+                rate: Some(two),
+                cv_amount: zero,
+                dollar_amount: two,
+                walk: None,
+            })
+            .unwrap(),
+            serde_json::to_string(&BinaryCommissionEarning {
+                earner_id: uuid_from_index(1),
+                position_id: uuid_from_index(1),
+                left_volume: two,
+                right_volume: zero,
+                matched_volume: two,
+                ratio: zero,
+                percent: two,
+                dollar_amount: zero,
+                capped: false,
+            })
+            .unwrap(),
+            serde_json::to_string(&LegVolumes {
+                left: two,
+                right: zero,
+            })
+            .unwrap(),
+            serde_json::to_string(&crate::board_plan::types::BoardCycleEarning {
+                earner_id: uuid_from_index(1),
+                board_id: uuid_from_index(2),
+                dollar_amount: two,
+                cycle_number: 1,
+                capped: false,
+            })
+            .unwrap(),
+            serde_json::to_string(&VolumeSource {
+                source_id: uuid_from_index(1),
+                cv_amount: d!(2.000000),
+            })
+            .unwrap(),
+        ];
+        for text in &texts {
+            assert!(!text.contains(":2.0"), "{text}");
+            assert!(!text.contains(":-0"), "{text}");
+        }
+        assert!(
+            texts[0].contains(r#""rate":2,"cv_amount":0,"dollar_amount":2,"#),
+            "{}",
+            texts[0]
+        );
+        assert!(
+            texts[1].contains(r#""left_volume":2,"right_volume":0,"matched_volume":2,"ratio":0,"percent":2,"dollar_amount":0,"#),
+            "{}",
+            texts[1]
+        );
+        assert_eq!(texts[2], r#"{"left":2,"right":0}"#);
+        assert!(texts[3].contains(r#""dollar_amount":2,"#), "{}", texts[3]);
+        assert!(texts[4].contains(r#""cv_amount":2}"#), "{}", texts[4]);
+    }
 }

@@ -2263,6 +2263,146 @@ fn build_binary_calc_tree(worker: &mut std::process::Child) {
 }
 
 #[test]
+fn frozen_stream_skips_write_normalized_cv_amounts() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../testdata/contracts/calculate_streamline_frozen.json"
+    );
+    use std::str::FromStr as _;
+    let fixture: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let mut worker = common::spawn_worker();
+    for line in fixture["setup_raw"].as_array().unwrap() {
+        let resp = common::send_receive(&mut worker, line.as_str().unwrap());
+        assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+    }
+    let mut request = fixture["request"].clone();
+    request["params"]["volume"][0]["cv_amount"] =
+        serde_json::Value::Number(serde_json::Number::from_str("100.000").unwrap());
+    let request_text = serde_json::to_string(&request).unwrap();
+    assert!(request_text.contains("100.000"), "request: {request_text}");
+
+    let resp = common::send_receive(&mut worker, &request_text);
+    let skips_at = resp
+        .find("frozen_stream_skips")
+        .unwrap_or_else(|| panic!("no frozen_stream_skips in: {resp}"));
+    assert!(resp[skips_at..].contains(r#""cv_amount":100,"#), "{resp}");
+    assert!(!resp.contains("100.0"), "{resp}");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Sends `calculate_binary_pairing` on the BinaryCalc tree with `volume` and
+/// `carry_forward` spliced into the params as JSON text.
+fn binary_pairing_with(
+    worker: &mut std::process::Child,
+    volume: &str,
+    carry_forward: &str,
+) -> String {
+    let snap = r#"{"rank":"associate","personal_volume":150.0,"status":"active","has_order_in_period":true}"#;
+    let request = format!(
+        r#"{{"id":"bp-n8","op":"calculate_binary_pairing","params":{{"structure":"BinaryCalc","snapshots":{{"{a}":{snap},"{b}":{snap},"{c}":{snap}}},"volume":{volume},"carry_forward":{carry_forward}}}}}"#,
+        a = NODE_A,
+        b = NODE_B,
+        c = NODE_C,
+    );
+    common::send_receive(worker, &request)
+}
+
+#[test]
+fn an_overflowing_sum_is_a_calculation_error_naming_the_operation() {
+    let mut worker = common::spawn_worker();
+    load_binary_test_plan(&mut worker);
+    build_binary_calc_tree(&mut worker);
+    let resp = binary_pairing_with(
+        &mut worker,
+        &format!(r#"[{{"source_id":"{NODE_B}","cv_amount":1}}]"#),
+        &format!(r#"{{"{NODE_A}":{{"left":79228162514264337593543950335,"right":0}}}}"#),
+    );
+    assert!(resp.contains("CALCULATION_ERROR"), "{resp}");
+    assert!(resp.contains(r#""message":"cannot add"#), "{resp}");
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn an_inexact_product_is_a_precision_error_through_the_worker() {
+    let mut worker = common::spawn_worker();
+    load_binary_test_plan(&mut worker);
+    build_binary_calc_tree(&mut worker);
+    let resp = binary_pairing_with(
+        &mut worker,
+        &format!(r#"[{{"source_id":"{NODE_C}","cv_amount":1}}]"#),
+        &format!(r#"{{"{NODE_A}":{{"left":0.0000000000000000000000000001,"right":0}}}}"#),
+    );
+    assert!(resp.contains("CALCULATION_ERROR"), "{resp}");
+    assert!(resp.contains("more than 28 decimal places"), "{resp}");
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn carry_forward_round_trips_exactly_into_the_next_period() {
+    let mut worker = common::spawn_worker();
+    let plan = BINARY_PLAN_JSON.replace(
+        r#""volume_after_payout": "full_flush","#,
+        r#""volume_after_payout": "carry_forward","#,
+    );
+    assert_ne!(
+        plan, BINARY_PLAN_JSON,
+        "the volume_after_payout replacement did not match"
+    );
+    let resp = send_load_plan(&mut worker, &plan);
+    assert!(resp.contains(r#""ok":true"#), "load_plan failed: {resp}");
+    build_binary_calc_tree(&mut worker);
+
+    let first = binary_pairing_with(
+        &mut worker,
+        "[]",
+        &format!(r#"{{"{NODE_A}":{{"left":12345.6789,"right":0}}}}"#),
+    );
+    assert!(
+        first.contains(r#""ok":true"#),
+        "first period failed: {first}"
+    );
+    let carry_at = first
+        .find(r#""carry_forward":"#)
+        .expect("carry_forward in the response")
+        + r#""carry_forward":"#.len();
+    let carry_text =
+        serde_json::value::RawValue::from_string(first[carry_at..first.len() - 2].to_string())
+            .map(|raw| raw.get().to_string())
+            .unwrap_or_else(|e| panic!("carry_forward text is not one JSON value ({e}): {first}"));
+    assert!(carry_text.contains("12345.6789"), "{carry_text}");
+
+    let second = binary_pairing_with(
+        &mut worker,
+        &format!(r#"[{{"source_id":"{NODE_C}","cv_amount":1}}]"#),
+        &carry_text,
+    );
+    assert!(second.contains(r#""left_volume":12345.6789,"#), "{second}");
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn an_over_precise_carry_forward_value_is_refused() {
+    let mut worker = common::spawn_worker();
+    load_binary_test_plan(&mut worker);
+    build_binary_calc_tree(&mut worker);
+    let resp = binary_pairing_with(
+        &mut worker,
+        "[]",
+        &format!(r#"{{"{NODE_A}":{{"left":0.00000000000000000000000000001,"right":0}}}}"#),
+    );
+    assert!(resp.contains("INVALID_PARAMS"), "{resp}");
+    assert!(resp.contains("more than 28 decimal places"), "{resp}");
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
 fn calculate_binary_pairing_writes_the_same_bytes_in_every_worker() {
     let snap = r#"{"rank":"associate","personal_volume":150.0,"status":"active","has_order_in_period":true}"#;
     let request = format!(

@@ -1087,6 +1087,14 @@ mod tests {
     }
 
     #[test]
+    fn mul_div_ratio_fast_path_returns_a_normalized_scale() {
+        let paid = d("100")
+            .mul_div_ratio(d("0.10"), d("1.0"), d("100.00"), d("100"))
+            .unwrap();
+        assert_eq!((paid.0.mantissa(), paid.0.scale()), (10, 0));
+    }
+
+    #[test]
     fn mul_div_ratio_holds_a_product_past_96_bits() {
         let leg = d("900000000000000");
         let paid = leg.mul_div_ratio(d("0.1"), d("1"), leg, leg);

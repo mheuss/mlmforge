@@ -215,7 +215,7 @@ pub struct BinaryCommissionEarning {
     /// Final payout amount after multiplier and cap.
     pub dollar_amount: Dec,
 
-    /// True if cap_per_period reduced this earning.
+    /// True if a per-period cap set this earning's amount.
     pub capped: bool,
 }
 

@@ -692,6 +692,7 @@ proptest! {
             "owner total {} exceeded aggregate cap {}",
             owner_total, cap
         );
+        prop_assert!(result.earnings.iter().all(|e| !e.dollar_amount.is_negative()));
         let any_capped = result.earnings.iter().any(|e| e.earner_id == owner && e.capped);
         if any_capped {
             prop_assert_eq!(owner_total, cap.dec(), "capped owner total against cap {}", cap);

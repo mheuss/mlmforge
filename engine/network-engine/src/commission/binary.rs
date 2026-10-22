@@ -190,9 +190,9 @@ fn apply_aggregate_cap(
         if total <= cap {
             continue;
         }
-        let (last, rest) = group
-            .split_last_mut()
-            .expect("chunk_by_mut yields non-empty groups");
+        let Some((last, rest)) = group.split_last_mut() else {
+            continue;
+        };
         let mut allocated = Dec::ZERO;
         for e in rest {
             e.dollar_amount = e.dollar_amount.mul_div_trunc(cap, total, 13)?;
@@ -4736,10 +4736,20 @@ mod tests {
             assert!(earnings.iter().all(|e| !e.dollar_amount.is_negative()));
         }
 
+        /// A cent amount, or a cent amount divided by three to 13 places.
+        fn share_amount() -> impl Strategy<Value = Dec> {
+            prop_oneof![
+                cents::<Dec>(0, 10_000_000),
+                cents::<Dec>(0, 10_000_000).prop_map(|c| c
+                    .mul_div_ratio(Dec::ONE, Dec::ONE, Dec::ONE, "3".parse::<Dec>().unwrap())
+                    .unwrap()),
+            ]
+        }
+
         proptest! {
             #[test]
             fn each_earners_capped_shares_sum_exactly_to_the_cap(
-                amounts in prop::collection::vec((0u8..4, cents::<Dec>(0, 10_000_000)), 1..12),
+                amounts in prop::collection::vec((0u8..4, share_amount()), 1..12),
                 cap in cents::<Dec>(0, 5_000_000),
             ) {
                 let mut earnings: Vec<_> = amounts
@@ -4751,6 +4761,8 @@ mod tests {
                 for e in &earnings {
                     raw.entry(e.earner_id).or_default().push(e.dollar_amount);
                 }
+                let raw_by_position: HashMap<Uuid, Dec> =
+                    earnings.iter().map(|e| (e.position_id, e.dollar_amount)).collect();
                 apply_aggregate_cap(&mut earnings, cap).unwrap();
                 for (owner, raw_amounts) in raw {
                     let raw_total = Dec::sum(raw_amounts.iter().copied()).unwrap();
@@ -4760,6 +4772,20 @@ mod tests {
                     if raw_total > cap {
                         prop_assert_eq!(total, cap);
                         prop_assert!(shares.iter().all(|e| e.capped));
+                        let last = shares.iter().map(|e| e.position_id).max().unwrap();
+                        let unit: Dec = d!(0.0000000000001);
+                        for e in &shares {
+                            let floor = raw_by_position[&e.position_id]
+                                .mul_div_trunc(cap, raw_total, 13)
+                                .unwrap();
+                            if e.position_id == last {
+                                let ceiling = shares.iter().fold(floor, |c, _| c.try_add(unit).unwrap());
+                                prop_assert!(e.dollar_amount >= floor);
+                                prop_assert!(e.dollar_amount < ceiling);
+                            } else {
+                                prop_assert_eq!(e.dollar_amount, floor);
+                            }
+                        }
                     } else {
                         prop_assert_eq!(total, raw_total);
                         prop_assert!(shares.iter().all(|e| !e.capped));

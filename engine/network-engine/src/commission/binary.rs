@@ -9,7 +9,7 @@ use crate::config::binary::{
 };
 use crate::config::eligibility::CommissionEligibility;
 use crate::config::{BinaryStructureConfig, CompensationPlan};
-use crate::decimal::{AuthoredDec, Dec, NumericError};
+use crate::decimal::{AuthoredDec, Dec, NumericError, PAYOUT_SCALE};
 use crate::tree::binary::BinaryTree;
 use crate::tree::node::NodeIndex;
 
@@ -195,7 +195,7 @@ fn apply_aggregate_cap(
         };
         let mut allocated = Dec::ZERO;
         for e in rest {
-            e.dollar_amount = e.dollar_amount.mul_div_trunc(cap, total, 13)?;
+            e.dollar_amount = e.dollar_amount.mul_div_trunc(cap, total, PAYOUT_SCALE)?;
             e.capped = true;
             allocated = allocated.try_add(e.dollar_amount)?;
         }
@@ -4740,9 +4740,11 @@ mod tests {
         fn share_amount() -> impl Strategy<Value = Dec> {
             prop_oneof![
                 cents::<Dec>(0, 10_000_000),
-                cents::<Dec>(0, 10_000_000).prop_map(|c| c
-                    .mul_div_ratio(Dec::ONE, Dec::ONE, Dec::ONE, "3".parse::<Dec>().unwrap())
-                    .unwrap()),
+                cents::<Dec>(0, 10_000_000).prop_map(|c| {
+                    let three: Dec = d!(3);
+                    c.mul_div_ratio(Dec::ONE, Dec::ONE, Dec::ONE, three)
+                        .unwrap()
+                }),
             ]
         }
 
@@ -5081,15 +5083,19 @@ mod tests {
             .earnings
             .iter()
             .filter(|e| e.earner_id == owner)
-            .map(|e| (e.position_id, e.dollar_amount))
+            .map(|e| (e.position_id, e.dollar_amount, e.capped))
             .collect();
         owned.sort();
         assert_eq!(
             owned,
             [
-                (test_uuid(2), d!(3.3333333333333)),
-                (test_uuid(3), d!(13.3333333333333)),
+                (test_uuid(2), d!(3.3333333333333), false),
+                (test_uuid(3), d!(13.3333333333333), false),
             ]
+        );
+        assert_eq!(
+            Dec::sum(owned.iter().map(|(_, amount, _)| *amount)).unwrap(),
+            d!(16.6666666666666)
         );
     }
 }

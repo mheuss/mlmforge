@@ -10,7 +10,8 @@ use thiserror::Error;
 
 const MAX_SCALE: u32 = 28;
 const ENVELOPE_MAX_SCALE: u32 = 10;
-const RATIO_PAYOUT_SCALE: u32 = 13;
+/// The scale E2 rounds payouts to and E3 truncates capped shares to.
+pub(crate) const PAYOUT_SCALE: u32 = 13;
 const ENVELOPE_LIMIT: Decimal = dec!(1_000_000_000_000_000);
 
 /// An engine-derived decimal: sums, products, outputs and carried state.
@@ -411,7 +412,8 @@ impl Dec {
     }
 
     /// E2: `self × b × c × d ÷ divisor`, with the product held exactly and the
-    /// quotient rounded once, half to even, at 13 decimal places.
+    /// quotient rounded once, half to even, at 13 decimal places, or at the
+    /// largest smaller scale whose coefficient fits 96 bits.
     pub fn mul_div_ratio(
         self,
         b: impl Into<Dec>,
@@ -433,7 +435,7 @@ impl Dec {
         if divisor.is_zero() {
             return Err(error(NumericErrorKind::DivisionByZero));
         }
-        wide_mul_div_ratio([self, b, c, d], divisor, RATIO_PAYOUT_SCALE)
+        wide_mul_div_ratio([self, b, c, d], divisor, PAYOUT_SCALE)
             .map(|quotient| Dec(quotient.normalize()))
             .map_err(error)
     }
@@ -1065,6 +1067,15 @@ mod tests {
     }
 
     #[test]
+    fn mul_div_ratio_drops_below_thirteen_places_only_when_thirteen_does_not_fit() {
+        let fits = d("7000000000000000").mul_div_ratio(d("1"), d("1"), d("1"), d("3"));
+        assert_eq!(fits.unwrap().to_string(), "2333333333333333.3333333333333");
+        let leg = d("100000000000000");
+        let paid = leg.mul_div_ratio(d("1"), d("1000"), leg, d("300000000000000"));
+        assert_eq!(paid.unwrap().to_string(), "33333333333333333.333333333333");
+    }
+
+    #[test]
     fn mul_div_ratio_rounds_a_two_thirds_ratio_up() {
         let paid = d("100").mul_div_ratio(d("0.1"), d("1"), d("200"), d("300"));
         assert_eq!(paid.unwrap().to_string(), "6.6666666666667");
@@ -1274,7 +1285,7 @@ mod tests {
 
     proptest! {
         #[test]
-        fn wide_mul_div_ratio_of_one_factor_follows_div_ratio(
+        fn round_quotient_at_28_follows_div_ratio_for_one_factor(
             a in full_width_dec(),
             b in full_width_dec(),
         ) {
@@ -1288,7 +1299,7 @@ mod tests {
         }
 
         #[test]
-        fn mul_div_ratio_rounds_half_to_even_at_thirteen_places(
+        fn mul_div_ratio_rounds_half_to_even_at_thirteen_places_or_fewer(
             a in prop_oneof![small_factor(), factor_dec()],
             b in prop_oneof![small_factor(), factor_dec()],
             c in prop_oneof![small_factor(), factor_dec()],
@@ -1301,13 +1312,15 @@ mod tests {
             ],
         ) {
             prop_assume!(!divisor.is_zero());
-            if let Some(expected) = half_even_at_thirteen([a, b, c, d], divisor) {
-                prop_assert_eq!(a.mul_div_ratio(b, c, d, divisor).unwrap(), expected);
+            match (half_even_at_thirteen_or_fewer([a, b, c, d], divisor), a.mul_div_ratio(b, c, d, divisor)) {
+                (Some(expected), Ok(got)) => prop_assert_eq!(got, expected),
+                (None, Err(e)) => prop_assert_eq!(e.kind, NumericErrorKind::Overflow),
+                (expected, got) => prop_assert!(false, "expected {:?}, got {:?}", expected, got),
             }
         }
 
         #[test]
-        fn wide_mul_div_ratio_follows_div_ratio_on_tie_prone_divisors(
+        fn round_quotient_at_28_follows_div_ratio_on_tie_prone_divisors(
             a in full_width_dec(),
             divisor in prop::sample::select(vec![2i128, 4, 8, 20, 25, 200, 2000, -2, -20]),
             scale in 0u32..=28,
@@ -1322,7 +1335,7 @@ mod tests {
         }
 
         #[test]
-        fn wide_mul_div_ratio_follows_div_ratio_of_a_held_product(
+        fn round_quotient_at_28_follows_div_ratio_of_a_held_product(
             a in factor_dec(),
             b in factor_dec(),
             c in factor_dec(),
@@ -1340,9 +1353,9 @@ mod tests {
         }
     }
 
-    /// The exact quotient rounded half to even at 13 places, or `None` when
-    /// that does not fit 96 bits.
-    fn half_even_at_thirteen(factors: [Dec; 4], divisor: Dec) -> Option<Dec> {
+    /// The exact quotient rounded half to even at the largest scale of 13 or
+    /// below whose coefficient fits 96 bits, or `None` when none does.
+    fn half_even_at_thirteen_or_fewer(factors: [Dec; 4], divisor: Dec) -> Option<Dec> {
         use bigdecimal::num_bigint::BigInt;
         let ten = BigInt::from(10);
         let mut num = BigInt::from(1);
@@ -1351,20 +1364,26 @@ mod tests {
             num *= BigInt::from(f.0.mantissa());
             num_scale += f.0.scale();
         }
-        let num = num * ten.pow(13 + divisor.0.scale());
-        let den = BigInt::from(divisor.0.mantissa()) * ten.pow(num_scale);
+        let den = BigInt::from(divisor.0.mantissa());
         let negative = (num < BigInt::from(0)) != (den < BigInt::from(0));
-        let (num, den) = (num.magnitude().clone(), den.magnitude().clone());
-        let (mut q, r) = (&num / &den, &num % &den);
-        let twice = r * 2u32;
-        if twice > den || (twice == den && &q % 2u32 == 1u32.into()) {
-            q += 1u32;
+        for scale in (0..=13u32).rev() {
+            let n = (&num * ten.pow(scale + divisor.0.scale()))
+                .magnitude()
+                .clone();
+            let d = (&den * ten.pow(num_scale)).magnitude().clone();
+            let (mut q, r) = (&n / &d, &n % &d);
+            let twice = r * 2u32;
+            if twice > d || (twice == d && &q % 2u32 == 1u32.into()) {
+                q += 1u32;
+            }
+            if let Some(m) = i128::try_from(q).ok().filter(|m| *m < (1i128 << 96)) {
+                return Some(Dec(Decimal::from_i128_with_scale(
+                    if negative { -m } else { m },
+                    scale,
+                )));
+            }
         }
-        let m = i128::try_from(q).ok().filter(|m| *m < (1i128 << 96))?;
-        Some(Dec(Decimal::from_i128_with_scale(
-            if negative { -m } else { m },
-            13,
-        )))
+        None
     }
 
     fn signed_dec() -> impl Strategy<Value = Dec> {

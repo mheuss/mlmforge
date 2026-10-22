@@ -692,6 +692,10 @@ proptest! {
             "owner total {} exceeded aggregate cap {}",
             owner_total, cap
         );
+        let any_capped = result.earnings.iter().any(|e| e.earner_id == owner && e.capped);
+        if any_capped {
+            prop_assert_eq!(owner_total, cap.dec(), "capped owner total against cap {}", cap);
+        }
     }
 
     /// Each position's carry-forward is independent of other positions
@@ -1180,7 +1184,11 @@ fn aggregate_cap_pairing_left_1_right_3_does_not_depend_on_map_order() {
         &structure,
         d!(1.0),
         d!(3.0),
-        [d!(0.0333333333333), d!(0.0166666666666), d!(0.05)],
+        [
+            d!(0.0333333333333),
+            d!(0.0166666666666),
+            d!(0.0500000000001),
+        ],
     );
 }
 
@@ -1204,7 +1212,11 @@ fn aggregate_cap_pairing_left_1_3_right_2_9_does_not_depend_on_map_order() {
         &structure,
         d!(1.3),
         d!(2.9),
-        [d!(0.1414705882352), d!(0.0707352941176), d!(0.157794117647)],
+        [
+            d!(0.1414705882352),
+            d!(0.0707352941176),
+            d!(0.1577941176472),
+        ],
     );
 }
 
@@ -1250,7 +1262,7 @@ fn aggregate_cap_cycle_step_does_not_depend_on_map_order() {
         [
             d!(0.0278571428571),
             d!(0.0092857142857),
-            d!(0.0928571428571),
+            d!(0.0928571428572),
         ],
     );
 }

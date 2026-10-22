@@ -173,8 +173,9 @@ fn sorted_positions(legs: &HashMap<Uuid, LegVolumes>) -> Vec<Uuid> {
     positions
 }
 
-/// Sorts `earnings` by `(earner_id, position_id)`, then scales each owner's
-/// earnings pro rata when their total exceeds `cap`.
+/// Sorts `earnings` by `(earner_id, position_id)`. Where an owner's total
+/// exceeds `cap`, splits the cap across that owner's earnings so the shares
+/// sum exactly to it.
 fn apply_aggregate_cap(
     earnings: &mut [BinaryCommissionEarning],
     cap: Dec,
@@ -184,17 +185,22 @@ fn apply_aggregate_cap(
             .cmp(&b.earner_id)
             .then_with(|| a.position_id.cmp(&b.position_id))
     });
-    let mut owner_totals: HashMap<Uuid, Dec> = HashMap::new();
-    for e in earnings.iter() {
-        let total = owner_totals.entry(e.earner_id).or_insert(Dec::ZERO);
-        *total = total.try_add(e.dollar_amount)?;
-    }
-    for e in earnings.iter_mut() {
-        let total = owner_totals[&e.earner_id];
-        if total > cap {
+    for group in earnings.chunk_by_mut(|a, b| a.earner_id == b.earner_id) {
+        let total = Dec::sum(group.iter().map(|e| e.dollar_amount))?;
+        if total <= cap {
+            continue;
+        }
+        let (last, rest) = group
+            .split_last_mut()
+            .expect("chunk_by_mut yields non-empty groups");
+        let mut allocated = Dec::ZERO;
+        for e in rest {
             e.dollar_amount = e.dollar_amount.mul_div_trunc(cap, total, 13)?;
             e.capped = true;
+            allocated = allocated.try_add(e.dollar_amount)?;
         }
+        last.dollar_amount = cap.try_sub(allocated)?;
+        last.capped = true;
     }
     Ok(())
 }
@@ -4273,7 +4279,11 @@ mod tests {
             earning(2, d!(0.1)),
             earning(3, d!(0.3)),
         ];
-        let pinned: [Dec; 3] = [d!(0.0333333333333), d!(0.0166666666666), d!(0.05)];
+        let pinned: [Dec; 3] = [
+            d!(0.0333333333333),
+            d!(0.0166666666666),
+            d!(0.0500000000001),
+        ];
         for order in [
             [0, 1, 2],
             [0, 2, 1],
@@ -4654,6 +4664,109 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.earnings[0].ratio, Dec::ONE);
+    }
+
+    mod aggregate_cap_split {
+        use super::*;
+        use crate::test_strategies::cents;
+        use proptest::prelude::*;
+
+        fn earning(owner: u8, position: u8, amount: Dec) -> BinaryCommissionEarning {
+            BinaryCommissionEarning {
+                earner_id: test_uuid(owner),
+                position_id: test_uuid(position),
+                left_volume: Dec::ZERO,
+                right_volume: Dec::ZERO,
+                matched_volume: Dec::ZERO,
+                ratio: Dec::ONE,
+                percent: Dec::ZERO,
+                dollar_amount: amount,
+                capped: false,
+            }
+        }
+
+        #[test]
+        fn three_earnings_of_one_split_a_cap_of_two_exactly() {
+            let mut earnings = vec![
+                earning(1, 2, d!(1)),
+                earning(1, 3, d!(1)),
+                earning(1, 4, d!(1)),
+            ];
+            apply_aggregate_cap(&mut earnings, d!(2)).unwrap();
+            let amounts: Vec<Dec> = earnings.iter().map(|e| e.dollar_amount).collect();
+            assert_eq!(
+                amounts,
+                vec![
+                    d!(0.6666666666666),
+                    d!(0.6666666666666),
+                    d!(0.6666666666668)
+                ]
+            );
+            assert_eq!(Dec::sum(amounts).unwrap(), d!(2));
+            assert!(earnings.iter().all(|e| e.capped));
+        }
+
+        #[test]
+        fn totals_at_or_below_the_cap_are_left_alone() {
+            for total in [d!(1.99), d!(2)] {
+                let one: Dec = d!(1);
+                let mut earnings = vec![
+                    earning(1, 2, one),
+                    earning(1, 3, Dec::try_sub(total, one).unwrap()),
+                ];
+                let before = earnings.clone();
+                apply_aggregate_cap(&mut earnings, d!(2)).unwrap();
+                assert_eq!(earnings, before);
+            }
+        }
+
+        #[test]
+        fn a_cap_at_the_envelope_edge_splits_exactly() {
+            let cap: Dec = d!(999999999999999.99);
+            let mut earnings = vec![
+                earning(1, 2, d!(600000000000000)),
+                earning(1, 3, d!(500000000000000.5)),
+                earning(1, 4, d!(123456789012345.67)),
+            ];
+            apply_aggregate_cap(&mut earnings, cap).unwrap();
+            assert_eq!(
+                Dec::sum(earnings.iter().map(|e| e.dollar_amount)).unwrap(),
+                cap
+            );
+            assert!(earnings.iter().all(|e| !e.dollar_amount.is_negative()));
+        }
+
+        proptest! {
+            #[test]
+            fn each_earners_capped_shares_sum_exactly_to_the_cap(
+                amounts in prop::collection::vec((0u8..4, cents::<Dec>(0, 10_000_000)), 1..12),
+                cap in cents::<Dec>(0, 5_000_000),
+            ) {
+                let mut earnings: Vec<_> = amounts
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (owner, amount))| earning(*owner + 1, 100 + i as u8, *amount))
+                    .collect();
+                let mut raw: HashMap<Uuid, Vec<Dec>> = HashMap::new();
+                for e in &earnings {
+                    raw.entry(e.earner_id).or_default().push(e.dollar_amount);
+                }
+                apply_aggregate_cap(&mut earnings, cap).unwrap();
+                for (owner, raw_amounts) in raw {
+                    let raw_total = Dec::sum(raw_amounts.iter().copied()).unwrap();
+                    let shares: Vec<_> = earnings.iter().filter(|e| e.earner_id == owner).collect();
+                    let total = Dec::sum(shares.iter().map(|e| e.dollar_amount)).unwrap();
+                    prop_assert!(shares.iter().all(|e| !e.dollar_amount.is_negative()));
+                    if raw_total > cap {
+                        prop_assert_eq!(total, cap);
+                        prop_assert!(shares.iter().all(|e| e.capped));
+                    } else {
+                        prop_assert_eq!(total, raw_total);
+                        prop_assert!(shares.iter().all(|e| !e.capped));
+                    }
+                }
+            }
+        }
     }
 
     fn volume_ratio_payout(

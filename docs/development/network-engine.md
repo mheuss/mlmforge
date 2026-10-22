@@ -1563,7 +1563,7 @@ The engine refuses to place a user who is in the holding tank. `add_root`, `add_
 
 `checked_div` already rounds, at whatever scale its 96-bit coefficient allows. Rounding that result again at 13 places gives the right answer in almost every case. It goes wrong when the first rounding lands exactly on a 13-place midpoint. The true quotient was a little above or below that midpoint, but the second rounding sees a tie and breaks it to even. That can pick the wrong neighbour.
 
-E2 sends any quotient that lands on a 13-place midpoint to the wide path, which divides exactly (HEU-969).
+E2 sends any quotient that lands on a 13-place midpoint to the wide path, which rounds once from the exact quotient (HEU-969).
 
 When testing a rounding step that follows another rounding, build fake ties in both directions and both signs. A true value just above the midpoint and one just below must round apart.
 

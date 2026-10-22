@@ -507,7 +507,11 @@ mod tests {
             ("associate".to_string(), BTreeMap::new()),
             ("silver".to_string(), BTreeMap::new()),
         ]));
-        assert!(empty.earnings.is_empty());
+        assert!(
+            empty.earnings.is_empty(),
+            "an empty table paid: {:?}",
+            empty.earnings
+        );
         assert_eq!(empty, empty_ranks);
     }
 

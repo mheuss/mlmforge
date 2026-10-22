@@ -20,10 +20,6 @@
 //!
 //! Streamline `dynamic_compression` is checked too: non-empty, a contiguous
 //! ascending run from 1, and no longer than `commissionable_depth` (HEU-612).
-//! Those three mirror rules Go already enforces, so Rust does not refuse a plan
-//! the Go pipeline passed. The parity argument rests on two Go files rather
-//! than one. Read the notes on `StreamlineCommissionConfig::validate` before
-//! auditing it.
 //!
 //! The pattern follows `CycleStepConfig::validate` (config/binary.rs): `&mut
 //! self` so normalization can ride along with the checks, and `Result<(),

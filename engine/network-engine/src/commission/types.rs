@@ -94,6 +94,16 @@ pub struct CommissionEarning {
 /// These indicate data integrity problems in the caller's input.
 #[derive(Debug, PartialEq, Error)]
 pub enum CalculationError {
+    /// A carried binary leg volume is negative.
+    #[error(
+        "carried {leg} leg volume for position {position} is {volume}; it must not be negative"
+    )]
+    NegativeCarriedLegVolume {
+        position: Uuid,
+        leg: BinaryLeg,
+        volume: Dec,
+    },
+
     /// A volume source references a distributor not in the tree.
     #[error("volume source {0} not found in tree")]
     SourceNotInTree(Uuid),
@@ -144,6 +154,22 @@ pub enum CalculationError {
         expected_spillover: SpilloverDirection,
         actual_spillover: SpilloverDirection,
     },
+}
+
+/// One of a binary position's two legs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BinaryLeg {
+    Left,
+    Right,
+}
+
+impl std::fmt::Display for BinaryLeg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            BinaryLeg::Left => "left",
+            BinaryLeg::Right => "right",
+        })
+    }
 }
 
 /// Per-distributor leg volumes carried from the previous period.

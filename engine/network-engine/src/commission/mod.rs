@@ -21,7 +21,7 @@ pub use matrix::calculate_matrix;
 pub use stairstep::calculate_stairstep;
 pub use streamline::calculate_streamline;
 pub use types::{
-    BinaryCalculationResult, BinaryCommissionEarning, CalculationError,
+    BinaryCalculationResult, BinaryCommissionEarning, BinaryLeg, CalculationError,
     CommissionCalculationResult, CommissionEarning, DistributorSnapshot, LegVolumes, PlanIdentity,
     StepOutcome, VolumeSource, Walk, WalkKind, WalkStep, WalkStop,
 };

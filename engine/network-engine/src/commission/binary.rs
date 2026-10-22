@@ -15,8 +15,8 @@ use crate::tree::node::NodeIndex;
 
 use super::is_eligible;
 use super::types::{
-    BinaryCalculationResult, BinaryCommissionEarning, CalculationError, DistributorSnapshot,
-    LegVolumes, VolumeSource,
+    BinaryCalculationResult, BinaryCommissionEarning, BinaryLeg, CalculationError,
+    DistributorSnapshot, LegVolumes, VolumeSource,
 };
 use super::walk;
 
@@ -144,6 +144,28 @@ fn accumulate_leg_volumes(
     Ok(leg_volumes)
 }
 
+/// Refuse a negative carried leg volume on any supplied position.
+fn check_carried_legs(carry_forward: &HashMap<Uuid, LegVolumes>) -> Result<(), CalculationError> {
+    let mut positions: Vec<_> = carry_forward.keys().copied().collect();
+    positions.sort();
+    for position in positions {
+        let prior = &carry_forward[&position];
+        for (leg, volume) in [
+            (BinaryLeg::Left, prior.left),
+            (BinaryLeg::Right, prior.right),
+        ] {
+            if volume.is_negative() {
+                return Err(CalculationError::NegativeCarriedLegVolume {
+                    position,
+                    leg,
+                    volume,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The positions in `legs`, in ascending id order.
 fn sorted_positions(legs: &HashMap<Uuid, LegVolumes>) -> Vec<Uuid> {
     let mut positions: Vec<Uuid> = legs.keys().copied().collect();
@@ -228,6 +250,7 @@ pub fn calculate_binary_pairing(
     // Below the match on purpose. The Pairing arm's percent assert and the
     // CycleStep arm's config validation each stay first on their own path,
     // and the CycleStep arm has already returned by here.
+    check_carried_legs(carry_forward)?;
     walk::validate_snapshots(
         plan,
         snapshots,
@@ -421,6 +444,7 @@ fn calculate_binary_cycle_step(
         .validate()
         .map_err(CalculationError::ConfigError)?;
 
+    check_carried_legs(carry_forward)?;
     walk::validate_snapshots(
         plan,
         snapshots,
@@ -4407,6 +4431,125 @@ mod tests {
         let earning = &result.earnings[0];
         assert_d!(earning.dollar_amount, 7);
         assert!(!earning.capped);
+    }
+
+    #[test]
+    fn a_negative_carried_left_leg_is_refused_naming_the_position() {
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+        let snapshots = HashMap::from([
+            (test_uuid(1), eligible_snapshot()),
+            (test_uuid(2), eligible_snapshot()),
+            (test_uuid(3), eligible_snapshot()),
+        ]);
+        let carry = HashMap::from([(
+            test_uuid(1),
+            LegVolumes {
+                left: d!(-5),
+                right: d!(0),
+            },
+        )]);
+        let err = calculate_binary_pairing(&tree, &plan, &structure, &snapshots, &[], &carry, None)
+            .unwrap_err();
+        assert_eq!(
+            err,
+            CalculationError::NegativeCarriedLegVolume {
+                position: test_uuid(1),
+                leg: BinaryLeg::Left,
+                volume: d!(-5),
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "carried left leg volume for position {} is -5; it must not be negative",
+                test_uuid(1)
+            )
+        );
+    }
+
+    #[test]
+    fn a_negative_carried_right_leg_is_refused_in_cycle_step_mode() {
+        let steps = vec![CycleStep {
+            threshold: d!(100),
+            amount: d!(10),
+        }];
+        let structure = test_cycle_step_structure(steps, VolumeAfterPayout::CarryForward);
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+        let snapshots = HashMap::from([
+            (test_uuid(1), eligible_snapshot()),
+            (test_uuid(2), eligible_snapshot()),
+            (test_uuid(3), eligible_snapshot()),
+        ]);
+        let carry = HashMap::from([(
+            test_uuid(2),
+            LegVolumes {
+                left: d!(0),
+                right: d!(-0.01),
+            },
+        )]);
+        let err = calculate_binary_pairing(&tree, &plan, &structure, &snapshots, &[], &carry, None)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            CalculationError::NegativeCarriedLegVolume {
+                leg: BinaryLeg::Right,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_negative_carried_leg_on_a_removed_position_is_refused() {
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+        let snapshots = HashMap::from([
+            (test_uuid(1), eligible_snapshot()),
+            (test_uuid(2), eligible_snapshot()),
+            (test_uuid(3), eligible_snapshot()),
+        ]);
+        let carry = HashMap::from([(
+            test_uuid(99),
+            LegVolumes {
+                left: d!(-1),
+                right: d!(0),
+            },
+        )]);
+        let err = calculate_binary_pairing(&tree, &plan, &structure, &snapshots, &[], &carry, None)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            CalculationError::NegativeCarriedLegVolume {
+                leg: BinaryLeg::Left,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_zero_carried_leg_is_accepted() {
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+        let snapshots = HashMap::from([
+            (test_uuid(1), eligible_snapshot()),
+            (test_uuid(2), eligible_snapshot()),
+            (test_uuid(3), eligible_snapshot()),
+        ]);
+        let carry = HashMap::from([(
+            test_uuid(1),
+            LegVolumes {
+                left: d!(0),
+                right: d!(0),
+            },
+        )]);
+        assert!(
+            calculate_binary_pairing(&tree, &plan, &structure, &snapshots, &[], &carry, None)
+                .is_ok()
+        );
     }
 
     fn volume_ratio_payout(

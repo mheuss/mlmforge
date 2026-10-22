@@ -273,13 +273,13 @@ alphabetically, including `serde_json::Value`, and the buffer comes back.
 
 | Helper | Field shape |
 |---|---|
-| `u8_keyed_map` | `BTreeMap<u8, f64>` |
-| `rank_keyed_u8_map` | `BTreeMap<String, BTreeMap<u8, f64>>` |
-| `optional_u8_keyed_map` | `Option<BTreeMap<u8, f64>>` |
+| `u8_keyed_map` | `BTreeMap<u8, AuthoredDec>` |
+| `rank_keyed_u8_map` | `BTreeMap<String, BTreeMap<u8, AuthoredDec>>` |
+| `optional_u8_keyed_map` | `Option<BTreeMap<u8, AuthoredDec>>` |
 
 ```rust
 #[serde(deserialize_with = "crate::serde_helpers::u8_keyed_map")]
-pub rates: BTreeMap<u8, f64>,
+pub rates: BTreeMap<u8, AuthoredDec>,
 ```
 
 **When to use this pattern:**

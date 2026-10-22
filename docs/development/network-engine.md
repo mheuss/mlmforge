@@ -423,16 +423,9 @@ Existing plan fixtures still use `setup_raw`. Leave them: changing a fixture's e
 
 Pattern: `request_raw` exists for the same reason on the request side. If you find yourself adding a new escape hatch for `params`, follow that precedent.
 
-## Contract-Test Harness: Result Numbers Must Match serde's Output
+## Contract-Test Harness: Numbers Compare As Exact Decimals
 
-The Rust contract test asserts the whole `result` subtree with `assert_eq!` on `serde_json::Value`. That comparison treats integers and floats as different types: `Number::Float(500.0) != Number::PosInt(500)`. So a fixture's `expected_response.result` must use the same numeric form the worker emits.
-
-- `f64` fields carry a decimal: `dollar_amount: 500.0`, `rate: 0.1`, `left: 0.0`. Never `500` or `0`.
-- Integer fields (`u8`/`u32`) are bare: `level: 1`, `walk: 0`, `cycle_number: 1`, and map values like `updated_cycle_counts`. Never `1.0`. A null `walk` is `null`, which sidesteps the trap entirely; a recorded one does not.
-
-The Go harness uses `assert.JSONEq`, which coerces every JSON number to `float64`. It will not catch an int/float mismatch. Only the Rust side will. Match serde's output and both pass.
-
-This tripped up every fixture in HEU-514. Any new commission-result fixture (HEU-397, HEU-528, HEU-529) will hit it too.
+Both contract runners compare numbers by value, as exact decimals, so a fixture may write `500` or `500.0`. The worker writes every decimal in normalized form, with no trailing zeros. A string is never equal to a number, so a quoted `"500"` still fails against `500`.
 
 ## Contract-Test Harness: No Per-Fixture Filter
 
@@ -484,37 +477,18 @@ emission orders actually differ, or roughly half the small cases prove nothing.
 
 Verified by deleting the sort and watching which tests failed. (HEU-641)
 
-## A Float Sum Takes A Defined Order
+## Numbers Are Exact Decimals
 
-Float addition depends on order. `(0.1 + 0.2) + 0.3` and `0.1 + (0.2 + 0.3)` give different bits. So commission code that adds floats must do it in a defined order, never in `HashMap` order.
-
-- `build_group_volumes` adds personal volumes in ascending user-id order.
-- `apply_aggregate_cap` adds each owner's earnings in `(earner_id, position_id)` order.
-
-The engine has to give the same `f64` bits from the same inputs. Go persists these values unrounded, so a different last bit is a different stored amount. (HEU-936)
-
-## A Tolerance On An `f64` Product Cannot Tell A Real Digit From Float Noise
-
-`0.29 * 100000.0` is `28999.999999999996`. Snapping a product like that to a decimal grid looks like the fix. It is not, because a snap needs a tolerance, and some real value always sits inside it.
-
-HEU-966 tried two tolerances and both withheld a rank that main awarded:
-
-- A gate of 8 × `f64::EPSILON` × the product snapped a real seventh decimal once the cap passed about 5.6e7.
-- Adding a 5e-8 ceiling still snapped real 8th and 9th decimals between about 1e6 and 1.5e8. `1.0 × 29000000.00000004` and `0.500000001 × 2000001` both ranked silver on main and associate with the gate.
-
-Tightening the tolerance only shrinks the window. The product alone does not carry the information.
-
-Multiply the decimals instead. `{:e}` gives each input's shortest round-trip decimal. Multiply the two mantissas as `u128`, add the exponents, and parse `<digits>e<exponent>` with `str::parse::<f64>`, which rounds correctly. Two mantissas of at most 17 digits multiply to under 1e34, so `u128` cannot overflow. Guard zero and non-finite inputs first, because `{:e}` prints `inf` and `NaN` with no exponent.
-
-That formatting costs about 250 ns per call. Compute the value once per request, not inside a per-distributor predicate.
-
-This holds until HEU-969 replaces `f64` for volume.
-
-## `f64::min` Hides A NaN
-
-`f64::min` and `f64::max` return the other argument when one is NaN. So a clamp written as `leg.min(cap)` turns a NaN leg into exactly the cap. A rank that should fail can then pass.
-
-On a money path, write the clamp as a comparison: `if leg > cap { cap } else { leg }`. `NaN > cap` is false, so the NaN stays in the sum and the final `>=` fails. (HEU-960)
+- `AuthoredDec` and `Dec` read JSON numbers only, and refuse a quoted number.
+- Adding, subtracting and multiplying give the exact result or a `NumericError`, never a rounded one.
+- Four operations are inexact, each with one rule:
+  - E1, `div_ratio`, the reported volume ratio: rust_decimal 1.43's `checked_div`, half to even at the largest scale of 28 or below that fits 96 bits.
+  - E2, `mul_div_ratio`, the volume-ratio payout: rounded once, half to even, at 13 places, or at the largest smaller scale that fits 96 bits.
+  - E3, `mul_div_trunc`, a capped share: truncated toward zero at a given scale, 13 for the aggregate cap.
+  - E4, `floor_div`, a cycle count: rounded down to an integer.
+- An authored value must be below 10^15 in size, with at most 10 decimal places.
+- serde_json's `arbitrary_precision` is a normal dependency of both crates, so a number on the wire never passes through `f64`.
+- Tests write decimal values with `d!()`.
 
 ## sha2 0.11 Returns An Array With No `LowerHex`
 
@@ -603,32 +577,6 @@ Comparing what two build configurations emit — say `cargo build -p foo` agains
 between the builds. Otherwise the second build reuses the first artifact, the
 outputs are trivially identical, and the comparison proves nothing. This one is
 quiet: the check appears to pass.
-
-## Non-Finite Floats Do Not Reach The Engine Over The Wire
-
-The worker parses requests with serde_json without `arbitrary_precision`. Observed on a built worker on 2026-10-19 (HEU-709):
-
-- A `NaN` or `Infinity` literal is not JSON. The whole request line fails with `INVALID_REQUEST`. The response `id` is empty.
-- `1e400` is JSON but overflows `f64`. The params fail with `INVALID_PARAMS` "number out of range".
-- `-1e-400` underflows to `-0.0`. It parses.
-
-If the worker enables `arbitrary_precision` or another number feature, rerun these probes before relying on this section.
-
-So an engine guard that rejects non-finite and negative floats can only meet a finite negative value from Go, such as `-5.5`. Test NaN and infinity through the library `calculate_*` functions. Test a finite negative value through a contract fixture.
-
-`CalculationError` derives `PartialEq`. Some variants carry an `f64`. NaN is not equal to itself. `assert_eq!` can never match a variant holding NaN. Use `matches!` with `is_nan()`, or compare `to_bits()`.
-
-## `serde_json` Misreads Some 16- And 17-Digit Numbers
-
-The engine's `serde_json` has no `float_roundtrip` feature. Without it, serde_json parses a number by converting its significand to `f64` and then scaling by a power of ten. When the significand is above 2^53, that rounds twice.
-
-Measured 2026-10-21, 200,000 samples per digit count: 0 misreads up to 15 significant digits, 3.6% at 16 and 25% at 17. Each misread is one `f64` step.
-
-So a value the engine computes with correct rounding can differ by one step from the same value sent over the wire. HEU-966's adversarial review showed a fixed cap of `364953592.32720524` and a fraction cap of the same decimal giving different ranks. Turning on `float_roundtrip` removed every mismatch. It changes how every float on the protocol is parsed, so it is tracked as HEU-975, under HEU-969.
-
-Until then, a claim that two values agree "exactly" holds for values of up to 15 significant digits.
-
-This holds until HEU-969 replaces `f64` for volume.
 
 ## Worker Binary Freshness
 

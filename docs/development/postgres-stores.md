@@ -86,8 +86,8 @@ the table. **Never byte-compare a fixture against a `SELECT`.** Parse and
 compare values. This also means an in-memory store returns different bytes than
 Postgres for the same write — assert on parsed values in any shared suite.
 
-Numbers survive exactly: `jsonb` stores them as `numeric`, so a float64 written
-into a JSON field reads back bit-identical even though the text may be
+Numbers survive exactly: `jsonb` stores them as `numeric`, so a decimal written
+into a JSON field reads back with the same value even though the text may be
 reformatted (`1e21` becomes `1000000000000000000000`).
 
 ## Go's json decoder is not Postgres's jsonb parser
@@ -123,9 +123,8 @@ if _, err := d.Token(); err != io.EOF { return errTrailing }
 ## NUMERIC accepts Infinity since Postgres 14
 
 `CHECK (col <> 'NaN'::numeric)` does not make a column finite. `Infinity`,
-`-Infinity`, and `+Inf` all insert — and `+Inf` is exactly what
-`strconv.FormatFloat(math.Inf(1), 'f', -1, 64)` emits, so a Go float64 reaches
-it through the ordinary text path.
+`-Infinity`, and `+Inf` all insert. The store writes exact decimal text, which
+cannot hold them, but manual SQL can.
 
 ```sql
 CHECK (col > '-Infinity'::numeric AND col < 'Infinity'::numeric)

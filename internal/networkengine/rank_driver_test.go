@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mlmforge/mlmforge/internal/dec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -145,7 +146,7 @@ func TestRankDriver_EvaluatePeriod_BuildsAxisAndPersists(t *testing.T) {
 
 	provider := NewMemoryPeriodInputProvider()
 	provider.Set("2026-06", PeriodInputs{
-		Distributors:  map[string]DistributorPrimitivesDTO{userA: {PersonalVolume: 100, Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}}},
+		Distributors:  map[string]DistributorPrimitivesDTO{userA: {PersonalVolume: dec.MustParse("100"), Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}}},
 		VolumeSources: []VolumeSourceDTO{},
 	})
 
@@ -177,7 +178,7 @@ func TestRankDriver_EvaluatePeriod_NoGatePlanSendsNoHistory(t *testing.T) {
 
 	provider := NewMemoryPeriodInputProvider()
 	provider.Set("2026-06", PeriodInputs{
-		Distributors:  map[string]DistributorPrimitivesDTO{userA: {PersonalVolume: 100, Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}}},
+		Distributors:  map[string]DistributorPrimitivesDTO{userA: {PersonalVolume: dec.MustParse("100"), Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}}},
 		VolumeSources: []VolumeSourceDTO{},
 	})
 
@@ -250,7 +251,7 @@ func TestRankDriver_EvaluatePeriod_NilActiveProductsSendsEmptyNotNull(t *testing
 	// distributors map, one level down.
 	provider := NewMemoryPeriodInputProvider()
 	provider.Set("2026-06", PeriodInputs{
-		Distributors:  map[string]DistributorPrimitivesDTO{userA: {PersonalVolume: 100, Status: "active", HasOrderInPeriod: true}},
+		Distributors:  map[string]DistributorPrimitivesDTO{userA: {PersonalVolume: dec.MustParse("100"), Status: "active", HasOrderInPeriod: true}},
 		VolumeSources: []VolumeSourceDTO{},
 	})
 
@@ -275,7 +276,7 @@ func TestRankDriver_EvaluatePeriod_DoesNotMutateProviderInputs(t *testing.T) {
 
 	provider := NewMemoryPeriodInputProvider()
 	provider.Set("2026-06", PeriodInputs{
-		Distributors:  map[string]DistributorPrimitivesDTO{userA: {PersonalVolume: 100, Status: "active", HasOrderInPeriod: true}},
+		Distributors:  map[string]DistributorPrimitivesDTO{userA: {PersonalVolume: dec.MustParse("100"), Status: "active", HasOrderInPeriod: true}},
 		VolumeSources: []VolumeSourceDTO{},
 	})
 
@@ -351,7 +352,7 @@ func (s *failOnPeriodStore) SaveResult(ctx context.Context, periodID string, ent
 // response (from the shared mock) qualifies as Director (ordinal 3).
 func qualifiedDirectorInputs(userID string) PeriodInputs {
 	return PeriodInputs{
-		Distributors:  map[string]DistributorPrimitivesDTO{userID: {PersonalVolume: 100, Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}}},
+		Distributors:  map[string]DistributorPrimitivesDTO{userID: {PersonalVolume: dec.MustParse("100"), Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}}},
 		VolumeSources: []VolumeSourceDTO{},
 	}
 }

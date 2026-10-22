@@ -1,5 +1,6 @@
 //! Commission eligibility types.
 
+use crate::decimal::AuthoredDec;
 use serde::{Deserialize, Serialize};
 
 use crate::serde_helpers::null_as_empty;
@@ -16,7 +17,7 @@ pub struct CommissionEligibility {
     ///
     /// Most plans set 100-150 PV. Zero disables the requirement.
     #[serde(rename = "min_personal_volume")]
-    pub minimum_pv: f64,
+    pub minimum_pv: AuthoredDec,
 
     /// When true, the distributor must have at least one order in the
     /// current period.
@@ -67,6 +68,7 @@ pub struct ActiveLegTier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{assert_d, d};
 
     #[test]
     fn deserialize_commission_eligibility() {
@@ -90,7 +92,7 @@ mod tests {
             ]
         }"#;
         let elig: CommissionEligibility = serde_json::from_str(json).unwrap();
-        assert_eq!(elig.minimum_pv, 100.0);
+        assert_d!(elig.minimum_pv, 100.0);
         assert!(elig.require_order_in_period);
         assert_eq!(elig.eligible_statuses, vec!["active", "grace"]);
         assert_eq!(elig.active_leg_tiers.len(), 3);
@@ -125,7 +127,7 @@ mod tests {
             "active_leg_tiers": []
         }"#;
         let elig: CommissionEligibility = serde_json::from_str(json).unwrap();
-        assert_eq!(elig.minimum_pv, 0.0);
+        assert_d!(elig.minimum_pv, 0.0);
         assert!(!elig.require_order_in_period);
         assert!(elig.eligible_statuses.is_empty());
         assert!(elig.active_leg_tiers.is_empty());
@@ -149,7 +151,7 @@ mod tests {
     #[test]
     fn round_trip_commission_eligibility() {
         let elig = CommissionEligibility {
-            minimum_pv: 150.0,
+            minimum_pv: d!(150.0),
             require_order_in_period: true,
             eligible_statuses: vec!["active".to_string()],
             active_leg_tiers: vec![
@@ -165,7 +167,7 @@ mod tests {
         };
         let json = serde_json::to_string(&elig).unwrap();
         let deserialized: CommissionEligibility = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.minimum_pv, 150.0);
+        assert_d!(deserialized.minimum_pv, 150.0);
         assert!(deserialized.require_order_in_period);
         assert_eq!(deserialized.eligible_statuses, vec!["active"]);
         assert_eq!(deserialized.active_leg_tiers.len(), 2);

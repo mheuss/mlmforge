@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/mlmforge/mlmforge/internal/dec"
 	"github.com/mlmforge/mlmforge/internal/observability"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,11 +100,11 @@ func TestObservabilityEndToEnd(t *testing.T) {
 	result, err := client.CalculateUnilevel(tracedCtx, CalculateUnilevelRequest{
 		StructureName: structure,
 		Snapshots: map[string]DistributorSnapshotDTO{
-			root: {Rank: "member", PersonalVolume: 100, Status: "active", HasOrderInPeriod: true},
-			mid:  {Rank: "member", PersonalVolume: 100, Status: "active", HasOrderInPeriod: true},
-			leaf: {Rank: "member", PersonalVolume: 100, Status: "active", HasOrderInPeriod: true},
+			root: {Rank: "member", PersonalVolume: dec.MustParse("100"), Status: "active", HasOrderInPeriod: true},
+			mid:  {Rank: "member", PersonalVolume: dec.MustParse("100"), Status: "active", HasOrderInPeriod: true},
+			leaf: {Rank: "member", PersonalVolume: dec.MustParse("100"), Status: "active", HasOrderInPeriod: true},
 		},
-		Volume: []VolumeSourceDTO{{SourceID: leaf, CVAmount: 100}},
+		Volume: []VolumeSourceDTO{{SourceID: leaf, CVAmount: dec.MustParse("100")}},
 	})
 
 	// (a) The response was demuxed correctly despite the interleaved signal.

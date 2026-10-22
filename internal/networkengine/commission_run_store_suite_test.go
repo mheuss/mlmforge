@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/mlmforge/mlmforge/internal/dec"
 )
 
 // Valid digests for tests. plan_hash must be "sha256:" plus exactly 64 hex
@@ -847,8 +847,8 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		}
 		a, b := uuid.New(), uuid.New()
 		in := []CommissionResultInput{
-			{EarnerID: a, DollarAmount: 10.5, Detail: []byte(`{"v":1,"level":1}`)},
-			{EarnerID: b, DollarAmount: 20.25, Detail: []byte(`{"v":1,"level":2}`)},
+			{EarnerID: a, DollarAmount: dec.MustParse("10.5"), Detail: []byte(`{"v":1,"level":1}`)},
+			{EarnerID: b, DollarAmount: dec.MustParse("20.25"), Detail: []byte(`{"v":1,"level":2}`)},
 		}
 		if err := s.SaveResults(ctx, runID, "primary", in); err != nil {
 			t.Fatalf("SaveResults: %v", err)
@@ -863,7 +863,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		if got[0].EarnerID != a || got[1].EarnerID != b {
 			t.Fatal("results must come back in insertion (id ascending) order")
 		}
-		if got[0].DollarAmount != 10.5 || got[1].DollarAmount != 20.25 {
+		if !got[0].DollarAmount.Equal(dec.MustParse("10.5").Decimal) || !got[1].DollarAmount.Equal(dec.MustParse("20.25").Decimal) {
 			t.Fatalf("amounts = %v, %v", got[0].DollarAmount, got[1].DollarAmount)
 		}
 		if got[0].RunID != runID || got[0].Structure != "primary" {
@@ -871,6 +871,29 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		}
 		if got[0].ID == 0 || got[1].ID <= got[0].ID {
 			t.Fatalf("ids should be assigned and increasing, got %d and %d", got[0].ID, got[1].ID)
+		}
+	})
+
+	t.Run("SaveResults round-trips an amount a float64 cannot hold", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		runID, err := s.CreateRun(ctx, "2026-01", validHash)
+		if err != nil {
+			t.Fatalf("CreateRun: %v", err)
+		}
+		in := []CommissionResultInput{
+			{EarnerID: uuid.New(), DollarAmount: dec.MustParse("12345678901234567.89"), Detail: []byte(`{"v":1}`)},
+		}
+		if err := s.SaveResults(ctx, runID, "primary", in); err != nil {
+			t.Fatalf("SaveResults: %v", err)
+		}
+		got, err := s.GetResults(ctx, runID)
+		if err != nil {
+			t.Fatalf("GetResults: %v", err)
+		}
+		if len(got) != 1 || got[0].DollarAmount.String() != "12345678901234567.89" {
+			t.Fatalf("got %+v, want one result of 12345678901234567.89", got)
 		}
 	})
 
@@ -886,7 +909,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 			t.Fatalf("CreateRun: %v", err)
 		}
 		if err := s.SaveResults(ctx, runID, "primary", []CommissionResultInput{
-			{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(
+			{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: []byte(
 				`{"v":1,"level":3,"rate":0.05,"compressed":true,"source":"11111111-1111-1111-1111-111111111111"}`)},
 		}); err != nil {
 			t.Fatalf("SaveResults: %v", err)
@@ -920,7 +943,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 			t.Fatalf("CreateRun: %v", err)
 		}
 		in := []CommissionResultInput{
-			{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1}`)},
+			{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: []byte(`{"v":1}`)},
 		}
 		if err := s.SaveResults(ctx, runID, "primary", in); err != nil {
 			t.Fatalf("first SaveResults: %v", err)
@@ -945,8 +968,8 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		if err != nil {
 			t.Fatalf("CreateRun: %v", err)
 		}
-		one := []CommissionResultInput{{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1}`)}}
-		two := []CommissionResultInput{{EarnerID: uuid.New(), DollarAmount: 2, Detail: []byte(`{"v":1}`)}}
+		one := []CommissionResultInput{{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: []byte(`{"v":1}`)}}
+		two := []CommissionResultInput{{EarnerID: uuid.New(), DollarAmount: dec.MustParse("2"), Detail: []byte(`{"v":1}`)}}
 		if err := s.SaveResults(ctx, runID, "unilevel", one); err != nil {
 			t.Fatalf("SaveResults unilevel: %v", err)
 		}
@@ -967,7 +990,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		// The survivor of the untouched structure must be the binary row.
 		var sawBinary bool
 		for _, r := range got {
-			if r.Structure == "binary" && r.DollarAmount == 2 {
+			if r.Structure == "binary" && r.DollarAmount.Equal(dec.MustParse("2").Decimal) {
 				sawBinary = true
 			}
 		}
@@ -995,7 +1018,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		if err != nil {
 			t.Fatalf("CreateRun: %v", err)
 		}
-		in := []CommissionResultInput{{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1}`)}}
+		in := []CommissionResultInput{{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: []byte(`{"v":1}`)}}
 		if err := s.SaveResults(ctx, runID, "primary", in); err != nil {
 			t.Fatalf("SaveResults: %v", err)
 		}
@@ -1023,7 +1046,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 			t.Fatalf("CompleteRun: %v", err)
 		}
 		err = s.SaveResults(ctx, runID, "primary", []CommissionResultInput{
-			{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1}`)},
+			{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: []byte(`{"v":1}`)},
 		})
 		var target *RunNotRunningError
 		if !errors.As(err, &target) {
@@ -1034,7 +1057,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 	t.Run("SaveResults on an unknown run returns RunNotFoundError", func(t *testing.T) {
 		s := newStore(t)
 		err := s.SaveResults(context.Background(), uuid.New(), "primary",
-			[]CommissionResultInput{{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1}`)}})
+			[]CommissionResultInput{{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: []byte(`{"v":1}`)}})
 		var target *RunNotFoundError
 		if !errors.As(err, &target) {
 			t.Fatalf("want *RunNotFoundError, got %v", err)
@@ -1059,7 +1082,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 			t.Fatalf("CreateRun: %v", err)
 		}
 		if err := s.SaveResults(ctx, runID, "primary", []CommissionResultInput{
-			{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1}`)},
+			{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: []byte(`{"v":1}`)},
 		}); err != nil {
 			t.Fatalf("SaveResults: %v", err)
 		}
@@ -1090,7 +1113,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 			t.Fatalf("CreateRun: %v", err)
 		}
 		if err := s.SaveResults(ctx, runID, "primary", []CommissionResultInput{
-			{EarnerID: uuid.New(), DollarAmount: 7, Detail: []byte(`{"v":1}`)},
+			{EarnerID: uuid.New(), DollarAmount: dec.MustParse("7"), Detail: []byte(`{"v":1}`)},
 		}); err != nil {
 			t.Fatalf("SaveResults: %v", err)
 		}
@@ -1101,7 +1124,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		if err != nil {
 			t.Fatalf("GetLiveResults: %v", err)
 		}
-		if len(live) != 1 || live[0].DollarAmount != 7 {
+		if len(live) != 1 || !live[0].DollarAmount.Equal(dec.MustParse("7").Decimal) {
 			t.Fatalf("live = %+v, want one row of 7", live)
 		}
 	})
@@ -1115,7 +1138,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 			t.Fatalf("CreateRun: %v", err)
 		}
 		if err := s.SaveResults(ctx, runID, "primary", []CommissionResultInput{
-			{EarnerID: uuid.New(), DollarAmount: 7, Detail: []byte(`{"v":1}`)},
+			{EarnerID: uuid.New(), DollarAmount: dec.MustParse("7"), Detail: []byte(`{"v":1}`)},
 		}); err != nil {
 			t.Fatalf("SaveResults: %v", err)
 		}
@@ -1154,7 +1177,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 			t.Fatalf("CreateRun: %v", err)
 		}
 		if err := s.SaveResults(ctx, oldID, "primary", []CommissionResultInput{
-			{EarnerID: uuid.New(), DollarAmount: 7, Detail: []byte(`{"v":1}`)},
+			{EarnerID: uuid.New(), DollarAmount: dec.MustParse("7"), Detail: []byte(`{"v":1}`)},
 		}); err != nil {
 			t.Fatalf("SaveResults old: %v", err)
 		}
@@ -1167,7 +1190,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 			t.Fatalf("ReplaceRun: %v", err)
 		}
 		if err := s.SaveResults(ctx, newID, "primary", []CommissionResultInput{
-			{EarnerID: uuid.New(), DollarAmount: 9, Detail: []byte(`{"v":1}`)},
+			{EarnerID: uuid.New(), DollarAmount: dec.MustParse("9"), Detail: []byte(`{"v":1}`)},
 		}); err != nil {
 			t.Fatalf("SaveResults new: %v", err)
 		}
@@ -1179,14 +1202,14 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		if err != nil {
 			t.Fatalf("GetLiveResults: %v", err)
 		}
-		if len(live) != 1 || live[0].DollarAmount != 9 {
+		if len(live) != 1 || !live[0].DollarAmount.Equal(dec.MustParse("9").Decimal) {
 			t.Fatalf("live = %+v, want only the replacement's row of 9", live)
 		}
 		archived, err := s.GetResults(ctx, oldID)
 		if err != nil {
 			t.Fatalf("GetResults old: %v", err)
 		}
-		if len(archived) != 1 || archived[0].DollarAmount != 7 {
+		if len(archived) != 1 || !archived[0].DollarAmount.Equal(dec.MustParse("7").Decimal) {
 			t.Fatalf("the superseded run's results must stay readable, got %+v", archived)
 		}
 	})
@@ -1215,7 +1238,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		s := newStore(t)
 		ctx := context.Background()
 
-		rows := func(amount float64) []CommissionResultInput {
+		rows := func(amount dec.Amount) []CommissionResultInput {
 			out := make([]CommissionResultInput, 3)
 			for i := range out {
 				out[i] = CommissionResultInput{
@@ -1229,7 +1252,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		if err != nil {
 			t.Fatalf("CreateRun: %v", err)
 		}
-		if err := s.SaveResults(ctx, oldID, "primary", rows(7)); err != nil {
+		if err := s.SaveResults(ctx, oldID, "primary", rows(dec.MustParse("7"))); err != nil {
 			t.Fatalf("SaveResults old: %v", err)
 		}
 		if err := s.CompleteRun(ctx, oldID, nil); err != nil {
@@ -1293,7 +1316,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 							report("rows from two runs in one read: %s and %s", runID, r.RunID)
 							return
 						}
-						if r.DollarAmount != amount {
+						if !r.DollarAmount.Equal(amount.Decimal) {
 							report("amounts %v and %v in one read", amount, r.DollarAmount)
 							return
 						}
@@ -1315,7 +1338,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		if err != nil {
 			report("ReplaceRun: %v", err)
 		} else {
-			if err := s.SaveResults(ctx, newID, "primary", rows(9)); err != nil {
+			if err := s.SaveResults(ctx, newID, "primary", rows(dec.MustParse("9"))); err != nil {
 				report("SaveResults new: %v", err)
 			}
 			if err := s.CompleteRun(ctx, newID, nil); err != nil {
@@ -1339,7 +1362,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		if err != nil {
 			t.Fatalf("final GetLiveResults: %v", err)
 		}
-		if len(live) != 3 || live[0].DollarAmount != 9 {
+		if len(live) != 3 || !live[0].DollarAmount.Equal(dec.MustParse("9").Decimal) {
 			t.Fatalf("final live = %+v, want the replacement's three rows of 9", live)
 		}
 	})
@@ -1399,28 +1422,22 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		}{
 			{"empty structure", "", nil},
 			{"nil earner id", "primary", []CommissionResultInput{
-				{EarnerID: uuid.Nil, DollarAmount: 1, Detail: []byte(`{"v":1}`)}}},
-			{"NaN amount", "primary", []CommissionResultInput{
-				{EarnerID: uuid.New(), DollarAmount: math.NaN(), Detail: []byte(`{"v":1}`)}}},
-			{"positive infinity", "primary", []CommissionResultInput{
-				{EarnerID: uuid.New(), DollarAmount: math.Inf(1), Detail: []byte(`{"v":1}`)}}},
-			{"negative infinity", "primary", []CommissionResultInput{
-				{EarnerID: uuid.New(), DollarAmount: math.Inf(-1), Detail: []byte(`{"v":1}`)}}},
+				{EarnerID: uuid.Nil, DollarAmount: dec.MustParse("1"), Detail: []byte(`{"v":1}`)}}},
 			{"array detail", "primary", []CommissionResultInput{
-				{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`[1,2]`)}}},
+				{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: []byte(`[1,2]`)}}},
 			{"JSON null detail", "primary", []CommissionResultInput{
-				{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`null`)}}},
+				{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: []byte(`null`)}}},
 			{"nil detail", "primary", []CommissionResultInput{
-				{EarnerID: uuid.New(), DollarAmount: 1, Detail: nil}}},
+				{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: nil}}},
 			// TEXT cannot hold a NUL byte — Postgres rejects it with
 			// "invalid byte sequence for encoding UTF8". Structure names come
 			// from plan config, where the schema only requires minLength 1,
 			// so a memory store that accepted this would diverge on real
 			// input rather than on a contrived one.
 			{"NUL in structure", "pri\x00mary", []CommissionResultInput{
-				{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1}`)}}},
+				{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: []byte(`{"v":1}`)}}},
 			{"invalid UTF-8 in structure", "pri\xffmary", []CommissionResultInput{
-				{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1}`)}}},
+				{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: []byte(`{"v":1}`)}}},
 		}
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
@@ -1450,8 +1467,8 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 			t.Fatalf("CreateRun: %v", err)
 		}
 		if err := s.SaveResults(ctx, runID, "primary", []CommissionResultInput{
-			{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1}`)},
-			{EarnerID: uuid.New(), DollarAmount: math.NaN(), Detail: []byte(`{"v":1}`)},
+			{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: []byte(`{"v":1}`)},
+			{EarnerID: uuid.Nil, DollarAmount: dec.MustParse("1"), Detail: []byte(`{"v":1}`)},
 		}); err == nil {
 			t.Fatal("a batch with one bad row should be rejected")
 		}
@@ -1477,7 +1494,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 		}
 		detail := []byte(`{"v":1,"level":3}`)
 		if err := s.SaveResults(ctx, runID, "primary", []CommissionResultInput{
-			{EarnerID: uuid.New(), DollarAmount: 1, Detail: detail},
+			{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: detail},
 		}); err != nil {
 			t.Fatalf("SaveResults: %v", err)
 		}
@@ -1512,7 +1529,7 @@ func runCommissionRunStoreSuite(t *testing.T, newStore func(t *testing.T) Commis
 			t.Fatalf("CreateRun: %v", err)
 		}
 		if err := s.SaveResults(ctx, runID, "primary", []CommissionResultInput{
-			{EarnerID: uuid.New(), DollarAmount: 1, Detail: []byte(`{"v":1,"level":3}`)},
+			{EarnerID: uuid.New(), DollarAmount: dec.MustParse("1"), Detail: []byte(`{"v":1,"level":3}`)},
 		}); err != nil {
 			t.Fatalf("SaveResults: %v", err)
 		}

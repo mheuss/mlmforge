@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/mlmforge/mlmforge/internal/dec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -31,8 +32,8 @@ func TestQualificationHistoryPersistence_EndToEnd(t *testing.T) {
 
 	req := EvaluateRanksRequest{
 		Distributors: map[string]DistributorPrimitivesDTO{
-			rootID:  {PersonalVolume: 100.0, Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}},
-			childID: {PersonalVolume: 100.0, Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}},
+			rootID:  {PersonalVolume: dec.MustParse("100.0"), Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}},
+			childID: {PersonalVolume: dec.MustParse("100.0"), Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}},
 		},
 		VolumeSources: []VolumeSourceDTO{},
 	}
@@ -113,7 +114,7 @@ func TestQualificationHistoryPersistence_PersistsTheBaseRankForADistributorInNoT
 	require.NoError(t, client.CreateTree(ctx, structureName, "unilevel"))
 	require.NoError(t, client.AddRoot(ctx, structureName, rootID, 100))
 
-	primitives := DistributorPrimitivesDTO{PersonalVolume: 0.0, Status: "active", ActiveProducts: []string{}}
+	primitives := DistributorPrimitivesDTO{PersonalVolume: dec.MustParse("0.0"), Status: "active", ActiveProducts: []string{}}
 	req := EvaluateRanksRequest{
 		Distributors:  map[string]DistributorPrimitivesDTO{rootID: primitives, outsiderID: primitives},
 		VolumeSources: []VolumeSourceDTO{},
@@ -152,7 +153,7 @@ func TestQualificationHistoryPersistence_NoOptionLeavesStoreEmpty(t *testing.T) 
 
 	req := EvaluateRanksRequest{
 		Distributors: map[string]DistributorPrimitivesDTO{
-			rootID: {PersonalVolume: 100.0, Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}},
+			rootID: {PersonalVolume: dec.MustParse("100.0"), Status: "active", HasOrderInPeriod: true, ActiveProducts: []string{}},
 		},
 		VolumeSources: []VolumeSourceDTO{},
 	}

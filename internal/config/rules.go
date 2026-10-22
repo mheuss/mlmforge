@@ -3,15 +3,23 @@ package config
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/mlmforge/mlmforge/internal/dec"
+	"github.com/shopspring/decimal"
 )
 
 // startDateLayout is RFC 3339 full-date, matching the schema's
 // "format": "date" on /period/start_date.
 const startDateLayout = "2006-01-02"
+
+var one = decimal.NewFromInt(1)
 
 // validateBusinessRules runs all business-rule checks against a parsed
 // CompensationPlan. Returns a slice of ValidationError. An empty slice
@@ -21,6 +29,7 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 	ranks := rankNames(plan)
 	structs := structureNames(plan)
 
+	errs = append(errs, validateEnvelope(plan)...)
 	errs = append(errs, validateRankNames(plan)...)
 	errs = append(errs, validateStructureNames(plan)...)
 	errs = append(errs, validatePeriod(plan)...)
@@ -95,7 +104,7 @@ func rankNames(plan *CompensationPlan) map[string]bool {
 
 // getRateTable extracts the rate table from a resolved commission config.
 // Returns nil if the commission type does not have a rate table.
-func getRateTable(commission Commission) map[string]map[string]float64 {
+func getRateTable(commission Commission) map[string]map[string]dec.Amount {
 	switch rc := commission.(type) {
 	case *UnilevelCommission:
 		return rc.RateTable
@@ -111,11 +120,8 @@ func getRateTable(commission Commission) map[string]map[string]float64 {
 }
 
 // validateU8MapKeys appends an error for each key of a level/depth-keyed rate
-// map that is not representable as a Rust u8 (0-255). These maps are Go
-// map[string]float64 but Rust BTreeMap<u8, f64>; a key like "300" passes Go
-// untyped and dies opaquely at Rust serde. See docs/development/config-types.md
-// "Cross-layer enforcement of byte-width caps".
-func validateU8MapKeys(m map[string]float64, path string) []ValidationError {
+// map that is not representable as a u8 (0-255).
+func validateU8MapKeys(m map[string]dec.Amount, path string) []ValidationError {
 	var errs []ValidationError
 
 	// Sorted so the reported spelling pair is stable. Go map iteration order is
@@ -166,7 +172,7 @@ func validateU8MapKeys(m map[string]float64, path string) []ValidationError {
 // validateRateTableU8Keys applies validateU8MapKeys to the inner (level) keys of
 // a rank-by-level rate table. Outer keys are rank names (String on both sides)
 // and are not checked here.
-func validateRateTableU8Keys(rt map[string]map[string]float64, path string) []ValidationError {
+func validateRateTableU8Keys(rt map[string]map[string]dec.Amount, path string) []ValidationError {
 	var errs []ValidationError
 	for rank, inner := range rt {
 		errs = append(errs, validateU8MapKeys(inner, path+"/"+rank)...)
@@ -175,11 +181,8 @@ func validateRateTableU8Keys(rt map[string]map[string]float64, path string) []Va
 }
 
 // validateRateKeyWidths checks that every level/depth-keyed rate map uses keys
-// representable as a Rust u8 (0-255). Bonus and per-structure commission rate
-// maps are Go map[string]float64 (or nested) but Rust BTreeMap<u8, f64>, so an
-// out-of-range key passes Go untyped and fails opaquely at the Rust serde
-// boundary. This mirrors the byte-width contract on the map KEY. Rank-name-keyed
-// maps (rank_rates, amounts) are String on both sides and are not checked.
+// representable as a u8 (0-255). Rank-name-keyed maps (rank_rates, amounts) are
+// not checked.
 func validateRateKeyWidths(plan *CompensationPlan) []ValidationError {
 	var errs []ValidationError
 
@@ -342,14 +345,14 @@ func validateRanks(plan *CompensationPlan, structs map[string]bool) []Validation
 			capPath := fmt.Sprintf("/ranks/%d/qualification/structures/%d/max_group_volume_per_leg", i, j)
 			fractionPath := fmt.Sprintf("/ranks/%d/qualification/structures/%d/max_group_volume_per_leg_fraction", i, j)
 			fraction := sq.MaxGroupVolumePerLegFraction
-			if sq.MaxGroupVolumePerLeg < 0 || math.IsNaN(sq.MaxGroupVolumePerLeg) || math.IsInf(sq.MaxGroupVolumePerLeg, 0) {
+			if sq.MaxGroupVolumePerLeg.IsNegative() {
 				errs = append(errs, ValidationError{
 					Path:     capPath,
 					Code:     "value_out_of_range",
-					Message:  fmt.Sprintf("rank %q structure %q max_group_volume_per_leg must be finite and non-negative, got %v", r.Name, sq.Structure, sq.MaxGroupVolumePerLeg),
+					Message:  fmt.Sprintf("rank %q structure %q max_group_volume_per_leg must be non-negative, got %v", r.Name, sq.Structure, sq.MaxGroupVolumePerLeg),
 					Severity: SeverityError,
 				})
-			} else if sq.MaxGroupVolumePerLeg > 0 && sq.GroupVolume > 0 && sq.MaxGroupVolumePerLeg >= sq.GroupVolume {
+			} else if sq.MaxGroupVolumePerLeg.IsPositive() && sq.GroupVolume.IsPositive() && sq.MaxGroupVolumePerLeg.GreaterThanOrEqual(sq.GroupVolume.Decimal) {
 				errs = append(errs, ValidationError{
 					Path:     capPath,
 					Code:     "cross_field_dependency",
@@ -357,7 +360,7 @@ func validateRanks(plan *CompensationPlan, structs map[string]bool) []Validation
 					Severity: SeverityWarning,
 				})
 			}
-			if math.IsNaN(fraction) || fraction < 0 || fraction > 1 {
+			if fraction.IsNegative() || fraction.GreaterThan(one) {
 				errs = append(errs, ValidationError{
 					Path:     fractionPath,
 					Code:     "value_out_of_range",
@@ -365,7 +368,7 @@ func validateRanks(plan *CompensationPlan, structs map[string]bool) []Validation
 					Severity: SeverityError,
 				})
 			}
-			if sq.MaxGroupVolumePerLeg > 0 && fraction > 0 {
+			if sq.MaxGroupVolumePerLeg.IsPositive() && fraction.IsPositive() {
 				errs = append(errs, ValidationError{
 					Path:     fractionPath,
 					Code:     "cross_field_dependency",
@@ -513,13 +516,13 @@ func validateBaseRank(plan *CompensationPlan) []ValidationError {
 		at := fmt.Sprintf("/structures/%d", j)
 		for _, f := range []struct {
 			name  string
-			value float64
+			value dec.Amount
 		}{
 			{"personal_volume", sq.PersonalVolume},
 			{"group_volume", sq.GroupVolume},
 			{"min_retail_volume", sq.MinRetailVolume},
 		} {
-			if f.value != 0 {
+			if !f.value.IsZero() {
 				refuse(at+"/"+f.name, fmt.Sprintf("sets %s %v on structure %q", f.name, f.value, sq.Structure))
 			}
 		}
@@ -591,20 +594,9 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 				}
 				if diff := rc.Breakaway.Overrides.Differential; diff != nil {
 					path := fmt.Sprintf("/structures/%d/commission/breakaway/overrides/differential/min_override", i)
-					switch {
-					// NaN fails every ordered comparison, so it would pass both
-					// unit branches below without this. The Rust validator
-					// rejects a non-finite value; on the bypass path nothing
-					// else does.
-					case math.IsNaN(diff.MinOverride.Value) || math.IsInf(diff.MinOverride.Value, 0):
-						errs = append(errs, ValidationError{
-							Path:     path,
-							Code:     "invalid_value",
-							Message:  fmt.Sprintf("structure %q breakaway differential min_override must be finite, got %v", s.Name, diff.MinOverride.Value),
-							Severity: SeverityError,
-						})
-					case diff.MinOverride.Type == "rate":
-						if diff.MinOverride.Value < 0 || diff.MinOverride.Value > 1 {
+					switch diff.MinOverride.Type {
+					case "rate":
+						if diff.MinOverride.Value.IsNegative() || diff.MinOverride.Value.GreaterThan(one) {
 							errs = append(errs, ValidationError{
 								Path:     path,
 								Code:     "out_of_range",
@@ -612,8 +604,8 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 								Severity: SeverityError,
 							})
 						}
-					case diff.MinOverride.Type == "currency":
-						if diff.MinOverride.Value < 0 {
+					case "currency":
+						if diff.MinOverride.Value.IsNegative() {
 							errs = append(errs, ValidationError{
 								Path:     path,
 								Code:     "out_of_range",
@@ -684,11 +676,11 @@ func validateStructureRefs(plan *CompensationPlan, ranks map[string]bool) []Vali
 						})
 					}
 					for k, tier := range rc.Breakaway.Overrides.Tiers {
-						if tier.Rate < 0 || tier.Rate > 1 {
+						if tier.Rate.IsNegative() || tier.Rate.GreaterThan(one) {
 							errs = append(errs, ValidationError{
 								Path:     fmt.Sprintf("/structures/%d/commission/breakaway/overrides/tiers/%d/rate", i, k),
 								Code:     "invalid_value",
-								Message:  fmt.Sprintf("structure %q breakaway tier %d rate %g must be in [0, 1]", s.Name, k, tier.Rate),
+								Message:  fmt.Sprintf("structure %q breakaway tier %d rate %s must be in [0, 1]", s.Name, k, tier.Rate),
 								Severity: SeverityError,
 							})
 						}
@@ -933,8 +925,9 @@ func validatePassUp(plan *CompensationPlan) []ValidationError {
 		if s.Type == "unilevel" {
 			continue
 		}
-		if rawMap, ok := s.CommissionRaw.(map[string]any); ok {
-			if _, hasPassUp := rawMap["pass_up"]; hasPassUp {
+		var raw map[string]any
+		if err := s.CommissionRaw.Decode(&raw); err == nil {
+			if _, hasPassUp := raw["pass_up"]; hasPassUp {
 				errs = append(errs, ValidationError{
 					Path:     fmt.Sprintf("/structures/%d/commission/pass_up", i),
 					Code:     "unsupported_field",
@@ -1093,11 +1086,11 @@ func validateStreamlineCommission(plan *CompensationPlan) []ValidationError {
 		// by validateStructureRefs, so no duplicate check here.
 		for key, level := range c.DynamicCompression {
 			levelPath := path + "/dynamic_compression/" + key
-			if level.Percent < 0 || level.Percent > 1 {
+			if level.Percent.IsNegative() || level.Percent.GreaterThan(one) {
 				errs = append(errs, ValidationError{
 					Path:     levelPath + "/percent",
 					Code:     "percent_out_of_range",
-					Message:  fmt.Sprintf("percent must be between 0 and 1, got %f", level.Percent),
+					Message:  fmt.Sprintf("percent must be between 0 and 1, got %s", level.Percent),
 					Severity: SeverityError,
 				})
 			}
@@ -1216,4 +1209,88 @@ func validateCrossFieldRules(plan *CompensationPlan, ranks map[string]bool) []Va
 	}
 
 	return errs
+}
+
+var envelopeLimit = decimal.New(1, 15)
+
+const envelopeMaxScale = 10
+
+// validateEnvelope refuses any authored decimal at or beyond 10^15 in
+// magnitude, or with more than 10 decimal places.
+func validateEnvelope(plan *CompensationPlan) []ValidationError {
+	var errs []ValidationError
+	check := func(path string, a dec.Amount) {
+		written := a.StringFixed(a.Scale())
+		var message string
+		switch {
+		case a.Abs().GreaterThanOrEqual(envelopeLimit):
+			message = fmt.Sprintf("%s is not below 10^15 in absolute value", written)
+		case a.Scale() > envelopeMaxScale:
+			message = fmt.Sprintf("%s has %d decimal places, and an authored value may have at most %d", written, a.Scale(), envelopeMaxScale)
+		default:
+			return
+		}
+		errs = append(errs, ValidationError{
+			Path:     path,
+			Code:     "out_of_envelope",
+			Message:  message,
+			Severity: SeverityError,
+		})
+	}
+	walkAmounts(reflect.ValueOf(plan).Elem(), "", check)
+	for i, s := range plan.Structures {
+		if s.resolvedCommission != nil {
+			walkAmounts(reflect.ValueOf(s.resolvedCommission), fmt.Sprintf("/structures/%d/commission", i), check)
+		}
+	}
+	return errs
+}
+
+var (
+	amountType   = reflect.TypeOf(dec.Amount{})
+	yamlNodeType = reflect.TypeOf(yaml.Node{})
+)
+
+// walkAmounts calls visit for every dec.Amount reachable from v. The path is
+// built from yaml tags.
+func walkAmounts(v reflect.Value, path string, visit func(string, dec.Amount)) {
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface:
+		if !v.IsNil() {
+			walkAmounts(v.Elem(), path, visit)
+		}
+	case reflect.Struct:
+		if v.Type() == amountType {
+			visit(path, v.Interface().(dec.Amount))
+			return
+		}
+		if v.Type() == yamlNodeType {
+			return
+		}
+		t := v.Type()
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			if !f.IsExported() {
+				continue
+			}
+			name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+			if name == "-" {
+				continue
+			}
+			if name == "" {
+				name = strings.ToLower(f.Name)
+			}
+			walkAmounts(v.Field(i), path+"/"+name, visit)
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			walkAmounts(v.Index(i), path+"/"+strconv.Itoa(i), visit)
+		}
+	case reflect.Map:
+		keys := v.MapKeys()
+		sort.Slice(keys, func(i, j int) bool { return fmt.Sprint(keys[i]) < fmt.Sprint(keys[j]) })
+		for _, k := range keys {
+			walkAmounts(v.MapIndex(k), path+"/"+fmt.Sprint(k), visit)
+		}
+	}
 }

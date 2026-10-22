@@ -2,19 +2,21 @@ package networkengine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"math"
 	"math/rand"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/mlmforge/mlmforge/internal/dec"
+	"github.com/shopspring/decimal"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// TestDollarAmountRoundTripsThroughNumeric is the property behind design
-// decision 5: float64 in Go, NUMERIC in Postgres, lossless in both
-// directions. Shortest-round-trip formatting on write and ParseFloat on read
-// must reproduce the original bits.
+// TestDollarAmountRoundTripsThroughNumeric checks that an exact decimal
+// written to NUMERIC reads back with the same value.
 func TestDollarAmountRoundTripsThroughNumeric(t *testing.T) {
 	if pgContainer == nil {
 		t.Skip("postgres container unavailable")
@@ -32,28 +34,22 @@ func TestDollarAmountRoundTripsThroughNumeric(t *testing.T) {
 	// configured linters.
 	rng := rand.New(rand.NewSource(20260805))
 
-	amounts := []float64{
-		0, 1, -1, 0.1, 0.2, 0.3,
-		1.0 / 3.0,
-		123456.789,
-		math.SmallestNonzeroFloat64,
-		// The extremes, not a scaled-down stand-in. Under 'f' with -1
-		// precision these format to 309 and 326 characters, against NUMERIC
-		// limits of 131072 integer and 16383 fractional digits — so no
-		// float64 exists that NUMERIC cannot hold, and this pins both ends.
-		math.MaxFloat64,
-		-math.MaxFloat64,
+	amounts := []dec.Amount{
+		dec.MustParse("0"), dec.MustParse("1"), dec.MustParse("-1"),
+		dec.MustParse("0.1"), dec.MustParse("0.2"), dec.MustParse("0.3"),
+		dec.MustParse("0.3333333333333333333333333"),
+		dec.MustParse("123456.789"),
+		dec.MustParse("1e-60"),
+		dec.MustParse("1e60"),
+		dec.MustParse("-1e60"),
 		// Clawbacks are why negatives must survive, and the finite-range
 		// CHECK is the constraint most likely to be tightened by mistake.
-		-0.01, -123456.789,
-		// Values needing all 17 significant digits, where a shorter
-		// formatting would silently lose the low bits.
-		0.1 + 0.2,
-		math.Nextafter(1, 2),
-		math.Nextafter(0.1, 1),
+		dec.MustParse("-0.01"), dec.MustParse("-123456.789"),
+		// More significant digits than a float64 holds.
+		dec.MustParse("12345678901234567.890123"),
 	}
 	for i := 0; i < 200; i++ {
-		amounts = append(amounts, rng.NormFloat64()*1000)
+		amounts = append(amounts, dec.Amount{Decimal: decimal.New(rng.Int63n(2_000_000_000_000_000)-1_000_000_000_000_000, -int32(rng.Intn(14)))})
 	}
 
 	in := make([]CommissionResultInput, len(amounts))
@@ -79,49 +75,9 @@ func TestDollarAmountRoundTripsThroughNumeric(t *testing.T) {
 	// order, GetResults sorts by id, and NewPool truncates with RESTART
 	// IDENTITY. The suite pins the ordering half separately.
 	for i, r := range got {
-		// Compare bits, not values: NaN would compare unequal to itself and
-		// -0.0 equals +0.0, so == would hide exactly the cases worth pinning.
-		if math.Float64bits(r.DollarAmount) != math.Float64bits(amounts[i]) {
-			t.Errorf("row %d: got %v, want %v (bits %x vs %x)",
-				i, r.DollarAmount, amounts[i],
-				math.Float64bits(r.DollarAmount), math.Float64bits(amounts[i]))
+		if !r.DollarAmount.Equal(amounts[i].Decimal) {
+			t.Errorf("row %d: got %v, want %v", i, r.DollarAmount, amounts[i])
 		}
-	}
-}
-
-// Negative zero is the one documented exception to the lossless claim:
-// NUMERIC carries no sign of zero, so -0.0 comes back as +0.0. Harmless for
-// money, since -0.0 == 0.0 in Go, but the interface doc states it and an
-// undocumented exception is how a claim rots. Pinned separately from the
-// round-trip property, which asserts bit equality and would fail on it.
-func TestNegativeZeroLosesItsSign(t *testing.T) {
-	if pgContainer == nil {
-		t.Skip("postgres container unavailable")
-	}
-	store := NewPostgresCommissionRunStore(pgContainer.NewPool(t))
-	ctx := context.Background()
-
-	runID, err := store.CreateRun(ctx, "2026-01", validHash)
-	if err != nil {
-		t.Fatalf("CreateRun: %v", err)
-	}
-	if err := store.SaveResults(ctx, runID, "primary", []CommissionResultInput{
-		{EarnerID: uuid.New(), DollarAmount: math.Copysign(0, -1), Detail: []byte(`{"v":1}`)},
-	}); err != nil {
-		t.Fatalf("SaveResults: %v", err)
-	}
-	got, err := store.GetResults(ctx, runID)
-	if err != nil {
-		t.Fatalf("GetResults: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("len = %d, want 1", len(got))
-	}
-	if got[0].DollarAmount != 0 {
-		t.Fatalf("DollarAmount = %v, want zero", got[0].DollarAmount)
-	}
-	if math.Signbit(got[0].DollarAmount) {
-		t.Fatal("negative zero kept its sign; the doc says NUMERIC drops it, so one of the two is wrong")
 	}
 }
 
@@ -150,8 +106,8 @@ func TestAFailedWriteLeavesPriorRowsIntact(t *testing.T) {
 	}
 
 	good := []CommissionResultInput{
-		{EarnerID: uuid.New(), DollarAmount: 10, Detail: []byte(`{"v":1}`)},
-		{EarnerID: uuid.New(), DollarAmount: 20, Detail: []byte(`{"v":1}`)},
+		{EarnerID: uuid.New(), DollarAmount: dec.MustParse("10"), Detail: []byte(`{"v":1}`)},
+		{EarnerID: uuid.New(), DollarAmount: dec.MustParse("20"), Detail: []byte(`{"v":1}`)},
 	}
 	if err := store.SaveResults(ctx, runID, "primary", good); err != nil {
 		t.Fatalf("seed SaveResults: %v", err)
@@ -167,7 +123,7 @@ func TestAFailedWriteLeavesPriorRowsIntact(t *testing.T) {
 	}
 
 	err = store.SaveResults(ctx, runID, "primary", []CommissionResultInput{
-		{EarnerID: uuid.New(), DollarAmount: 30, Detail: poison},
+		{EarnerID: uuid.New(), DollarAmount: dec.MustParse("30"), Detail: poison},
 	})
 	if err == nil {
 		t.Fatal("premise broken: Postgres should reject a lone surrogate in jsonb")
@@ -194,7 +150,21 @@ func TestAFailedWriteLeavesPriorRowsIntact(t *testing.T) {
 		t.Fatalf("got %d rows after a failed write, want the original %d; the DELETE was not rolled back",
 			len(after), len(good))
 	}
-	if after[0].DollarAmount != 10 || after[1].DollarAmount != 20 {
+	if !after[0].DollarAmount.Equal(dec.MustParse("10").Decimal) || !after[1].DollarAmount.Equal(dec.MustParse("20").Decimal) {
 		t.Fatalf("prior rows changed: %v, %v", after[0].DollarAmount, after[1].DollarAmount)
 	}
+}
+
+func TestCommissionEarningDTOReadsTheEngineNumberExactly(t *testing.T) {
+	var e CommissionEarningDTO
+	require.NoError(t, json.Unmarshal([]byte(`{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.07,"cv_amount":100,"dollar_amount":7,"walk":0}`), &e))
+	assert.Equal(t, "7", e.DollarAmount.String())
+	assert.Equal(t, "0.07", e.Rate.String())
+}
+
+func TestCommissionEarningDTORefusesAQuotedAmount(t *testing.T) {
+	var e CommissionEarningDTO
+	err := json.Unmarshal([]byte(`{"dollar_amount":"7"}`), &e)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bare JSON number")
 }

@@ -14,6 +14,7 @@ use crate::config::CompensationPlan;
 use crate::config::PassUpConfig;
 use crate::config::commission::{CompressionConfig, CompressionMode};
 use crate::config::eligibility::{ActiveLegTier, CommissionEligibility};
+use crate::decimal::{AuthoredDec, Dec};
 use crate::tree::navigator::TreeNavigator;
 use crate::tree::node::Node;
 
@@ -62,12 +63,12 @@ pub(crate) struct LevelWalkConfig<'a> {
     /// (HEU-517), so the counter, not upstream validation, is what makes
     /// this safe.
     pub max_depth: u8,
-    pub broad_pct: f64,
-    pub multiplier: f64,
+    pub broad_pct: Dec,
+    pub multiplier: Dec,
     pub compression: Option<&'a CompressionConfig>,
     pub threshold_ordinal: Option<u16>,
     pub rank_ordinals: &'a HashMap<&'a str, u16>,
-    pub rate_table: &'a BTreeMap<String, BTreeMap<u8, f64>>,
+    pub rate_table: &'a BTreeMap<String, BTreeMap<u8, AuthoredDec>>,
     /// Optional pass-up skip sets. When present, distributors are
     /// skipped (without consuming a level) for volume sources in
     /// their skip set.
@@ -116,7 +117,7 @@ pub(crate) fn validate_snapshot_ranks(
     }
 }
 
-/// Reject a snapshot whose personal volume is non-finite or negative.
+/// Reject a snapshot whose personal volume is negative.
 ///
 /// On `Err`, the user ID is the lowest among the offending snapshots.
 pub(crate) fn validate_snapshot_volumes(
@@ -124,7 +125,7 @@ pub(crate) fn validate_snapshot_volumes(
 ) -> Result<(), CalculationError> {
     let offender = snapshots
         .iter()
-        .filter(|(_, s)| !s.personal_volume.is_finite() || s.personal_volume < 0.0)
+        .filter(|(_, s)| s.personal_volume.is_negative())
         .min_by_key(|(id, _)| **id);
     match offender {
         Some((user_id, s)) => Err(CalculationError::InvalidPersonalVolume(
@@ -226,9 +227,9 @@ pub(crate) fn determine_max_depth(active_leg_count: u16, tiers: &[ActiveLegTier]
     None // no tier matched, use config max_depth
 }
 
-/// Validate that a volume source's CV amount is finite and non-negative.
+/// Validate that a volume source's CV amount is non-negative.
 pub(crate) fn validate_cv(source: &VolumeSource) -> Result<(), CalculationError> {
-    if !source.cv_amount.is_finite() || source.cv_amount < 0.0 {
+    if source.cv_amount.is_negative() {
         return Err(CalculationError::InvalidCvAmount(
             source.source_id,
             source.cv_amount,
@@ -440,15 +441,16 @@ pub(crate) fn build_pass_up_context<T: TreeNavigator>(
 ///
 /// Called once during config construction. The debug_assert catches
 /// this in development; the tracing::warn surfaces it in production.
-pub(crate) fn validate_broad_pct(broad_pct: f64) {
+pub(crate) fn validate_broad_pct(broad_pct: Dec) {
+    let in_range = !broad_pct.is_negative() && broad_pct <= Dec::ONE;
     debug_assert!(
-        (0.0..=1.0).contains(&broad_pct),
+        in_range,
         "broad_commission_percent out of range: {}",
         broad_pct
     );
-    if !(0.0..=1.0).contains(&broad_pct) {
+    if !in_range {
         tracing::warn!(
-            broad_percent = broad_pct,
+            broad_percent = %broad_pct,
             "broad_commission_percent outside [0.0, 1.0]; commissions may be overstated"
         );
     }
@@ -642,9 +644,9 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                 .get(&snapshot.rank)
                 .and_then(|levels| levels.get(&level_u8))
                 .copied()
-                .unwrap_or(0.0);
+                .unwrap_or(AuthoredDec::ZERO);
 
-            if rate > 0.0 {
+            if rate > AuthoredDec::ZERO {
                 steps.push(WalkStep {
                     node_id: node.user_id,
                     outcome: StepOutcome::Paid,
@@ -655,15 +657,20 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                     earner_id: node.user_id,
                     source_id: source.source_id,
                     level: level_u8,
-                    rate: Some(rate),
-                    cv_amount: source.cv_amount,
-                    dollar_amount: source.cv_amount * config.broad_pct * config.multiplier * rate,
+                    rate: Some(rate.dec()),
+                    cv_amount: source.cv_amount.dec(),
+                    dollar_amount: source
+                        .cv_amount
+                        .dec()
+                        .try_mul(config.broad_pct)?
+                        .try_mul(config.multiplier)?
+                        .try_mul(rate)?,
                     walk: Some(collector_id),
                 });
             } else {
                 // Eligible and uncompressed, but the rate table had no entry
                 // for this rank at this level, so the lookup above fell back
-                // to 0.0. The level is still consumed by the increment below,
+                // to zero. The level is still consumed by the increment below,
                 // so this is a forfeit and not a skip. Omitting this step
                 // leaves steps.len() short of the counter for every zero-rate
                 // node, which compiles and passes every fixture.
@@ -702,6 +709,7 @@ mod tests {
     use crate::config::eligibility::ActiveLegTier;
     use crate::tree::test_helpers::test_uuid;
     use crate::tree::unilevel::UnilevelTree;
+    use crate::{assert_d, d};
 
     // --- build_rank_ordinals ---
 
@@ -712,7 +720,7 @@ mod tests {
             crate::config::StructureConfig::Unilevel(crate::config::UnilevelStructureConfig {
                 name: "Test".to_string(),
                 level_commission: crate::config::commission::LevelCommissionConfig {
-                    broad_commission_percent: 0.40,
+                    broad_commission_percent: d!(0.40),
                     volume_to_dollar_multiplier: None,
                     max_depth: 5,
                     rate_table: std::collections::BTreeMap::new(),
@@ -735,7 +743,7 @@ mod tests {
             crate::config::StructureConfig::Unilevel(crate::config::UnilevelStructureConfig {
                 name: "Test".to_string(),
                 level_commission: crate::config::commission::LevelCommissionConfig {
-                    broad_commission_percent: 0.40,
+                    broad_commission_percent: d!(0.40),
                     volume_to_dollar_multiplier: None,
                     max_depth: 5,
                     rate_table: std::collections::BTreeMap::new(),
@@ -847,14 +855,14 @@ mod tests {
 
     // --- validate_snapshot_volumes ---
 
-    fn snapshot_with_pv(pv: f64) -> DistributorSnapshot {
+    fn snapshot_with_pv(pv: AuthoredDec) -> DistributorSnapshot {
         DistributorSnapshot {
             personal_volume: pv,
             ..snapshot_with_rank("associate")
         }
     }
 
-    fn assert_rejects_volume(pv: f64) {
+    fn assert_rejects_volume(pv: AuthoredDec) {
         let mut snapshots = HashMap::new();
         snapshots.insert(test_uuid(1), snapshot_with_pv(pv));
 
@@ -863,38 +871,23 @@ mod tests {
             matches!(
                 err,
                 CalculationError::InvalidPersonalVolume(id, observed)
-                    if id == test_uuid(1) && observed.to_bits() == pv.to_bits()
+                    if id == test_uuid(1) && observed == pv
             ),
             "got {err:?}"
         );
     }
 
     #[test]
-    fn validate_snapshot_volumes_rejects_nan() {
-        assert_rejects_volume(f64::NAN);
-    }
-
-    #[test]
-    fn validate_snapshot_volumes_rejects_positive_infinity() {
-        assert_rejects_volume(f64::INFINITY);
-    }
-
-    #[test]
-    fn validate_snapshot_volumes_rejects_negative_infinity() {
-        assert_rejects_volume(f64::NEG_INFINITY);
-    }
-
-    #[test]
     fn validate_snapshot_volumes_rejects_a_negative_value() {
-        assert_rejects_volume(-0.5);
+        assert_rejects_volume(d!(-0.5));
     }
 
     #[test]
     fn validate_snapshot_volumes_accepts_zero_negative_zero_and_positive_values() {
         let mut snapshots = HashMap::new();
-        snapshots.insert(test_uuid(1), snapshot_with_pv(0.0));
-        snapshots.insert(test_uuid(2), snapshot_with_pv(-0.0));
-        snapshots.insert(test_uuid(3), snapshot_with_pv(150.0));
+        snapshots.insert(test_uuid(1), snapshot_with_pv(d!(0.0)));
+        snapshots.insert(test_uuid(2), snapshot_with_pv(d!(-0.0)));
+        snapshots.insert(test_uuid(3), snapshot_with_pv(d!(150.0)));
 
         assert_eq!(validate_snapshot_volumes(&snapshots), Ok(()));
     }
@@ -904,14 +897,17 @@ mod tests {
         // Rebuilt inside the loop so each pass samples a fresh HashMap order.
         for _ in 0..32 {
             let mut snapshots = HashMap::new();
-            snapshots.insert(test_uuid(3), snapshot_with_pv(f64::NAN));
-            snapshots.insert(test_uuid(1), snapshot_with_pv(-1.0));
-            snapshots.insert(test_uuid(4), snapshot_with_pv(f64::INFINITY));
-            snapshots.insert(test_uuid(2), snapshot_with_pv(150.0));
+            snapshots.insert(test_uuid(3), snapshot_with_pv(d!(-3.0)));
+            snapshots.insert(test_uuid(1), snapshot_with_pv(d!(-1.0)));
+            snapshots.insert(test_uuid(4), snapshot_with_pv(d!(-4.0)));
+            snapshots.insert(test_uuid(2), snapshot_with_pv(d!(150.0)));
 
             assert_eq!(
                 validate_snapshot_volumes(&snapshots),
-                Err(CalculationError::InvalidPersonalVolume(test_uuid(1), -1.0))
+                Err(CalculationError::InvalidPersonalVolume(
+                    test_uuid(1),
+                    d!(-1.0)
+                ))
             );
         }
     }
@@ -923,12 +919,12 @@ mod tests {
 
     #[test]
     fn invalid_personal_volume_message_states_the_user_and_the_observed_value() {
-        let err = CalculationError::InvalidPersonalVolume(test_uuid(1), f64::NAN);
+        let err = CalculationError::InvalidPersonalVolume(test_uuid(1), d!(-0.5));
 
         assert_eq!(
             err.to_string(),
             format!(
-                "snapshot for {} has personal_volume NaN; it must be finite and not negative",
+                "snapshot for {} has personal_volume -0.5; it must not be negative",
                 test_uuid(1)
             )
         );
@@ -991,7 +987,7 @@ mod tests {
         // can make the rank error win.
         let plan = test_plan_with_ranks(&[("associate", 1)]);
         let mut snapshots = HashMap::new();
-        snapshots.insert(test_uuid(1), snapshot_with_pv(f64::NAN));
+        snapshots.insert(test_uuid(1), snapshot_with_pv(d!(-2.0)));
         snapshots.insert(test_uuid(2), snapshot_with_rank("diamond"));
 
         assert_eq!(
@@ -1007,11 +1003,14 @@ mod tests {
     fn validate_snapshots_rejects_a_bad_volume_when_every_rank_is_known() {
         let plan = test_plan_with_ranks(&[("associate", 1)]);
         let mut snapshots = HashMap::new();
-        snapshots.insert(test_uuid(1), snapshot_with_pv(-2.0));
+        snapshots.insert(test_uuid(1), snapshot_with_pv(d!(-2.0)));
 
         assert_eq!(
             validate_snapshots(&plan, &snapshots, [test_uuid(1)]),
-            Err(CalculationError::InvalidPersonalVolume(test_uuid(1), -2.0))
+            Err(CalculationError::InvalidPersonalVolume(
+                test_uuid(1),
+                d!(-2.0)
+            ))
         );
     }
 
@@ -1021,11 +1020,14 @@ mod tests {
         // order can make the volume error win.
         let plan = test_plan_with_ranks(&[("associate", 1)]);
         let mut snapshots = HashMap::new();
-        snapshots.insert(test_uuid(2), snapshot_with_pv(-2.0));
+        snapshots.insert(test_uuid(2), snapshot_with_pv(d!(-2.0)));
 
         assert_eq!(
             validate_snapshots(&plan, &snapshots, [test_uuid(1), test_uuid(2)]),
-            Err(CalculationError::InvalidPersonalVolume(test_uuid(2), -2.0))
+            Err(CalculationError::InvalidPersonalVolume(
+                test_uuid(2),
+                d!(-2.0)
+            ))
         );
     }
 
@@ -1047,7 +1049,7 @@ mod tests {
         tree.add_root(test_uuid(1), 0).unwrap();
         let source = VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         };
 
         assert_eq!(
@@ -1147,7 +1149,7 @@ mod tests {
     fn validate_cv_accepts_positive() {
         let source = VolumeSource {
             source_id: uuid_from_index(1),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         };
         assert!(validate_cv(&source).is_ok());
     }
@@ -1156,7 +1158,7 @@ mod tests {
     fn validate_cv_accepts_zero() {
         let source = VolumeSource {
             source_id: uuid_from_index(1),
-            cv_amount: 0.0,
+            cv_amount: d!(0.0),
         };
         assert!(validate_cv(&source).is_ok());
     }
@@ -1165,25 +1167,7 @@ mod tests {
     fn validate_cv_rejects_negative() {
         let source = VolumeSource {
             source_id: uuid_from_index(1),
-            cv_amount: -1.0,
-        };
-        assert!(validate_cv(&source).is_err());
-    }
-
-    #[test]
-    fn validate_cv_rejects_nan() {
-        let source = VolumeSource {
-            source_id: uuid_from_index(1),
-            cv_amount: f64::NAN,
-        };
-        assert!(validate_cv(&source).is_err());
-    }
-
-    #[test]
-    fn validate_cv_rejects_infinity() {
-        let source = VolumeSource {
-            source_id: uuid_from_index(1),
-            cv_amount: f64::INFINITY,
+            cv_amount: d!(-1.0),
         };
         assert!(validate_cv(&source).is_err());
     }
@@ -1197,18 +1181,18 @@ mod tests {
                 earner_id: uuid_from_index(1),
                 source_id: uuid_from_index(2),
                 level: 3,
-                rate: Some(0.01),
-                cv_amount: 100.0,
-                dollar_amount: 1.0,
+                rate: Some(d!(0.01)),
+                cv_amount: d!(100.0),
+                dollar_amount: d!(1.0),
                 walk: None,
             },
             CommissionEarning {
                 earner_id: uuid_from_index(1),
                 source_id: uuid_from_index(2),
                 level: 1,
-                rate: Some(0.05),
-                cv_amount: 100.0,
-                dollar_amount: 5.0,
+                rate: Some(d!(0.05)),
+                cv_amount: d!(100.0),
+                dollar_amount: d!(5.0),
                 walk: None,
             },
         ];
@@ -1229,18 +1213,18 @@ mod tests {
                 earner_id: uuid_from_index(1),
                 source_id: uuid_from_index(2),
                 level: 1,
-                rate: Some(0.05),
-                cv_amount: 100.0,
-                dollar_amount: 5.0,
+                rate: Some(d!(0.05)),
+                cv_amount: d!(100.0),
+                dollar_amount: d!(5.0),
                 walk: Some(3),
             },
             CommissionEarning {
                 earner_id: uuid_from_index(1),
                 source_id: uuid_from_index(2),
                 level: 1,
-                rate: Some(0.05),
-                cv_amount: 100.0,
-                dollar_amount: 5.0,
+                rate: Some(d!(0.05)),
+                cv_amount: d!(100.0),
+                dollar_amount: d!(5.0),
                 walk: Some(1),
             },
         ];
@@ -1260,18 +1244,18 @@ mod tests {
                 earner_id: uuid_from_index(1),
                 source_id: uuid_from_index(2),
                 level: 2,
-                rate: Some(0.05),
-                cv_amount: 100.0,
-                dollar_amount: 5.0,
+                rate: Some(d!(0.05)),
+                cv_amount: d!(100.0),
+                dollar_amount: d!(5.0),
                 walk: Some(1),
             },
             CommissionEarning {
                 earner_id: uuid_from_index(1),
                 source_id: uuid_from_index(2),
                 level: 1,
-                rate: Some(0.05),
-                cv_amount: 100.0,
-                dollar_amount: 5.0,
+                rate: Some(d!(0.05)),
+                cv_amount: d!(100.0),
+                dollar_amount: d!(5.0),
                 walk: Some(5),
             },
         ];
@@ -1295,18 +1279,18 @@ mod tests {
                 earner_id: uuid_from_index(1),
                 source_id: uuid_from_index(2),
                 level: 1,
-                rate: Some(0.05),
-                cv_amount: 100.0,
-                dollar_amount: 5.0,
+                rate: Some(d!(0.05)),
+                cv_amount: d!(100.0),
+                dollar_amount: d!(5.0),
                 walk: Some(0),
             },
             CommissionEarning {
                 earner_id: uuid_from_index(1),
                 source_id: uuid_from_index(2),
                 level: 1,
-                rate: Some(0.05),
-                cv_amount: 100.0,
-                dollar_amount: 5.0,
+                rate: Some(d!(0.05)),
+                cv_amount: d!(100.0),
+                dollar_amount: d!(5.0),
                 walk: None,
             },
         ];
@@ -1322,27 +1306,27 @@ mod tests {
                 earner_id: uuid_from_index(2),
                 source_id: uuid_from_index(1),
                 level: 1,
-                rate: Some(0.05),
-                cv_amount: 100.0,
-                dollar_amount: 2.0,
+                rate: Some(d!(0.05)),
+                cv_amount: d!(100.0),
+                dollar_amount: d!(2.0),
                 walk: None,
             },
             CommissionEarning {
                 earner_id: uuid_from_index(1),
                 source_id: uuid_from_index(2),
                 level: 1,
-                rate: Some(0.05),
-                cv_amount: 100.0,
-                dollar_amount: 2.0,
+                rate: Some(d!(0.05)),
+                cv_amount: d!(100.0),
+                dollar_amount: d!(2.0),
                 walk: None,
             },
             CommissionEarning {
                 earner_id: uuid_from_index(1),
                 source_id: uuid_from_index(1),
                 level: 1,
-                rate: Some(0.05),
-                cv_amount: 100.0,
-                dollar_amount: 2.0,
+                rate: Some(d!(0.05)),
+                cv_amount: d!(100.0),
+                dollar_amount: d!(2.0),
                 walk: None,
             },
         ];
@@ -1380,7 +1364,7 @@ mod tests {
         snapshots.insert(
             test_uuid(3),
             DistributorSnapshot {
-                personal_volume: 0.0, // below min
+                personal_volume: d!(0.0), // below min
                 ..crate::commission::test_helpers::eligible_snapshot()
             },
         );
@@ -1417,7 +1401,7 @@ mod tests {
         snapshots.insert(
             test_uuid(2),
             DistributorSnapshot {
-                personal_volume: 0.0, // ineligible
+                personal_volume: d!(0.0), // ineligible
                 ..crate::commission::test_helpers::eligible_snapshot()
             },
         );
@@ -1429,15 +1413,6 @@ mod tests {
     }
 
     // --- Additional tests from code quality review ---
-
-    #[test]
-    fn validate_cv_rejects_negative_infinity() {
-        let source = VolumeSource {
-            source_id: uuid_from_index(1),
-            cv_amount: f64::NEG_INFINITY,
-        };
-        assert!(validate_cv(&source).is_err());
-    }
 
     #[test]
     fn determine_max_depth_no_tier_matches_with_nonempty_tiers() {
@@ -1480,34 +1455,34 @@ mod tests {
     }
 
     /// A rate table that pays at every level from 1 to 255.
-    fn full_depth_rate_table() -> BTreeMap<String, BTreeMap<u8, f64>> {
+    fn full_depth_rate_table() -> BTreeMap<String, BTreeMap<u8, AuthoredDec>> {
         let mut rates = BTreeMap::new();
         for l in 1..=255u8 {
-            rates.insert(l, 0.01);
+            rates.insert(l, d!(0.01));
         }
         let mut table = BTreeMap::new();
         table.insert("associate".to_string(), rates);
         table
     }
 
-    fn test_rate_table() -> BTreeMap<String, BTreeMap<u8, f64>> {
+    fn test_rate_table() -> BTreeMap<String, BTreeMap<u8, AuthoredDec>> {
         let mut table = BTreeMap::new();
         let mut rates = BTreeMap::new();
-        rates.insert(1, 0.05);
-        rates.insert(2, 0.04);
-        rates.insert(3, 0.03);
+        rates.insert(1, d!(0.05));
+        rates.insert(2, d!(0.04));
+        rates.insert(3, d!(0.03));
         table.insert("associate".to_string(), rates);
         table
     }
 
     fn test_walk_config<'a>(
         rank_ordinals: &'a HashMap<&'a str, u16>,
-        rate_table: &'a BTreeMap<String, BTreeMap<u8, f64>>,
+        rate_table: &'a BTreeMap<String, BTreeMap<u8, AuthoredDec>>,
     ) -> LevelWalkConfig<'a> {
         LevelWalkConfig {
             max_depth: 5,
-            broad_pct: 0.40,
-            multiplier: 1.0,
+            broad_pct: d!(0.40),
+            multiplier: d!(1.0),
             compression: None,
             threshold_ordinal: None,
             rank_ordinals,
@@ -1552,7 +1527,7 @@ mod tests {
         let config = test_walk_config(&rank_ordinals, &rate_table);
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let mut walks = Vec::new();
@@ -1605,7 +1580,7 @@ mod tests {
             test_uuid(3),
             DistributorSnapshot {
                 rank: "associate".to_string(),
-                personal_volume: 0.0,
+                personal_volume: d!(0.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
             },
@@ -1616,15 +1591,15 @@ mod tests {
         let rank_ordinals = HashMap::from([("associate", 1u16)]);
         let mut rate_table = BTreeMap::new();
         let mut rates = BTreeMap::new();
-        rates.insert(1, 0.05);
-        rates.insert(2, 0.04);
+        rates.insert(1, d!(0.05));
+        rates.insert(2, d!(0.04));
         rate_table.insert("associate".to_string(), rates);
         let mut config = test_walk_config(&rank_ordinals, &rate_table);
         config.max_depth = 5;
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(4),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let mut walks = Vec::new();
@@ -1712,7 +1687,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let mut walks = Vec::new();
@@ -1749,7 +1724,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let mut walks = Vec::new();
@@ -1776,7 +1751,7 @@ mod tests {
         // advances and a step is owed.
         let (tree, snapshots) = eligible_chain(4);
         let elig = CommissionEligibility {
-            minimum_pv: 100.0,
+            minimum_pv: d!(100.0),
             require_order_in_period: false,
             eligible_statuses: vec!["active".to_string()],
             active_leg_tiers: vec![ActiveLegTier {
@@ -1796,7 +1771,7 @@ mod tests {
         let config = test_walk_config(&rank_ordinals, &rate_table);
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let mut walks = Vec::new();
@@ -1832,7 +1807,7 @@ mod tests {
         let config = test_walk_config(&rank_ordinals, &rate_table);
         let volume = vec![VolumeSource {
             source_id: test_uuid(0),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let mut walks = Vec::new();
@@ -1870,7 +1845,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let mut walks = Vec::new();
@@ -1910,7 +1885,7 @@ mod tests {
         let config = test_walk_config(&rank_ordinals, &rate_table);
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let mut walks = Vec::new();
@@ -1954,7 +1929,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = walk_level_commissions(
@@ -1971,8 +1946,8 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, test_uuid(0));
         assert_eq!(result[0].level, 1);
-        assert_eq!(result[0].rate, Some(0.05));
-        assert!((result[0].dollar_amount - 2.0).abs() < 1e-10); // 100 * 0.40 * 1.0 * 0.05
+        assert_eq!(result[0].rate, Some(d!(0.05)));
+        assert_d!(result[0].dollar_amount, 2.0); // 100 * 0.40 * 1.0 * 0.05
     }
 
     #[test]
@@ -1991,8 +1966,8 @@ mod tests {
 
         let config = LevelWalkConfig {
             max_depth: 255,
-            broad_pct: 0.40,
-            multiplier: 1.0,
+            broad_pct: d!(0.40),
+            multiplier: d!(1.0),
             compression: None,
             threshold_ordinal: None,
             rank_ordinals: &rank_ordinals,
@@ -2003,7 +1978,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid_u16(300),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = walk_level_commissions(
@@ -2038,8 +2013,8 @@ mod tests {
 
         let config = LevelWalkConfig {
             max_depth: 254,
-            broad_pct: 0.40,
-            multiplier: 1.0,
+            broad_pct: d!(0.40),
+            multiplier: d!(1.0),
             compression: None,
             threshold_ordinal: None,
             rank_ordinals: &rank_ordinals,
@@ -2050,7 +2025,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid_u16(300),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = walk_level_commissions(
@@ -2086,8 +2061,8 @@ mod tests {
 
         let config = LevelWalkConfig {
             max_depth: 255,
-            broad_pct: 0.40,
-            multiplier: 1.0,
+            broad_pct: d!(0.40),
+            multiplier: d!(1.0),
             compression: None,
             threshold_ordinal: None,
             rank_ordinals: &rank_ordinals,
@@ -2098,7 +2073,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid_u16(300),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = walk_level_commissions(
@@ -2141,7 +2116,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         // Stop at node 0 (the root). Only node 1 should earn.
@@ -2173,7 +2148,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(99),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = walk_level_commissions(
@@ -2215,7 +2190,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(5),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = walk_level_commissions(
@@ -2465,7 +2440,7 @@ mod tests {
     fn snapshot_with_rank(rank: &str) -> DistributorSnapshot {
         DistributorSnapshot {
             rank: rank.to_string(),
-            personal_volume: 150.0,
+            personal_volume: d!(150.0),
             status: "active".to_string(),
             has_order_in_period: true,
         }
@@ -2473,13 +2448,13 @@ mod tests {
 
     fn test_walk_config_with_thresholds<'a>(
         rank_ordinals: &'a HashMap<&'a str, u16>,
-        rate_table: &'a BTreeMap<String, BTreeMap<u8, f64>>,
+        rate_table: &'a BTreeMap<String, BTreeMap<u8, AuthoredDec>>,
         thresholds: &'a [u16],
     ) -> LevelWalkConfig<'a> {
         LevelWalkConfig {
             max_depth: 5,
-            broad_pct: 0.0,
-            multiplier: 1.0,
+            broad_pct: d!(0.0),
+            multiplier: d!(1.0),
             compression: None,
             threshold_ordinal: None,
             rank_ordinals,
@@ -2523,8 +2498,8 @@ mod tests {
 
         let mut rate_table = BTreeMap::new();
         let mut rates = BTreeMap::new();
-        rates.insert(1, 0.05);
-        rates.insert(2, 0.04);
+        rates.insert(1, d!(0.05));
+        rates.insert(2, d!(0.04));
         for rank in ["associate", "bronze", "silver"] {
             rate_table.insert(rank.to_string(), rates.clone());
         }
@@ -2535,7 +2510,7 @@ mod tests {
         // Volume at node 4 (bottom). Walk goes upline: 3, 2, 1, 0.
         let volume = vec![VolumeSource {
             source_id: test_uuid(4),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let earnings = walk_level_commissions(
@@ -2580,8 +2555,8 @@ mod tests {
         let rank_ordinals: HashMap<&str, u16> = [("associate", 0_u16)].into_iter().collect();
         let mut rate_table = BTreeMap::new();
         let mut rates = BTreeMap::new();
-        rates.insert(1, 0.05);
-        rates.insert(2, 0.04);
+        rates.insert(1, d!(0.05));
+        rates.insert(2, d!(0.04));
         rate_table.insert("associate".to_string(), rates);
 
         let thresholds = [0_u16, 0];
@@ -2589,7 +2564,7 @@ mod tests {
         // Volume at node 2 (bottom). Walk goes upline: 1, 0.
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let earnings = walk_level_commissions(
@@ -2627,7 +2602,7 @@ mod tests {
             test_uuid(1),
             DistributorSnapshot {
                 rank: "associate".to_string(),
-                personal_volume: 0.0,
+                personal_volume: d!(0.0),
                 status: "inactive".to_string(),
                 has_order_in_period: false,
             },
@@ -2650,8 +2625,8 @@ mod tests {
 
         let config = LevelWalkConfig {
             max_depth: 5,
-            broad_pct: 0.0,
-            multiplier: 1.0,
+            broad_pct: d!(0.0),
+            multiplier: d!(1.0),
             compression: Some(&compression),
             threshold_ordinal: None,
             rank_ordinals: &rank_ordinals,
@@ -2663,7 +2638,7 @@ mod tests {
         // Volume at node 2 (bottom). Walk goes upline: 1, 0.
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let earnings = walk_level_commissions(
@@ -2711,8 +2686,8 @@ mod tests {
 
         let mut rate_table = BTreeMap::new();
         let mut rates = BTreeMap::new();
-        rates.insert(1, 0.05);
-        rates.insert(2, 0.04);
+        rates.insert(1, d!(0.05));
+        rates.insert(2, d!(0.04));
         for rank in ["associate", "bronze", "silver"] {
             rate_table.insert(rank.to_string(), rates.clone());
         }
@@ -2723,7 +2698,7 @@ mod tests {
         // Volume at node 2 (bottom). Walk goes upline: 1, 0.
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let earnings = walk_level_commissions(

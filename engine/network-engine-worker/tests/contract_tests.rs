@@ -76,12 +76,90 @@ fn load_fixtures() -> Vec<(String, ContractFixture)> {
     fixtures
 }
 
+/// Compares two JSON values, reading numbers as exact decimals. Returns the
+/// first difference, led by its JSON Pointer.
+fn compare_json(
+    path: &str,
+    expected: &serde_json::Value,
+    actual: &serde_json::Value,
+) -> Result<(), String> {
+    use serde_json::Value;
+    let at = if path.is_empty() { "(root)" } else { path };
+    match (expected, actual) {
+        (Value::Number(e), Value::Number(a)) => {
+            let (e_text, a_text) = (e.to_string(), a.to_string());
+            let same = match (canonical_number(&e_text), canonical_number(&a_text)) {
+                (Some(x), Some(y)) => x == y,
+                _ => e_text == a_text,
+            };
+            if same {
+                Ok(())
+            } else {
+                Err(format!("{at}: expected {e}, got {a}"))
+            }
+        }
+        (Value::Object(e), Value::Object(a)) => {
+            for (key, ev) in e {
+                match a.get(key) {
+                    Some(av) => compare_json(&format!("{path}/{key}"), ev, av)?,
+                    None => return Err(format!("{path}/{key}: expected key is absent")),
+                }
+            }
+            match a.keys().find(|key| !e.contains_key(*key)) {
+                Some(key) => Err(format!("{path}/{key}: unexpected key")),
+                None => Ok(()),
+            }
+        }
+        (Value::Array(e), Value::Array(a)) if e.len() == a.len() => {
+            for (i, (ev, av)) in e.iter().zip(a).enumerate() {
+                compare_json(&format!("{path}/{i}"), ev, av)?;
+            }
+            Ok(())
+        }
+        (Value::Array(e), Value::Array(a)) => Err(format!(
+            "{at}: expected an array of {}, got an array of {}",
+            e.len(),
+            a.len()
+        )),
+        _ if expected == actual => Ok(()),
+        _ => Err(format!("{at}: expected {expected}, got {actual}")),
+    }
+}
+
+/// A JSON number's sign, significant digits and power of ten, with leading and
+/// trailing zeros removed. Zero has no sign. `None` when the exponent does not
+/// fit an `i64`.
+fn canonical_number(text: &str) -> Option<(bool, String, i64)> {
+    let (negative, body) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text),
+    };
+    let (mantissa, exponent_text) = match body.find(['e', 'E']) {
+        Some(at) => (&body[..at], Some(&body[at + 1..])),
+        None => (body, None),
+    };
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let digits = format!("{whole}{fraction}");
+    let significant = digits.trim_start_matches('0');
+    let trimmed = significant.trim_end_matches('0');
+    if trimmed.is_empty() {
+        return Some((false, String::new(), 0));
+    }
+    let exponent = match exponent_text {
+        Some(e) => e.trim_start_matches('+').parse::<i64>().ok()?,
+        None => 0,
+    };
+    let shift = (significant.len() - trimmed.len()) as i64 - fraction.len() as i64;
+    Some((negative, trimmed.to_string(), exponent.checked_add(shift)?))
+}
+
 /// Asserts that the actual response matches the expected response from the fixture.
 ///
 /// Comparison rules:
 /// - `ok` must match exactly.
 /// - `id` must match exactly.
-/// - If `expected.result` is present, `actual.result` must match exactly.
+/// - If `expected.result` is present, `actual.result` must match, with numbers
+///   compared as exact decimals.
 /// - If `expected.error.code` is present, `actual.error.code` must match.
 /// - If `expected.error.message_contains` is present, `actual.error.message`
 ///   must contain it. When the key is absent the message is not compared.
@@ -105,11 +183,9 @@ fn assert_response_matches(fixture_name: &str, expected: &serde_json::Value, act
 
     // If expected has a result, compare it (including explicit null).
     if expected.get("result").is_some() {
-        assert_eq!(
-            expected["result"], actual["result"],
-            "[{}] 'result' mismatch",
-            fixture_name
-        );
+        if let Err(difference) = compare_json("", &expected["result"], &actual["result"]) {
+            panic!("[{}] 'result' mismatch at {}", fixture_name, difference);
+        }
     }
 
     // If expected has an error, compare the error object.
@@ -417,5 +493,76 @@ fn check_expected_error_treats_code_as_optional() {
     assert!(
         check_expected_error("fx", &expected, &actual).is_err(),
         "the message check must still bite when no code is asserted"
+    );
+}
+
+#[test]
+fn compare_json_treats_equal_decimals_as_equal() {
+    let expected: serde_json::Value =
+        serde_json::from_str(r#"{"a":2.0,"b":[1,0.50],"c":1e3}"#).unwrap();
+    let actual: serde_json::Value =
+        serde_json::from_str(r#"{"c":1000,"b":[1.00,0.5],"a":2}"#).unwrap();
+    assert_eq!(compare_json("", &expected, &actual), Ok(()));
+}
+
+#[test]
+fn compare_json_names_the_first_difference() {
+    let expected: serde_json::Value = serde_json::from_str(r#"{"a":{"b":[1,2.5]}}"#).unwrap();
+    let actual: serde_json::Value = serde_json::from_str(r#"{"a":{"b":[1,2.50001]}}"#).unwrap();
+    assert_eq!(
+        compare_json("", &expected, &actual),
+        Err("/a/b/1: expected 2.5, got 2.50001".to_string())
+    );
+}
+
+#[test]
+fn compare_json_keeps_strings_and_numbers_apart() {
+    let expected: serde_json::Value = serde_json::from_str(r#"{"a":"2"}"#).unwrap();
+    let actual: serde_json::Value = serde_json::from_str(r#"{"a":2}"#).unwrap();
+    assert!(compare_json("", &expected, &actual).is_err());
+}
+
+#[test]
+fn compare_json_does_not_panic_on_an_exponent_past_i64() {
+    let expected: serde_json::Value = serde_json::from_str(r#"[1e99999999999999999999]"#).unwrap();
+    let actual: serde_json::Value = serde_json::from_str(r#"[1]"#).unwrap();
+    assert!(compare_json("", &expected, &actual).is_err());
+    assert_eq!(canonical_number("1e99999999999999999999"), None);
+    assert_eq!(canonical_number("1e-99999999999999999999"), None);
+    assert_eq!(canonical_number("10e9223372036854775807"), None);
+}
+
+#[test]
+fn compare_json_treats_negative_zero_as_zero() {
+    let expected: serde_json::Value = serde_json::from_str(r#"[0]"#).unwrap();
+    let actual: serde_json::Value = serde_json::from_str(r#"[-0.0]"#).unwrap();
+    assert_eq!(compare_json("", &expected, &actual), Ok(()));
+}
+
+#[test]
+fn compare_json_labels_a_root_difference() {
+    assert_eq!(
+        compare_json("", &serde_json::json!("x"), &serde_json::json!("y")),
+        Err("(root): expected \"x\", got \"y\"".to_string())
+    );
+}
+
+#[test]
+fn compare_json_names_array_lengths_that_differ() {
+    assert_eq!(
+        compare_json(
+            "",
+            &serde_json::json!({"a": [1, 2]}),
+            &serde_json::json!({"a": [1]})
+        ),
+        Err("/a: expected an array of 2, got an array of 1".to_string())
+    );
+}
+
+#[test]
+fn canonical_number_reads_zero_with_any_exponent_as_zero() {
+    assert_eq!(
+        canonical_number("0e99999999999999999999"),
+        canonical_number("0")
     );
 }

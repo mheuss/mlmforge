@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::config::stairstep::{BreakawayTier, MinOverride, MultiTierConfig};
 use crate::config::{CompensationPlan, StairstepStructureConfig};
+use crate::decimal::{AuthoredDec, Dec, NumericError};
 use crate::tree::unilevel::UnilevelTree;
 
 use super::generation::{GenerationEntry, count_generations_upward};
@@ -27,7 +28,7 @@ use super::{walk, walk_order};
 struct PrepResult {
     eligibility: HashMap<Uuid, walk::EligibilityResult>,
     breakaways: HashSet<Uuid>,
-    group_volumes: HashMap<Uuid, f64>,
+    group_volumes: HashMap<Uuid, Dec>,
     group_leaders: HashMap<Uuid, Uuid>,
     /// First-Line Split-Out Group counts. Distributor X's count is the
     /// number of breakaways B whose nearest breakaway-or-root ancestor is
@@ -77,6 +78,9 @@ fn identify_breakaways(
         .collect()
 }
 
+/// Each group leader's total volume, and each distributor's group leader.
+type GroupVolumes = (HashMap<Uuid, Dec>, HashMap<Uuid, Uuid>);
+
 /// Build group volume aggregations and group leader assignments.
 ///
 /// For each distributor, the "group leader" is the nearest breakaway
@@ -96,21 +100,29 @@ fn build_group_volumes(
     tree: &UnilevelTree,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     breakaways: &HashSet<Uuid>,
-) -> (HashMap<Uuid, f64>, HashMap<Uuid, Uuid>) {
-    let mut group_volumes: HashMap<Uuid, f64> = HashMap::new();
+) -> Result<GroupVolumes, NumericError> {
+    let mut group_volumes: HashMap<Uuid, Dec> = HashMap::new();
     let mut group_leaders: HashMap<Uuid, Uuid> = HashMap::new();
 
-    // Float addition depends on order, so sum in user-id order, not hash order.
+    // Sum in user-id order, not hash order, so a failed addition names the same operands every run.
     let mut user_ids: Vec<&Uuid> = snapshots.keys().collect();
     user_ids.sort();
     for user_id in user_ids {
         let snapshot = &snapshots[user_id];
         let leader = find_group_leader(tree, *user_id, breakaways);
         group_leaders.insert(*user_id, leader);
-        *group_volumes.entry(leader).or_insert(0.0) += snapshot.personal_volume;
+        let total = group_volumes.entry(leader).or_insert(Dec::ZERO);
+        *total = total.try_add(snapshot.personal_volume)?;
     }
 
-    (group_volumes, group_leaders)
+    Ok((group_volumes, group_leaders))
+}
+
+/// The ids in `set`, in ascending order.
+fn sorted_ids(set: &HashSet<Uuid>) -> Vec<Uuid> {
+    let mut ids: Vec<Uuid> = set.iter().copied().collect();
+    ids.sort_unstable();
+    ids
 }
 
 /// Find the group leader for a distributor.
@@ -168,19 +180,19 @@ fn prep(
     structure: &StairstepStructureConfig,
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     rank_ordinals: &HashMap<&str, u16>,
-) -> PrepResult {
+) -> Result<PrepResult, NumericError> {
     let eligibility = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
     let breakaways = identify_breakaways(structure, snapshots, rank_ordinals);
-    let (group_volumes, group_leaders) = build_group_volumes(tree, snapshots, &breakaways);
+    let (group_volumes, group_leaders) = build_group_volumes(tree, snapshots, &breakaways)?;
     let first_line_split_outs = count_first_line_split_outs(tree, &breakaways);
 
-    PrepResult {
+    Ok(PrepResult {
         eligibility,
         breakaways,
         group_volumes,
         group_leaders,
         first_line_split_outs,
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -193,28 +205,11 @@ fn prep(
 /// earn and the walk keeps climbing.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Gen1Payout {
-    Rate(f64),
+    Rate(Dec),
     /// A fixed currency amount drawn from the leg's pool.
-    Currency(f64),
+    Currency(Dec),
     Nothing,
 }
-
-/// A floor equal to the pool is payable. Compare with a tolerance so binary
-/// rounding does not reject it: 2913000.0 * 0.29 is 844769.9999999999, and a
-/// floor of 844770.0 is meant to be exactly coverable there.
-///
-/// An absolute tolerance stops working once one ULP at the compared magnitude
-/// exceeds it, because that is the smallest gap two f64 values can have. The
-/// dollar figure is a consequence of that, not the rule: this value holds to a
-/// pool of 2^33, about 8.59 billion, and the 1e-10 it replaced held only to
-/// 2^19, about 524 thousand. Raising the tolerance moves the bound; it cannot
-/// remove it.
-///
-/// Above the bound an exactly-coverable floor is refused and pays nothing. It
-/// fails closed: the most it can ever overpay is the tolerance itself, a
-/// ten-thousandth of a cent. Removing the bound means comparing money in minor
-/// units rather than f64, which is wider than this field. HEU-717.
-const POOL_TOL: f64 = 1e-6;
 
 /// Resolve what a generation-1 ancestor earns on a breakaway leg.
 ///
@@ -227,30 +222,45 @@ fn resolve_gen1_payout(
     mode: &crate::config::stairstep::OverrideMode,
     ancestor_rank: &str,
     breakaway_rank: &str,
-) -> Gen1Payout {
+) -> Result<Gen1Payout, NumericError> {
     match mode {
         crate::config::stairstep::OverrideMode::Differential(diff) => {
-            let ancestor_rate = diff.rank_rates.get(ancestor_rank).copied().unwrap_or(0.0);
-            let breakaway_rate = diff.rank_rates.get(breakaway_rank).copied().unwrap_or(0.0);
-            let gap = ancestor_rate - breakaway_rate;
-            if gap > 0.0 {
-                return Gen1Payout::Rate(gap);
+            let rate_of = |rank: &str| {
+                diff.rank_rates
+                    .get(rank)
+                    .copied()
+                    .unwrap_or(AuthoredDec::ZERO)
+            };
+            let ancestor_rate = rate_of(ancestor_rank);
+            let breakaway_rate = rate_of(breakaway_rank);
+            let gap = ancestor_rate.dec().try_sub(breakaway_rate)?;
+            if gap > Dec::ZERO {
+                return Ok(Gen1Payout::Rate(gap));
             }
-            if ancestor_rate <= 0.0 {
-                return Gen1Payout::Nothing;
+            if ancestor_rate <= AuthoredDec::ZERO {
+                return Ok(Gen1Payout::Nothing);
             }
-            match diff.min_override {
-                MinOverride::Rate { value } if value > 0.0 => Gen1Payout::Rate(value),
-                MinOverride::Currency { value } if value > 0.0 => Gen1Payout::Currency(value),
+            Ok(match diff.min_override {
+                MinOverride::Rate { value } if value > AuthoredDec::ZERO => {
+                    Gen1Payout::Rate(value.dec())
+                }
+                MinOverride::Currency { value } if value > AuthoredDec::ZERO => {
+                    Gen1Payout::Currency(value.dec())
+                }
                 _ => Gen1Payout::Nothing,
-            }
+            })
         }
-        crate::config::stairstep::OverrideMode::FixedOverride(fixed) => {
-            match fixed.rank_rates.get(ancestor_rank).copied().unwrap_or(0.0) {
-                r if r > 0.0 => Gen1Payout::Rate(r),
+        crate::config::stairstep::OverrideMode::FixedOverride(fixed) => Ok(
+            match fixed
+                .rank_rates
+                .get(ancestor_rank)
+                .copied()
+                .unwrap_or(AuthoredDec::ZERO)
+            {
+                r if r > AuthoredDec::ZERO => Gen1Payout::Rate(r.dec()),
                 _ => Gen1Payout::Nothing,
-            }
-        }
+            },
+        ),
     }
 }
 
@@ -267,7 +277,7 @@ fn walk_overrides(
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     prep: &PrepResult,
     rank_ordinals: &HashMap<&str, u16>,
-    multiplier: f64,
+    multiplier: Dec,
 ) -> Result<Vec<CommissionEarning>, CalculationError> {
     let breakaway_cfg = match &structure.breakaway {
         Some(b) => b,
@@ -279,7 +289,7 @@ fn walk_overrides(
             walk_single_overrides(tree, structure, snapshots, prep, rank_ordinals, multiplier)
         }
         crate::config::stairstep::OverrideStrategy::MultiTier(cfg) => {
-            Ok(walk_multi_tier_overrides(tree, cfg, prep, multiplier))
+            Ok(walk_multi_tier_overrides(tree, cfg, prep, multiplier)?)
         }
     }
 }
@@ -319,7 +329,7 @@ fn walk_single_overrides(
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     prep: &PrepResult,
     rank_ordinals: &HashMap<&str, u16>,
-    multiplier: f64,
+    multiplier: Dec,
 ) -> Result<Vec<CommissionEarning>, CalculationError> {
     // broad_pct is read inside this function so the multi-tier dispatch
     // path does not carry it as an unused parameter. Walk 1
@@ -375,14 +385,15 @@ fn walk_single_overrides(
         )
     });
 
-    for &breakaway_id in &prep.breakaways {
+    // Visit breakaways in id order so a failed calculation names the same operands every run.
+    for breakaway_id in sorted_ids(&prep.breakaways) {
         let group_vol = prep
             .group_volumes
             .get(&breakaway_id)
             .copied()
-            .unwrap_or(0.0);
+            .unwrap_or(Dec::ZERO);
 
-        if group_vol <= 0.0 {
+        if group_vol <= Dec::ZERO {
             continue;
         }
 
@@ -415,7 +426,7 @@ fn walk_single_overrides(
                     continue;
                 }
 
-                let pool = group_vol * broad_pct * multiplier;
+                let pool = group_vol.try_mul(broad_pct)?.try_mul(multiplier)?;
                 if entry.generation == 1 {
                     let ancestor_rank = snapshots
                         .get(&entry.earner_id)
@@ -423,11 +434,11 @@ fn walk_single_overrides(
                         .ok_or(CalculationError::UplineNotInSnapshot(entry.earner_id))?;
 
                     let (rate, dollar_amount) =
-                        match resolve_gen1_payout(override_mode, ancestor_rank, breakaway_rank) {
+                        match resolve_gen1_payout(override_mode, ancestor_rank, breakaway_rank)? {
                             Gen1Payout::Nothing => continue,
-                            Gen1Payout::Rate(r) => (Some(r), pool * r),
+                            Gen1Payout::Rate(r) => (Some(r), pool.try_mul(r)?),
                             Gen1Payout::Currency(amount) => {
-                                if amount - pool > POOL_TOL {
+                                if amount > pool {
                                     continue;
                                 }
                                 (None, amount)
@@ -448,16 +459,20 @@ fn walk_single_overrides(
                     });
                 } else {
                     // Generation 2+: rate from generation override table
-                    let rate = gen_cfg.rates.get(&entry.generation).copied().unwrap_or(0.0);
+                    let rate = gen_cfg
+                        .rates
+                        .get(&entry.generation)
+                        .copied()
+                        .unwrap_or(AuthoredDec::ZERO);
 
-                    if rate > 0.0 {
+                    if rate > AuthoredDec::ZERO {
                         earnings.push(CommissionEarning {
                             earner_id: entry.earner_id,
                             source_id: breakaway_id,
                             level: entry.generation,
-                            rate: Some(rate),
+                            rate: Some(rate.dec()),
                             cv_amount: group_vol,
-                            dollar_amount: pool * rate,
+                            dollar_amount: pool.try_mul(rate)?,
                             // Walk 2. Permanently null in v2, see above.
                             walk: None,
                         });
@@ -486,13 +501,13 @@ fn walk_single_overrides(
                     None => return Err(CalculationError::UplineNotInSnapshot(node.user_id)),
                 };
 
-                let pool = group_vol * broad_pct * multiplier;
+                let pool = group_vol.try_mul(broad_pct)?.try_mul(multiplier)?;
                 let (rate, dollar_amount) =
-                    match resolve_gen1_payout(override_mode, ancestor_rank, breakaway_rank) {
+                    match resolve_gen1_payout(override_mode, ancestor_rank, breakaway_rank)? {
                         Gen1Payout::Nothing => continue,
-                        Gen1Payout::Rate(r) => (Some(r), pool * r),
+                        Gen1Payout::Rate(r) => (Some(r), pool.try_mul(r)?),
                         Gen1Payout::Currency(amount) => {
-                            if amount - pool > POOL_TOL {
+                            if amount > pool {
                                 continue;
                             }
                             (None, amount)
@@ -556,14 +571,19 @@ fn walk_multi_tier_overrides(
     tree: &UnilevelTree,
     config: &MultiTierConfig,
     prep: &PrepResult,
-    multiplier: f64,
-) -> Vec<CommissionEarning> {
+    multiplier: Dec,
+) -> Result<Vec<CommissionEarning>, NumericError> {
     let mut earnings = Vec::new();
     let always_boundary = |_: Uuid| true;
 
-    for &source_id in &prep.breakaways {
-        let group_vol = prep.group_volumes.get(&source_id).copied().unwrap_or(0.0);
-        if group_vol <= 0.0 {
+    // Visit breakaways in id order so a failed calculation names the same operands every run.
+    for source_id in sorted_ids(&prep.breakaways) {
+        let group_vol = prep
+            .group_volumes
+            .get(&source_id)
+            .copied()
+            .unwrap_or(Dec::ZERO);
+        if group_vol <= Dec::ZERO {
             continue;
         }
 
@@ -591,9 +611,9 @@ fn walk_multi_tier_overrides(
                     earner_id: entry.earner_id,
                     source_id,
                     level: depth_floor,
-                    rate: Some(tier.rate),
+                    rate: Some(tier.rate.dec()),
                     cv_amount: group_vol,
-                    dollar_amount: group_vol * multiplier * tier.rate,
+                    dollar_amount: group_vol.try_mul(multiplier)?.try_mul(tier.rate)?,
                     // Walk 2. Permanently null in v2, per design 029.
                     walk: None,
                 });
@@ -601,7 +621,7 @@ fn walk_multi_tier_overrides(
         }
     }
 
-    earnings
+    Ok(earnings)
 }
 
 // ---------------------------------------------------------------------------
@@ -645,9 +665,10 @@ fn walk_multi_tier_overrides(
 /// # Errors
 ///
 /// Returns [`CalculationError`] if a snapshot names a rank the plan does not
-/// define, if a snapshot has a non-finite or negative personal_volume, if a
-/// distributor in the tree has no snapshot, if a volume source is not found in
-/// the tree, or if a volume source has a non-finite or negative cv_amount.
+/// define, if a snapshot has a negative personal_volume, if a distributor in
+/// the tree has no snapshot, if a volume source is not found in the tree, if a
+/// volume source has a negative cv_amount, or if an exact result cannot be
+/// held.
 pub fn calculate_stairstep(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -658,15 +679,16 @@ pub fn calculate_stairstep(
 ) -> Result<CommissionCalculationResult, CalculationError> {
     walk::validate_snapshots(plan, snapshots, tree.user_ids())?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
-    let prep_result = prep(tree, plan, structure, snapshots, &rank_ordinals);
+    let prep_result = prep(tree, plan, structure, snapshots, &rank_ordinals)?;
 
-    let broad_pct = structure.level_commission.broad_commission_percent;
+    let broad_pct = structure.level_commission.broad_commission_percent.dec();
     walk::validate_broad_pct(broad_pct);
 
     let multiplier = structure
         .level_commission
         .volume_to_dollar_multiplier
-        .unwrap_or(plan.volume.volume_to_dollar_multiplier);
+        .unwrap_or(plan.volume.volume_to_dollar_multiplier)
+        .dec();
 
     let compression = structure.compression.as_ref();
     let threshold_ordinal = walk::resolve_threshold_ordinal(compression, &rank_ordinals);
@@ -751,6 +773,7 @@ mod tests {
         FixedOverrideConfig, MinOverride, MultiTierConfig, OverrideMode, OverrideStrategy,
     };
     use crate::config::{StairstepStructureConfig, StructureConfig};
+    use crate::{assert_d, d};
     use std::collections::BTreeMap;
 
     use crate::commission::test_helpers::uuid_from_index as uuid;
@@ -762,13 +785,13 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("diamond", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("associate", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("diamond", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("associate", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_stairstep(
@@ -788,19 +811,19 @@ mod tests {
     }
 
     #[test]
-    fn calculate_stairstep_rejects_a_nan_personal_volume() {
+    fn calculate_stairstep_rejects_a_negative_personal_volume() {
         let tree = build_chain(3);
         let structure = test_stairstep_structure();
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("associate", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("associate", f64::NAN));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("associate", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("associate", d!(-0.5)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_stairstep(
@@ -817,14 +840,14 @@ mod tests {
             matches!(
                 err,
                 CalculationError::InvalidPersonalVolume(id, pv)
-                    if id == uuid(1) && pv.is_nan()
+                    if id == uuid(1) && pv == d!(-0.5)
             ),
             "got {err:?}"
         );
     }
 
     #[test]
-    fn stairstep_rejects_a_nan_personal_volume_off_every_walked_upline() {
+    fn stairstep_rejects_a_negative_personal_volume_off_every_walked_upline() {
         // uuid(3) hangs off the root, away from the only source's upline.
         let mut tree = build_chain(3);
         tree.add_node(uuid(3), uuid(0), uuid(0), 3).unwrap();
@@ -832,14 +855,14 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("associate", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("associate", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("associate", f64::NAN));
+        snapshots.insert(uuid(0), snapshot_with_rank("associate", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("associate", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", d!(-0.5)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_stairstep(
@@ -856,7 +879,7 @@ mod tests {
             matches!(
                 err,
                 CalculationError::InvalidPersonalVolume(id, pv)
-                    if id == uuid(3) && pv.is_nan()
+                    if id == uuid(3) && pv == d!(-0.5)
             ),
             "got {err:?}"
         );
@@ -873,13 +896,13 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("diamond", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("associate", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("diamond", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("associate", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: -50.0,
+            cv_amount: d!(-50.0),
         }];
 
         let err = calculate_stairstep(
@@ -915,17 +938,17 @@ mod tests {
         let tree = build_chain(3);
         let mut structure = test_stairstep_structure();
         // Deliberately out of range. This value is the discriminator, not a typo.
-        structure.level_commission.broad_commission_percent = 1.5;
+        structure.level_commission.broad_commission_percent = d!(1.5);
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("diamond", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("associate", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("diamond", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("associate", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_stairstep(
@@ -954,7 +977,7 @@ mod tests {
         tree
     }
 
-    fn snapshot_with_rank(rank: &str, pv: f64) -> DistributorSnapshot {
+    fn snapshot_with_rank(rank: &str, pv: AuthoredDec) -> DistributorSnapshot {
         DistributorSnapshot {
             rank: rank.to_string(),
             personal_volume: pv,
@@ -963,18 +986,18 @@ mod tests {
         }
     }
 
-    fn test_stairstep_rate_table() -> BTreeMap<String, BTreeMap<u8, f64>> {
+    fn test_stairstep_rate_table() -> BTreeMap<String, BTreeMap<u8, AuthoredDec>> {
         let mut table = BTreeMap::new();
 
         let mut associate = BTreeMap::new();
         for level in 1..=5 {
-            associate.insert(level, 0.05);
+            associate.insert(level, d!(0.05));
         }
         table.insert("associate".to_string(), associate);
 
         let mut director = BTreeMap::new();
         for level in 1..=5 {
-            director.insert(level, 0.05);
+            director.insert(level, d!(0.05));
         }
         table.insert("director".to_string(), director);
 
@@ -985,7 +1008,7 @@ mod tests {
         StairstepStructureConfig {
             name: "Test".to_string(),
             level_commission: LevelCommissionConfig {
-                broad_commission_percent: 0.40,
+                broad_commission_percent: d!(0.40),
                 volume_to_dollar_multiplier: None,
                 max_depth: 5,
                 rate_table: test_stairstep_rate_table(),
@@ -998,11 +1021,11 @@ mod tests {
                     mode: OverrideMode::Differential(DifferentialConfig {
                         rank_rates: {
                             let mut m = BTreeMap::new();
-                            m.insert("director".to_string(), 0.10);
-                            m.insert("senior_director".to_string(), 0.15);
+                            m.insert("director".to_string(), d!(0.10));
+                            m.insert("senior_director".to_string(), d!(0.15));
                             m
                         },
-                        min_override: MinOverride::Rate { value: 0.02 },
+                        min_override: MinOverride::Rate { value: d!(0.02) },
                     }),
                     generation_overrides: None,
                 },
@@ -1087,10 +1110,10 @@ mod tests {
         let structure = test_stairstep_structure();
         let rank_ordinals = test_rank_ordinals();
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("associate", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("associate", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("director", d!(150.0)));
 
         let breakaways = identify_breakaways(&structure, &snapshots, &rank_ordinals);
 
@@ -1106,9 +1129,9 @@ mod tests {
         let structure = test_stairstep_structure();
         let rank_ordinals = test_rank_ordinals();
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("associate", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("senior_director", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("associate", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("senior_director", d!(150.0)));
 
         let breakaways = identify_breakaways(&structure, &snapshots, &rank_ordinals);
 
@@ -1128,7 +1151,7 @@ mod tests {
         let rank_ordinals = test_rank_ordinals();
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("director", d!(150.0)));
 
         let breakaways = identify_breakaways(&structure, &snapshots, &rank_ordinals);
 
@@ -1143,12 +1166,13 @@ mod tests {
         let breakaways = HashSet::new();
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("associate", 100.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("associate", 200.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 300.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("associate", 400.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("associate", d!(100.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("associate", d!(200.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(300.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", d!(400.0)));
 
-        let (group_volumes, group_leaders) = build_group_volumes(&tree, &snapshots, &breakaways);
+        let (group_volumes, group_leaders) =
+            build_group_volumes(&tree, &snapshots, &breakaways).unwrap();
 
         // All distributors should have root (uuid(0)) as their group leader
         for i in 0..4 {
@@ -1161,8 +1185,9 @@ mod tests {
         }
 
         // Root's group volume should be the sum of all PV
-        assert!(
-            (group_volumes[&uuid(0)] - 1000.0).abs() < f64::EPSILON,
+        assert_d!(
+            group_volumes[&uuid(0)],
+            1000.0,
             "root group volume should be 1000.0, got {}",
             group_volumes[&uuid(0)]
         );
@@ -1181,12 +1206,13 @@ mod tests {
         breakaways.insert(uuid(1));
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("associate", 100.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 200.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 300.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("associate", 400.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("associate", d!(100.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(200.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(300.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", d!(400.0)));
 
-        let (group_volumes, group_leaders) = build_group_volumes(&tree, &snapshots, &breakaways);
+        let (group_volumes, group_leaders) =
+            build_group_volumes(&tree, &snapshots, &breakaways).unwrap();
 
         // uuid(0) is its own leader (root, no breakaway ancestor)
         assert_eq!(group_leaders[&uuid(0)], uuid(0));
@@ -1196,13 +1222,15 @@ mod tests {
         assert_eq!(group_leaders[&uuid(2)], uuid(1));
         assert_eq!(group_leaders[&uuid(3)], uuid(1));
 
-        assert!(
-            (group_volumes[&uuid(0)] - 100.0).abs() < f64::EPSILON,
+        assert_d!(
+            group_volumes[&uuid(0)],
+            100.0,
             "root group volume = {}",
             group_volumes[&uuid(0)]
         );
-        assert!(
-            (group_volumes[&uuid(1)] - 900.0).abs() < f64::EPSILON,
+        assert_d!(
+            group_volumes[&uuid(1)],
+            900.0,
             "breakaway group volume = {}",
             group_volumes[&uuid(1)]
         );
@@ -1222,13 +1250,14 @@ mod tests {
         breakaways.insert(uuid(3));
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("associate", 100.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 200.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 300.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("director", 400.0));
-        snapshots.insert(uuid(4), snapshot_with_rank("associate", 500.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("associate", d!(100.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(200.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(300.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("director", d!(400.0)));
+        snapshots.insert(uuid(4), snapshot_with_rank("associate", d!(500.0)));
 
-        let (group_volumes, group_leaders) = build_group_volumes(&tree, &snapshots, &breakaways);
+        let (group_volumes, group_leaders) =
+            build_group_volumes(&tree, &snapshots, &breakaways).unwrap();
 
         assert_eq!(group_leaders[&uuid(0)], uuid(0));
         assert_eq!(group_leaders[&uuid(1)], uuid(1));
@@ -1236,9 +1265,9 @@ mod tests {
         assert_eq!(group_leaders[&uuid(3)], uuid(3));
         assert_eq!(group_leaders[&uuid(4)], uuid(3));
 
-        assert!((group_volumes[&uuid(0)] - 100.0).abs() < f64::EPSILON);
-        assert!((group_volumes[&uuid(1)] - 500.0).abs() < f64::EPSILON);
-        assert!((group_volumes[&uuid(3)] - 900.0).abs() < f64::EPSILON);
+        assert_d!(group_volumes[&uuid(0)], 100.0);
+        assert_d!(group_volumes[&uuid(1)], 500.0);
+        assert_d!(group_volumes[&uuid(3)], 900.0);
     }
 
     // --- Walk 1 tests ---
@@ -1253,13 +1282,13 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("associate", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("associate", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("associate", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("associate", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -1278,12 +1307,12 @@ mod tests {
         // uuid(1) at level 1: 100 * 0.40 * 1.0 * 0.05 = 2.0
         let e1 = result.iter().find(|e| e.earner_id == uuid(1)).unwrap();
         assert_eq!(e1.level, 1);
-        assert!((e1.dollar_amount - 2.0).abs() < f64::EPSILON);
+        assert_d!(e1.dollar_amount, 2.0);
 
         // uuid(0) at level 2: 100 * 0.40 * 1.0 * 0.05 = 2.0
         let e0 = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(e0.level, 2);
-        assert!((e0.dollar_amount - 2.0).abs() < f64::EPSILON);
+        assert_d!(e0.dollar_amount, 2.0);
     }
 
     #[test]
@@ -1300,14 +1329,14 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("associate", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("associate", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -1340,14 +1369,14 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("associate", d!(150.0)));
         // uuid(1) intentionally omitted — no snapshot
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -1373,13 +1402,13 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 200.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 300.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("associate", 400.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(200.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(300.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", d!(400.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -1406,14 +1435,14 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 200.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 300.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("associate", 400.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(200.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(300.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", d!(400.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -1441,11 +1470,11 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(0),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -1464,12 +1493,6 @@ mod tests {
 
     // --- Walk 2: Differential override tests ---
 
-    /// Tolerance for floating-point comparisons involving differential
-    /// rates. Subtraction of f64 values (e.g., 0.15 - 0.10) produces
-    /// rounding error beyond f64::EPSILON when multiplied through the
-    /// dollar_amount formula.
-    const FP_TOL: f64 = 1e-10;
-
     #[test]
     fn single_breakaway_differential_override() {
         // Tree: 0(senior_director) -> 1(director) -> 2(assoc) -> 3(assoc)
@@ -1483,15 +1506,15 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 200.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 300.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("associate", 400.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(200.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(300.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", d!(400.0)));
 
         // Volume from node 3 to trigger Walk 1 and Walk 2.
         let volume = vec![VolumeSource {
             source_id: uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -1512,9 +1535,9 @@ mod tests {
             .expect("node 0 should earn override on breakaway node 1");
 
         assert_eq!(override_earning.level, 1);
-        assert!((override_earning.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
-        assert!((override_earning.cv_amount - 900.0).abs() < FP_TOL);
-        assert!((override_earning.dollar_amount - 18.0).abs() < FP_TOL);
+        assert_d!(override_earning.rate.expect("earning has a rate"), 0.05);
+        assert_d!(override_earning.cv_amount, 900.0);
+        assert_d!(override_earning.dollar_amount, 18.0);
     }
 
     #[test]
@@ -1527,7 +1550,7 @@ mod tests {
         match &mut structure.breakaway.as_mut().unwrap().overrides {
             OverrideStrategy::SingleWalk { mode, .. } => match mode {
                 OverrideMode::Differential(diff) => {
-                    diff.min_override = MinOverride::Rate { value: 0.0 }
+                    diff.min_override = MinOverride::Rate { value: d!(0.0) }
                 }
                 OverrideMode::FixedOverride(_) => panic!("expected Differential override mode"),
             },
@@ -1536,13 +1559,13 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -1567,15 +1590,15 @@ mod tests {
     #[test]
     fn resolve_gen1_payout_reports_a_rate_for_a_differential_gap() {
         let mut rank_rates = BTreeMap::new();
-        rank_rates.insert("manager".to_string(), 0.10);
-        rank_rates.insert("member".to_string(), 0.04);
+        rank_rates.insert("manager".to_string(), d!(0.10));
+        rank_rates.insert("member".to_string(), d!(0.04));
         let mode = OverrideMode::Differential(DifferentialConfig {
             rank_rates,
-            min_override: MinOverride::Rate { value: 0.0 },
+            min_override: MinOverride::Rate { value: d!(0.0) },
         });
 
-        match resolve_gen1_payout(&mode, "manager", "member") {
-            Gen1Payout::Rate(r) => assert!((r - 0.06).abs() < FP_TOL, "got {r}"),
+        match resolve_gen1_payout(&mode, "manager", "member").unwrap() {
+            Gen1Payout::Rate(r) => assert_d!(r, 0.06, "got {r}"),
             other => panic!("expected a rate, got {other:?}"),
         }
     }
@@ -1583,14 +1606,14 @@ mod tests {
     #[test]
     fn resolve_gen1_payout_reports_nothing_when_the_gap_is_zero_and_no_floor() {
         let mut rank_rates = BTreeMap::new();
-        rank_rates.insert("manager".to_string(), 0.10);
+        rank_rates.insert("manager".to_string(), d!(0.10));
         let mode = OverrideMode::Differential(DifferentialConfig {
             rank_rates,
-            min_override: MinOverride::Rate { value: 0.0 },
+            min_override: MinOverride::Rate { value: d!(0.0) },
         });
 
         assert!(matches!(
-            resolve_gen1_payout(&mode, "manager", "manager"),
+            resolve_gen1_payout(&mode, "manager", "manager").unwrap(),
             Gen1Payout::Nothing
         ));
     }
@@ -1607,13 +1630,13 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -1632,9 +1655,9 @@ mod tests {
             .find(|e| e.earner_id == uuid(0) && e.source_id == uuid(1))
             .expect("node 0 should earn min_override on breakaway node 1");
 
-        assert!((override_earning.rate.expect("earning has a rate") - 0.02).abs() < FP_TOL);
-        assert!((override_earning.cv_amount - 300.0).abs() < FP_TOL);
-        assert!((override_earning.dollar_amount - 2.40).abs() < FP_TOL);
+        assert_d!(override_earning.rate.expect("earning has a rate"), 0.02);
+        assert_d!(override_earning.cv_amount, 300.0);
+        assert_d!(override_earning.dollar_amount, 2.40);
     }
 
     #[test]
@@ -1644,17 +1667,17 @@ mod tests {
         // pool is 300 * 0.40 * 1.0 = 120.00, which covers a 5.00 floor.
         let tree = build_chain(3);
         let mut structure = test_stairstep_structure();
-        set_min_override(&mut structure, MinOverride::Currency { value: 5.0 });
+        set_min_override(&mut structure, MinOverride::Currency { value: d!(5.0) });
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -1677,7 +1700,7 @@ mod tests {
             override_earning.rate, None,
             "a currency floor applied no rate, so there is none to report"
         );
-        assert!((override_earning.dollar_amount - 5.0).abs() < FP_TOL);
+        assert_d!(override_earning.dollar_amount, 5.0);
     }
 
     #[test]
@@ -1686,17 +1709,22 @@ mod tests {
         // so it pays what it would have paid with no floor configured at all.
         let tree = build_chain(3);
         let mut structure = test_stairstep_structure();
-        set_min_override(&mut structure, MinOverride::Currency { value: 10_000.0 });
+        set_min_override(
+            &mut structure,
+            MinOverride::Currency {
+                value: d!(10_000.0),
+            },
+        );
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -1721,22 +1749,20 @@ mod tests {
     #[test]
     fn currency_min_override_exactly_equal_to_the_pool_is_payable() {
         // The leg's pool is 300 * 0.40 * 1.0 = 120.00. A floor of exactly
-        // 120.00 is coverable and must pay. This is the boundary POOL_TOL
-        // exists for: the pool is a product of three floats and need not land
-        // on the same bits as the literal an author writes.
+        // 120.00 is coverable and must pay.
         let tree = build_chain(3);
         let mut structure = test_stairstep_structure();
-        set_min_override(&mut structure, MinOverride::Currency { value: 120.0 });
+        set_min_override(&mut structure, MinOverride::Currency { value: d!(120.0) });
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -1755,30 +1781,32 @@ mod tests {
             .find(|e| e.earner_id == uuid(0) && e.source_id == uuid(1))
             .expect("a floor equal to the pool is coverable and must pay");
         assert_eq!(earned.rate, None);
-        assert!((earned.dollar_amount - 120.0).abs() < FP_TOL);
+        assert_d!(earned.dollar_amount, 120.0);
     }
 
     #[test]
-    fn currency_min_override_equal_to_a_pool_that_does_not_land_on_its_decimal() {
-        // A pool of 120.00 is exact in binary, so a test at that size cannot
-        // tell a sub-cent tolerance from a sub-nanodollar one. This one can:
-        // 2_913_000 * 0.29 is 844769.9999999999, so a floor written as
-        // 844770.00 sits 1.16e-10 above the pool it is meant to exactly
-        // cover. A nanodollar tolerance rejects it and pays zero.
+    fn currency_min_override_equal_to_a_pool_of_a_fraction_of_a_large_leg() {
+        // The pool is 2_913_000 * 0.29 * 1.0 = 844770, and a floor of
+        // 844770.00 covers it exactly.
         let tree = build_chain(3);
         let mut structure = test_stairstep_structure();
-        structure.level_commission.broad_commission_percent = 0.29;
-        set_min_override(&mut structure, MinOverride::Currency { value: 844_770.0 });
+        structure.level_commission.broad_commission_percent = d!(0.29);
+        set_min_override(
+            &mut structure,
+            MinOverride::Currency {
+                value: d!(844_770.0),
+            },
+        );
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("director", 1_456_500.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 1_456_500.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 1_456_500.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("director", d!(1_456_500.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(1_456_500.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(1_456_500.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -1795,9 +1823,9 @@ mod tests {
         let earned = result
             .iter()
             .find(|e| e.earner_id == uuid(0) && e.source_id == uuid(1))
-            .expect("a floor equal to the pool must pay even when the pool does not land on its decimal");
+            .expect("a floor equal to the pool is coverable and must pay");
         assert_eq!(earned.rate, None);
-        assert!((earned.dollar_amount - 844_770.0).abs() < FP_TOL);
+        assert_d!(earned.dollar_amount, 844_770.0);
     }
 
     #[test]
@@ -1805,17 +1833,17 @@ mod tests {
         // One cent above the pool is a real shortfall, not rounding.
         let tree = build_chain(3);
         let mut structure = test_stairstep_structure();
-        set_min_override(&mut structure, MinOverride::Currency { value: 120.01 });
+        set_min_override(&mut structure, MinOverride::Currency { value: d!(120.01) });
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -1845,7 +1873,12 @@ mod tests {
         // and generation 2 still earns from the table.
         let tree = build_chain(4);
         let mut structure = test_stairstep_structure();
-        set_min_override(&mut structure, MinOverride::Currency { value: 10_000.0 });
+        set_min_override(
+            &mut structure,
+            MinOverride::Currency {
+                value: d!(10_000.0),
+            },
+        );
         let OverrideStrategy::SingleWalk {
             generation_overrides,
             ..
@@ -1857,7 +1890,7 @@ mod tests {
             max_generations: 3,
             rates: {
                 let mut m = BTreeMap::new();
-                m.insert(2, 0.03);
+                m.insert(2, d!(0.03));
                 m
             },
             boundary_rank: "director".to_string(),
@@ -1865,19 +1898,19 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![
             VolumeSource {
                 source_id: uuid(2),
-                cv_amount: 150.0,
+                cv_amount: d!(150.0),
             },
             VolumeSource {
                 source_id: uuid(3),
-                cv_amount: 150.0,
+                cv_amount: d!(150.0),
             },
         ];
 
@@ -1902,7 +1935,7 @@ mod tests {
             .iter()
             .find(|e| e.source_id == uuid(2) && e.level == 2 && e.walk.is_none())
             .expect("generation 2 still earns from the generation rate table");
-        assert!((gen2.rate.expect("a table rate") - 0.03).abs() < FP_TOL);
+        assert_d!(gen2.rate.expect("a table rate"), 0.03);
     }
 
     #[test]
@@ -1916,7 +1949,7 @@ mod tests {
         // leader, so it reaches the floor. Pool is 300 * 0.40 = 120.00.
         let tree = build_chain(4);
         let mut structure = test_stairstep_structure();
-        set_min_override(&mut structure, MinOverride::Currency { value: 5.0 });
+        set_min_override(&mut structure, MinOverride::Currency { value: d!(5.0) });
         let OverrideStrategy::SingleWalk {
             generation_overrides,
             ..
@@ -1928,7 +1961,7 @@ mod tests {
             max_generations: 3,
             rates: {
                 let mut m = BTreeMap::new();
-                m.insert(2, 0.03);
+                m.insert(2, d!(0.03));
                 m
             },
             boundary_rank: "director".to_string(),
@@ -1936,19 +1969,19 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![
             VolumeSource {
                 source_id: uuid(2),
-                cv_amount: 150.0,
+                cv_amount: d!(150.0),
             },
             VolumeSource {
                 source_id: uuid(3),
-                cv_amount: 150.0,
+                cv_amount: d!(150.0),
             },
         ];
 
@@ -1972,7 +2005,7 @@ mod tests {
             gen1.rate, None,
             "a currency floor applied no rate on the generation branch either"
         );
-        assert!((gen1.dollar_amount - 5.0).abs() < FP_TOL);
+        assert_d!(gen1.dollar_amount, 5.0);
     }
 
     #[test]
@@ -1987,18 +2020,23 @@ mod tests {
         // earning.
         let tree = build_chain(4);
         let mut structure = test_stairstep_structure();
-        set_min_override(&mut structure, MinOverride::Currency { value: 10_000.0 });
+        set_min_override(
+            &mut structure,
+            MinOverride::Currency {
+                value: d!(10_000.0),
+            },
+        );
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -2018,7 +2056,7 @@ mod tests {
             .expect(
                 "node 0 must still earn its differential past a leg that cannot carry the floor",
             );
-        assert!((earned.rate.expect("a differential gap is a rate") - 0.05).abs() < FP_TOL);
+        assert_d!(earned.rate.expect("a differential gap is a rate"), 0.05);
     }
 
     #[test]
@@ -2032,11 +2070,11 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("director", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(0),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -2077,15 +2115,15 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", d!(150.0)));
         // Node 1 is inactive (PV below minimum 100)
-        snapshots.insert(uuid(1), snapshot_with_rank("associate", 50.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(1), snapshot_with_rank("associate", d!(50.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -2108,9 +2146,9 @@ mod tests {
             .find(|e| e.earner_id == uuid(0) && e.source_id == uuid(2))
             .expect("node 0 should earn override despite inactive node 1 in between");
 
-        assert!((override_earning.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
-        assert!((override_earning.cv_amount - 300.0).abs() < FP_TOL);
-        assert!((override_earning.dollar_amount - 6.0).abs() < FP_TOL);
+        assert_d!(override_earning.rate.expect("earning has a rate"), 0.05);
+        assert_d!(override_earning.cv_amount, 300.0);
+        assert_d!(override_earning.dollar_amount, 6.0);
     }
 
     // --- Walk 2: Generation override tests ---
@@ -2134,9 +2172,9 @@ mod tests {
             max_generations: 3,
             rates: {
                 let mut m = BTreeMap::new();
-                m.insert(1, 0.05);
-                m.insert(2, 0.03);
-                m.insert(3, 0.01);
+                m.insert(1, d!(0.05));
+                m.insert(2, d!(0.03));
+                m.insert(3, d!(0.01));
                 m
             },
             boundary_rank: "director".to_string(),
@@ -2144,11 +2182,11 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(4), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(4), snapshot_with_rank("associate", d!(150.0)));
 
         // Two sources on purpose. Stairstep calls the level walk once per
         // source rather than once with the slice, because `should_stop`
@@ -2157,11 +2195,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: uuid(4),
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             },
             VolumeSource {
                 source_id: uuid(2),
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             },
         ];
 
@@ -2239,9 +2277,9 @@ mod tests {
             max_generations: 3,
             rates: {
                 let mut m = BTreeMap::new();
-                m.insert(1, 0.05);
-                m.insert(2, 0.03);
-                m.insert(3, 0.01);
+                m.insert(1, d!(0.05));
+                m.insert(2, d!(0.03));
+                m.insert(3, d!(0.01));
                 m
             },
             boundary_rank: "director".to_string(),
@@ -2249,15 +2287,15 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 200.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 300.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(4), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(200.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(300.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(4), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(4),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -2281,9 +2319,9 @@ mod tests {
             .find(|e| e.earner_id == uuid(0) && e.source_id == uuid(1))
             .expect("node 0 should earn differential override on breakaway node 1");
         assert_eq!(node0_on_node1.level, 1);
-        assert!((node0_on_node1.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
-        assert!((node0_on_node1.cv_amount - 500.0).abs() < FP_TOL);
-        assert!((node0_on_node1.dollar_amount - 10.0).abs() < FP_TOL);
+        assert_d!(node0_on_node1.rate.expect("earning has a rate"), 0.05);
+        assert_d!(node0_on_node1.cv_amount, 500.0);
+        assert_d!(node0_on_node1.dollar_amount, 10.0);
 
         // --- Override earnings for breakaway node 3 (source_id = uuid(3)) ---
         // Group volume for node 3: 150 + 150 = 300
@@ -2296,9 +2334,9 @@ mod tests {
             .find(|e| e.earner_id == uuid(1) && e.source_id == uuid(3))
             .expect("node 1 should earn gen-1 differential on breakaway node 3");
         assert_eq!(node1_on_node3.level, 1);
-        assert!((node1_on_node3.rate.expect("earning has a rate") - 0.02).abs() < FP_TOL);
-        assert!((node1_on_node3.cv_amount - 300.0).abs() < FP_TOL);
-        assert!((node1_on_node3.dollar_amount - 2.40).abs() < FP_TOL);
+        assert_d!(node1_on_node3.rate.expect("earning has a rate"), 0.02);
+        assert_d!(node1_on_node3.cv_amount, 300.0);
+        assert_d!(node1_on_node3.dollar_amount, 2.40);
 
         // Generation 2: node 0 earns generation override on node 3
         // Rate from generation_overrides.rates[2] = 0.03
@@ -2308,9 +2346,9 @@ mod tests {
             .find(|e| e.earner_id == uuid(0) && e.source_id == uuid(3))
             .expect("node 0 should earn gen-2 override on breakaway node 3");
         assert_eq!(node0_on_node3.level, 2);
-        assert!((node0_on_node3.rate.expect("earning has a rate") - 0.03).abs() < FP_TOL);
-        assert!((node0_on_node3.cv_amount - 300.0).abs() < FP_TOL);
-        assert!((node0_on_node3.dollar_amount - 3.60).abs() < FP_TOL);
+        assert_d!(node0_on_node3.rate.expect("earning has a rate"), 0.03);
+        assert_d!(node0_on_node3.cv_amount, 300.0);
+        assert_d!(node0_on_node3.dollar_amount, 3.60);
     }
 
     // --- FixedOverride tests ---
@@ -2319,7 +2357,7 @@ mod tests {
         StairstepStructureConfig {
             name: "Test".to_string(),
             level_commission: LevelCommissionConfig {
-                broad_commission_percent: 0.40,
+                broad_commission_percent: d!(0.40),
                 volume_to_dollar_multiplier: None,
                 max_depth: 5,
                 rate_table: test_stairstep_rate_table(),
@@ -2332,8 +2370,8 @@ mod tests {
                     mode: OverrideMode::FixedOverride(FixedOverrideConfig {
                         rank_rates: {
                             let mut m = BTreeMap::new();
-                            m.insert("director".to_string(), 0.05);
-                            m.insert("senior_director".to_string(), 0.08);
+                            m.insert("director".to_string(), d!(0.05));
+                            m.insert("senior_director".to_string(), d!(0.08));
                             m
                         },
                     }),
@@ -2356,18 +2394,18 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![
             VolumeSource {
                 source_id: uuid(1),
-                cv_amount: 150.0,
+                cv_amount: d!(150.0),
             },
             VolumeSource {
                 source_id: uuid(2),
-                cv_amount: 150.0,
+                cv_amount: d!(150.0),
             },
         ];
 
@@ -2386,12 +2424,11 @@ mod tests {
         let override_earnings: Vec<_> = result.iter().filter(|e| e.source_id == uuid(1)).collect();
         assert_eq!(override_earnings.len(), 1);
 
-        const FP_TOL: f64 = 1e-10;
         let earning = &override_earnings[0];
         assert_eq!(earning.earner_id, uuid(0));
-        assert!((earning.rate.expect("earning has a rate") - 0.08).abs() < FP_TOL);
-        assert!((earning.cv_amount - 300.0).abs() < FP_TOL);
-        assert!((earning.dollar_amount - 9.60).abs() < FP_TOL);
+        assert_d!(earning.rate.expect("earning has a rate"), 0.08);
+        assert_d!(earning.cv_amount, 300.0);
+        assert_d!(earning.dollar_amount, 9.60);
     }
 
     #[test]
@@ -2407,18 +2444,18 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![
             VolumeSource {
                 source_id: uuid(1),
-                cv_amount: 150.0,
+                cv_amount: d!(150.0),
             },
             VolumeSource {
                 source_id: uuid(2),
-                cv_amount: 150.0,
+                cv_amount: d!(150.0),
             },
         ];
 
@@ -2436,11 +2473,10 @@ mod tests {
         let override_earnings: Vec<_> = result.iter().filter(|e| e.source_id == uuid(1)).collect();
         assert_eq!(override_earnings.len(), 1);
 
-        const FP_TOL: f64 = 1e-10;
         let earning = &override_earnings[0];
         assert_eq!(earning.earner_id, uuid(0));
-        assert!((earning.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
-        assert!((earning.dollar_amount - 6.00).abs() < FP_TOL);
+        assert_d!(earning.rate.expect("earning has a rate"), 0.05);
+        assert_d!(earning.dollar_amount, 6.00);
     }
 
     #[test]
@@ -2452,18 +2488,18 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("associate", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("associate", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![
             VolumeSource {
                 source_id: uuid(1),
-                cv_amount: 150.0,
+                cv_amount: d!(150.0),
             },
             VolumeSource {
                 source_id: uuid(2),
-                cv_amount: 150.0,
+                cv_amount: d!(150.0),
             },
         ];
 
@@ -2500,19 +2536,19 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("associate", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("associate", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![
             VolumeSource {
                 source_id: uuid(2),
-                cv_amount: 150.0,
+                cv_amount: d!(150.0),
             },
             VolumeSource {
                 source_id: uuid(3),
-                cv_amount: 150.0,
+                cv_amount: d!(150.0),
             },
         ];
 
@@ -2531,10 +2567,10 @@ mod tests {
             .iter()
             .find(|e| e.earner_id == uuid(0) && e.source_id == uuid(2) && e.walk.is_none())
             .expect("node 0 must earn the override on node 2 despite node 1 earning nothing");
-        assert_eq!(earned.rate, Some(0.08));
+        assert_eq!(earned.rate, Some(d!(0.08)));
         // 300 group volume * 0.40 broad_pct * 1.0 multiplier * 0.08
-        assert!((earned.cv_amount - 300.0).abs() < 1e-10);
-        assert!((earned.dollar_amount - 9.60).abs() < 1e-10);
+        assert_d!(earned.cv_amount, 300.0);
+        assert_d!(earned.dollar_amount, 9.60);
     }
 
     #[test]
@@ -2564,7 +2600,7 @@ mod tests {
             max_generations: 3,
             rates: {
                 let mut m = BTreeMap::new();
-                m.insert(2, 0.03);
+                m.insert(2, d!(0.03));
                 m
             },
             boundary_rank: "director".to_string(),
@@ -2572,19 +2608,19 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![
             VolumeSource {
                 source_id: uuid(2),
-                cv_amount: 150.0,
+                cv_amount: d!(150.0),
             },
             VolumeSource {
                 source_id: uuid(3),
-                cv_amount: 150.0,
+                cv_amount: d!(150.0),
             },
         ];
 
@@ -2599,7 +2635,6 @@ mod tests {
         .unwrap()
         .earnings;
 
-        const FP_TOL: f64 = 1e-10;
         assert!(
             !result
                 .iter()
@@ -2611,9 +2646,9 @@ mod tests {
             .find(|e| e.source_id == uuid(2) && e.level == 2 && e.walk.is_none())
             .expect("generation 2 must still earn after generation 1 earned nothing");
         assert_eq!(gen2.earner_id, uuid(0));
-        assert!((gen2.rate.expect("earning has a rate") - 0.03).abs() < FP_TOL);
+        assert_d!(gen2.rate.expect("earning has a rate"), 0.03);
         // 300 group volume * 0.40 broad_pct * 1.0 multiplier * 0.03
-        assert!((gen2.dollar_amount - 3.60).abs() < FP_TOL);
+        assert_d!(gen2.dollar_amount, 3.60);
     }
 
     #[test]
@@ -2639,8 +2674,8 @@ mod tests {
             max_generations: 3,
             rates: {
                 let mut m = BTreeMap::new();
-                m.insert(1, 0.05); // unused for gen 1 (uses fixed rate)
-                m.insert(2, 0.03);
+                m.insert(1, d!(0.05)); // unused for gen 1 (uses fixed rate)
+                m.insert(2, d!(0.03));
                 m
             },
             boundary_rank: "director".to_string(),
@@ -2648,19 +2683,19 @@ mod tests {
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("senior_director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![
             VolumeSource {
                 source_id: uuid(2),
-                cv_amount: 150.0,
+                cv_amount: d!(150.0),
             },
             VolumeSource {
                 source_id: uuid(3),
-                cv_amount: 150.0,
+                cv_amount: d!(150.0),
             },
         ];
 
@@ -2680,19 +2715,17 @@ mod tests {
             result.iter().filter(|e| e.source_id == uuid(2)).collect();
         override_earnings.sort_by_key(|e| e.level);
 
-        const FP_TOL: f64 = 1e-10;
-
         // Gen 1: node 1 earns flat fixed rate for director
         let gen1 = override_earnings.iter().find(|e| e.level == 1).unwrap();
         assert_eq!(gen1.earner_id, uuid(1));
-        assert!((gen1.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
-        assert!((gen1.dollar_amount - 6.00).abs() < FP_TOL);
+        assert_d!(gen1.rate.expect("earning has a rate"), 0.05);
+        assert_d!(gen1.dollar_amount, 6.00);
 
         // Gen 2: node 0 earns generation override rate
         let gen2 = override_earnings.iter().find(|e| e.level == 2).unwrap();
         assert_eq!(gen2.earner_id, uuid(0));
-        assert!((gen2.rate.expect("earning has a rate") - 0.03).abs() < FP_TOL);
-        assert!((gen2.dollar_amount - 3.60).abs() < FP_TOL);
+        assert_d!(gen2.rate.expect("earning has a rate"), 0.03);
+        assert_d!(gen2.dollar_amount, 3.60);
     }
 
     // --- First-Line Split-Out counting tests ---
@@ -2779,7 +2812,7 @@ mod tests {
         StairstepStructureConfig {
             name: "Test".to_string(),
             level_commission: LevelCommissionConfig {
-                broad_commission_percent: 0.40,
+                broad_commission_percent: d!(0.40),
                 volume_to_dollar_multiplier: None,
                 max_depth: 5,
                 rate_table: test_stairstep_rate_table(),
@@ -2793,6 +2826,76 @@ mod tests {
         }
     }
 
+    /// Every distinct error text `calculate_stairstep` returns across repeated runs.
+    fn errors_across_runs(
+        structure: &StairstepStructureConfig,
+        ranks_and_pvs: &[(&str, AuthoredDec)],
+    ) -> std::collections::BTreeSet<String> {
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+        let mut seen = std::collections::BTreeSet::new();
+        // Rebuilt inside the loop so each pass samples a fresh HashMap order.
+        for _ in 0..32 {
+            let tree = build_chain(ranks_and_pvs.len());
+            let snapshots: HashMap<Uuid, DistributorSnapshot> = ranks_and_pvs
+                .iter()
+                .enumerate()
+                .map(|(i, (rank, pv))| (uuid(i), snapshot_with_rank(rank, *pv)))
+                .collect();
+            let err = calculate_stairstep(
+                &tree,
+                &plan,
+                structure,
+                &snapshots,
+                &[],
+                &crate::test_support::test_plan_identity(),
+            )
+            .unwrap_err();
+            seen.insert(err.to_string());
+        }
+        seen
+    }
+
+    #[test]
+    fn single_walk_names_the_same_failing_breakaway_on_every_run() {
+        let mut structure = test_stairstep_structure();
+        structure.level_commission.volume_to_dollar_multiplier = Some(d!(900_000_000_000_000));
+        let seen = errors_across_runs(
+            &structure,
+            &[
+                ("senior_director", d!(150)),
+                ("director", d!(900_000_000_000_000)),
+                ("associate", d!(150)),
+                ("director", d!(800_000_000_000_000)),
+                ("associate", d!(150)),
+            ],
+        );
+        assert_eq!(seen.len(), 1, "distinct errors across runs: {seen:?}");
+        let only = seen.first().unwrap();
+        assert!(only.contains("360000000000060"), "{only}");
+    }
+
+    #[test]
+    fn multi_tier_names_the_same_failing_breakaway_on_every_run() {
+        let mut structure = test_multi_tier_structure(vec![BreakawayTier {
+            min_split_out_groups: 1,
+            rate: d!(0.05),
+        }]);
+        structure.level_commission.volume_to_dollar_multiplier = Some(d!(900_000_000_000_000));
+        let seen = errors_across_runs(
+            &structure,
+            &[
+                ("director", d!(150)),
+                ("director", d!(900_000_000_000_000)),
+                ("associate", d!(150)),
+                ("director", d!(800_000_000_000_000)),
+                ("associate", d!(150)),
+            ],
+        );
+        assert_eq!(seen.len(), 1, "distinct errors across runs: {seen:?}");
+        let only = seen.first().unwrap();
+        assert!(only.contains("900000000000150"), "{only}");
+    }
+
     #[test]
     fn multi_tier_walk_two_earnings_also_carry_null_walk() {
         // Plan gotcha 7: Task 10 must cover all three Walk 2 dispatch paths,
@@ -2803,19 +2906,19 @@ mod tests {
         let tree = build_chain(4);
         let structure = test_multi_tier_structure(vec![BreakawayTier {
             min_split_out_groups: 1,
-            rate: 0.05,
+            rate: d!(0.05),
         }]);
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -2874,22 +2977,22 @@ mod tests {
         let tree = build_chain(4);
         let structure = test_multi_tier_structure(vec![BreakawayTier {
             min_split_out_groups: 1,
-            rate: 0.05,
+            rate: d!(0.05),
         }]);
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("associate", d!(150.0)));
 
         // Each source feeds its own group_volume map entry. Volume here is
         // for the calculator's source list; the multi-tier walk uses
         // group_volumes built during prep.
         let volume = vec![VolumeSource {
             source_id: uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -2910,9 +3013,9 @@ mod tests {
             .find(|e| e.source_id == uuid(2) && e.earner_id == uuid(1))
             .expect("uuid(1) should earn tier 1 on uuid(2)'s group");
         assert_eq!(on_uuid2.level, 1);
-        assert!((on_uuid2.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
-        assert!((on_uuid2.cv_amount - 300.0).abs() < FP_TOL);
-        assert!((on_uuid2.dollar_amount - 15.0).abs() < FP_TOL);
+        assert_d!(on_uuid2.rate.expect("earning has a rate"), 0.05);
+        assert_d!(on_uuid2.cv_amount, 300.0);
+        assert_d!(on_uuid2.dollar_amount, 15.0);
 
         // Override earning on uuid(1)'s group (uuid(1) PV alone = 150).
         // Earner: uuid(0). Rate: 0.05. Dollar = 150 * 1.0 * 0.05 = 7.5.
@@ -2921,9 +3024,9 @@ mod tests {
             .find(|e| e.source_id == uuid(1) && e.earner_id == uuid(0))
             .expect("uuid(0) should earn tier 1 on uuid(1)'s group");
         assert_eq!(on_uuid1.level, 1);
-        assert!((on_uuid1.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
-        assert!((on_uuid1.cv_amount - 150.0).abs() < FP_TOL);
-        assert!((on_uuid1.dollar_amount - 7.5).abs() < FP_TOL);
+        assert_d!(on_uuid1.rate.expect("earning has a rate"), 0.05);
+        assert_d!(on_uuid1.cv_amount, 150.0);
+        assert_d!(on_uuid1.dollar_amount, 7.5);
 
         // uuid(0) is a root breakaway and has no override earnings on itself.
         let on_uuid0: Vec<_> = result.iter().filter(|e| e.source_id == uuid(0)).collect();
@@ -2964,21 +3067,21 @@ mod tests {
 
         let structure = test_multi_tier_structure(vec![BreakawayTier {
             min_split_out_groups: 2,
-            rate: 0.05,
+            rate: d!(0.05),
         }]);
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(4), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(4), snapshot_with_rank("director", d!(150.0)));
 
         // Pump volume on uuid(3) so the calculator runs the full pipeline.
         let volume = vec![VolumeSource {
             source_id: uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -3001,9 +3104,9 @@ mod tests {
             .expect("expected one override earning on uuid(3)'s group");
         assert_eq!(on_uuid3.earner_id, uuid(0));
         assert_eq!(on_uuid3.level, 1);
-        assert!((on_uuid3.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
-        assert!((on_uuid3.cv_amount - 150.0).abs() < FP_TOL);
-        assert!((on_uuid3.dollar_amount - 7.5).abs() < FP_TOL);
+        assert_d!(on_uuid3.rate.expect("earning has a rate"), 0.05);
+        assert_d!(on_uuid3.cv_amount, 150.0);
+        assert_d!(on_uuid3.dollar_amount, 7.5);
 
         // No earnings from uuid(1) or uuid(2) on uuid(3)'s group:
         // they fail the min_split_out_groups gate.
@@ -3031,18 +3134,18 @@ mod tests {
         let tree = build_chain(3);
         let structure = test_multi_tier_structure(vec![BreakawayTier {
             min_split_out_groups: 5,
-            rate: 0.05,
+            rate: d!(0.05),
         }]);
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("associate", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -3072,16 +3175,16 @@ mod tests {
 
         let structure = test_multi_tier_structure(vec![BreakawayTier {
             min_split_out_groups: 1,
-            rate: 0.05,
+            rate: d!(0.05),
         }]);
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("director", d!(150.0)));
 
         let volume = vec![VolumeSource {
             source_id: uuid(0),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -3138,30 +3241,30 @@ mod tests {
         let structure = test_multi_tier_structure(vec![
             BreakawayTier {
                 min_split_out_groups: 1,
-                rate: 0.05,
+                rate: d!(0.05),
             },
             BreakawayTier {
                 min_split_out_groups: 1,
-                rate: 0.03,
+                rate: d!(0.03),
             },
             BreakawayTier {
                 min_split_out_groups: 1,
-                rate: 0.01,
+                rate: d!(0.01),
             },
         ]);
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
 
         let mut snapshots = HashMap::new();
-        snapshots.insert(uuid(0), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(1), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(2), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(3), snapshot_with_rank("director", 150.0));
-        snapshots.insert(uuid(4), snapshot_with_rank("associate", 150.0));
+        snapshots.insert(uuid(0), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(2), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(3), snapshot_with_rank("director", d!(150.0)));
+        snapshots.insert(uuid(4), snapshot_with_rank("associate", d!(150.0)));
 
         // Volume on uuid(4) so uuid(3)'s group has volume.
         let volume = vec![VolumeSource {
             source_id: uuid(4),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_stairstep(
@@ -3182,8 +3285,8 @@ mod tests {
             .find(|e| e.source_id == uuid(3) && e.earner_id == uuid(2))
             .expect("uuid(2) should earn tier 0 on uuid(3)'s group");
         assert_eq!(tier0.level, 1);
-        assert!((tier0.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
-        assert!((tier0.dollar_amount - 15.0).abs() < FP_TOL);
+        assert_d!(tier0.rate.expect("earning has a rate"), 0.05);
+        assert_d!(tier0.dollar_amount, 15.0);
 
         // Tier 1: uuid(1) earns 0.03 * 300 = 9.0 at level 2.
         let tier1 = result
@@ -3191,8 +3294,8 @@ mod tests {
             .find(|e| e.source_id == uuid(3) && e.earner_id == uuid(1))
             .expect("uuid(1) should earn tier 1 on uuid(3)'s group");
         assert_eq!(tier1.level, 2);
-        assert!((tier1.rate.expect("earning has a rate") - 0.03).abs() < FP_TOL);
-        assert!((tier1.dollar_amount - 9.0).abs() < FP_TOL);
+        assert_d!(tier1.rate.expect("earning has a rate"), 0.03);
+        assert_d!(tier1.dollar_amount, 9.0);
 
         // Tier 2: uuid(0) earns 0.01 * 300 = 3.0 at level 3.
         let tier2 = result
@@ -3200,8 +3303,8 @@ mod tests {
             .find(|e| e.source_id == uuid(3) && e.earner_id == uuid(0))
             .expect("uuid(0) should earn tier 2 on uuid(3)'s group");
         assert_eq!(tier2.level, 3);
-        assert!((tier2.rate.expect("earning has a rate") - 0.01).abs() < FP_TOL);
-        assert!((tier2.dollar_amount - 3.0).abs() < FP_TOL);
+        assert_d!(tier2.rate.expect("earning has a rate"), 0.01);
+        assert_d!(tier2.dollar_amount, 3.0);
 
         // Tier-count invariant: exactly one earner per tier on uuid(3)'s
         // group, so the source has exactly three override earnings. Catches
@@ -3270,11 +3373,11 @@ mod tests {
         let structure = test_multi_tier_structure(vec![
             BreakawayTier {
                 min_split_out_groups: 2,
-                rate: 0.05,
+                rate: d!(0.05),
             },
             BreakawayTier {
                 min_split_out_groups: 2,
-                rate: 0.03,
+                rate: d!(0.03),
             },
         ]);
         let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
@@ -3284,7 +3387,7 @@ mod tests {
         // and its group volume = its PV (no descendants).
         let mut snapshots = HashMap::new();
         for id in 0..=6 {
-            snapshots.insert(uuid(id), snapshot_with_rank("director", 200.0));
+            snapshots.insert(uuid(id), snapshot_with_rank("director", d!(200.0)));
         }
 
         let result = calculate_stairstep(
@@ -3304,16 +3407,16 @@ mod tests {
             .iter()
             .find(|e| e.source_id == uuid(6) && e.earner_id == uuid(0) && e.level == 1)
             .expect("uuid(0) should win Tier 0 on uuid(6)'s group");
-        assert!((tier0.rate.expect("earning has a rate") - 0.05).abs() < FP_TOL);
-        assert!((tier0.dollar_amount - 10.0).abs() < FP_TOL);
+        assert_d!(tier0.rate.expect("earning has a rate"), 0.05);
+        assert_d!(tier0.dollar_amount, 10.0);
 
         // Tier 1: uuid(0) earns 0.03 * 200 = 6.0 at level 2.
         let tier1 = result
             .iter()
             .find(|e| e.source_id == uuid(6) && e.earner_id == uuid(0) && e.level == 2)
             .expect("uuid(0) should win Tier 1 on uuid(6)'s group");
-        assert!((tier1.rate.expect("earning has a rate") - 0.03).abs() < FP_TOL);
-        assert!((tier1.dollar_amount - 6.0).abs() < FP_TOL);
+        assert_d!(tier1.rate.expect("earning has a rate"), 0.03);
+        assert_d!(tier1.dollar_amount, 6.0);
 
         // uuid(0) wins both tiers: exactly two earnings, one per level.
         let uuid0_earnings: Vec<_> = result
@@ -3371,32 +3474,32 @@ mod tests {
         let structure = test_multi_tier_structure(vec![
             BreakawayTier {
                 min_split_out_groups: 1,
-                rate: 0.05,
+                rate: d!(0.05),
             },
             BreakawayTier {
                 min_split_out_groups: 1,
-                rate: 0.02,
+                rate: d!(0.02),
             },
             BreakawayTier {
                 min_split_out_groups: 1,
-                rate: 0.01,
+                rate: d!(0.01),
             },
             BreakawayTier {
                 min_split_out_groups: 1,
-                rate: 0.005,
+                rate: d!(0.005),
             },
             BreakawayTier {
                 min_split_out_groups: 1,
-                rate: 0.0025,
+                rate: d!(0.0025),
             },
             BreakawayTier {
                 min_split_out_groups: 1,
-                rate: 0.00125,
+                rate: d!(0.00125),
             },
         ]);
         // Permissive eligibility so uuid(0)..uuid(5) with PV 0 still earn.
         let eligibility = CommissionEligibility {
-            minimum_pv: 0.0,
+            minimum_pv: d!(0.0),
             require_order_in_period: false,
             eligible_statuses: vec![],
             active_leg_tiers: vec![],
@@ -3405,9 +3508,9 @@ mod tests {
 
         let mut snapshots = HashMap::new();
         for i in 0..=5 {
-            snapshots.insert(uuid(i), snapshot_with_rank("director", 0.0));
+            snapshots.insert(uuid(i), snapshot_with_rank("director", d!(0.0)));
         }
-        snapshots.insert(uuid(6), snapshot_with_rank("director", 10_000.0));
+        snapshots.insert(uuid(6), snapshot_with_rank("director", d!(10_000.0)));
 
         // `volume = vec![]` so only Walk 2 runs.
         let volume: Vec<VolumeSource> = vec![];
@@ -3437,12 +3540,12 @@ mod tests {
         // Hand-verified expected (earner_id, level, rate, dollar_amount)
         // for each tier of the Oriflame ladder.
         let expected = [
-            (uuid(5), 1u8, 0.05, 500.0),
-            (uuid(4), 2u8, 0.02, 200.0),
-            (uuid(3), 3u8, 0.01, 100.0),
-            (uuid(2), 4u8, 0.005, 50.0),
-            (uuid(1), 5u8, 0.0025, 25.0),
-            (uuid(0), 6u8, 0.00125, 12.5),
+            (uuid(5), 1u8, d!(0.05), d!(500.0)),
+            (uuid(4), 2u8, d!(0.02), d!(200.0)),
+            (uuid(3), 3u8, d!(0.01), d!(100.0)),
+            (uuid(2), 4u8, d!(0.005), d!(50.0)),
+            (uuid(1), 5u8, d!(0.0025), d!(25.0)),
+            (uuid(0), 6u8, d!(0.00125), d!(12.5)),
         ];
 
         for (earner, level, rate, dollar_amount) in expected {
@@ -3452,16 +3555,18 @@ mod tests {
                 .unwrap_or_else(|| {
                     panic!("expected earning for earner {earner:?} at level {level}")
                 });
-            assert!(
-                (earning.rate.expect("earning has a rate") - rate).abs() < FP_TOL,
+            assert_eq!(
+                earning.rate.expect("earning has a rate"),
+                rate,
                 "rate mismatch for {earner:?}: {earning:?}",
             );
-            assert!(
-                (earning.cv_amount - 10_000.0).abs() < FP_TOL,
+            assert_d!(
+                earning.cv_amount,
+                10_000.0,
                 "cv_amount mismatch for {earner:?}: {earning:?}",
             );
-            assert!(
-                (earning.dollar_amount - dollar_amount).abs() < FP_TOL,
+            assert_eq!(
+                earning.dollar_amount, dollar_amount,
                 "dollar_amount mismatch for {earner:?}: {earning:?}",
             );
         }
@@ -3505,7 +3610,7 @@ mod tests {
         };
         let tier = BreakawayTier {
             min_split_out_groups: 1,
-            rate: 0.05,
+            rate: d!(0.05),
         };
         let prep = qualifies_prep(earner, true, 1);
         assert!(qualifies_for_tier(&entry, 2, &tier, &prep));
@@ -3521,7 +3626,7 @@ mod tests {
         };
         let tier = BreakawayTier {
             min_split_out_groups: 1,
-            rate: 0.05,
+            rate: d!(0.05),
         };
         let prep = qualifies_prep(earner, true, 1);
         assert!(!qualifies_for_tier(&entry, 2, &tier, &prep));
@@ -3536,7 +3641,7 @@ mod tests {
         };
         let tier = BreakawayTier {
             min_split_out_groups: 1,
-            rate: 0.05,
+            rate: d!(0.05),
         };
         let prep = qualifies_prep(earner, false, 1);
         assert!(!qualifies_for_tier(&entry, 2, &tier, &prep));
@@ -3551,7 +3656,7 @@ mod tests {
         };
         let tier = BreakawayTier {
             min_split_out_groups: 2,
-            rate: 0.05,
+            rate: d!(0.05),
         };
         // First-line split-out count is 1, below the gate of 2; reject.
         let prep = qualifies_prep(earner, true, 1);
@@ -3571,14 +3676,14 @@ mod tests {
         };
         let tier = BreakawayTier {
             min_split_out_groups: 1,
-            rate: 0.05,
+            rate: d!(0.05),
         };
         let prep = qualifies_prep(known, true, 5);
         assert!(!qualifies_for_tier(&entry, 2, &tier, &prep));
     }
 
     /// Builds Walk 2's prep state directly, without the prep phase.
-    fn handmade_prep(breakaway: Uuid, group_volume: f64, eligible: &[Uuid]) -> PrepResult {
+    fn handmade_prep(breakaway: Uuid, group_volume: Dec, eligible: &[Uuid]) -> PrepResult {
         PrepResult {
             eligibility: eligible
                 .iter()
@@ -3603,8 +3708,9 @@ mod tests {
     fn walk_two_refuses_a_breakaway_with_no_snapshot() {
         let tree = build_chain(2);
         let structure = test_stairstep_structure();
-        let snapshots = HashMap::from([(uuid(0), snapshot_with_rank("senior_director", 150.0))]);
-        let prep = handmade_prep(uuid(1), 900.0, &[uuid(0)]);
+        let snapshots =
+            HashMap::from([(uuid(0), snapshot_with_rank("senior_director", d!(150.0)))]);
+        let prep = handmade_prep(uuid(1), d!(900.0), &[uuid(0)]);
 
         assert_eq!(
             walk_overrides(
@@ -3613,7 +3719,7 @@ mod tests {
                 &snapshots,
                 &prep,
                 &test_rank_ordinals(),
-                1.0
+                d!(1.0)
             ),
             Err(CalculationError::DistributorNotInSnapshot(uuid(1)))
         );
@@ -3623,8 +3729,8 @@ mod tests {
     fn walk_two_refuses_an_eligible_ancestor_with_no_snapshot() {
         let tree = build_chain(2);
         let structure = test_stairstep_structure();
-        let snapshots = HashMap::from([(uuid(1), snapshot_with_rank("director", 200.0))]);
-        let prep = handmade_prep(uuid(1), 900.0, &[uuid(0)]);
+        let snapshots = HashMap::from([(uuid(1), snapshot_with_rank("director", d!(200.0)))]);
+        let prep = handmade_prep(uuid(1), d!(900.0), &[uuid(0)]);
 
         assert_eq!(
             walk_overrides(
@@ -3633,9 +3739,54 @@ mod tests {
                 &snapshots,
                 &prep,
                 &test_rank_ordinals(),
-                1.0
+                d!(1.0)
             ),
             Err(CalculationError::UplineNotInSnapshot(uuid(0)))
         );
+    }
+
+    #[test]
+    fn currency_min_override_equal_to_a_pool_above_eight_billion_pays() {
+        // HEU-717: 12_098_554_891 * 0.71 is 8_589_973_972.61 exactly.
+        let tree = build_chain(3);
+        let mut structure = test_stairstep_structure();
+        structure.level_commission.broad_commission_percent = d!(0.71);
+        set_min_override(
+            &mut structure,
+            MinOverride::Currency {
+                value: d!(8_589_973_972.61),
+            },
+        );
+        let plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+
+        let mut snapshots = HashMap::new();
+        snapshots.insert(uuid(0), snapshot_with_rank("director", d!(6_049_277_445.5)));
+        snapshots.insert(uuid(1), snapshot_with_rank("director", d!(6_049_277_445.5)));
+        snapshots.insert(
+            uuid(2),
+            snapshot_with_rank("associate", d!(6_049_277_445.5)),
+        );
+        let volume = vec![VolumeSource {
+            source_id: uuid(2),
+            cv_amount: d!(100),
+        }];
+
+        let result = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap()
+        .earnings;
+
+        let earned = result
+            .iter()
+            .find(|e| e.earner_id == uuid(0) && e.source_id == uuid(1))
+            .expect("a floor equal to the pool pays at any magnitude inside the envelope");
+        assert_eq!(earned.rate, None);
+        assert_d!(earned.dollar_amount, 8_589_973_972.61);
     }
 }

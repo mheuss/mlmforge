@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/mlmforge/mlmforge/internal/dec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,15 +16,15 @@ func TestEvaluateRanksRequest_RoundTrip(t *testing.T) {
 	src := EvaluateRanksRequest{
 		Distributors: map[string]DistributorPrimitivesDTO{
 			"00000000-0000-0000-0000-000000000001": {
-				PersonalVolume:   100.0,
-				RetailVolume:     25.0,
+				PersonalVolume:   dec.MustParse("100.0"),
+				RetailVolume:     dec.MustParse("25.0"),
 				Status:           "active",
 				HasOrderInPeriod: true,
 				ActiveProducts:   []string{"kit-a"},
 			},
 		},
 		VolumeSources: []VolumeSourceDTO{
-			{SourceID: "00000000-0000-0000-0000-000000000001", CVAmount: 50.0},
+			{SourceID: "00000000-0000-0000-0000-000000000001", CVAmount: dec.MustParse("50.0")},
 		},
 	}
 

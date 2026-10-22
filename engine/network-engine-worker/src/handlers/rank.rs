@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use network_engine::rank::{EvaluationInputs, evaluate_ranks, structures_above_lowest_rank};
 use network_engine::tree::navigator::TreeNavigator;
 
-use super::common::require_plan;
+use super::common::{parse_params_as, require_plan};
 use crate::protocol::{Request, Response};
 use crate::state::WorkerState;
 
@@ -13,9 +13,9 @@ pub(crate) fn handle_evaluate_ranks(state: &WorkerState, request: &Request) -> R
         Ok(p) => p,
         Err(resp) => return resp,
     };
-    let inputs: EvaluationInputs = match serde_json::from_str(request.params.get()) {
+    let inputs: EvaluationInputs = match parse_params_as(&request.params) {
         Ok(p) => p,
-        Err(e) => return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string()),
+        Err(e) => return Response::error(request.id.clone(), "INVALID_PARAMS", e),
     };
 
     // A structure with no navigable tree returns STRUCTURE_NOT_FOUND.

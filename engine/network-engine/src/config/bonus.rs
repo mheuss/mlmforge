@@ -4,6 +4,7 @@
 //! Each bonus is independently optional. A plan can activate any
 //! combination by populating the corresponding field in `BonusConfig`.
 
+use crate::decimal::AuthoredDec;
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -85,7 +86,7 @@ pub struct MatchingBonusConfig {
     /// Deserialized via `crate::serde_helpers::u8_keyed_map` so the keys
     /// parse whether or not serde buffered this value.
     #[serde(deserialize_with = "crate::serde_helpers::u8_keyed_map")]
-    pub rates: BTreeMap<u8, f64>,
+    pub rates: BTreeMap<u8, AuthoredDec>,
 
     /// Which commission types are matched. References commission type
     /// names such as "level" or "binary".
@@ -104,7 +105,7 @@ pub struct MatchingBonusConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SponsorBonusConfig {
     /// Fixed dollar amount or percentage, depending on `amount_type`.
-    pub amount: f64,
+    pub amount: AuthoredDec,
 
     /// Whether `amount` is a fixed dollar value or a percentage.
     pub amount_type: AmountType,
@@ -154,7 +155,7 @@ pub struct FastStartBonusConfig {
         rename = "rate_table",
         deserialize_with = "crate::serde_helpers::rank_keyed_u8_map"
     )]
-    pub enhanced_rate_table: BTreeMap<String, BTreeMap<u8, f64>>,
+    pub enhanced_rate_table: BTreeMap<String, BTreeMap<u8, AuthoredDec>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -169,7 +170,7 @@ pub struct FastStartBonusConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RankAdvancementBonusConfig {
     /// Rank name to bonus amount paid when reaching that rank.
-    pub amounts: BTreeMap<String, f64>,
+    pub amounts: BTreeMap<String, AuthoredDec>,
 
     /// When true, each rank bonus is paid only the first time achieved.
     /// Requires `track_achieved_rank` in `RankTrackingConfig`.
@@ -196,7 +197,7 @@ pub struct LeadershipDevelopmentBonusConfig {
     /// Deserialized via `crate::serde_helpers::u8_keyed_map` so the keys
     /// parse whether or not serde buffered this value.
     #[serde(deserialize_with = "crate::serde_helpers::u8_keyed_map")]
-    pub rates: BTreeMap<u8, f64>,
+    pub rates: BTreeMap<u8, AuthoredDec>,
 
     /// How to handle multi-rank jumps.
     pub rank_skip_mode: RankSkipMode,
@@ -229,7 +230,7 @@ pub struct InfinityBonusConfig {
 
     /// Used when `rate_mode` is `Flat`. The same rate at every
     /// generation.
-    pub flat_rate: Option<f64>,
+    pub flat_rate: Option<AuthoredDec>,
 
     /// Used when `rate_mode` is `Decreasing`. Generation (1-indexed)
     /// to rate. Rate decreases per generation.
@@ -242,7 +243,7 @@ pub struct InfinityBonusConfig {
         default,
         deserialize_with = "crate::serde_helpers::optional_u8_keyed_map"
     )]
-    pub decreasing_rates: Option<BTreeMap<u8, f64>>,
+    pub decreasing_rates: Option<BTreeMap<u8, AuthoredDec>>,
 
     /// Whether rates are flat or decreasing per generation.
     pub rate_mode: InfinityRateMode,
@@ -294,7 +295,7 @@ pub struct LifestyleTier {
     pub min_rank: String,
 
     /// Monthly (per-period) bonus amount.
-    pub amount: f64,
+    pub amount: AuthoredDec,
 
     /// Number of periods the bonus continues after falling below rank.
     /// 0 means no grace.
@@ -315,7 +316,7 @@ pub struct PoolBonusConfig {
     pub name: String,
 
     /// Percentage of company volume allocated to this pool.
-    pub source_percent: f64,
+    pub source_percent: AuthoredDec,
 
     /// How distributors qualify for the pool.
     pub qualification: PoolQualification,
@@ -360,7 +361,7 @@ pub enum PoolQualificationMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VelocityQualification {
     /// Volume that must be reached.
-    pub volume_target: f64,
+    pub volume_target: AuthoredDec,
 
     /// Time window for the target.
     pub timeframe: VelocityTimeframe,
@@ -387,7 +388,7 @@ pub struct PoolShares {
     pub mode: PoolShareMode,
 
     /// Maximum per-distributor share when mode is `EqualShare`.
-    pub equal_share_cap: Option<f64>,
+    pub equal_share_cap: Option<AuthoredDec>,
 }
 
 /// How pool shares are calculated.
@@ -423,11 +424,11 @@ pub struct MatrixCompletionBonusConfig {
         rename = "per_level",
         deserialize_with = "crate::serde_helpers::u8_keyed_map"
     )]
-    pub per_level_amounts: BTreeMap<u8, f64>,
+    pub per_level_amounts: BTreeMap<u8, AuthoredDec>,
 
     /// Bonus paid when the entire matrix is complete.
     #[serde(rename = "full_matrix")]
-    pub full_matrix_amount: f64,
+    pub full_matrix_amount: AuthoredDec,
 }
 
 // ---------------------------------------------------------------------------
@@ -441,7 +442,7 @@ pub struct MatrixCompletionBonusConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PositionBonusConfig {
     /// Fixed or percentage amount.
-    pub amount: f64,
+    pub amount: AuthoredDec,
 
     /// Whether `amount` is a fixed dollar value or a percentage.
     pub amount_type: AmountType,
@@ -486,6 +487,7 @@ pub struct PassUpConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{assert_d, d};
     use std::collections::BTreeMap;
 
     #[test]
@@ -551,11 +553,11 @@ mod tests {
         let config: MatchingBonusConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.max_depth, 5);
         assert_eq!(config.rates.len(), 5);
-        assert_eq!(config.rates[&1], 0.50);
-        assert_eq!(config.rates[&2], 0.25);
-        assert_eq!(config.rates[&3], 0.10);
-        assert_eq!(config.rates[&4], 0.05);
-        assert_eq!(config.rates[&5], 0.02);
+        assert_d!(config.rates[&1], 0.50);
+        assert_d!(config.rates[&2], 0.25);
+        assert_d!(config.rates[&3], 0.10);
+        assert_d!(config.rates[&4], 0.05);
+        assert_d!(config.rates[&5], 0.02);
         assert_eq!(config.matched_commission_types, vec!["unilevel"]);
     }
 
@@ -567,7 +569,7 @@ mod tests {
             "qualifying_products": []
         }"#;
         let config: SponsorBonusConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.amount, 50.0);
+        assert_d!(config.amount, 50.0);
         assert!(matches!(config.amount_type, AmountType::Fixed));
         assert!(config.qualifying_products.is_empty());
     }
@@ -580,7 +582,7 @@ mod tests {
             "qualifying_products": null
         }"#;
         let config: SponsorBonusConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.amount, 25.0);
+        assert_d!(config.amount, 25.0);
         assert!(matches!(config.amount_type, AmountType::Percentage));
         assert!(config.qualifying_products.is_empty());
     }
@@ -592,7 +594,7 @@ mod tests {
             "amount_type": "percentage"
         }"#;
         let config: SponsorBonusConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.amount, 25.0);
+        assert_d!(config.amount, 25.0);
         assert!(matches!(config.amount_type, AmountType::Percentage));
         assert!(config.qualifying_products.is_empty());
     }
@@ -619,12 +621,12 @@ mod tests {
 
         let associate = &config.enhanced_rate_table["associate"];
         assert_eq!(associate.len(), 3);
-        assert_eq!(associate[&1], 0.10);
-        assert_eq!(associate[&3], 0.06);
+        assert_d!(associate[&1], 0.10);
+        assert_d!(associate[&3], 0.06);
 
         let silver = &config.enhanced_rate_table["silver"];
         assert_eq!(silver.len(), 2);
-        assert_eq!(silver[&1], 0.12);
+        assert_d!(silver[&1], 0.12);
     }
 
     #[test]
@@ -649,14 +651,14 @@ mod tests {
         }"#;
         let config: PoolBonusConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.name, "Velocity Pool");
-        assert_eq!(config.source_percent, 0.03);
+        assert_d!(config.source_percent, 0.03);
         assert!(matches!(
             config.qualification.mode,
             PoolQualificationMode::VelocityBased
         ));
         assert!(config.qualification.min_rank.is_none());
         let velocity = config.qualification.velocity.as_ref().unwrap();
-        assert_eq!(velocity.volume_target, 5000.0);
+        assert_d!(velocity.volume_target, 5000.0);
         assert!(matches!(velocity.timeframe, VelocityTimeframe::Days));
         assert_eq!(velocity.timeframe_days, Some(30));
         assert!(matches!(config.shares.mode, PoolShareMode::VolumeWeighted));
@@ -677,8 +679,8 @@ mod tests {
         assert!(config.flat_rate.is_none());
         let rates = config.decreasing_rates.as_ref().unwrap();
         assert_eq!(rates.len(), 3);
-        assert_eq!(rates[&1], 0.05);
-        assert_eq!(rates[&3], 0.03);
+        assert_d!(rates[&1], 0.05);
+        assert_d!(rates[&3], 0.03);
         assert!(matches!(config.rate_mode, InfinityRateMode::Decreasing));
     }
 
@@ -720,9 +722,9 @@ mod tests {
         }"#;
         let config: RankAdvancementBonusConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.amounts.len(), 3);
-        assert_eq!(config.amounts["silver"], 500.0);
-        assert_eq!(config.amounts["gold"], 1000.0);
-        assert_eq!(config.amounts["diamond"], 5000.0);
+        assert_d!(config.amounts["silver"], 500.0);
+        assert_d!(config.amounts["gold"], 1000.0);
+        assert_d!(config.amounts["diamond"], 5000.0);
         assert!(config.pay_once_only);
     }
 
@@ -740,9 +742,9 @@ mod tests {
         let config: LeadershipDevelopmentBonusConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.max_depth, 4);
         assert_eq!(config.rates.len(), 3);
-        assert_eq!(config.rates[&1], 100.0);
-        assert_eq!(config.rates[&2], 250.0);
-        assert_eq!(config.rates[&3], 500.0);
+        assert_d!(config.rates[&1], 100.0);
+        assert_d!(config.rates[&2], 250.0);
+        assert_d!(config.rates[&3], 500.0);
         assert!(matches!(config.rank_skip_mode, RankSkipMode::HighestOnly));
     }
 
@@ -768,10 +770,10 @@ mod tests {
         let config: LifestyleBonusConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.tiers.len(), 2);
         assert_eq!(config.tiers[0].min_rank, "gold");
-        assert_eq!(config.tiers[0].amount, 500.0);
+        assert_d!(config.tiers[0].amount, 500.0);
         assert_eq!(config.tiers[0].grace_periods, 2);
         assert_eq!(config.tiers[1].min_rank, "diamond");
-        assert_eq!(config.tiers[1].amount, 1500.0);
+        assert_d!(config.tiers[1].amount, 1500.0);
         assert_eq!(config.tiers[1].grace_periods, 3);
     }
 
@@ -783,10 +785,10 @@ mod tests {
         }"#;
         let config: MatrixCompletionBonusConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.per_level_amounts.len(), 3);
-        assert_eq!(config.per_level_amounts[&1], 100.0);
-        assert_eq!(config.per_level_amounts[&2], 200.0);
-        assert_eq!(config.per_level_amounts[&3], 500.0);
-        assert_eq!(config.full_matrix_amount, 2000.0);
+        assert_d!(config.per_level_amounts[&1], 100.0);
+        assert_d!(config.per_level_amounts[&2], 200.0);
+        assert_d!(config.per_level_amounts[&3], 500.0);
+        assert_d!(config.full_matrix_amount, 2000.0);
     }
 
     #[test]
@@ -797,7 +799,7 @@ mod tests {
             "sponsored_only": true
         }"#;
         let config: PositionBonusConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.amount, 0.05);
+        assert_d!(config.amount, 0.05);
         assert!(matches!(config.amount_type, AmountType::Percentage));
         assert!(config.sponsored_only);
     }
@@ -829,7 +831,7 @@ mod tests {
         }"#;
         let config: InfinityBonusConfig = serde_json::from_str(json).unwrap();
         assert!(matches!(config.blocker_mode, BlockerMode::SameRank));
-        assert_eq!(config.flat_rate, Some(0.03));
+        assert_eq!(config.flat_rate, Some(d!(0.03)));
         assert!(config.decreasing_rates.is_none());
         assert!(matches!(config.rate_mode, InfinityRateMode::Flat));
     }
@@ -914,7 +916,7 @@ mod tests {
         ));
         assert_eq!(config.qualification.min_rank, Some("gold".to_string()));
         let velocity = config.qualification.velocity.as_ref().unwrap();
-        assert_eq!(velocity.volume_target, 10000.0);
+        assert_d!(velocity.volume_target, 10000.0);
         assert!(matches!(velocity.timeframe, VelocityTimeframe::Period));
         assert!(velocity.timeframe_days.is_none());
         assert!(matches!(config.shares.mode, PoolShareMode::RankWeighted));
@@ -923,8 +925,8 @@ mod tests {
     #[test]
     fn round_trip_bonus_config() {
         let mut rates = BTreeMap::new();
-        rates.insert(1, 0.50);
-        rates.insert(2, 0.25);
+        rates.insert(1, d!(0.50));
+        rates.insert(2, d!(0.25));
 
         let config = BonusConfig {
             matching: Some(MatchingBonusConfig {
@@ -947,21 +949,21 @@ mod tests {
         let deserialized: BonusConfig = serde_json::from_str(&json).unwrap();
         let matching = deserialized.matching.unwrap();
         assert_eq!(matching.max_depth, 2);
-        assert_eq!(matching.rates[&1], 0.50);
-        assert_eq!(matching.rates[&2], 0.25);
+        assert_d!(matching.rates[&1], 0.50);
+        assert_d!(matching.rates[&2], 0.25);
         assert_eq!(matching.matched_commission_types, vec!["unilevel"]);
     }
 
     #[test]
     fn round_trip_sponsor_bonus() {
         let config = SponsorBonusConfig {
-            amount: 100.0,
+            amount: d!(100.0),
             amount_type: AmountType::Percentage,
             qualifying_products: vec!["premium-kit".to_string()],
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: SponsorBonusConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.amount, 100.0);
+        assert_d!(deserialized.amount, 100.0);
         assert!(matches!(deserialized.amount_type, AmountType::Percentage));
         assert_eq!(deserialized.qualifying_products, vec!["premium-kit"]);
     }
@@ -982,6 +984,7 @@ mod tests {
 #[cfg(test)]
 mod buffer_probe_tests {
     use super::*;
+    use crate::assert_d;
     use serde::Deserialize;
 
     /// Forces serde's `Content` buffer, which a plain `from_value` does not.
@@ -1027,7 +1030,7 @@ mod buffer_probe_tests {
                 "matched_commission_types": ["level"]
             }),
         ) {
-            BufferProbe::Matching(c) => assert_eq!(c.rates[&1], 0.1),
+            BufferProbe::Matching(c) => assert_d!(c.rates[&1], 0.1),
             other => panic!("expected matching, got {other:?}"),
         }
     }
@@ -1041,7 +1044,9 @@ mod buffer_probe_tests {
                 "rate_table": { "associate": { "1": 0.2 } }
             }),
         ) {
-            BufferProbe::FastStart(c) => assert_eq!(c.enhanced_rate_table["associate"][&1], 0.2),
+            BufferProbe::FastStart(c) => {
+                assert_d!(c.enhanced_rate_table["associate"][&1], 0.2)
+            }
             other => panic!("expected fast_start, got {other:?}"),
         }
     }
@@ -1056,7 +1061,7 @@ mod buffer_probe_tests {
                 "rank_skip_mode": "highest_only"
             }),
         ) {
-            BufferProbe::Leadership(c) => assert_eq!(c.rates[&1], 0.03),
+            BufferProbe::Leadership(c) => assert_d!(c.rates[&1], 0.03),
             other => panic!("expected leadership, got {other:?}"),
         }
     }
@@ -1073,7 +1078,7 @@ mod buffer_probe_tests {
             }),
         ) {
             BufferProbe::Infinity(c) => {
-                assert_eq!(c.decreasing_rates.as_ref().unwrap()[&1], 0.04)
+                assert_d!(c.decreasing_rates.as_ref().unwrap()[&1], 0.04)
             }
             other => panic!("expected infinity, got {other:?}"),
         }
@@ -1088,7 +1093,7 @@ mod buffer_probe_tests {
                 "full_matrix": 500.0
             }),
         ) {
-            BufferProbe::MatrixCompletion(c) => assert_eq!(c.per_level_amounts[&1], 25.0),
+            BufferProbe::MatrixCompletion(c) => assert_d!(c.per_level_amounts[&1], 25.0),
             other => panic!("expected matrix_completion, got {other:?}"),
         }
     }

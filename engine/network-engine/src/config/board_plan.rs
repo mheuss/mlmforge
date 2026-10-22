@@ -5,6 +5,7 @@
 //! Re-entry rules control whether cycled-out members rejoin new boards.
 //! Cascade limits prevent runaway chain reactions from a single add.
 
+use crate::decimal::AuthoredDec;
 use std::num::NonZeroU32;
 
 use serde::{Deserialize, Serialize};
@@ -16,7 +17,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BoardPlanConfig {
     /// Fixed dollar amount earned when cycling out of a board.
-    pub cycle_commission: f64,
+    pub cycle_commission: AuthoredDec,
 
     /// Whether cycled-out members automatically re-enter a new board.
     pub re_entry_enabled: bool,
@@ -55,6 +56,7 @@ fn default_max_cascade_depth() -> NonZeroU32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assert_d;
 
     #[test]
     fn deserialize_board_plan_config() {
@@ -68,7 +70,7 @@ mod tests {
             "inactive_compression": true
         }"#;
         let config: BoardPlanConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.cycle_commission, 500.0);
+        assert_d!(config.cycle_commission, 500.0);
         assert!(config.re_entry_enabled);
         assert!(matches!(
             config.re_entry_position,

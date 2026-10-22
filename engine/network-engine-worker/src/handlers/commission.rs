@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use network_engine::commission::{
     BinaryCommissionEarning, DistributorSnapshot, LegVolumes, VolumeSource,
@@ -13,7 +13,7 @@ use network_engine::serde_helpers::null_as_empty;
 use uuid::Uuid;
 
 use super::common::{
-    require_binary_tree, require_matrix_tree, require_plan, require_plan_identity,
+    parse_params_as, require_binary_tree, require_matrix_tree, require_plan, require_plan_identity,
     require_unilevel_tree,
 };
 use crate::protocol::{Request, Response};
@@ -133,14 +133,10 @@ struct CalculateStairstepParams {
 }
 
 /// Wire response for a binary pairing calculation result.
-///
-/// The library's `BinaryCalculationResult` is not Serialize (carry_forward
-/// uses `HashMap<Uuid, LegVolumes>` which we convert to string-keyed JSON).
-/// This struct owns the wire-safe shape.
 #[derive(serde::Serialize)]
 struct BinaryCalculationResponse {
     earnings: Vec<BinaryCommissionEarning>,
-    carry_forward: HashMap<String, LegVolumes>,
+    carry_forward: BTreeMap<String, LegVolumes>,
 }
 
 // --- Commission handlers ---
@@ -154,10 +150,10 @@ pub(crate) fn handle_calculate_unilevel(state: &WorkerState, request: &Request) 
         Ok(i) => i,
         Err(resp) => return resp,
     };
-    let params: CalculateUnilevelParams = match serde_json::from_str(request.params.get()) {
+    let params: CalculateUnilevelParams = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
-            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+            return Response::error(request.id.clone(), "INVALID_PARAMS", e);
         }
     };
     let tree = match require_unilevel_tree(state, &params.structure_name, &request.id) {
@@ -197,10 +193,10 @@ pub(crate) fn handle_calculate_generation(state: &WorkerState, request: &Request
         Ok(i) => i,
         Err(resp) => return resp,
     };
-    let params: CalculateGenerationParams = match serde_json::from_str(request.params.get()) {
+    let params: CalculateGenerationParams = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
-            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+            return Response::error(request.id.clone(), "INVALID_PARAMS", e);
         }
     };
     let tree = match require_unilevel_tree(state, &params.structure_name, &request.id) {
@@ -236,10 +232,10 @@ pub(crate) fn handle_calculate_binary_pairing(state: &WorkerState, request: &Req
         Ok(p) => p,
         Err(resp) => return resp,
     };
-    let params: CalculateBinaryPairingParams = match serde_json::from_str(request.params.get()) {
+    let params: CalculateBinaryPairingParams = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
-            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+            return Response::error(request.id.clone(), "INVALID_PARAMS", e);
         }
     };
     let tree = match require_binary_tree(state, &params.structure_name, &request.id) {
@@ -290,10 +286,10 @@ pub(crate) fn handle_calculate_matrix(state: &WorkerState, request: &Request) ->
         Ok(i) => i,
         Err(resp) => return resp,
     };
-    let params: CalculateMatrixParams = match serde_json::from_str(request.params.get()) {
+    let params: CalculateMatrixParams = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
-            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+            return Response::error(request.id.clone(), "INVALID_PARAMS", e);
         }
     };
     let tree = match require_matrix_tree(state, &params.structure_name, &request.id) {
@@ -333,10 +329,10 @@ pub(crate) fn handle_calculate_stairstep(state: &WorkerState, request: &Request)
         Ok(i) => i,
         Err(resp) => return resp,
     };
-    let params: CalculateStairstepParams = match serde_json::from_str(request.params.get()) {
+    let params: CalculateStairstepParams = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
-            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+            return Response::error(request.id.clone(), "INVALID_PARAMS", e);
         }
     };
     // Stairstep operates on a unilevel tree, so reuse require_unilevel_tree.

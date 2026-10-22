@@ -1,6 +1,12 @@
 mod common;
 
 use network_engine::config::StructureConfig;
+use network_engine::decimal::Dec;
+
+/// The text of a JSON number.
+fn number_text(value: &serde_json::Value) -> &str {
+    value.as_number().expect("a JSON number").as_str()
+}
 
 const ROOT: &str = "00000000-0000-0000-0000-000000000001";
 const CHILD: &str = "00000000-0000-0000-0000-000000000002";
@@ -90,7 +96,7 @@ fn ping_returns_protocol_version() {
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(parsed["id"], "1");
-    assert_eq!(parsed["result"]["protocol_version"], 23);
+    assert_eq!(parsed["result"]["protocol_version"], 24);
 
     drop(child.stdin.take());
     child.wait().unwrap();
@@ -804,6 +810,138 @@ fn expected_plan_hash(plan_json: &str) -> String {
     format!("sha256:{hex}")
 }
 
+/// Asserts `resp` is a refusal with `code` whose message starts with `prefix`,
+/// then `path`, then text holding `inner`.
+fn assert_refused_at_path(resp: &str, code: &str, prefix: &str, path: &str, inner: &str) {
+    let parsed: serde_json::Value = serde_json::from_str(resp).unwrap();
+    assert_eq!(parsed["ok"], false, "response: {resp}");
+    assert_eq!(parsed["error"]["code"], code, "response: {resp}");
+    let message = parsed["error"]["message"].as_str().unwrap();
+    let rest = message
+        .strip_prefix(&format!("{prefix}{path}: "))
+        .unwrap_or_else(|| panic!("message: {message}"));
+    assert!(rest.contains(inner), "message: {message}");
+}
+
+#[test]
+fn load_plan_refuses_an_authored_value_of_ten_to_the_fifteenth_and_names_its_path() {
+    let mut worker = common::spawn_worker();
+    let plan = TEST_PLAN_JSON.replace(
+        r#""volume_to_dollar_multiplier": 1.0,"#,
+        r#""volume_to_dollar_multiplier": 1e15,"#,
+    );
+    assert_ne!(
+        plan, TEST_PLAN_JSON,
+        "the multiplier replacement did not match"
+    );
+    let resp = send_load_plan(&mut worker, &plan);
+    assert_refused_at_path(
+        &resp,
+        "INVALID_PLAN",
+        "failed to deserialize plan: ",
+        "volume.volume_to_dollar_multiplier",
+        "below 10^15",
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn load_plan_refuses_a_quoted_number_and_names_its_path() {
+    let mut worker = common::spawn_worker();
+    let plan = TEST_PLAN_JSON.replace(
+        r#""volume_to_dollar_multiplier": 1.0,"#,
+        r#""volume_to_dollar_multiplier": "1","#,
+    );
+    assert_ne!(
+        plan, TEST_PLAN_JSON,
+        "the multiplier replacement did not match"
+    );
+    let resp = send_load_plan(&mut worker, &plan);
+    assert_refused_at_path(
+        &resp,
+        "INVALID_PLAN",
+        "failed to deserialize plan: ",
+        "volume.volume_to_dollar_multiplier",
+        "invalid type: string",
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn load_plan_refuses_eleven_decimal_places_and_names_its_path() {
+    let mut worker = common::spawn_worker();
+    let plan = TEST_PLAN_JSON.replacen(
+        r#""structures": [],"#,
+        r#""structures": [{"structure": "Test", "personal_volume": 0.00000000001, "group_volume": 0.0, "max_group_volume_per_leg": 0.0, "min_retail_volume": 0.0, "distributor_count": null}],"#,
+        1,
+    );
+    assert_ne!(
+        plan, TEST_PLAN_JSON,
+        "the structures replacement did not match"
+    );
+    let resp = send_load_plan(&mut worker, &plan);
+    assert_refused_at_path(
+        &resp,
+        "INVALID_PLAN",
+        "failed to deserialize plan: ",
+        "ranks[0].qualification.structures[0].personal_volume",
+        "at most 10 decimal places",
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Sends `calculate_unilevel` with one volume entry whose `cv_amount` is `cv`.
+fn calculate_unilevel_with_cv(cv: &str) -> String {
+    let mut worker = common::spawn_worker();
+    load_test_plan(&mut worker);
+    let request = format!(
+        r#"{{"id":"u-path","op":"calculate_unilevel","params":{{"structure":"Test","snapshots":{{}},"volume":[{{"source_id":"{GRANDCHILD}","cv_amount":{cv}}}]}}}}"#
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+    resp
+}
+
+#[test]
+fn calculate_unilevel_refuses_a_quoted_cv_amount_and_names_its_path() {
+    let resp = calculate_unilevel_with_cv(r#""100""#);
+    assert_refused_at_path(
+        &resp,
+        "INVALID_PARAMS",
+        "",
+        "volume[0].cv_amount",
+        "invalid type: string",
+    );
+}
+
+#[test]
+fn calculate_unilevel_refuses_an_out_of_envelope_cv_amount_and_names_its_path() {
+    let resp = calculate_unilevel_with_cv("1e15");
+    assert_refused_at_path(
+        &resp,
+        "INVALID_PARAMS",
+        "",
+        "volume[0].cv_amount",
+        "below 10^15",
+    );
+}
+
+#[test]
+fn calculate_unilevel_refuses_eleven_decimal_places_and_names_its_path() {
+    let resp = calculate_unilevel_with_cv("0.00000000001");
+    assert_refused_at_path(
+        &resp,
+        "INVALID_PARAMS",
+        "",
+        "volume[0].cv_amount",
+        "at most 10 decimal places",
+    );
+}
+
 #[test]
 fn load_plan_records_a_plan_hash_over_the_bytes_it_received() {
     let mut worker = common::spawn_worker();
@@ -1062,12 +1200,8 @@ fn calculate_unilevel_three_node_chain() {
         .expect("mid should have earned");
     assert_eq!(mid_earning["level"].as_u64().unwrap(), 1);
     assert_eq!(mid_earning["source_id"].as_str().unwrap(), GRANDCHILD);
-    let mid_dollar = mid_earning["dollar_amount"].as_f64().unwrap();
-    assert!(
-        (mid_dollar - 2.0).abs() < 1e-10,
-        "mid dollar_amount should be 2.0, got {}",
-        mid_dollar
-    );
+    let mid_dollar = number_text(&mid_earning["dollar_amount"]);
+    assert_eq!(mid_dollar, "2", "mid dollar_amount");
 
     // Find root(001) earning at level 2
     let root_earning = earnings
@@ -1076,12 +1210,8 @@ fn calculate_unilevel_three_node_chain() {
         .expect("root should have earned");
     assert_eq!(root_earning["level"].as_u64().unwrap(), 2);
     assert_eq!(root_earning["source_id"].as_str().unwrap(), GRANDCHILD);
-    let root_dollar = root_earning["dollar_amount"].as_f64().unwrap();
-    assert!(
-        (root_dollar - 2.0).abs() < 1e-10,
-        "root dollar_amount should be 2.0, got {}",
-        root_dollar
-    );
+    let root_dollar = number_text(&root_earning["dollar_amount"]);
+    assert_eq!(root_dollar, "2", "root dollar_amount");
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -2133,6 +2263,170 @@ fn build_binary_calc_tree(worker: &mut std::process::Child) {
 }
 
 #[test]
+fn frozen_stream_skips_write_normalized_cv_amounts() {
+    use std::str::FromStr as _;
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../testdata/contracts/calculate_streamline_frozen.json"
+    );
+    let fixture: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let mut worker = common::spawn_worker();
+    for line in fixture["setup_raw"].as_array().unwrap() {
+        let resp = common::send_receive(&mut worker, line.as_str().unwrap());
+        assert!(resp.contains(r#""ok":true"#), "setup failed: {}", resp);
+    }
+    let mut request = fixture["request"].clone();
+    request["params"]["volume"][0]["cv_amount"] =
+        serde_json::Value::Number(serde_json::Number::from_str("100.000").unwrap());
+    let request_text = serde_json::to_string(&request).unwrap();
+    assert!(request_text.contains("100.000"), "request: {request_text}");
+
+    let resp = common::send_receive(&mut worker, &request_text);
+    let skips_at = resp
+        .find("frozen_stream_skips")
+        .unwrap_or_else(|| panic!("no frozen_stream_skips in: {resp}"));
+    assert!(resp[skips_at..].contains(r#""cv_amount":100,"#), "{resp}");
+    assert!(!resp.contains("100.0"), "{resp}");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Sends `calculate_binary_pairing` on the BinaryCalc tree with `volume` and
+/// `carry_forward` spliced into the params as JSON text.
+fn binary_pairing_with(
+    worker: &mut std::process::Child,
+    volume: &str,
+    carry_forward: &str,
+) -> String {
+    let snap = r#"{"rank":"associate","personal_volume":150.0,"status":"active","has_order_in_period":true}"#;
+    let request = format!(
+        r#"{{"id":"bp-n8","op":"calculate_binary_pairing","params":{{"structure":"BinaryCalc","snapshots":{{"{a}":{snap},"{b}":{snap},"{c}":{snap}}},"volume":{volume},"carry_forward":{carry_forward}}}}}"#,
+        a = NODE_A,
+        b = NODE_B,
+        c = NODE_C,
+    );
+    common::send_receive(worker, &request)
+}
+
+#[test]
+fn an_overflowing_sum_is_a_calculation_error_naming_the_operation() {
+    let mut worker = common::spawn_worker();
+    load_binary_test_plan(&mut worker);
+    build_binary_calc_tree(&mut worker);
+    let resp = binary_pairing_with(
+        &mut worker,
+        &format!(r#"[{{"source_id":"{NODE_B}","cv_amount":1}}]"#),
+        &format!(r#"{{"{NODE_A}":{{"left":79228162514264337593543950335,"right":0}}}}"#),
+    );
+    assert!(resp.contains("CALCULATION_ERROR"), "{resp}");
+    assert!(resp.contains(r#""message":"cannot add"#), "{resp}");
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn an_inexact_product_is_a_precision_error_through_the_worker() {
+    let mut worker = common::spawn_worker();
+    load_binary_test_plan(&mut worker);
+    build_binary_calc_tree(&mut worker);
+    let resp = binary_pairing_with(
+        &mut worker,
+        &format!(r#"[{{"source_id":"{NODE_C}","cv_amount":1}}]"#),
+        &format!(r#"{{"{NODE_A}":{{"left":0.0000000000000000000000000001,"right":0}}}}"#),
+    );
+    assert!(resp.contains("CALCULATION_ERROR"), "{resp}");
+    assert!(resp.contains(r#""message":"cannot multiply"#), "{resp}");
+    assert!(resp.contains("more than 28 decimal places"), "{resp}");
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn carry_forward_round_trips_exactly_into_the_next_period() {
+    let mut worker = common::spawn_worker();
+    let plan = BINARY_PLAN_JSON.replace(
+        r#""volume_after_payout": "full_flush","#,
+        r#""volume_after_payout": "carry_forward","#,
+    );
+    assert_ne!(
+        plan, BINARY_PLAN_JSON,
+        "the volume_after_payout replacement did not match"
+    );
+    let resp = send_load_plan(&mut worker, &plan);
+    assert!(resp.contains(r#""ok":true"#), "load_plan failed: {resp}");
+    build_binary_calc_tree(&mut worker);
+
+    let first = binary_pairing_with(
+        &mut worker,
+        "[]",
+        &format!(r#"{{"{NODE_A}":{{"left":12345.678901234567890123,"right":0}}}}"#),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&first).unwrap();
+    assert_eq!(parsed["ok"], true, "first period failed: {first}");
+    let carry_text = parsed["result"]["carry_forward"].to_string();
+    assert!(
+        carry_text.contains(&format!(r#""{NODE_A}":{{"left":12345.678901234567890123,"#)),
+        "{carry_text}"
+    );
+
+    let second = binary_pairing_with(
+        &mut worker,
+        &format!(r#"[{{"source_id":"{NODE_C}","cv_amount":1}}]"#),
+        &carry_text,
+    );
+    assert!(
+        second.contains(r#""left_volume":12345.678901234567890123,"#),
+        "{second}"
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn an_over_precise_carry_forward_value_is_refused() {
+    let mut worker = common::spawn_worker();
+    load_binary_test_plan(&mut worker);
+    build_binary_calc_tree(&mut worker);
+    let resp = binary_pairing_with(
+        &mut worker,
+        "[]",
+        &format!(r#"{{"{NODE_A}":{{"left":0.00000000000000000000000000001,"right":0}}}}"#),
+    );
+    assert!(resp.contains("INVALID_PARAMS"), "{resp}");
+    assert!(resp.contains("carry_forward"), "{resp}");
+    assert!(resp.contains("more than 28 decimal places"), "{resp}");
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn calculate_binary_pairing_writes_the_same_bytes_in_every_worker() {
+    let snap = r#"{"rank":"associate","personal_volume":150.0,"status":"active","has_order_in_period":true}"#;
+    let request = format!(
+        r#"{{"id":"bp-1","op":"calculate_binary_pairing","params":{{"structure":"BinaryCalc","snapshots":{{"{a}":{snap},"{b}":{snap},"{c}":{snap}}},"volume":[{{"source_id":"{b}","cv_amount":500.0}},{{"source_id":"{c}","cv_amount":300.0}}]}}}}"#,
+        a = NODE_A,
+        b = NODE_B,
+        c = NODE_C,
+        snap = snap,
+    );
+    let mut seen = std::collections::BTreeSet::new();
+    // A fresh process per pass, so each pass gets fresh hash seeds.
+    for _ in 0..8 {
+        let mut worker = common::spawn_worker();
+        load_binary_test_plan(&mut worker);
+        build_binary_calc_tree(&mut worker);
+        let resp = common::send_receive(&mut worker, &request);
+        assert!(resp.contains(r#""ok":true"#), "calculate failed: {}", resp);
+        seen.insert(resp);
+        drop(worker.stdin.take());
+        worker.wait().unwrap();
+    }
+    assert_eq!(seen.len(), 1, "distinct responses across workers: {seen:?}");
+}
+
+#[test]
 fn calculate_binary_pairing_balanced_legs() {
     let mut worker = common::spawn_worker();
 
@@ -2173,18 +2467,14 @@ fn calculate_binary_pairing_balanced_legs() {
 
     let earning = &earnings[0];
     assert_eq!(earning["earner_id"].as_str().unwrap(), NODE_A);
-    assert_eq!(earning["left_volume"].as_f64().unwrap(), 500.0);
-    assert_eq!(earning["right_volume"].as_f64().unwrap(), 500.0);
-    assert_eq!(earning["matched_volume"].as_f64().unwrap(), 500.0);
-    assert_eq!(earning["ratio"].as_f64().unwrap(), 1.0);
-    assert_eq!(earning["percent"].as_f64().unwrap(), 0.10);
+    assert_eq!(number_text(&earning["left_volume"]), "500");
+    assert_eq!(number_text(&earning["right_volume"]), "500");
+    assert_eq!(number_text(&earning["matched_volume"]), "500");
+    assert_eq!(number_text(&earning["ratio"]), "1");
+    assert_eq!(number_text(&earning["percent"]), "0.1");
 
-    let dollar = earning["dollar_amount"].as_f64().unwrap();
-    assert!(
-        (dollar - 50.0).abs() < 1e-10,
-        "dollar_amount should be 50.0, got {}",
-        dollar
-    );
+    let dollar = number_text(&earning["dollar_amount"]);
+    assert_eq!(dollar, "50", "dollar_amount");
     assert!(!earning["capped"].as_bool().unwrap());
 
     // Verify carry_forward is present.
@@ -2288,8 +2578,8 @@ fn calculate_binary_pairing_accepts_a_null_volume() {
         let legs = carry
             .get(node)
             .unwrap_or_else(|| panic!("carry_forward should name {}, got: {}", node, resp));
-        assert_eq!(legs["left"].as_f64().unwrap(), 0.0, "got: {}", resp);
-        assert_eq!(legs["right"].as_f64().unwrap(), 0.0, "got: {}", resp);
+        assert_eq!(number_text(&legs["left"]), "0", "got: {}", resp);
+        assert_eq!(number_text(&legs["right"]), "0", "got: {}", resp);
     }
 
     drop(worker.stdin.take());
@@ -2444,14 +2734,13 @@ fn calculate_binary_pairing_applies_populated_carry_forward() {
 
     let earning = &earnings[0];
     assert_eq!(earning["earner_id"].as_str().unwrap(), NODE_A);
-    assert_eq!(earning["left_volume"].as_f64().unwrap(), 500.0);
-    assert_eq!(earning["right_volume"].as_f64().unwrap(), 500.0);
-    assert_eq!(earning["matched_volume"].as_f64().unwrap(), 500.0);
-    let dollar = earning["dollar_amount"].as_f64().unwrap();
-    assert!(
-        (dollar - 50.0).abs() < 1e-10,
-        "carry of 500/500 at 10% should pay 50.0, got {} in: {}",
-        dollar,
+    assert_eq!(number_text(&earning["left_volume"]), "500");
+    assert_eq!(number_text(&earning["right_volume"]), "500");
+    assert_eq!(number_text(&earning["matched_volume"]), "500");
+    let dollar = number_text(&earning["dollar_amount"]);
+    assert_eq!(
+        dollar, "50",
+        "dollar_amount for a carry of 500/500 at 10% in: {}",
         resp
     );
 
@@ -2461,8 +2750,8 @@ fn calculate_binary_pairing_applies_populated_carry_forward() {
     let root_carry = carry
         .get(NODE_A)
         .unwrap_or_else(|| panic!("carry_forward should name the root, got: {}", resp));
-    assert_eq!(root_carry["left"].as_f64().unwrap(), 0.0, "got: {}", resp);
-    assert_eq!(root_carry["right"].as_f64().unwrap(), 0.0, "got: {}", resp);
+    assert_eq!(number_text(&root_carry["left"]), "0", "got: {}", resp);
+    assert_eq!(number_text(&root_carry["right"]), "0", "got: {}", resp);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -2773,14 +3062,16 @@ fn calculate_binary_pairing_multi_position_ownership() {
     }
 
     // Owner A aggregate cap: total should not exceed 500.0.
-    let owner_a_total: f64 = owner_a_earnings
-        .iter()
-        .map(|e| e["dollar_amount"].as_f64().unwrap())
-        .sum();
-    assert!(
-        (owner_a_total - 500.0).abs() < 1e-10,
-        "owner_a aggregate should be exactly 500.0 after pro-rata cap, got {}",
-        owner_a_total
+    let owner_a_total = Dec::sum(
+        owner_a_earnings
+            .iter()
+            .map(|e| number_text(&e["dollar_amount"]).parse::<Dec>().unwrap()),
+    )
+    .unwrap();
+    assert_eq!(
+        owner_a_total,
+        "500".parse::<Dec>().unwrap(),
+        "owner_a aggregate after the pro-rata cap"
     );
 
     // Owner B's earnings (pos3).
@@ -3083,12 +3374,8 @@ fn calculate_unilevel_pass_up_skips_first_recruits() {
         1,
         "S should earn at level 1 (A skipped without consuming a level)"
     );
-    let s_r1_dollar = r1_earnings[0]["dollar_amount"].as_f64().unwrap();
-    assert!(
-        (s_r1_dollar - 2.0).abs() < 1e-10,
-        "S dollar_amount from R1 should be 2.0, got {}",
-        s_r1_dollar
-    );
+    let s_r1_dollar = number_text(&r1_earnings[0]["dollar_amount"]);
+    assert_eq!(s_r1_dollar, "2", "S dollar_amount from R1");
 
     // --- Verify R3 volume: A earns at level 1, S earns at level 2 ---
     let r3_earnings: Vec<&serde_json::Value> = earnings
@@ -3107,24 +3394,16 @@ fn calculate_unilevel_pass_up_skips_first_recruits() {
         .find(|e| e["earner_id"].as_str().unwrap() == PU_A)
         .expect("A should earn from R3 volume");
     assert_eq!(a_from_r3["level"].as_u64().unwrap(), 1);
-    let a_r3_dollar = a_from_r3["dollar_amount"].as_f64().unwrap();
-    assert!(
-        (a_r3_dollar - 2.0).abs() < 1e-10,
-        "A dollar_amount from R3 should be 2.0, got {}",
-        a_r3_dollar
-    );
+    let a_r3_dollar = number_text(&a_from_r3["dollar_amount"]);
+    assert_eq!(a_r3_dollar, "2", "A dollar_amount from R3");
 
     let s_from_r3 = r3_earnings
         .iter()
         .find(|e| e["earner_id"].as_str().unwrap() == PU_S)
         .expect("S should earn from R3 volume");
     assert_eq!(s_from_r3["level"].as_u64().unwrap(), 2);
-    let s_r3_dollar = s_from_r3["dollar_amount"].as_f64().unwrap();
-    assert!(
-        (s_r3_dollar - 2.0).abs() < 1e-10,
-        "S dollar_amount from R3 should be 2.0, got {}",
-        s_r3_dollar
-    );
+    let s_r3_dollar = number_text(&s_from_r3["dollar_amount"]);
+    assert_eq!(s_r3_dollar, "2", "S dollar_amount from R3");
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -3775,6 +4054,34 @@ fn board_calculate_accepts_absent_period_cycle_counts() {
     worker.wait().unwrap();
 }
 
+#[test]
+fn board_calculate_writes_the_same_bytes_in_every_worker() {
+    let events = (1..=4)
+        .map(|i| {
+            format!(
+                r#"{{"board_id":"00000000-0000-0000-0000-000000000010","cycled_member":"00000000-0000-0000-0000-00000000000{i}","new_boards":[],"re_entry_board":null}}"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let request = format!(
+        r#"{{"id":"bp-bytes","op":"board_calculate_commissions","params":{{"structure":"{}","cycle_events":[{}],"period_cycle_counts":{{}}}}}}"#,
+        BP_STRUCTURE, events
+    );
+    let mut seen = std::collections::BTreeSet::new();
+    // A fresh process per pass, so each pass gets fresh hash seeds.
+    for _ in 0..8 {
+        let mut worker = common::spawn_worker();
+        load_board_test_plan(&mut worker);
+        let resp = common::send_receive(&mut worker, &request);
+        assert!(resp.contains(r#""ok":true"#), "calculate failed: {}", resp);
+        seen.insert(resp);
+        drop(worker.stdin.take());
+        worker.wait().unwrap();
+    }
+    assert_eq!(seen.len(), 1, "distinct responses across workers: {seen:?}");
+}
+
 /// Omitting `cycle_events` altogether stays an error. This is the other half of
 /// `board_calculate_accepts_null_collections`: widening null must not quietly
 /// widen absent, or a caller that forgets the field gets a zero payout instead
@@ -3855,7 +4162,7 @@ fn load_plan_rejects_board_cycle_commission_negative() {
         resp
     );
     assert!(
-        resp.contains("cycle_commission") && resp.contains("must be finite and non-negative"),
+        resp.contains("cycle_commission") && resp.contains("must be non-negative"),
         "expected the board dollar-law gate to reject it, not a deserialize \
          failure or an unrelated check, got: {}",
         resp
@@ -3968,8 +4275,7 @@ fn board_calculate_rejects_legacy_shape_without_structure() {
 ///
 /// Both hostile values differ from the plan's, and both are asserted. The
 /// commission proves `cycle_commission` comes from the plan; the cap proves
-/// `max_cycles_per_period` does too. The calculator reads exactly these two
-/// fields (`commission/board_plan.rs:35-36`), so together they cover it.
+/// `max_cycles_per_period` does too.
 ///
 /// `config` has since been deleted from `Params`. This test still sends it,
 /// and that is the point: nothing sets `deny_unknown_fields`, so the worker
@@ -4007,30 +4313,24 @@ fn board_calculate_ignores_request_scoped_config() {
     let earnings = parsed["result"]["earnings"].as_array().expect(&resp);
     assert_eq!(earnings.len(), 4, "expected four earnings, got: {}", resp);
 
-    let first = earnings[0]["dollar_amount"].as_f64().expect(&resp);
-    assert!(
-        (first - 500.0).abs() < 1e-10,
-        "the request-scoped cycle_commission reached the calculator, got {}: {}",
-        first,
-        resp
-    );
+    let first = number_text(&earnings[0]["dollar_amount"]);
+    assert_eq!(first, "500", "first cycle dollar_amount in: {}", resp);
 
     // Pins the cap at exactly 3, not merely somewhere in 1..=3. The
-    // fourth-cycle check alone stays green under a drifted cap of 1 or 2. It
-    // also stays green if the `>` at `commission/board_plan.rs:35` became
-    // `>=`. Only this assertion catches either.
-    let third = earnings[2]["dollar_amount"].as_f64().expect(&resp);
+    // fourth-cycle check alone stays green under a drifted cap of 1 or 2.
+    let third = number_text(&earnings[2]["dollar_amount"]);
+    assert_eq!(third, "500", "third cycle dollar_amount in: {}", resp);
     assert!(
-        (third - 500.0).abs() < 1e-10 && !earnings[2]["capped"].as_bool().expect(&resp),
-        "the third cycle is within the plan's cap of 3 and must pay, got: {}",
+        !earnings[2]["capped"].as_bool().expect(&resp),
+        "third cycle capped flag in: {}",
         resp
     );
 
-    let fourth = earnings[3]["dollar_amount"].as_f64().expect(&resp);
+    let fourth = number_text(&earnings[3]["dollar_amount"]);
+    assert_eq!(fourth, "0", "fourth cycle dollar_amount in: {}", resp);
     assert!(
-        (fourth - 0.0).abs() < 1e-10 && earnings[3]["capped"].as_bool().expect(&resp),
-        "the request-scoped max_cycles_per_period reached the calculator; the \
-         fourth cycle should be capped under the plan's cap of 3, got: {}",
+        earnings[3]["capped"].as_bool().expect(&resp),
+        "the fourth cycle should be capped under the plan's cap of 3, got: {}",
         resp
     );
 
@@ -4087,15 +4387,8 @@ fn board_calculate_ignores_malformed_request_config() {
         "a malformed config must be ignored, not deserialized, got: {}",
         resp
     );
-    let dollar = parsed["result"]["earnings"][0]["dollar_amount"]
-        .as_f64()
-        .expect(&resp);
-    assert!(
-        (dollar - 500.0).abs() < 1e-10,
-        "expected the plan's 500.0, got {}: {}",
-        dollar,
-        resp
-    );
+    let dollar = number_text(&parsed["result"]["earnings"][0]["dollar_amount"]);
+    assert_eq!(dollar, "500", "dollar_amount in: {}", resp);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -4485,13 +4778,17 @@ fn calculate_streamline_at_depth_255() {
     assert_eq!(earner_at(1), uid(256));
     assert_eq!(earner_at(255), uid(2));
 
-    // 100 CV * 1.0 multiplier * 0.01 is exactly 1.0 in binary floating point,
-    // so the total is bit-exact and safe to assert.
-    let total: f64 = earnings
-        .iter()
-        .map(|e| e["dollar_amount"].as_f64().expect(&resp))
-        .sum();
-    assert_eq!(total, 255.0, "each of 255 levels pays exactly 1.00");
+    let total = Dec::sum(earnings.iter().map(|e| {
+        number_text(&e["dollar_amount"])
+            .parse::<Dec>()
+            .expect(&resp)
+    }))
+    .unwrap();
+    assert_eq!(
+        total,
+        "255".parse::<Dec>().unwrap(),
+        "each of 255 levels pays exactly 1.00"
+    );
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -4729,16 +5026,9 @@ fn calculate_streamline_uses_the_loaded_plan_structure() {
     assert_eq!(earnings[0]["earner_id"].as_str().expect(&resp), SL_USER1);
     assert_eq!(earnings[0]["source_id"].as_str().expect(&resp), SL_USER2);
     assert_eq!(earnings[0]["level"].as_u64().expect(&resp), 1);
-    // 100 CV * 1.0 multiplier * 0.10 level-1 percent = 10.0. Compared with a
-    // tolerance so a change to the multiplication order inside the calculator
-    // can't fail this test by one ULP — the config source is what it guards.
-    let dollar = earnings[0]["dollar_amount"].as_f64().expect(&resp);
-    assert!(
-        (dollar - 10.0).abs() < 1e-10,
-        "dollar_amount should be 10.0, got {}: {}",
-        dollar,
-        resp
-    );
+    // 100 CV * 1.0 multiplier * 0.10 level-1 percent = 10.0.
+    let dollar = number_text(&earnings[0]["dollar_amount"]);
+    assert_eq!(dollar, "10", "dollar_amount in: {}", resp);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -4800,13 +5090,8 @@ fn calculate_streamline_ignores_request_scoped_config() {
         "expected exactly one earning, got: {}",
         resp
     );
-    let dollar = earnings[0]["dollar_amount"].as_f64().expect(&resp);
-    assert!(
-        (dollar - 10.0).abs() < 1e-10,
-        "the request-scoped percent reached the calculator, got {}: {}",
-        dollar,
-        resp
-    );
+    let dollar = number_text(&earnings[0]["dollar_amount"]);
+    assert_eq!(dollar, "10", "dollar_amount in: {}", resp);
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -5868,12 +6153,8 @@ fn calculate_matrix_pays_upline() {
         .expect("root should have earned");
     assert_eq!(root_earning["level"].as_u64().unwrap(), 1);
     assert_eq!(root_earning["source_id"].as_str().unwrap(), CHILD);
-    let root_dollar = root_earning["dollar_amount"].as_f64().unwrap();
-    assert!(
-        (root_dollar - 2.0).abs() < 1e-10,
-        "root dollar_amount should be 2.0, got {}",
-        root_dollar
-    );
+    let root_dollar = number_text(&root_earning["dollar_amount"]);
+    assert_eq!(root_dollar, "2", "root dollar_amount");
 
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -6239,24 +6520,16 @@ fn calculate_stairstep_pays_upline() {
         .expect("child should have earned");
     assert_eq!(child_earning["level"].as_u64().unwrap(), 1);
     assert_eq!(child_earning["source_id"].as_str().unwrap(), GRANDCHILD);
-    let child_dollar = child_earning["dollar_amount"].as_f64().unwrap();
-    assert!(
-        (child_dollar - 2.0).abs() < 1e-10,
-        "child dollar_amount should be 2.0, got {}",
-        child_dollar
-    );
+    let child_dollar = number_text(&child_earning["dollar_amount"]);
+    assert_eq!(child_dollar, "2", "child dollar_amount");
     let root_earning = earnings
         .iter()
         .find(|e| e["earner_id"].as_str().unwrap() == ROOT)
         .expect("root should have earned");
     assert_eq!(root_earning["level"].as_u64().unwrap(), 2);
     assert_eq!(root_earning["source_id"].as_str().unwrap(), GRANDCHILD);
-    let root_dollar = root_earning["dollar_amount"].as_f64().unwrap();
-    assert!(
-        (root_dollar - 2.0).abs() < 1e-10,
-        "root dollar_amount should be 2.0, got {}",
-        root_dollar
-    );
+    let root_dollar = number_text(&root_earning["dollar_amount"]);
+    assert_eq!(root_dollar, "2", "root dollar_amount");
 
     drop(worker.stdin.take());
     worker.wait().unwrap();

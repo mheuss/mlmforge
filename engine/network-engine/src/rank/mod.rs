@@ -33,7 +33,7 @@ pub fn evaluate_ranks(
     let mut ranks_owned: Vec<crate::config::rank::RankDefinition> =
         ranks_sorted.iter().map(|r| (*r).clone()).collect();
     // Resolve fraction caps once per evaluation, not per distributor.
-    predicates::resolve_fraction_caps(&mut ranks_owned);
+    predicates::resolve_fraction_caps(&mut ranks_owned)?;
 
     // BR9 empty-axis guard: a time gate cannot be evaluated without an axis.
     // If any rank above the lowest declares a window or tenure requirement but the caller
@@ -59,7 +59,7 @@ pub fn evaluate_ranks(
         .map(|r| (r.name.clone(), r.ordinal))
         .collect();
 
-    let volume_index = VolumeIndex::build(&inputs.volume_sources);
+    let volume_index = VolumeIndex::build(&inputs.volume_sources)?;
 
     let user_ids: Vec<Uuid> = inputs.distributors.keys().copied().collect();
     let order = evaluation_order_for_users(trees, &user_ids);

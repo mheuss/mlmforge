@@ -7,7 +7,9 @@ use network_engine::config::{BoardPlanStructureConfig, CompensationPlan, Structu
 use network_engine::serde_helpers::null_as_empty;
 use uuid::Uuid;
 
-use super::common::{extract_structure_name, parse_params, parse_uuid, require_plan};
+use super::common::{
+    extract_structure_name, parse_params, parse_params_as, parse_uuid, require_plan,
+};
 use crate::protocol::{Request, Response};
 use crate::state::{TreeInstance, WorkerState};
 
@@ -115,10 +117,10 @@ pub(crate) fn handle_create_board_plan(state: &mut WorkerState, request: &Reques
         timestamp: i64,
     }
 
-    let params: Params = match serde_json::from_str(request.params.get()) {
+    let params: Params = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
-            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+            return Response::error(request.id.clone(), "INVALID_PARAMS", e);
         }
     };
 
@@ -472,11 +474,7 @@ pub(crate) fn handle_board_calculate_commissions(
     request: &Request,
 ) -> Response {
     // Config comes from the plan validated by handle_load_plan, never from
-    // request params (HEU-603, design rationale 028). BoardPlanConfig::validate
-    // checks exactly one thing: cycle_commission is finite and non-negative.
-    // Only the negative half is reachable from a request. JSON carries no NaN
-    // literal and serde_json rejects float overflow, so a wire value is always
-    // finite. The non-finite guard covers in-process construction.
+    // request params (HEU-603).
     //
     // Unlike the six sibling handlers this one never reads state.trees. Cycle
     // events arrive on the request, so a tree lookup would add a precondition
@@ -504,9 +502,9 @@ pub(crate) fn handle_board_calculate_commissions(
         period_cycle_counts: HashMap<Uuid, u32>,
     }
 
-    let params: Params = match serde_json::from_str(request.params.get()) {
+    let params: Params = match parse_params_as(&request.params) {
         Ok(p) => p,
-        Err(e) => return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string()),
+        Err(e) => return Response::error(request.id.clone(), "INVALID_PARAMS", e),
     };
 
     let structure = match find_board_plan_structure(plan, &params.structure_name) {

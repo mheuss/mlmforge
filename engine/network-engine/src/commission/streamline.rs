@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;
 
 use crate::config::{CompensationPlan, StreamlineStructureConfig};
+use crate::decimal::{AuthoredDec, Dec};
 use crate::streamline::StreamlineEngine;
 
 use super::types::{
@@ -17,11 +18,11 @@ use super::{walk, walk_order};
 /// Calculate streamline commissions across all active streams.
 ///
 /// Rejects an invalid dynamic-compression config, a snapshot naming a rank the
-/// plan does not define, a snapshot whose personal_volume is negative or not
-/// finite, and a stream member with no snapshot, frozen streams included. Also
-/// rejects volume it cannot pay: a source with a non-finite or negative CV
-/// amount, or a source held by no stream. A source held only by a frozen stream
-/// is accepted and earns nothing.
+/// plan does not define, a snapshot whose personal_volume is negative, and a
+/// stream member with no snapshot, frozen streams included. Also rejects volume
+/// it cannot pay: a source with a negative CV amount, or a source held by no
+/// stream. A source held only by a frozen stream is accepted and earns nothing.
+/// Fails when an exact result cannot be held.
 ///
 /// Each unfrozen stream is walked independently. Dynamic compression
 /// thresholds gate per-level qualification by rank ordinal. Monoline
@@ -48,7 +49,7 @@ pub fn calculate_streamline(
     // the worst failure mode. Without this it falls through: max_level is 0,
     // slots is empty, the gap map over an empty vec yields Ok, and the walk
     // gets dynamic_thresholds: Some(&[]) — no level gated, no rate in the
-    // table, so every rate falls to 0.0 and the call pays nobody without
+    // table, so every rate falls to zero and the call pays nobody without
     // saying why. validate() rejects it at load; this covers the direct
     // caller (HEU-670).
     if structure.streamline_commission.levels.is_empty() {
@@ -121,7 +122,7 @@ pub fn calculate_streamline(
     for level in &structure.streamline_commission.levels {
         level_rates.insert(level.level, level.percent);
     }
-    let mut rate_table: BTreeMap<String, BTreeMap<u8, f64>> = BTreeMap::new();
+    let mut rate_table: BTreeMap<String, BTreeMap<u8, AuthoredDec>> = BTreeMap::new();
     for rank in &plan.ranks {
         rate_table.insert(rank.name.clone(), level_rates.clone());
     }
@@ -147,7 +148,10 @@ pub fn calculate_streamline(
     // stream's walks, so their ids stay unique across the response.
     let mut walks = Vec::new();
 
-    for stream in engine.active_streams() {
+    // Visit streams in id order so a failed calculation names the same operands every run.
+    let mut streams: Vec<_> = engine.active_streams().collect();
+    streams.sort_unstable_by_key(|stream| stream.id);
+    for stream in streams {
         let eligibility_cache =
             walk::evaluate_eligibility(snapshots, &stream.tree, &plan.eligibility);
 
@@ -163,8 +167,8 @@ pub fn calculate_streamline(
 
         let config = walk::LevelWalkConfig {
             max_depth,
-            broad_pct: 1.0,
-            multiplier,
+            broad_pct: Dec::ONE,
+            multiplier: multiplier.dec(),
             compression: None,
             threshold_ordinal: None,
             rank_ordinals: &rank_ordinals,
@@ -189,10 +193,7 @@ pub fn calculate_streamline(
             &mut walks,
         )?;
 
-        // Stamp the stream on exactly the walks it produced. This is what
-        // makes the index order deterministic: `active_streams` iterates a
-        // HashMap, so without `stream_id` the total order would fall through
-        // to a collector id assigned in hash order, which design 029 forbids.
+        // Stamp the stream on exactly the walks it produced.
         for w in &mut walks[stream_walks_from..] {
             w.stream_id = Some(stream.id);
         }
@@ -217,6 +218,7 @@ mod tests {
         StreamAssignmentMode, StreamlineCommissionConfig, StreamlineLevel,
     };
     use crate::streamline::engine::StreamlineConfig;
+    use crate::{assert_d, d};
 
     fn test_uuid(n: u8) -> Uuid {
         crate::tree::test_helpers::test_uuid(n)
@@ -226,7 +228,7 @@ mod tests {
         StreamlineStructureConfig {
             name: "test_streamline".to_string(),
             streamline_commission: StreamlineCommissionConfig {
-                volume_to_dollar_multiplier: Some(1.0),
+                volume_to_dollar_multiplier: Some(d!(1.0)),
                 max_depth,
                 levels,
                 stream_config: None,
@@ -259,7 +261,7 @@ mod tests {
         test_helpers::make_rank(name, ordinal, vec!["test_streamline".to_string()])
     }
 
-    fn level(n: u8, min_rank: &str, percent: f64) -> StreamlineLevel {
+    fn level(n: u8, min_rank: &str, percent: AuthoredDec) -> StreamlineLevel {
         StreamlineLevel {
             level: n,
             min_rank: min_rank.to_string(),
@@ -274,17 +276,17 @@ mod tests {
             StreamlineLevel {
                 level: 1,
                 min_rank: "bronze".to_string(),
-                percent: 0.05,
+                percent: d!(0.05),
             },
             StreamlineLevel {
                 level: 2,
                 min_rank: "bronze".to_string(),
-                percent: 0.04,
+                percent: d!(0.04),
             },
             StreamlineLevel {
                 level: 3,
                 min_rank: "silver".to_string(),
-                percent: 0.03,
+                percent: d!(0.03),
             },
         ];
         let structure = make_structure(levels, 5);
@@ -343,7 +345,7 @@ mod tests {
                 test_uuid((i + 1) as u8),
                 DistributorSnapshot {
                     rank: rank.to_string(),
-                    personal_volume: 150.0,
+                    personal_volume: d!(150.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
@@ -353,7 +355,7 @@ mod tests {
         // Volume at node 5 (bottom of chain).
         let volume = vec![VolumeSource {
             source_id: test_uuid(5),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_streamline(
@@ -368,10 +370,8 @@ mod tests {
 
         assert!(!result.walks.is_empty(), "the fixture must produce a walk");
 
-        // Every streamline walk names the stream it came from. This is what
-        // walk_order sorts on, and without it the index order falls through to
-        // a collector id assigned in HashMap iteration order, which design 029
-        // forbids.
+        // Every streamline walk names the stream it came from, so walks from
+        // different streams never tie on the stream key.
         for w in &result.walks {
             assert!(
                 w.stream_id.is_some(),
@@ -394,17 +394,17 @@ mod tests {
             StreamlineLevel {
                 level: 1,
                 min_rank: "bronze".to_string(),
-                percent: 0.05,
+                percent: d!(0.05),
             },
             StreamlineLevel {
                 level: 2,
                 min_rank: "bronze".to_string(),
-                percent: 0.04,
+                percent: d!(0.04),
             },
             StreamlineLevel {
                 level: 3,
                 min_rank: "silver".to_string(),
-                percent: 0.03,
+                percent: d!(0.03),
             },
         ];
         let structure = make_structure(levels, 5);
@@ -463,7 +463,7 @@ mod tests {
                 test_uuid((i + 1) as u8),
                 DistributorSnapshot {
                     rank: rank.to_string(),
-                    personal_volume: 150.0,
+                    personal_volume: d!(150.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
@@ -473,7 +473,7 @@ mod tests {
         // Volume at node 5 (bottom of chain).
         let volume = vec![VolumeSource {
             source_id: test_uuid(5),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let earnings = calculate_streamline(
@@ -493,16 +493,16 @@ mod tests {
         // Assert the shape, not the count. Ungated, the walk pays 4, 3 and 2 —
         // also three earnings, so a length check passes either way and never
         // sees the compression this test is named for.
-        let shape: Vec<(Uuid, u8, Option<f64>)> = earnings
+        let shape: Vec<(Uuid, u8, Option<Dec>)> = earnings
             .iter()
             .map(|e| (e.earner_id, e.level, e.rate))
             .collect();
         assert_eq!(
             shape,
             vec![
-                (test_uuid(1), 3, Some(0.03)),
-                (test_uuid(2), 2, Some(0.04)),
-                (test_uuid(4), 1, Some(0.05)),
+                (test_uuid(1), 3, Some(d!(0.03))),
+                (test_uuid(2), 2, Some(d!(0.04))),
+                (test_uuid(4), 1, Some(d!(0.05))),
             ]
         );
     }
@@ -530,7 +530,7 @@ mod tests {
         let levels = vec![StreamlineLevel {
             level: 1,
             min_rank: "associate".to_string(),
-            percent: 0.10,
+            percent: d!(0.10),
         }];
         let structure = make_structure(levels, 5);
 
@@ -547,7 +547,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let earnings = calculate_streamline(
@@ -573,12 +573,12 @@ mod tests {
             StreamlineLevel {
                 level: 1,
                 min_rank: "associate".to_string(),
-                percent: 0.10,
+                percent: d!(0.10),
             },
             StreamlineLevel {
                 level: 2,
                 min_rank: "associate".to_string(),
-                percent: 0.05,
+                percent: d!(0.05),
             },
         ];
         let structure = make_structure(levels, 5);
@@ -597,7 +597,7 @@ mod tests {
         // Volume at node 3. Walk upline: 2, 1.
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let earnings = calculate_streamline(
@@ -630,7 +630,7 @@ mod tests {
         let levels = vec![StreamlineLevel {
             level: 1,
             min_rank: "associate".to_string(),
-            percent: 0.10,
+            percent: d!(0.10),
         }];
         let structure = make_structure(levels, 5);
 
@@ -646,7 +646,7 @@ mod tests {
         // Volume in stream 1 only. Stream 2 is empty.
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let earnings = calculate_streamline(
@@ -670,12 +670,12 @@ mod tests {
             StreamlineLevel {
                 level: 1,
                 min_rank: "associate".to_string(),
-                percent: 0.10,
+                percent: d!(0.10),
             },
             StreamlineLevel {
                 level: 2,
                 min_rank: "associate".to_string(),
-                percent: 0.05,
+                percent: d!(0.05),
             },
         ];
         // Max depth = 2 but chain is 4 deep.
@@ -694,7 +694,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(5),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let earnings = calculate_streamline(
@@ -715,7 +715,10 @@ mod tests {
     fn calculate_streamline_rejects_a_rank_not_in_the_ladder() {
         let engine = make_engine(5);
         let structure = make_structure(
-            vec![level(1, "associate", 0.10), level(2, "bronze", 0.05)],
+            vec![
+                level(1, "associate", d!(0.10)),
+                level(2, "bronze", d!(0.05)),
+            ],
             5,
         );
         let mut plan = test_helpers::build_test_plan(
@@ -734,7 +737,7 @@ mod tests {
                 test_uuid((i + 1) as u8),
                 DistributorSnapshot {
                     rank: rank.to_string(),
-                    personal_volume: 150.0,
+                    personal_volume: d!(150.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
@@ -743,7 +746,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(5),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_streamline(
@@ -763,10 +766,13 @@ mod tests {
     }
 
     #[test]
-    fn calculate_streamline_rejects_a_nan_personal_volume() {
+    fn calculate_streamline_rejects_a_negative_personal_volume() {
         let engine = make_engine(5);
         let structure = make_structure(
-            vec![level(1, "associate", 0.10), level(2, "bronze", 0.05)],
+            vec![
+                level(1, "associate", d!(0.10)),
+                level(2, "bronze", d!(0.05)),
+            ],
             5,
         );
         let mut plan = test_helpers::build_test_plan(
@@ -783,17 +789,17 @@ mod tests {
                 test_uuid((i + 1) as u8),
                 DistributorSnapshot {
                     rank: rank.to_string(),
-                    personal_volume: 150.0,
+                    personal_volume: d!(150.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
             );
         }
-        snapshots.get_mut(&test_uuid(1)).unwrap().personal_volume = f64::NAN;
+        snapshots.get_mut(&test_uuid(1)).unwrap().personal_volume = d!(-0.5);
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(5),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_streamline(
@@ -810,7 +816,7 @@ mod tests {
             matches!(
                 err,
                 CalculationError::InvalidPersonalVolume(id, pv)
-                    if id == test_uuid(1) && pv.is_nan()
+                    if id == test_uuid(1) && pv == d!(-0.5)
             ),
             "got {err:?}"
         );
@@ -833,9 +839,9 @@ mod tests {
         let engine = make_engine(5);
         let structure = make_structure(
             vec![
-                level(1, "associate", 0.10),
-                level(2, "bronze", 0.05),
-                level(3, "silver", 0.02),
+                level(1, "associate", d!(0.10)),
+                level(2, "bronze", d!(0.05)),
+                level(3, "silver", d!(0.02)),
             ],
             5,
         );
@@ -861,7 +867,7 @@ mod tests {
                 test_uuid((i + 1) as u8),
                 DistributorSnapshot {
                     rank: rank.to_string(),
-                    personal_volume: 150.0,
+                    personal_volume: d!(150.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
@@ -870,7 +876,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(5),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let earnings = calculate_streamline(
@@ -896,8 +902,8 @@ mod tests {
             1
         );
         assert_eq!(top.level, 3);
-        assert_eq!(top.rate, Some(0.02));
-        assert_eq!(top.dollar_amount, 2.0);
+        assert_eq!(top.rate, Some(d!(0.02)));
+        assert_d!(top.dollar_amount, 2.0);
     }
 
     /// Pins the rank check above the per-source checks. This input is bad on
@@ -906,7 +912,10 @@ mod tests {
     fn streamline_unknown_rank_wins_over_invalid_cv() {
         let engine = make_engine(5);
         let structure = make_structure(
-            vec![level(1, "associate", 0.10), level(2, "bronze", 0.05)],
+            vec![
+                level(1, "associate", d!(0.10)),
+                level(2, "bronze", d!(0.05)),
+            ],
             5,
         );
         let mut plan = test_helpers::build_test_plan(
@@ -923,7 +932,7 @@ mod tests {
                 test_uuid((i + 1) as u8),
                 DistributorSnapshot {
                     rank: rank.to_string(),
-                    personal_volume: 150.0,
+                    personal_volume: d!(150.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
@@ -932,7 +941,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(5),
-            cv_amount: -50.0,
+            cv_amount: d!(-50.0),
         }];
 
         let err = calculate_streamline(
@@ -961,7 +970,7 @@ mod tests {
     #[test]
     fn streamline_config_error_wins_over_unknown_rank() {
         let engine = make_engine(5);
-        let structure = make_structure(vec![level(2, "associate", 0.10)], 5);
+        let structure = make_structure(vec![level(2, "associate", d!(0.10))], 5);
         let mut plan = test_helpers::build_test_plan(
             test_helpers::default_eligibility(),
             crate::config::StructureConfig::Streamline(structure.clone()),
@@ -974,7 +983,7 @@ mod tests {
             test_uuid(1),
             DistributorSnapshot {
                 rank: "diamond".to_string(),
-                personal_volume: 150.0,
+                personal_volume: d!(150.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
             },
@@ -982,7 +991,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(5),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_streamline(
@@ -1013,14 +1022,14 @@ mod tests {
         let engine = make_engine(5);
 
         let sorted = vec![
-            level(1, "associate", 0.10),
-            level(2, "bronze", 0.05),
-            level(3, "silver", 0.02),
+            level(1, "associate", d!(0.10)),
+            level(2, "bronze", d!(0.05)),
+            level(3, "silver", d!(0.02)),
         ];
         let shuffled = vec![
-            level(3, "silver", 0.02),
-            level(1, "associate", 0.10),
-            level(2, "bronze", 0.05),
+            level(3, "silver", d!(0.02)),
+            level(1, "associate", d!(0.10)),
+            level(2, "bronze", d!(0.05)),
         ];
 
         let run = |levels: Vec<StreamlineLevel>| {
@@ -1044,7 +1053,7 @@ mod tests {
                     test_uuid((i + 1) as u8),
                     DistributorSnapshot {
                         rank: rank.to_string(),
-                        personal_volume: 150.0,
+                        personal_volume: d!(150.0),
                         status: "active".to_string(),
                         has_order_in_period: true,
                     },
@@ -1053,7 +1062,7 @@ mod tests {
 
             let volume = vec![VolumeSource {
                 source_id: test_uuid(5),
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             }];
 
             calculate_streamline(
@@ -1085,16 +1094,16 @@ mod tests {
         // calculate_streamline ends with walk_order::assemble, which sorts by
         // (earner_id, source_id, level, walk). test_uuid puts the index in the
         // leading byte, so the earners come back ascending: 1, 2, 4.
-        let shape: Vec<(Uuid, u8, Option<f64>)> = from_shuffled
+        let shape: Vec<(Uuid, u8, Option<Dec>)> = from_shuffled
             .iter()
             .map(|e| (e.earner_id, e.level, e.rate))
             .collect();
         assert_eq!(
             shape,
             vec![
-                (test_uuid(1), 3, Some(0.02)),
-                (test_uuid(2), 2, Some(0.05)),
-                (test_uuid(4), 1, Some(0.10)),
+                (test_uuid(1), 3, Some(d!(0.02))),
+                (test_uuid(2), 2, Some(d!(0.05))),
+                (test_uuid(4), 1, Some(d!(0.10))),
             ]
         );
     }
@@ -1104,7 +1113,7 @@ mod tests {
         // apex sits at 65535 here. This test turns only on the error, so that
         // value does not change its outcome.
         let engine = make_engine(5);
-        let levels = vec![level(1, "associate", 0.10), level(3, "apex", 0.02)];
+        let levels = vec![level(1, "associate", d!(0.10)), level(3, "apex", d!(0.02))];
         let structure = make_structure(levels, 5);
 
         let mut plan = test_helpers::build_test_plan(
@@ -1120,7 +1129,7 @@ mod tests {
                 test_uuid(i),
                 DistributorSnapshot {
                     rank: "apex".to_string(),
-                    personal_volume: 150.0,
+                    personal_volume: d!(150.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 },
@@ -1129,7 +1138,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(5),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_streamline(
@@ -1169,7 +1178,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_streamline(
@@ -1193,7 +1202,7 @@ mod tests {
     fn level_zero_errors_rather_than_panicking() {
         // Levels are 1-based. A declared level of 0 would underflow the index.
         let engine = make_engine(3);
-        let levels = vec![level(0, "associate", 0.10)];
+        let levels = vec![level(0, "associate", d!(0.10))];
         let structure = make_structure(levels, 5);
 
         let plan = test_helpers::build_test_plan(
@@ -1209,7 +1218,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_streamline(
@@ -1240,7 +1249,7 @@ mod tests {
         HashMap<Uuid, DistributorSnapshot>,
     ) {
         let engine = make_engine(5);
-        let structure = make_structure(vec![level(1, "associate", 0.10)], 5);
+        let structure = make_structure(vec![level(1, "associate", d!(0.10))], 5);
         let plan = test_helpers::build_test_plan(
             test_helpers::default_eligibility(),
             crate::config::StructureConfig::Streamline(structure.clone()),
@@ -1258,7 +1267,7 @@ mod tests {
         let (engine, plan, structure, snapshots) = validation_fixture();
         let volume = vec![VolumeSource {
             source_id: test_uuid(99),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_streamline(
@@ -1281,7 +1290,7 @@ mod tests {
         let (engine, plan, structure, snapshots) = validation_fixture();
         let volume = vec![VolumeSource {
             source_id: test_uuid(99),
-            cv_amount: f64::NAN,
+            cv_amount: d!(-1.0),
         }];
 
         let result = calculate_streamline(
@@ -1305,7 +1314,7 @@ mod tests {
         snapshots.remove(&test_uuid(3));
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_streamline(
@@ -1323,8 +1332,8 @@ mod tests {
         );
     }
 
-    fn earnings_from_member_three(engine: &StreamlineEngine) -> Vec<(Uuid, Uuid, u8, f64)> {
-        let structure = make_structure(vec![level(1, "associate", 0.10)], 5);
+    fn earnings_from_member_three(engine: &StreamlineEngine) -> Vec<(Uuid, Uuid, u8, Dec)> {
+        let structure = make_structure(vec![level(1, "associate", d!(0.10))], 5);
         let plan = test_helpers::build_test_plan(
             test_helpers::default_eligibility(),
             crate::config::StructureConfig::Streamline(structure.clone()),
@@ -1336,7 +1345,7 @@ mod tests {
         }
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
         calculate_streamline(
             engine,
@@ -1385,7 +1394,7 @@ mod tests {
         let fresh_earnings = earnings_from_member_three(&fresh);
         assert_eq!(
             fresh_earnings,
-            vec![(test_uuid(2), test_uuid(3), 1, 10.0)],
+            vec![(test_uuid(2), test_uuid(3), 1, d!(10.0))],
             "the fresh engine should pay member 2 on member 3's volume"
         );
         assert_eq!(earnings_from_member_three(&rebuilt), fresh_earnings);
@@ -1430,7 +1439,7 @@ mod tests {
             .unwrap();
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_streamline(
@@ -1459,7 +1468,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(5),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_streamline(
@@ -1478,18 +1487,18 @@ mod tests {
     }
 
     /// Faults resolve per source in input order, not per check across the
-    /// slice. The first source's tree fault must beat the second source's NaN.
+    /// slice. The first source's tree fault must beat the second source's negative CV.
     #[test]
     fn faults_resolve_per_source_in_input_order() {
         let (engine, plan, structure, snapshots) = validation_fixture();
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(99),
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: f64::NAN,
+                cv_amount: d!(-1.0),
             },
         ];
 
@@ -1516,11 +1525,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             },
             VolumeSource {
                 source_id: test_uuid(4),
-                cv_amount: f64::NAN,
+                cv_amount: d!(-1.0),
             },
         ];
 
@@ -1537,5 +1546,92 @@ mod tests {
             result.unwrap_err(),
             CalculationError::DistributorNotInSnapshot(test_uuid(3))
         );
+    }
+
+    /// One stream holding `a` and its child `b`, as snapshot JSON.
+    fn one_stream_snapshot(a: u8, b: u8) -> serde_json::Value {
+        let config = StreamlineConfig {
+            assignment_mode: StreamAssignmentMode::SponsorStream,
+            enrollment_stream_choice: false,
+            freeze_on_demotion: true,
+        };
+        let mut engine = StreamlineEngine::new(config, 1000);
+        engine
+            .add_member(test_uuid(a), test_uuid(99), 1000, None)
+            .unwrap();
+        engine
+            .add_member(test_uuid(b), test_uuid(a), 1001, None)
+            .unwrap();
+        serde_json::to_value(&engine).unwrap()
+    }
+
+    /// Two active streams, 1 -> 2 as stream 1 and 3 -> 4 as stream 2.
+    fn two_stream_snapshot() -> String {
+        let mut first = one_stream_snapshot(1, 2);
+        let second = one_stream_snapshot(3, 4);
+        let mut stream = second["streams"]["1"].clone();
+        stream["id"] = serde_json::json!(2);
+        first["streams"]["2"] = stream;
+        for user in [3u8, 4] {
+            first["user_streams"][test_uuid(user).to_string()] = serde_json::json!([2]);
+        }
+        first["stream_owners"][test_uuid(3).to_string()] = serde_json::json!([2]);
+        first["next_stream_id"] = serde_json::json!(3);
+        first.to_string()
+    }
+
+    #[test]
+    fn streams_name_the_same_failing_operands_on_every_run() {
+        let structure = StreamlineStructureConfig {
+            name: "test_streamline".to_string(),
+            streamline_commission: StreamlineCommissionConfig {
+                volume_to_dollar_multiplier: Some(d!(0.0000000001)),
+                max_depth: 5,
+                levels: vec![StreamlineLevel {
+                    level: 1,
+                    min_rank: "associate".to_string(),
+                    percent: d!(0.0000000001),
+                }],
+                stream_config: None,
+            },
+        };
+        let plan = test_helpers::build_test_plan(
+            test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Streamline(structure.clone()),
+            "test_streamline",
+        );
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: d!(0.0000000001),
+            },
+            VolumeSource {
+                source_id: test_uuid(4),
+                cv_amount: d!(0.0000000003),
+            },
+        ];
+        let json = two_stream_snapshot();
+        let mut seen = std::collections::BTreeSet::new();
+        // Restored inside the loop so each pass samples a fresh HashMap order.
+        for _ in 0..32 {
+            let engine: StreamlineEngine = serde_json::from_str(&json).unwrap();
+            engine.validate_restored().unwrap();
+            let snapshots: HashMap<Uuid, DistributorSnapshot> = (1..=4)
+                .map(|i| (test_uuid(i), test_helpers::eligible_snapshot()))
+                .collect();
+            let err = calculate_streamline(
+                &engine,
+                &plan,
+                &structure,
+                &snapshots,
+                &volume,
+                &crate::test_support::test_plan_identity(),
+            )
+            .unwrap_err();
+            seen.insert(err.to_string());
+        }
+        assert_eq!(seen.len(), 1, "distinct errors across runs: {seen:?}");
+        let only = seen.first().unwrap();
+        assert!(only.contains("0.00000000000000000001 and"), "{only}");
     }
 }

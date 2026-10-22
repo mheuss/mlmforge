@@ -1,15 +1,17 @@
 package networkengine
 
+import "github.com/mlmforge/mlmforge/internal/dec"
+
 // SignupProduct represents a specific regional instance of a signup product.
 // The same logical product (e.g., "Gold Package") has different regional
 // instances with different pricing in local currency but comparable CV values.
 type SignupProduct struct {
 	ID                  string
 	Name                string
-	MarketID            string  // Regional market ("US", "EU", "JP")
-	SignupFee           float64 // In market's local currency
+	MarketID            string     // Regional market ("US", "EU", "JP")
+	SignupFee           dec.Amount // In market's local currency
 	SignupFeeCurrency   string
-	RecurringFee        float64         // In market's local currency
+	RecurringFee        dec.Amount      // In market's local currency
 	RecurringPeriod     string          // "monthly", "annual"
 	QualifiedStructures []string        // Necessary but not sufficient — placement requirements add gates
 	CommissionEligible  map[string]bool // Keyed by structure ID
@@ -31,5 +33,5 @@ type StructureDescriptor struct {
 type VolumeRoutingRule struct {
 	ProductClassID string
 	StructureID    string
-	Multiplier     float64 // Optional — different CV ratios per structure
+	Multiplier     dec.Amount // Optional — different CV ratios per structure
 }

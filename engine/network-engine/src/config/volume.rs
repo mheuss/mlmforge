@@ -1,5 +1,6 @@
 //! Volume configuration types.
 
+use crate::decimal::AuthoredDec;
 use serde::{Deserialize, Serialize};
 
 /// Plan-level volume configuration.
@@ -25,7 +26,7 @@ pub struct VolumeConfig {
     /// Applied in the commission formula: `CV * multiplier * rate`.
     /// Most plans set this to 1.0. Must be greater than 0.
     /// Can be overridden per structure.
-    pub volume_to_dollar_multiplier: f64,
+    pub volume_to_dollar_multiplier: AuthoredDec,
 
     /// When true, volume used for rank qualification is subtracted
     /// from commissionable volume. Prevents double-counting.

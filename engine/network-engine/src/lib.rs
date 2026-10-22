@@ -6,6 +6,7 @@
 pub mod board_plan;
 pub mod commission;
 pub mod config;
+pub mod decimal;
 pub mod rank;
 pub mod serde_helpers;
 pub mod snapshot;
@@ -14,3 +15,6 @@ pub mod streamline;
 pub mod test_support;
 pub mod tree;
 pub mod types;
+
+#[cfg(test)]
+pub(crate) mod test_strategies;

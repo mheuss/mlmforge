@@ -135,7 +135,7 @@
         "ok": false,
         "error": {
             "code": "INVALID_PLAN",
-            "message_contains": "rank 'silver' structure 'Test' max_group_volume_per_leg must be finite and non-negative, got -1"
+            "message_contains": "rank 'silver' structure 'Test' max_group_volume_per_leg must be non-negative, got -1"
         }
     }
 }

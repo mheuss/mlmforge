@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// This moves on any change to wire semantics, not only on shape changes. Two
 /// workers can share a schema and still disagree about what a field means.
-pub const PROTOCOL_VERSION: u32 = 23;
+pub const PROTOCOL_VERSION: u32 = 24;
 
 /// An NDJSON request from the Go platform layer.
 #[derive(Debug, Deserialize)]
@@ -27,13 +27,6 @@ pub struct Request {
     /// their own types instead of through a `serde_json::Value` intermediate.
     /// That skips a full reparse of every request body and keeps the caller's
     /// bytes intact.
-    ///
-    /// It used to be load-bearing for correctness too: `Value` sorts keys, and
-    /// the sorted order made serde buffer an adjacently-tagged enum's content,
-    /// which stripped the string-to-integer coercion that `BTreeMap<u8, f64>`
-    /// rate tables need. HEU-648 fixed that in the config types, so a `Value`
-    /// round-trip no longer breaks a plan. `RawValue` stays for the reasons
-    /// above.
     #[serde(default = "default_raw_params")]
     pub params: Box<serde_json::value::RawValue>,
 }

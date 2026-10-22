@@ -78,9 +78,9 @@ This means compression behavior is tightly coupled to the walk loop. It has to b
 
 Volume sources must exist in the tree. Every distributor the calculation requires must have a snapshot, whether or not a walk reaches it. For most structures that is each tree node. For binary it is the owner of each position. A missing snapshot returns an error. So does a snapshot naming a rank the plan does not define, and a restored engine whose indexes disagree with the structures they index.
 
-Volume amounts are validated too: `cv_amount` must be finite and non-negative. NaN, positive infinity, negative infinity, and negative values all produce `InvalidCvAmount` errors. These are input integrity checks, not business rules. A non-finite CV amount is always a bug upstream.
+Volume amounts are validated too: a negative `cv_amount` produces an `InvalidCvAmount` error. Decimal values cannot be NaN or infinite. These are input integrity checks, not business rules.
 
-`personal_volume` follows the same rule on every snapshot in the map. NaN, both infinities and negative values produce `InvalidPersonalVolume` errors. The check runs after the snapshot rank check and before the calculator reads any snapshot.
+`personal_volume` follows the same rule on every snapshot in the map. A negative value produces an `InvalidPersonalVolume` error. The check runs after the snapshot rank check and before the calculator reads any snapshot.
 
 This decision was the reverse until 2026-09-10. Upline nodes missing from snapshots were treated as ineligible with no signal, on the grounds that missing upline data is a completeness issue rather than an integrity issue. That reasoning missed one thing. The snapshot map is a request parameter. Under compression a missing upline is skipped without consuming a level, so omitting one promotes every ancestor above it. Absence chosen by the caller and absence caused by a data gap are indistinguishable at the point of use. The engine cannot be lenient about one without being lenient about both.
 

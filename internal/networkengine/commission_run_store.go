@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/mlmforge/mlmforge/internal/dec"
 )
 
 // CommissionRunStatus is the lifecycle state of a commission run.
@@ -43,29 +43,18 @@ type CommissionRun struct {
 // assigns it and pgx.CopyFrom cannot return generated values.
 type CommissionResultInput struct {
 	EarnerID     uuid.UUID
-	DollarAmount float64
+	DollarAmount dec.Amount
 	Detail       json.RawMessage
 }
 
-// CommissionResult is the read shape for one persisted earning.
-//
-// DollarAmount is float64 because that is what the engine emits and what
-// CommissionEarningDTO carries. The Postgres store converts to NUMERIC on
-// write via strconv.FormatFloat(v, 'f', -1, 64), the shortest representation
-// that round-trips, so the Go boundary is lossless both ways — with one
-// exception: NUMERIC does not carry the sign of zero, so -0.0 comes back as
-// +0.0. Harmless for money, since -0.0 == 0.0 in Go. NUMERIC still buys
-// exact, order-independent SUM in SQL, which is why it was chosen.
-//
-// Caveat for future readers: a SQL-side SUM over a million rows may not be
-// exactly representable as float64. A payout reader should pull that total as
-// NUMERIC text, not as a float.
+// CommissionResult is the read shape for one persisted earning. DollarAmount
+// is an exact decimal read from NUMERIC text.
 type CommissionResult struct {
 	ID           int64
 	RunID        uuid.UUID
 	Structure    string
 	EarnerID     uuid.UUID
-	DollarAmount float64
+	DollarAmount dec.Amount
 	Detail       json.RawMessage
 }
 
@@ -376,9 +365,8 @@ func validateResultInputs(structure string, results []CommissionResultInput) err
 		if r.EarnerID == uuid.Nil {
 			return fmt.Errorf("commission results: row %d has a nil earner id", i)
 		}
-		if math.IsNaN(r.DollarAmount) || math.IsInf(r.DollarAmount, 0) {
-			return fmt.Errorf("commission results: row %d (earner %s): dollar_amount must be finite, got %v",
-				i, r.EarnerID, r.DollarAmount)
+		if _, err := dec.Parse(r.DollarAmount.String()); err != nil {
+			return fmt.Errorf("commission results: row %d (earner %s): dollar_amount: %w", i, r.EarnerID, err)
 		}
 		// A nil or empty Detail is rejected by checkJSONObject. That mirrors
 		// detail JSONB NOT NULL. Unlike carry_forward there is deliberately

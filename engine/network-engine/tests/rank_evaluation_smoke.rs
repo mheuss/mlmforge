@@ -1,9 +1,11 @@
 mod common;
 
+use network_engine::d;
+use network_engine::decimal::AuthoredDec;
 use std::collections::HashMap;
 use std::time::Instant;
 
-use common::uuid_from_index;
+use common::{uuid_from_index, whole};
 use network_engine::config::rank::{
     DemotionPolicy, RankDefinition, RankQualification, StructureQualification,
 };
@@ -15,7 +17,7 @@ use network_engine::tree::unilevel::UnilevelTree;
 fn build_seven_rank_plan() -> CompensationPlan {
     let mut plan = network_engine::test_support::build_test_plan(
         network_engine::config::eligibility::CommissionEligibility {
-            minimum_pv: 0.0,
+            minimum_pv: d!(0.0),
             require_order_in_period: false,
             eligible_statuses: vec![],
             active_leg_tiers: vec![],
@@ -23,7 +25,7 @@ fn build_seven_rank_plan() -> CompensationPlan {
         StructureConfig::Unilevel(UnilevelStructureConfig {
             name: "Test".to_string(),
             level_commission: network_engine::config::commission::LevelCommissionConfig {
-                broad_commission_percent: 0.4,
+                broad_commission_percent: d!(0.4),
                 volume_to_dollar_multiplier: None,
                 max_depth: 7,
                 rate_table: Default::default(),
@@ -51,11 +53,11 @@ fn build_seven_rank_plan() -> CompensationPlan {
             qualification: RankQualification {
                 structures: vec![StructureQualification {
                     structure: "Test".to_string(),
-                    personal_volume: (i as f64) * 50.0,
-                    group_volume: 0.0,
-                    max_group_volume_per_leg: f64::MAX,
-                    max_group_volume_per_leg_fraction: 0.0,
-                    min_retail_volume: 0.0,
+                    personal_volume: whole(i * 50),
+                    group_volume: d!(0.0),
+                    max_group_volume_per_leg: AuthoredDec::ZERO,
+                    max_group_volume_per_leg_fraction: d!(0.0),
+                    min_retail_volume: d!(0.0),
                     distributor_count: None,
                     leg_quality: vec![],
                 }],
@@ -97,8 +99,8 @@ fn evaluate_ranks_completes_in_reasonable_time_on_10k_distributors() {
         distributors.insert(
             uuid_from_index(i),
             DistributorPrimitives {
-                personal_volume: (i % 500) as f64,
-                retail_volume: 0.0,
+                personal_volume: whole(i % 500),
+                retail_volume: d!(0.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
                 active_products: vec![],

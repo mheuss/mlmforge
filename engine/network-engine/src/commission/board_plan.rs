@@ -6,12 +6,13 @@
 //! paid cycles a member can accumulate. Cycles beyond the cap are
 //! recorded with `capped=true` and `dollar_amount=0`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use uuid::Uuid;
 
 use crate::board_plan::types::{BoardCommissionResult, BoardCycleEarning, CycleEvent};
 use crate::config::board_plan::BoardPlanConfig;
+use crate::decimal::Dec;
 
 /// Calculate board cycle commissions for a set of cycle events.
 ///
@@ -24,7 +25,10 @@ pub fn calculate_board_commissions(
     period_cycle_counts: &HashMap<Uuid, u32>,
     config: &BoardPlanConfig,
 ) -> BoardCommissionResult {
-    let mut counts: HashMap<Uuid, u32> = period_cycle_counts.clone();
+    let mut counts: BTreeMap<Uuid, u32> = period_cycle_counts
+        .iter()
+        .map(|(member, count)| (*member, *count))
+        .collect();
     let mut earnings = Vec::new();
 
     for event in cycle_events {
@@ -33,7 +37,11 @@ pub fn calculate_board_commissions(
         *count += 1;
 
         let capped = *count > config.max_cycles_per_period;
-        let dollar_amount = if capped { 0.0 } else { config.cycle_commission };
+        let dollar_amount = if capped {
+            Dec::ZERO
+        } else {
+            config.cycle_commission.dec()
+        };
 
         earnings.push(BoardCycleEarning {
             earner_id: member,
@@ -52,6 +60,7 @@ pub fn calculate_board_commissions(
 
 #[cfg(test)]
 mod tests {
+    use crate::{assert_d, d};
     use std::num::NonZeroU32;
 
     use super::*;
@@ -62,7 +71,7 @@ mod tests {
 
     fn test_config() -> BoardPlanConfig {
         BoardPlanConfig {
-            cycle_commission: 500.0,
+            cycle_commission: d!(500.0),
             re_entry_enabled: true,
             re_entry_position: crate::config::board_plan::ReEntryPosition::Bottom,
             max_cycles_per_period: 3,
@@ -92,7 +101,7 @@ mod tests {
 
         assert_eq!(result.earnings.len(), 1);
         assert_eq!(result.earnings[0].earner_id, member);
-        assert_eq!(result.earnings[0].dollar_amount, 500.0);
+        assert_d!(result.earnings[0].dollar_amount, 500.0);
         assert_eq!(result.earnings[0].cycle_number, 1);
         assert!(!result.earnings[0].capped);
         assert_eq!(*result.updated_cycle_counts.get(&member).unwrap(), 1);
@@ -111,14 +120,14 @@ mod tests {
 
         // First 3 are paid.
         for i in 0..3 {
-            assert_eq!(result.earnings[i].dollar_amount, 500.0);
+            assert_d!(result.earnings[i].dollar_amount, 500.0);
             assert!(!result.earnings[i].capped);
             assert_eq!(result.earnings[i].cycle_number, (i + 1) as u32);
         }
 
         // Last 2 are capped.
         for i in 3..5 {
-            assert_eq!(result.earnings[i].dollar_amount, 0.0);
+            assert_d!(result.earnings[i].dollar_amount, 0.0);
             assert!(result.earnings[i].capped);
             assert_eq!(result.earnings[i].cycle_number, (i + 1) as u32);
         }
@@ -141,7 +150,7 @@ mod tests {
         assert_eq!(result.earnings.len(), 1);
         // This is cycle #3 (2 prior + 1 new), still within cap.
         assert_eq!(result.earnings[0].cycle_number, 3);
-        assert_eq!(result.earnings[0].dollar_amount, 500.0);
+        assert_d!(result.earnings[0].dollar_amount, 500.0);
         assert!(!result.earnings[0].capped);
         assert_eq!(*result.updated_cycle_counts.get(&member).unwrap(), 3);
     }
@@ -159,11 +168,11 @@ mod tests {
         assert_eq!(result.earnings.len(), 2);
 
         assert_eq!(result.earnings[0].earner_id, alice);
-        assert_eq!(result.earnings[0].dollar_amount, 500.0);
+        assert_d!(result.earnings[0].dollar_amount, 500.0);
         assert_eq!(result.earnings[0].cycle_number, 1);
 
         assert_eq!(result.earnings[1].earner_id, bob);
-        assert_eq!(result.earnings[1].dollar_amount, 500.0);
+        assert_d!(result.earnings[1].dollar_amount, 500.0);
         assert_eq!(result.earnings[1].cycle_number, 1);
 
         assert_eq!(*result.updated_cycle_counts.get(&alice).unwrap(), 1);

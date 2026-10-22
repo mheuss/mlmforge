@@ -3,6 +3,7 @@
 //! These types are shared across unilevel, matrix, and stairstep
 //! structures. Each structure composes these into its own config wrapper.
 
+use crate::decimal::AuthoredDec;
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -23,14 +24,14 @@ pub struct LevelCommissionConfig {
     /// Typical range 30-50%. Represents the fraction of commissionable
     /// volume set aside for level commissions before per-rank rates
     /// are applied.
-    pub broad_commission_percent: f64,
+    pub broad_commission_percent: AuthoredDec,
 
     /// Per-structure override for converting CV points to currency.
     ///
     /// When `None`, the plan-level multiplier from `VolumeConfig` is
     /// used. Allows individual structures to adjust the CV-to-dollar
     /// ratio independently.
-    pub volume_to_dollar_multiplier: Option<f64>,
+    pub volume_to_dollar_multiplier: Option<AuthoredDec>,
 
     /// Maximum number of levels deep commissions are paid.
     ///
@@ -52,7 +53,7 @@ pub struct LevelCommissionConfig {
     /// Deserialized via `crate::serde_helpers::rank_keyed_u8_map` so the
     /// inner integer keys parse whether or not serde buffered this value.
     #[serde(deserialize_with = "crate::serde_helpers::rank_keyed_u8_map")]
-    pub rate_table: BTreeMap<String, BTreeMap<u8, f64>>,
+    pub rate_table: BTreeMap<String, BTreeMap<u8, AuthoredDec>>,
 }
 
 /// Compression configuration for level commissions.
@@ -103,6 +104,7 @@ pub enum CompressionMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{assert_d, d};
     use std::collections::BTreeMap;
 
     #[test]
@@ -127,21 +129,21 @@ mod tests {
             }
         }"#;
         let config: LevelCommissionConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.broad_commission_percent, 0.40);
-        assert_eq!(config.volume_to_dollar_multiplier, Some(1.5));
+        assert_d!(config.broad_commission_percent, 0.40);
+        assert_eq!(config.volume_to_dollar_multiplier, Some(d!(1.5)));
         assert_eq!(config.max_depth, 5);
         assert_eq!(config.rate_table.len(), 2);
 
         let associate = &config.rate_table["associate"];
         assert_eq!(associate.len(), 3);
-        assert_eq!(associate[&1], 0.05);
-        assert_eq!(associate[&2], 0.04);
-        assert_eq!(associate[&3], 0.03);
+        assert_d!(associate[&1], 0.05);
+        assert_d!(associate[&2], 0.04);
+        assert_d!(associate[&3], 0.03);
 
         let silver = &config.rate_table["silver"];
         assert_eq!(silver.len(), 5);
-        assert_eq!(silver[&1], 0.07);
-        assert_eq!(silver[&5], 0.03);
+        assert_d!(silver[&1], 0.07);
+        assert_d!(silver[&5], 0.03);
     }
 
     #[test]
@@ -157,7 +159,7 @@ mod tests {
             }
         }"#;
         let config: LevelCommissionConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.broad_commission_percent, 0.35);
+        assert_d!(config.broad_commission_percent, 0.35);
         assert_eq!(config.volume_to_dollar_multiplier, None);
         assert_eq!(config.max_depth, 3);
     }
@@ -213,26 +215,26 @@ mod tests {
     #[test]
     fn round_trip_level_commission() {
         let mut associate_rates = BTreeMap::new();
-        associate_rates.insert(1, 0.05);
-        associate_rates.insert(2, 0.04);
-        associate_rates.insert(3, 0.03);
+        associate_rates.insert(1, d!(0.05));
+        associate_rates.insert(2, d!(0.04));
+        associate_rates.insert(3, d!(0.03));
 
         let mut rate_table = BTreeMap::new();
         rate_table.insert("associate".to_string(), associate_rates);
 
         let config = LevelCommissionConfig {
-            broad_commission_percent: 0.40,
-            volume_to_dollar_multiplier: Some(1.0),
+            broad_commission_percent: d!(0.40),
+            volume_to_dollar_multiplier: Some(d!(1.0)),
             max_depth: 3,
             rate_table,
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: LevelCommissionConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.broad_commission_percent, 0.40);
-        assert_eq!(deserialized.volume_to_dollar_multiplier, Some(1.0));
+        assert_d!(deserialized.broad_commission_percent, 0.40);
+        assert_eq!(deserialized.volume_to_dollar_multiplier, Some(d!(1.0)));
         assert_eq!(deserialized.max_depth, 3);
-        assert_eq!(deserialized.rate_table["associate"][&1], 0.05);
-        assert_eq!(deserialized.rate_table["associate"][&3], 0.03);
+        assert_d!(deserialized.rate_table["associate"][&1], 0.05);
+        assert_d!(deserialized.rate_table["associate"][&3], 0.03);
     }
 
     #[test]

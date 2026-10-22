@@ -1,6 +1,7 @@
 //! Types for commission calculation.
 
 use crate::config::matrix::SpilloverDirection;
+use crate::decimal::{AuthoredDec, Dec};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -19,7 +20,7 @@ pub struct DistributorSnapshot {
     pub rank: String,
 
     /// Personal volume generated this period.
-    pub personal_volume: f64,
+    pub personal_volume: AuthoredDec,
 
     /// Distributor's current status (e.g., "active", "grace", "suspended").
     pub status: String,
@@ -38,7 +39,7 @@ pub struct VolumeSource {
     pub source_id: Uuid,
 
     /// Commission volume points generated.
-    pub cv_amount: f64,
+    pub cv_amount: AuthoredDec,
 }
 
 /// A single commission earning. One entry per earner per volume source.
@@ -65,13 +66,13 @@ pub struct CommissionEarning {
     ///
     /// Serialized even when null. Omitting the key would make an unrecorded
     /// rate indistinguishable from a missing field.
-    pub rate: Option<f64>,
+    pub rate: Option<Dec>,
 
     /// Input commission volume from the source.
-    pub cv_amount: f64,
+    pub cv_amount: Dec,
 
     /// Final payout amount in the plan's base currency.
-    pub dollar_amount: f64,
+    pub dollar_amount: Dec,
 
     /// Index of the walk that produced this earning.
     ///
@@ -93,6 +94,16 @@ pub struct CommissionEarning {
 /// These indicate data integrity problems in the caller's input.
 #[derive(Debug, PartialEq, Error)]
 pub enum CalculationError {
+    /// A carried binary leg volume is negative.
+    #[error(
+        "carried {leg} leg volume for position {position} is {volume}; it must not be negative"
+    )]
+    NegativeCarriedLegVolume {
+        position: Uuid,
+        leg: BinaryLeg,
+        volume: Dec,
+    },
+
     /// A volume source references a distributor not in the tree.
     #[error("volume source {0} not found in tree")]
     SourceNotInTree(Uuid),
@@ -113,17 +124,21 @@ pub enum CalculationError {
     #[error("snapshot for {0} names rank {1:?}; the loaded plan's rank ladder does not contain it")]
     UnknownSnapshotRank(Uuid, String),
 
-    /// A volume source has a non-finite or negative cv_amount.
+    /// A volume source has a negative cv_amount.
     #[error("volume source {0} has invalid cv_amount: {1}")]
-    InvalidCvAmount(Uuid, f64),
+    InvalidCvAmount(Uuid, AuthoredDec),
 
-    /// A snapshot has a non-finite or negative personal_volume.
-    #[error("snapshot for {0} has personal_volume {1}; it must be finite and not negative")]
-    InvalidPersonalVolume(Uuid, f64),
+    /// A snapshot has a negative personal_volume.
+    #[error("snapshot for {0} has personal_volume {1}; it must not be negative")]
+    InvalidPersonalVolume(Uuid, AuthoredDec),
 
     /// Commission config failed validation.
     #[error("config error: {0}")]
     ConfigError(String),
+
+    /// An arithmetic step has no exact result the engine can hold.
+    #[error(transparent)]
+    Numeric(#[from] crate::decimal::NumericError),
 
     /// The tree's topology does not match the structure config it pays against.
     /// Paying against a mismatched tree computes commissions on the wrong shape.
@@ -141,6 +156,22 @@ pub enum CalculationError {
     },
 }
 
+/// One of a binary position's two legs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BinaryLeg {
+    Left,
+    Right,
+}
+
+impl std::fmt::Display for BinaryLeg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            BinaryLeg::Left => "left",
+            BinaryLeg::Right => "right",
+        })
+    }
+}
+
 /// Per-distributor leg volumes carried from the previous period.
 ///
 /// Used as both input (carry-forward from prior period) and output
@@ -148,8 +179,8 @@ pub enum CalculationError {
 /// calculation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LegVolumes {
-    pub left: f64,
-    pub right: f64,
+    pub left: Dec,
+    pub right: Dec,
 }
 
 /// A single binary pairing commission earning.
@@ -167,24 +198,26 @@ pub struct BinaryCommissionEarning {
     pub position_id: Uuid,
 
     /// Total volume in the left leg (current period + carry-forward).
-    pub left_volume: f64,
+    pub left_volume: Dec,
 
     /// Total volume in the right leg (current period + carry-forward).
-    pub right_volume: f64,
+    pub right_volume: Dec,
 
     /// Volume matched between legs: min(left, right).
-    pub matched_volume: f64,
+    pub matched_volume: Dec,
 
-    /// Balance ratio applied. 1.0 for WeakerLeg, min/max for VolumeRatio.
-    pub ratio: f64,
+    /// The balance ratio reported with this earning: 1 for WeakerLeg, min/max
+    /// for VolumeRatio, 0 for cycle-step. It is reported, not used to compute
+    /// `dollar_amount`.
+    pub ratio: Dec,
 
     /// The pairing percent from config.
-    pub percent: f64,
+    pub percent: Dec,
 
     /// Final payout amount after multiplier and cap.
-    pub dollar_amount: f64,
+    pub dollar_amount: Dec,
 
-    /// True if cap_per_period reduced this earning.
+    /// True if a per-period cap set this earning's amount.
     pub capped: bool,
 }
 
@@ -317,8 +350,7 @@ pub struct Walk {
     ///
     /// **Not knowable at construction.** Design 029 requires indexes to come
     /// from a defined total order applied across the whole response, never
-    /// from the order walks happened to be emitted in, which for streamline
-    /// is a `HashMap` iteration.
+    /// from the order walks happened to be emitted in.
     ///
     /// The emitters set this to a collector id, unique within one
     /// calculator's collector. `walk_order::assign_indexes` then sorts the
@@ -398,6 +430,7 @@ pub struct CommissionCalculationResult {
 mod tests {
     use super::*;
     use crate::commission::test_helpers::uuid_from_index;
+    use crate::d;
 
     #[test]
     fn walk_serializes_with_absent_optional_context() {
@@ -509,9 +542,9 @@ mod tests {
             earner_id: uuid_from_index(1),
             source_id: uuid_from_index(2),
             level: 1,
-            rate: Some(0.05),
-            cv_amount: 100.0,
-            dollar_amount: 5.0,
+            rate: Some(d!(0.05)),
+            cv_amount: d!(100.0),
+            dollar_amount: d!(5.0),
             walk: None,
         };
         let json = serde_json::to_value(&earning).expect("serialize earning");
@@ -541,8 +574,8 @@ mod tests {
             source_id: uuid_from_index(2),
             level: 1,
             rate: None,
-            cv_amount: 100.0,
-            dollar_amount: 5.0,
+            cv_amount: d!(100.0),
+            dollar_amount: d!(5.0),
             walk: None,
         };
         let json = serde_json::to_value(&earning).expect("serialize earning");
@@ -556,7 +589,7 @@ mod tests {
         );
 
         let rated = CommissionEarning {
-            rate: Some(0.05),
+            rate: Some(d!(0.05)),
             ..earning
         };
         let json = serde_json::to_value(&rated).expect("serialize earning");
@@ -735,5 +768,82 @@ mod tests {
         let id = uuid_from_index(4);
         let err = CalculationError::DistributorNotInSnapshot(id);
         assert_eq!(err.to_string(), format!("distributor {id} has no snapshot"));
+    }
+
+    #[test]
+    fn a_numeric_error_reads_through_a_calculation_error() {
+        let one: crate::decimal::Dec = "1".parse().unwrap();
+        let err = one.floor_div(crate::decimal::Dec::ZERO).unwrap_err();
+        assert_eq!(
+            CalculationError::from(err).to_string(),
+            "cannot floor-divide 1 by 0: the divisor is zero"
+        );
+    }
+
+    #[test]
+    fn every_output_type_writes_normalized_numbers() {
+        let two: Dec = d!(2.000000);
+        let half: Dec = d!(0.5);
+        let zero = half.try_sub(half).unwrap();
+        assert_eq!(format!("{zero:?}"), "Dec(0.0)");
+        let texts = [
+            serde_json::to_string(&CommissionEarning {
+                earner_id: uuid_from_index(1),
+                source_id: uuid_from_index(2),
+                level: 1,
+                rate: Some(two),
+                cv_amount: zero,
+                dollar_amount: two,
+                walk: None,
+            })
+            .unwrap(),
+            serde_json::to_string(&BinaryCommissionEarning {
+                earner_id: uuid_from_index(1),
+                position_id: uuid_from_index(1),
+                left_volume: two,
+                right_volume: zero,
+                matched_volume: two,
+                ratio: zero,
+                percent: two,
+                dollar_amount: zero,
+                capped: false,
+            })
+            .unwrap(),
+            serde_json::to_string(&LegVolumes {
+                left: two,
+                right: zero,
+            })
+            .unwrap(),
+            serde_json::to_string(&crate::board_plan::types::BoardCycleEarning {
+                earner_id: uuid_from_index(1),
+                board_id: uuid_from_index(2),
+                dollar_amount: two,
+                cycle_number: 1,
+                capped: false,
+            })
+            .unwrap(),
+            serde_json::to_string(&VolumeSource {
+                source_id: uuid_from_index(1),
+                cv_amount: d!(2.000000),
+            })
+            .unwrap(),
+        ];
+        for text in &texts {
+            assert!(!text.contains(":2.0"), "{text}");
+            assert!(!text.contains(":0.0"), "{text}");
+        }
+        assert!(
+            texts[0].contains(r#""rate":2,"cv_amount":0,"dollar_amount":2,"#),
+            "{}",
+            texts[0]
+        );
+        assert!(
+            texts[1].contains(r#""left_volume":2,"right_volume":0,"matched_volume":2,"ratio":0,"percent":2,"dollar_amount":0,"#),
+            "{}",
+            texts[1]
+        );
+        assert_eq!(texts[2], r#"{"left":2,"right":0}"#);
+        assert!(texts[3].contains(r#""dollar_amount":2,"#), "{}", texts[3]);
+        assert!(texts[4].contains(r#""cv_amount":2}"#), "{}", texts[4]);
     }
 }

@@ -5,6 +5,7 @@
 //! CapsConfig protects the company and distributors through per-distributor
 //! and company-wide payout limits.
 
+use crate::decimal::AuthoredDec;
 use serde::{Deserialize, Serialize};
 
 /// Payout configuration.
@@ -26,7 +27,7 @@ pub struct PayoutConfig {
     /// Commissions below this threshold roll over to the next period.
     /// Prevents micro-payouts that cost more to process than they're worth.
     #[serde(rename = "minimum_amount")]
-    pub minimum_payout: f64,
+    pub minimum_payout: AuthoredDec,
 
     /// When true, distributors can request partial payouts above the minimum.
     ///
@@ -57,7 +58,7 @@ pub struct PayoutMethod {
     ///
     /// Interpretation (flat vs. percentage) is company-defined.
     /// Applied when this payment method is selected for disbursement.
-    pub fee: f64,
+    pub fee: AuthoredDec,
 }
 
 /// Commission cap configuration.
@@ -72,14 +73,14 @@ pub struct CapsConfig {
     /// None means uncapped. When set, no distributor can earn more than
     /// this amount in a single commission period.
     #[serde(rename = "per_distributor_per_period")]
-    pub per_distributor_cap: Option<f64>,
+    pub per_distributor_cap: Option<AuthoredDec>,
 
     /// Maximum percentage of company volume paid as commissions.
     ///
     /// Industry standard is 40-45%. If total commissions exceed this
     /// percentage of total company volume, the enforcement strategy
     /// determines how to reduce payouts.
-    pub company_payout_cap_percent: f64,
+    pub company_payout_cap_percent: AuthoredDec,
 
     /// How caps are enforced when exceeded.
     #[serde(rename = "cap_enforcement")]
@@ -120,6 +121,7 @@ pub enum CapEnforcement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{assert_d, d};
 
     #[test]
     fn deserialize_payout_config() {
@@ -135,15 +137,15 @@ mod tests {
         }"#;
         let config: PayoutConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.currency, "USD");
-        assert_eq!(config.minimum_payout, 50.0);
+        assert_d!(config.minimum_payout, 50.0);
         assert!(config.allow_partial_payout);
         assert_eq!(config.payment_methods.len(), 3);
         assert_eq!(config.payment_methods[0].method_type, "bank_transfer");
-        assert_eq!(config.payment_methods[0].fee, 2.50);
+        assert_d!(config.payment_methods[0].fee, 2.50);
         assert_eq!(config.payment_methods[1].method_type, "check");
-        assert_eq!(config.payment_methods[1].fee, 5.00);
+        assert_d!(config.payment_methods[1].fee, 5.00);
         assert_eq!(config.payment_methods[2].method_type, "ewallet");
-        assert_eq!(config.payment_methods[2].fee, 0.00);
+        assert_d!(config.payment_methods[2].fee, 0.00);
     }
 
     #[test]
@@ -154,7 +156,7 @@ mod tests {
         }"#;
         let method: PayoutMethod = serde_json::from_str(json).unwrap();
         assert_eq!(method.method_type, "bank_transfer");
-        assert_eq!(method.fee, 2.50);
+        assert_d!(method.fee, 2.50);
     }
 
     #[test]
@@ -166,8 +168,8 @@ mod tests {
             "clawback_on_refund": false
         }"#;
         let config: CapsConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.per_distributor_cap, Some(10000.0));
-        assert_eq!(config.company_payout_cap_percent, 0.42);
+        assert_eq!(config.per_distributor_cap, Some(d!(10000.0)));
+        assert_d!(config.company_payout_cap_percent, 0.42);
         assert!(matches!(config.enforcement, CapEnforcement::ProRata));
         assert!(!config.enable_clawback);
     }
@@ -182,7 +184,7 @@ mod tests {
         }"#;
         let config: CapsConfig = serde_json::from_str(json).unwrap();
         assert!(config.per_distributor_cap.is_none());
-        assert_eq!(config.company_payout_cap_percent, 0.45);
+        assert_d!(config.company_payout_cap_percent, 0.45);
         assert!(matches!(config.enforcement, CapEnforcement::HardStop));
         assert!(config.enable_clawback);
     }
@@ -206,41 +208,41 @@ mod tests {
     fn round_trip_payout_config() {
         let config = PayoutConfig {
             currency: "EUR".to_string(),
-            minimum_payout: 25.0,
+            minimum_payout: d!(25.0),
             allow_partial_payout: false,
             payment_methods: vec![
                 PayoutMethod {
                     method_type: "bank_transfer".to_string(),
-                    fee: 1.50,
+                    fee: d!(1.50),
                 },
                 PayoutMethod {
                     method_type: "ewallet".to_string(),
-                    fee: 0.0,
+                    fee: d!(0.0),
                 },
             ],
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: PayoutConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.currency, "EUR");
-        assert_eq!(deserialized.minimum_payout, 25.0);
+        assert_d!(deserialized.minimum_payout, 25.0);
         assert!(!deserialized.allow_partial_payout);
         assert_eq!(deserialized.payment_methods.len(), 2);
         assert_eq!(deserialized.payment_methods[0].method_type, "bank_transfer");
-        assert_eq!(deserialized.payment_methods[1].fee, 0.0);
+        assert_d!(deserialized.payment_methods[1].fee, 0.0);
     }
 
     #[test]
     fn round_trip_caps_config() {
         let config = CapsConfig {
-            per_distributor_cap: Some(5000.0),
-            company_payout_cap_percent: 0.40,
+            per_distributor_cap: Some(d!(5000.0)),
+            company_payout_cap_percent: d!(0.40),
             enforcement: CapEnforcement::PriorityReduction,
             enable_clawback: true,
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: CapsConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.per_distributor_cap, Some(5000.0));
-        assert_eq!(deserialized.company_payout_cap_percent, 0.40);
+        assert_eq!(deserialized.per_distributor_cap, Some(d!(5000.0)));
+        assert_d!(deserialized.company_payout_cap_percent, 0.40);
         assert!(matches!(
             deserialized.enforcement,
             CapEnforcement::PriorityReduction
@@ -252,7 +254,7 @@ mod tests {
     fn payout_method_serializes_type_as_json_key() {
         let method = PayoutMethod {
             method_type: "check".to_string(),
-            fee: 3.00,
+            fee: d!(3.00),
         };
         let json = serde_json::to_string(&method).unwrap();
         assert!(json.contains(r#""type":"check""#));

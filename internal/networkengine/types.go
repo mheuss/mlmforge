@@ -1,6 +1,10 @@
 package networkengine
 
-import "time"
+import (
+	"time"
+
+	"github.com/mlmforge/mlmforge/internal/dec"
+)
 
 // --- Tree types ---
 
@@ -33,13 +37,13 @@ type TreePosition struct {
 	ParentUserID   string
 	Position       int
 	Depth          int
-	Width          int             // Max child positions (2 for binary, N for matrix, unbounded for unilevel)
-	ChildCount     int             // Currently placed children
-	BranchCounts   map[int]int     // Nodes per position. Binary: {0: 150, 1: 143}
-	BranchVolumes  map[int]float64 // CV volume per position
-	PersonalVolume float64         // User's own CV
-	GroupVolume    float64         // Sum of all branch volumes + personal
-	OpenPositions  []int           // Unfilled child positions. N/A for unilevel.
+	Width          int                // Max child positions (2 for binary, N for matrix, unbounded for unilevel)
+	ChildCount     int                // Currently placed children
+	BranchCounts   map[int]int        // Nodes per position. Binary: {0: 150, 1: 143}
+	BranchVolumes  map[int]dec.Amount // CV volume per position
+	PersonalVolume dec.Amount         // User's own CV
+	GroupVolume    dec.Amount         // Sum of all branch volumes + personal
+	OpenPositions  []int              // Unfilled child positions. N/A for unilevel.
 }
 
 // TreeQuery defines a filtered or cross-structure query.
@@ -60,8 +64,8 @@ type QueryFilter struct {
 // QueryResult extends TreeNode with requested enrichment fields.
 type QueryResult struct {
 	TreeNode
-	PersonalVolume float64 // Included when query requests volume
-	GroupVolume    float64
+	PersonalVolume dec.Amount // Included when query requests volume
+	GroupVolume    dec.Amount
 	RankID         string // Included when query requests rank
 }
 
@@ -77,11 +81,7 @@ type HoldingTankEntry struct {
 
 // --- Volume types ---
 //
-// Monetary values use float64 throughout the system. IEEE 754 rounding errors
-// are acceptable during intermediate calculations (tree walks, commission rates).
-// Final rounding to currency precision happens at the payout stage (ADR-013).
-// If sub-cent precision becomes a requirement, migrate to a decimal type at
-// that boundary only.
+// Monetary and volume values are exact decimals.
 
 // VolumeSource carries order details for volume recording.
 type VolumeSource struct {
@@ -96,14 +96,14 @@ type VolumeSource struct {
 type VolumeSourceItem struct {
 	ProductID string
 	Quantity  int
-	CVPoints  float64 // Currency-neutral commissionable volume
+	CVPoints  dec.Amount // Currency-neutral commissionable volume
 }
 
 // VolumeAttribution shows where volume was placed after routing rules applied.
 type VolumeAttribution struct {
 	StructureID string
 	ProductID   string
-	CVPoints    float64
+	CVPoints    dec.Amount
 	Period      string
 }
 
@@ -113,7 +113,7 @@ type VolumeAttribution struct {
 type CommissionEarning struct {
 	ID           string
 	UserID       string
-	Amount       float64 // In base currency
+	Amount       dec.Amount // In base currency
 	BaseCurrency string
 	Reason       string // "direct", "override", "pool", "bonus"
 	SourceUserID string // Who generated this commission
@@ -123,11 +123,11 @@ type CommissionEarning struct {
 
 // CommissionSummary is a dashboard-level summary of commission data.
 type CommissionSummary struct {
-	TotalPending  float64
-	TotalApproved float64
-	TotalPaid     float64
+	TotalPending  dec.Amount
+	TotalApproved dec.Amount
+	TotalPaid     dec.Amount
 	BaseCurrency  string
-	ByReason      map[string]float64
+	ByReason      map[string]dec.Amount
 }
 
 // CommissionPage is a paginated result of commissions.
@@ -141,10 +141,10 @@ type CommissionPage struct {
 // PeriodSummary is a rolled-up view of an entire commission period.
 type PeriodSummary struct {
 	Period           string
-	TotalCommissions float64
+	TotalCommissions dec.Amount
 	BaseCurrency     string
-	TotalByType      map[string]float64
-	TotalByRankTier  map[string]float64
+	TotalByType      map[string]dec.Amount
+	TotalByRankTier  map[string]dec.Amount
 	PayeeCount       int
 }
 
@@ -154,7 +154,7 @@ type PeriodStatus struct {
 	State            string // "open", "calculating", "calculated", "approved", "paid"
 	LastRunAt        time.Time
 	LastProjectionAt time.Time
-	CommissionTotal  float64
+	CommissionTotal  dec.Amount
 	BaseCurrency     string
 	PayeeCount       int
 }
@@ -162,12 +162,12 @@ type PeriodStatus struct {
 // CommissionFilter supports filtering commission records.
 type CommissionFilter struct {
 	Period      string
-	RankID      string  // Optional
-	StructureID string  // Optional
-	Status      string  // Optional
-	MinAmount   float64 // Optional
-	MaxAmount   float64 // Optional
-	ReasonType  string  // Optional
+	RankID      string     // Optional
+	StructureID string     // Optional
+	Status      string     // Optional
+	MinAmount   dec.Amount // Optional
+	MaxAmount   dec.Amount // Optional
+	ReasonType  string     // Optional
 	Page        int
 	PageSize    int
 }

@@ -1,12 +1,14 @@
 mod common;
 
 use common::{
-    build_generation_plan, build_same_rank_generation_plan, snapshot_with_rank, uuid_from_index,
-    walk_order_fingerprint,
+    build_generation_plan, build_same_rank_generation_plan, cents, snapshot_with_rank,
+    uuid_from_index, walk_order_fingerprint, whole,
 };
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_generation};
+use network_engine::decimal::{AuthoredDec, Dec};
 use network_engine::tree::unilevel::UnilevelTree;
+use network_engine::{assert_d, d};
 use proptest::prelude::*;
 use std::collections::{HashMap, HashSet};
 
@@ -89,11 +91,11 @@ fn reference_tree_threshold_mode() {
     let (plan, structure) = build_generation_plan(4);
 
     let director = DistributorSnapshot {
-        personal_volume: 150.0,
+        personal_volume: d!(150.0),
         ..snapshot_with_rank("director")
     };
     let associate = DistributorSnapshot {
-        personal_volume: 150.0,
+        personal_volume: d!(150.0),
         ..snapshot_with_rank("associate")
     };
 
@@ -114,7 +116,7 @@ fn reference_tree_threshold_mode() {
     // Alice earns gen 2 at 0.07: 100 * 1.0 * 0.07 = 7.0
     let volume_eve = vec![VolumeSource {
         source_id: uuid_from_index(4),
-        cv_amount: 100.0,
+        cv_amount: d!(100.0),
     }];
     let result = calculate_generation(
         &tree,
@@ -133,21 +135,21 @@ fn reference_tree_threshold_mode() {
         .find(|e| e.earner_id == uuid_from_index(3))
         .expect("Dave should earn");
     assert_eq!(dave.level, 1);
-    assert!((dave.dollar_amount - 10.0).abs() < 1e-10);
+    assert_d!(dave.dollar_amount, 10.0);
 
     let alice = result
         .iter()
         .find(|e| e.earner_id == uuid_from_index(0))
         .expect("Alice should earn");
     assert_eq!(alice.level, 2);
-    assert!((alice.dollar_amount - 7.0).abs() < 1e-10);
+    assert_d!(alice.dollar_amount, 7.0);
 
     // --- Volume from Henry (50 CV) ---
     // Walk from Henry upward: Alice (Director, gen 1).
     // Alice earns gen 1 at 0.10: 50 * 1.0 * 0.10 = 5.0
     let volume_henry = vec![VolumeSource {
         source_id: uuid_from_index(7),
-        cv_amount: 50.0,
+        cv_amount: d!(50.0),
     }];
     let result = calculate_generation(
         &tree,
@@ -163,14 +165,14 @@ fn reference_tree_threshold_mode() {
     assert_eq!(result.len(), 1, "Henry volume: expected 1 earner");
     assert_eq!(result[0].earner_id, uuid_from_index(0));
     assert_eq!(result[0].level, 1);
-    assert!((result[0].dollar_amount - 5.0).abs() < 1e-10);
+    assert_d!(result[0].dollar_amount, 5.0);
 
     // --- Volume from Grace (75 CV) ---
     // Walk from Grace upward: Bob (skip), Alice (Director, gen 1).
     // Alice earns gen 1 at 0.10: 75 * 1.0 * 0.10 = 7.5
     let volume_grace = vec![VolumeSource {
         source_id: uuid_from_index(6),
-        cv_amount: 75.0,
+        cv_amount: d!(75.0),
     }];
     let result = calculate_generation(
         &tree,
@@ -186,14 +188,14 @@ fn reference_tree_threshold_mode() {
     assert_eq!(result.len(), 1, "Grace volume: expected 1 earner");
     assert_eq!(result[0].earner_id, uuid_from_index(0));
     assert_eq!(result[0].level, 1);
-    assert!((result[0].dollar_amount - 7.5).abs() < 1e-10);
+    assert_d!(result[0].dollar_amount, 7.5);
 
     // --- Volume from Bob (200 CV) ---
     // Walk from Bob upward: Alice (Director, gen 1).
     // Alice earns gen 1 at 0.10: 200 * 1.0 * 0.10 = 20.0
     let volume_bob = vec![VolumeSource {
         source_id: uuid_from_index(1),
-        cv_amount: 200.0,
+        cv_amount: d!(200.0),
     }];
     let result = calculate_generation(
         &tree,
@@ -209,18 +211,18 @@ fn reference_tree_threshold_mode() {
     assert_eq!(result.len(), 1, "Bob volume: expected 1 earner");
     assert_eq!(result[0].earner_id, uuid_from_index(0));
     assert_eq!(result[0].level, 1);
-    assert!((result[0].dollar_amount - 20.0).abs() < 1e-10);
+    assert_d!(result[0].dollar_amount, 20.0);
 
     // --- Multiple sources at once ---
     // Eve (100) + Henry (50): should produce earnings for both sources combined.
     let volume_multi = vec![
         VolumeSource {
             source_id: uuid_from_index(4),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         },
         VolumeSource {
             source_id: uuid_from_index(7),
-            cv_amount: 50.0,
+            cv_amount: d!(50.0),
         },
     ];
     let result = calculate_generation(
@@ -244,10 +246,11 @@ fn reference_tree_threshold_mode() {
         .collect();
     assert_eq!(alice_earnings.len(), 2, "Alice should have 2 earnings");
 
-    let alice_total: f64 = alice_earnings.iter().map(|e| e.dollar_amount).sum();
+    let alice_total = Dec::sum(alice_earnings.iter().map(|e| e.dollar_amount)).unwrap();
     // 7.0 (gen 2 from Eve) + 5.0 (gen 1 from Henry) = 12.0
-    assert!(
-        (alice_total - 12.0).abs() < 1e-10,
+    assert_d!(
+        alice_total,
+        12.0,
         "Alice total: expected 12.0, got {}",
         alice_total
     );
@@ -286,7 +289,7 @@ fn build_random_chain(
             uuid_from_index(i),
             DistributorSnapshot {
                 rank: rank.to_string(),
-                personal_volume: 150.0,
+                personal_volume: d!(150.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
             },
@@ -297,10 +300,10 @@ fn build_random_chain(
 }
 
 /// Strategy: generate a tree size and a set of director positions within it.
-fn generation_inputs() -> impl Strategy<Value = (usize, Vec<usize>, f64, u8)> {
+fn generation_inputs() -> impl Strategy<Value = (usize, Vec<usize>, AuthoredDec, u8)> {
     (3..30usize).prop_flat_map(|size| {
         let directors = proptest::collection::vec(0..size, 0..size / 2 + 1);
-        let cv = 0.0..10000.0f64;
+        let cv = cents(0, 1_000_000);
         let max_gen = 1..6u8;
         (Just(size), directors, cv, max_gen)
     })
@@ -346,7 +349,7 @@ proptest! {
         let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         for earning in &result {
             prop_assert!(
-                earning.dollar_amount >= 0.0,
+                earning.dollar_amount >= d!(0.0),
                 "Negative earning: {}",
                 earning.dollar_amount
             );
@@ -408,7 +411,7 @@ proptest! {
     #[test]
     fn at_least_one_earner_when_boundary_exists(
         size in 3..20usize,
-        cv in 1.0..1000.0f64,
+        cv in cents(100, 100_000),
     ) {
         // Force a director at position 0 (root) to guarantee a boundary.
         let directors = vec![0];
@@ -441,18 +444,18 @@ proptest! {
         }];
 
         let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
-        let total_payout: f64 = result.iter().map(|e| e.dollar_amount).sum();
+        let total_payout = Dec::sum(result.iter().map(|e| e.dollar_amount)).unwrap();
 
         // Upper bound: cv * multiplier * sum(all gen rates)
-        let rate_sum: f64 = structure.generation_commission.rates.values().sum();
+        let rate_sum = Dec::sum(structure.generation_commission.rates.values().map(|r| r.dec())).unwrap();
         let multiplier = structure
             .generation_commission
             .volume_to_dollar_multiplier
             .unwrap_or(plan.volume.volume_to_dollar_multiplier);
-        let upper_bound = cv * multiplier * rate_sum;
+        let upper_bound = cv.dec().try_mul(multiplier).unwrap().try_mul(rate_sum).unwrap();
 
         prop_assert!(
-            total_payout <= upper_bound + 1e-6,
+            total_payout <= upper_bound,
             "Total payout {} exceeds upper bound {}",
             total_payout, upper_bound
         );
@@ -492,7 +495,7 @@ fn build_multi_rank_chain(
             uuid_from_index(i),
             DistributorSnapshot {
                 rank: rank_names[rank_idx].to_string(),
-                personal_volume: 150.0,
+                personal_volume: d!(150.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
             },
@@ -503,10 +506,10 @@ fn build_multi_rank_chain(
 }
 
 /// Strategy for SameRank mode: tree size + rank assignments per node.
-fn same_rank_inputs() -> impl Strategy<Value = (usize, Vec<u8>, f64, u8)> {
+fn same_rank_inputs() -> impl Strategy<Value = (usize, Vec<u8>, AuthoredDec, u8)> {
     (3..20usize).prop_flat_map(|size| {
         let ranks = proptest::collection::vec(0..3u8, size..=size);
-        let cv = 0.0..5000.0f64;
+        let cv = cents(0, 500_000);
         let max_gen = 1..5u8;
         (Just(size), ranks, cv, max_gen)
     })
@@ -552,7 +555,7 @@ proptest! {
         let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         for earning in &result {
             prop_assert!(
-                earning.dollar_amount >= 0.0,
+                earning.dollar_amount >= d!(0.0),
                 "SameRank: negative earning: {}",
                 earning.dollar_amount
             );
@@ -624,20 +627,27 @@ proptest! {
         }];
 
         let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
-        let total_payout: f64 = result.iter().map(|e| e.dollar_amount).sum();
+        let total_payout = Dec::sum(result.iter().map(|e| e.dollar_amount)).unwrap();
 
         // Upper bound: each of the 3 rank ordinals can produce up to
         // (cv * multiplier * sum_of_rates) earnings independently.
-        let rate_sum: f64 = structure.generation_commission.rates.values().sum();
+        let rate_sum = Dec::sum(structure.generation_commission.rates.values().map(|r| r.dec())).unwrap();
         let multiplier = structure
             .generation_commission
             .volume_to_dollar_multiplier
             .unwrap_or(plan.volume.volume_to_dollar_multiplier);
         let num_ranks = 3u32; // associate, silver, director
-        let upper_bound = cv * multiplier * rate_sum * num_ranks as f64;
+        let upper_bound = cv
+            .dec()
+            .try_mul(multiplier)
+            .unwrap()
+            .try_mul(rate_sum)
+            .unwrap()
+            .try_mul(whole::<Dec>(num_ranks))
+            .unwrap();
 
         prop_assert!(
-            total_payout <= upper_bound + 1e-6,
+            total_payout <= upper_bound,
             "SameRank: total payout {} exceeds upper bound {}",
             total_payout, upper_bound
         );
@@ -665,10 +675,6 @@ proptest! {
     /// `snapshots` only through key lookups and set membership, so map order
     /// cannot reach walk *content* today. If some future change let it reach
     /// the steps or the stop, these two runs would disagree and this fails.
-    ///
-    /// The property that exercises the ordering lives in
-    /// `streamline_properties.rs`, because streamline is the only calculator
-    /// whose emission order is a `HashMap` iteration.
     ///
     /// The two snapshot maps below hold identical content and are built in
     /// opposite insertion orders. Calling one calculator twice over a single

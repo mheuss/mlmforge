@@ -6,6 +6,7 @@
 
 mod common;
 
+use network_engine::d;
 use std::collections::BTreeMap;
 
 use network_engine::config::commission::CompressionMode;
@@ -31,7 +32,7 @@ fn warn_triggering_plan_json() -> String {
     let structure = UnilevelStructureConfig {
         name: STRUCTURE.to_string(),
         level_commission: LevelCommissionConfig {
-            broad_commission_percent: 0.40,
+            broad_commission_percent: d!(0.40),
             volume_to_dollar_multiplier: None,
             max_depth: 5,
             rate_table: BTreeMap::new(),
@@ -44,7 +45,7 @@ fn warn_triggering_plan_json() -> String {
         pass_up: None,
     };
     let eligibility = CommissionEligibility {
-        minimum_pv: 0.0,
+        minimum_pv: d!(0.0),
         require_order_in_period: false,
         eligible_statuses: vec![],
         active_leg_tiers: vec![],

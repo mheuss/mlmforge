@@ -23,9 +23,9 @@ use super::{walk, walk_order};
 /// `spillover` disagrees with `structure.matrix_params` — checked before any
 /// other work, so it precedes volume/snapshot validation. Otherwise returns
 /// `CalculationError` if a snapshot names a rank the plan does not define, if
-/// a snapshot's `personal_volume` is negative or not finite, if a placed node
-/// has no snapshot, if a volume source is not found in the tree, or if a volume
-/// source has an invalid `cv_amount`.
+/// a snapshot's `personal_volume` is negative, if a placed node has no
+/// snapshot, if a volume source is not found in the tree, if a volume source
+/// has an invalid `cv_amount`, or if an exact result cannot be held.
 pub fn calculate_matrix(
     tree: &MatrixTree,
     plan: &CompensationPlan,
@@ -60,7 +60,7 @@ pub fn calculate_matrix(
         .min(structure.matrix_params.height);
 
     let broad_pct = structure.level_commission.broad_commission_percent;
-    walk::validate_broad_pct(broad_pct);
+    walk::validate_broad_pct(broad_pct.dec());
 
     let multiplier = structure
         .level_commission
@@ -72,8 +72,8 @@ pub fn calculate_matrix(
 
     let config = walk::LevelWalkConfig {
         max_depth,
-        broad_pct,
-        multiplier,
+        broad_pct: broad_pct.dec(),
+        multiplier: multiplier.dec(),
         compression,
         threshold_ordinal,
         rank_ordinals: &rank_ordinals,
@@ -111,29 +111,31 @@ mod tests {
     use crate::config::matrix::{MatrixStructureParams, SpilloverDirection};
     use crate::config::rank::{DemotionPolicy, RankDefinition, RankQualification};
     use crate::config::{MatrixStructureConfig, StructureConfig};
+    use crate::decimal::{AuthoredDec, Dec};
     use crate::tree::test_helpers::test_uuid;
+    use crate::{assert_d, d};
     use std::collections::BTreeMap;
 
-    fn test_rate_table() -> BTreeMap<String, BTreeMap<u8, f64>> {
+    fn test_rate_table() -> BTreeMap<String, BTreeMap<u8, AuthoredDec>> {
         let mut table = BTreeMap::new();
         let mut associate = BTreeMap::new();
-        associate.insert(1, 0.05);
-        associate.insert(2, 0.04);
-        associate.insert(3, 0.03);
-        associate.insert(4, 0.02);
-        associate.insert(5, 0.01);
+        associate.insert(1, d!(0.05));
+        associate.insert(2, d!(0.04));
+        associate.insert(3, d!(0.03));
+        associate.insert(4, d!(0.02));
+        associate.insert(5, d!(0.01));
         table.insert("associate".to_string(), associate);
         table
     }
 
-    fn multi_rank_rate_table() -> BTreeMap<String, BTreeMap<u8, f64>> {
+    fn multi_rank_rate_table() -> BTreeMap<String, BTreeMap<u8, AuthoredDec>> {
         let mut table = test_rate_table();
         let mut silver = BTreeMap::new();
-        silver.insert(1, 0.07);
-        silver.insert(2, 0.06);
-        silver.insert(3, 0.05);
-        silver.insert(4, 0.04);
-        silver.insert(5, 0.03);
+        silver.insert(1, d!(0.07));
+        silver.insert(2, d!(0.06));
+        silver.insert(3, d!(0.05));
+        silver.insert(4, d!(0.04));
+        silver.insert(5, d!(0.03));
         table.insert("silver".to_string(), silver);
         table
     }
@@ -147,7 +149,7 @@ mod tests {
                 spillover: SpilloverDirection::BreadthFirst,
             },
             level_commission: LevelCommissionConfig {
-                broad_commission_percent: 0.40,
+                broad_commission_percent: d!(0.40),
                 volume_to_dollar_multiplier: None,
                 max_depth,
                 rate_table: test_rate_table(),
@@ -207,7 +209,7 @@ mod tests {
     fn eligible_snapshot() -> DistributorSnapshot {
         DistributorSnapshot {
             rank: "associate".to_string(),
-            personal_volume: 150.0,
+            personal_volume: d!(150.0),
             status: "active".to_string(),
             has_order_in_period: true,
         }
@@ -229,7 +231,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(
@@ -247,9 +249,9 @@ mod tests {
         assert_eq!(result[0].earner_id, test_uuid(0));
         assert_eq!(result[0].source_id, test_uuid(1));
         assert_eq!(result[0].level, 1);
-        assert_eq!(result[0].rate, Some(0.05));
+        assert_eq!(result[0].rate, Some(d!(0.05)));
         // 100.0 * 0.40 * 1.0 * 0.05 = 2.0
-        assert!((result[0].dollar_amount - 2.0).abs() < 1e-10);
+        assert_d!(result[0].dollar_amount, 2.0);
     }
 
     #[test]
@@ -272,7 +274,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(
@@ -291,21 +293,21 @@ mod tests {
         // Verify each earner got the correct level, rate, and dollar amount
         let e2 = result.iter().find(|e| e.earner_id == test_uuid(2)).unwrap();
         assert_eq!(e2.level, 1);
-        assert_eq!(e2.rate, Some(0.05));
+        assert_eq!(e2.rate, Some(d!(0.05)));
         // 100.0 * 0.40 * 1.0 * 0.05 = 2.0
-        assert!((e2.dollar_amount - 2.0).abs() < 1e-10);
+        assert_d!(e2.dollar_amount, 2.0);
 
         let e1 = result.iter().find(|e| e.earner_id == test_uuid(1)).unwrap();
         assert_eq!(e1.level, 2);
-        assert_eq!(e1.rate, Some(0.04));
+        assert_eq!(e1.rate, Some(d!(0.04)));
         // 100.0 * 0.40 * 1.0 * 0.04 = 1.6
-        assert!((e1.dollar_amount - 1.6).abs() < 1e-10);
+        assert_d!(e1.dollar_amount, 1.6);
 
         let e0 = result.iter().find(|e| e.earner_id == test_uuid(0)).unwrap();
         assert_eq!(e0.level, 3);
-        assert_eq!(e0.rate, Some(0.03));
+        assert_eq!(e0.rate, Some(d!(0.03)));
         // 100.0 * 0.40 * 1.0 * 0.03 = 1.2
-        assert!((e0.dollar_amount - 1.2).abs() < 1e-10);
+        assert_d!(e0.dollar_amount, 1.2);
     }
 
     #[test]
@@ -329,7 +331,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(
@@ -374,7 +376,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(
@@ -414,7 +416,7 @@ mod tests {
             test_uuid(0),
             DistributorSnapshot {
                 rank: "associate".to_string(),
-                personal_volume: 10.0, // below min 100
+                personal_volume: d!(10.0), // below min 100
                 status: "active".to_string(),
                 has_order_in_period: true,
             },
@@ -423,7 +425,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(
@@ -464,7 +466,7 @@ mod tests {
             test_uuid(1),
             DistributorSnapshot {
                 rank: "associate".to_string(),
-                personal_volume: 10.0, // ineligible
+                personal_volume: d!(10.0), // ineligible
                 status: "active".to_string(),
                 has_order_in_period: true,
             },
@@ -473,7 +475,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(
@@ -510,7 +512,7 @@ mod tests {
             test_uuid(1),
             DistributorSnapshot {
                 rank: "associate".to_string(),
-                personal_volume: 10.0, // ineligible
+                personal_volume: d!(10.0), // ineligible
                 status: "active".to_string(),
                 has_order_in_period: true,
             },
@@ -519,7 +521,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(
@@ -551,7 +553,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(0),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(
@@ -602,7 +604,7 @@ mod tests {
         snapshots.insert(test_uuid(0), eligible_snapshot());
         let volume = vec![VolumeSource {
             source_id: test_uuid(99),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(
@@ -631,7 +633,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(
@@ -701,7 +703,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(
@@ -734,7 +736,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: -50.0,
+            cv_amount: d!(-50.0),
         }];
 
         let result = calculate_matrix(
@@ -774,7 +776,7 @@ mod tests {
             test_uuid(0),
             DistributorSnapshot {
                 rank: "gold".to_string(), // not in rate table
-                personal_volume: 150.0,
+                personal_volume: d!(150.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
             },
@@ -783,7 +785,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(
@@ -820,7 +822,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_matrix(
@@ -840,7 +842,7 @@ mod tests {
     }
 
     #[test]
-    fn calculate_matrix_rejects_a_nan_personal_volume() {
+    fn calculate_matrix_rejects_a_negative_personal_volume() {
         let structure = test_matrix_structure(3, 9, 5);
         let plan = test_plan(structure.clone());
 
@@ -852,7 +854,7 @@ mod tests {
         snapshots.insert(
             test_uuid(0),
             DistributorSnapshot {
-                personal_volume: f64::NAN,
+                personal_volume: d!(-0.5),
                 ..eligible_snapshot()
             },
         );
@@ -860,7 +862,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_matrix(
@@ -877,7 +879,7 @@ mod tests {
             matches!(
                 err,
                 CalculationError::InvalidPersonalVolume(id, pv)
-                    if id == test_uuid(0) && pv.is_nan()
+                    if id == test_uuid(0) && pv == d!(-0.5)
             ),
             "got {err:?}"
         );
@@ -905,7 +907,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(0),
-            cv_amount: -50.0,
+            cv_amount: d!(-50.0),
         }];
 
         let err = calculate_matrix(
@@ -946,7 +948,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(0),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_matrix(
@@ -978,7 +980,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: 200.0,
+            cv_amount: d!(200.0),
         }];
 
         let result = calculate_matrix(
@@ -994,13 +996,13 @@ mod tests {
 
         assert_eq!(result.len(), 1);
         // 200.0 * 0.40 * 1.0 * 0.05 = 4.0
-        assert!((result[0].dollar_amount - 4.0).abs() < 1e-10);
+        assert_d!(result[0].dollar_amount, 4.0);
     }
 
     #[test]
     fn structure_multiplier_overrides_plan() {
         let mut structure = test_matrix_structure(3, 9, 5);
-        structure.level_commission.volume_to_dollar_multiplier = Some(2.0);
+        structure.level_commission.volume_to_dollar_multiplier = Some(d!(2.0));
         let plan = test_plan(structure.clone());
 
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
@@ -1013,7 +1015,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(
@@ -1029,7 +1031,7 @@ mod tests {
 
         assert_eq!(result.len(), 1);
         // 100.0 * 0.40 * 2.0 * 0.05 = 4.0
-        assert!((result[0].dollar_amount - 4.0).abs() < 1e-10);
+        assert_d!(result[0].dollar_amount, 4.0);
     }
 
     #[test]
@@ -1052,11 +1054,11 @@ mod tests {
         let volume = vec![
             VolumeSource {
                 source_id: test_uuid(1),
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             },
             VolumeSource {
                 source_id: test_uuid(2),
-                cv_amount: 200.0,
+                cv_amount: d!(200.0),
             },
         ];
 
@@ -1072,9 +1074,9 @@ mod tests {
         .earnings;
 
         assert_eq!(result.len(), 2);
-        let total: f64 = result.iter().map(|e| e.dollar_amount).sum();
+        let total = Dec::sum(result.iter().map(|e| e.dollar_amount)).unwrap();
         // (100 + 200) * 0.40 * 1.0 * 0.05 = 6.0
-        assert!((total - 6.0).abs() < 1e-10);
+        assert_d!(total, 6.0);
     }
 
     #[test]
@@ -1102,7 +1104,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(4),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(
@@ -1141,7 +1143,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: 0.0,
+            cv_amount: d!(0.0),
         }];
 
         let result = calculate_matrix(
@@ -1157,103 +1159,7 @@ mod tests {
         // Zero CV passes validation but produces zero dollar amounts.
         // The rate > 0.0 check passes, so an earning is emitted with dollar_amount = 0.
         assert_eq!(result.len(), 1);
-        assert!((result[0].dollar_amount).abs() < 1e-10);
-    }
-
-    #[test]
-    fn nan_cv_amount_returns_error() {
-        let structure = test_matrix_structure(3, 9, 5);
-        let plan = test_plan(structure.clone());
-
-        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.add_root(test_uuid(0), 0).unwrap();
-        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
-
-        let mut snapshots = HashMap::new();
-        snapshots.insert(test_uuid(0), eligible_snapshot());
-        snapshots.insert(test_uuid(1), eligible_snapshot());
-
-        let volume = vec![VolumeSource {
-            source_id: test_uuid(1),
-            cv_amount: f64::NAN,
-        }];
-
-        let result = calculate_matrix(
-            &tree,
-            &plan,
-            &structure,
-            &snapshots,
-            &volume,
-            &crate::test_support::test_plan_identity(),
-        );
-        assert!(matches!(
-            result,
-            Err(CalculationError::InvalidCvAmount(_, _))
-        ));
-    }
-
-    #[test]
-    fn positive_infinity_cv_amount_returns_error() {
-        let structure = test_matrix_structure(3, 9, 5);
-        let plan = test_plan(structure.clone());
-
-        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.add_root(test_uuid(0), 0).unwrap();
-        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
-
-        let mut snapshots = HashMap::new();
-        snapshots.insert(test_uuid(0), eligible_snapshot());
-        snapshots.insert(test_uuid(1), eligible_snapshot());
-
-        let volume = vec![VolumeSource {
-            source_id: test_uuid(1),
-            cv_amount: f64::INFINITY,
-        }];
-
-        let result = calculate_matrix(
-            &tree,
-            &plan,
-            &structure,
-            &snapshots,
-            &volume,
-            &crate::test_support::test_plan_identity(),
-        );
-        assert!(matches!(
-            result,
-            Err(CalculationError::InvalidCvAmount(_, _))
-        ));
-    }
-
-    #[test]
-    fn negative_infinity_cv_amount_returns_error() {
-        let structure = test_matrix_structure(3, 9, 5);
-        let plan = test_plan(structure.clone());
-
-        let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
-        tree.add_root(test_uuid(0), 0).unwrap();
-        tree.add_node(test_uuid(1), test_uuid(0), 1).unwrap();
-
-        let mut snapshots = HashMap::new();
-        snapshots.insert(test_uuid(0), eligible_snapshot());
-        snapshots.insert(test_uuid(1), eligible_snapshot());
-
-        let volume = vec![VolumeSource {
-            source_id: test_uuid(1),
-            cv_amount: f64::NEG_INFINITY,
-        }];
-
-        let result = calculate_matrix(
-            &tree,
-            &plan,
-            &structure,
-            &snapshots,
-            &volume,
-            &crate::test_support::test_plan_identity(),
-        );
-        assert!(matches!(
-            result,
-            Err(CalculationError::InvalidCvAmount(_, _))
-        ));
+        assert_d!(result[0].dollar_amount, 0);
     }
 
     #[test]
@@ -1295,7 +1201,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(
@@ -1313,7 +1219,7 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, test_uuid(0));
         assert_eq!(result[0].level, 1);
-        assert_eq!(result[0].rate, Some(0.07)); // silver rate at level 1
+        assert_eq!(result[0].rate, Some(d!(0.07))); // silver rate at level 1
     }
 
     #[test]
@@ -1330,7 +1236,7 @@ mod tests {
         // Root should earn at level 2 (within depth 3 from sponsored count).
         let structure = test_matrix_structure(3, 9, 5);
         let eligibility = CommissionEligibility {
-            minimum_pv: 100.0,
+            minimum_pv: d!(100.0),
             require_order_in_period: false,
             eligible_statuses: vec!["active".to_string()],
             active_leg_tiers: vec![
@@ -1361,7 +1267,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(4),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(
@@ -1461,7 +1367,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_matrix(
@@ -1499,7 +1405,7 @@ mod tests {
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(1),
-            cv_amount: -50.0, // would be InvalidCvAmount if the walk ran
+            cv_amount: d!(-50.0), // would be InvalidCvAmount if the walk ran
         }];
 
         let result = calculate_matrix(

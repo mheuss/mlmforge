@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::config::generation::GenerationBoundaryMode;
 use crate::config::{CompensationPlan, GenerationStructureConfig};
+use crate::decimal::{AuthoredDec, Dec, NumericError};
 use crate::tree::unilevel::UnilevelTree;
 
 use super::types::{
@@ -209,7 +210,7 @@ fn emit_generation_earnings(
     source: &VolumeSource,
     gen_config: &crate::config::generation::GenerationCommissionConfig,
     eligibility_cache: &HashMap<Uuid, walk::EligibilityResult>,
-    multiplier: f64,
+    multiplier: Dec,
     // The walk these entries came from. Taken as a parameter rather than
     // derived from `source`, because SameRank runs one traversal per
     // (rank, source): deriving it would collapse every rank onto one walk,
@@ -217,7 +218,7 @@ fn emit_generation_earnings(
     // fail loudly.
     collector_id: u32,
     earnings: &mut Vec<CommissionEarning>,
-) {
+) -> Result<(), NumericError> {
     for entry in gen_entries {
         // Ineligible earners are in the boundary set (they define structure)
         // but must not earn.
@@ -232,9 +233,9 @@ fn emit_generation_earnings(
             .rates
             .get(&entry.generation)
             .copied()
-            .unwrap_or(0.0);
+            .unwrap_or(AuthoredDec::ZERO);
 
-        if rate <= 0.0 {
+        if rate <= AuthoredDec::ZERO {
             continue;
         }
 
@@ -242,12 +243,13 @@ fn emit_generation_earnings(
             earner_id: entry.earner_id,
             source_id: source.source_id,
             level: entry.generation,
-            rate: Some(rate),
-            cv_amount: source.cv_amount,
-            dollar_amount: source.cv_amount * multiplier * rate,
+            rate: Some(rate.dec()),
+            cv_amount: source.cv_amount.dec(),
+            dollar_amount: source.cv_amount.dec().try_mul(multiplier)?.try_mul(rate)?,
             walk: Some(collector_id),
         });
     }
+    Ok(())
 }
 
 /// Calculate generation commissions for a set of volume events.
@@ -264,10 +266,10 @@ fn emit_generation_earnings(
 /// # Errors
 ///
 /// Returns `CalculationError` if a snapshot names a rank the plan does not
-/// define, if a snapshot's personal_volume is negative or not finite, if a
-/// distributor in the tree has no snapshot, if a volume source is not found in
-/// the tree, if a volume source has an invalid CV amount, or if level
-/// commissions are enabled with no level commission config.
+/// define, if a snapshot's personal_volume is negative, if a distributor in the
+/// tree has no snapshot, if a volume source is not found in the tree, if a
+/// volume source has an invalid CV amount, if level commissions are enabled
+/// with no level commission config, or if an exact result cannot be held.
 pub fn calculate_generation(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -312,8 +314,8 @@ pub fn calculate_generation(
 
         let level_config = walk::LevelWalkConfig {
             max_depth: lc.max_depth,
-            broad_pct: lc.broad_commission_percent,
-            multiplier: lc_multiplier,
+            broad_pct: lc.broad_commission_percent.dec(),
+            multiplier: lc_multiplier.dec(),
             compression: structure.compression.as_ref(),
             threshold_ordinal,
             rank_ordinals: &rank_ordinals,
@@ -430,10 +432,10 @@ pub fn calculate_generation(
                     source,
                     gen_config,
                     &eligibility_cache,
-                    multiplier,
+                    multiplier.dec(),
                     collector_id,
                     &mut earnings,
-                );
+                )?;
             }
         }
 
@@ -453,7 +455,7 @@ pub fn calculate_generation(
                 .collect::<HashSet<_>>()
                 .into_iter()
                 .collect();
-            unique_ranks.sort_by_key(|(_, ord)| *ord);
+            unique_ranks.sort_unstable_by_key(|&(name, ord)| (ord, name));
 
             // The boundary check is rank-independent, so build it once and
             // reuse it across every per-rank walk.
@@ -513,10 +515,10 @@ pub fn calculate_generation(
                         source,
                         gen_config,
                         &eligibility_cache,
-                        multiplier,
+                        multiplier.dec(),
                         collector_id,
                         &mut earnings,
-                    );
+                    )?;
                 }
             }
         }
@@ -533,6 +535,7 @@ pub fn calculate_generation(
 
 #[cfg(test)]
 mod tests {
+    use crate::d;
     use std::collections::BTreeMap;
 
     use super::*;
@@ -544,7 +547,7 @@ mod tests {
         GenerationCommissionConfig {
             max_generations: default,
             max_generations_per_rank: per_rank,
-            rates: BTreeMap::from([(1u8, 0.10)]),
+            rates: BTreeMap::from([(1u8, d!(0.10))]),
             boundary_mode: GenerationBoundaryMode::ThresholdRank,
             boundary_rank: "director".to_string(),
             empty_generation_consumes_number: false,
@@ -988,6 +991,8 @@ mod tests {
 
 #[cfg(test)]
 mod calculate_tests {
+    use crate::decimal::AuthoredDec;
+    use crate::{assert_d, d};
     use std::collections::{BTreeMap, HashMap};
 
     use crate::commission::test_helpers::{
@@ -1018,7 +1023,7 @@ mod calculate_tests {
     fn threshold_structure(
         boundary_rank: &str,
         max_generations: u8,
-        rates: BTreeMap<u8, f64>,
+        rates: BTreeMap<u8, AuthoredDec>,
     ) -> GenerationStructureConfig {
         GenerationStructureConfig {
             name: "Generation".to_string(),
@@ -1043,7 +1048,7 @@ mod calculate_tests {
         let structure = StructureConfig::Generation(threshold_structure(
             "director",
             3,
-            BTreeMap::from([(1, 0.10)]),
+            BTreeMap::from([(1, d!(0.10))]),
         ));
         let mut plan = build_test_plan(default_eligibility(), structure, "Generation");
         plan.ranks = vec![
@@ -1078,7 +1083,7 @@ mod calculate_tests {
     fn director_snapshot() -> DistributorSnapshot {
         DistributorSnapshot {
             rank: "director".to_string(),
-            personal_volume: 150.0,
+            personal_volume: d!(150.0),
             status: "active".to_string(),
             has_order_in_period: true,
         }
@@ -1088,7 +1093,7 @@ mod calculate_tests {
     fn calculate_generation_rejects_a_rank_not_in_the_ladder() {
         let tree = build_chain(3);
         let plan = two_rank_plan();
-        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, d!(0.10))]));
 
         let mut snapshots: HashMap<_, _> = HashMap::new();
         snapshots.insert(uuid(0), director_snapshot());
@@ -1103,7 +1108,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_generation(
@@ -1123,17 +1128,17 @@ mod calculate_tests {
     }
 
     #[test]
-    fn calculate_generation_rejects_a_nan_personal_volume() {
+    fn calculate_generation_rejects_a_negative_personal_volume() {
         let tree = build_chain(3);
         let plan = two_rank_plan();
-        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, d!(0.10))]));
 
         let mut snapshots: HashMap<_, _> = HashMap::new();
         snapshots.insert(uuid(0), director_snapshot());
         snapshots.insert(
             uuid(1),
             DistributorSnapshot {
-                personal_volume: f64::NAN,
+                personal_volume: d!(-0.5),
                 ..eligible_snapshot()
             },
         );
@@ -1141,7 +1146,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_generation(
@@ -1158,7 +1163,7 @@ mod calculate_tests {
             matches!(
                 err,
                 CalculationError::InvalidPersonalVolume(id, pv)
-                    if id == uuid(1) && pv.is_nan()
+                    if id == uuid(1) && pv == d!(-0.5)
             ),
             "got {err:?}"
         );
@@ -1171,7 +1176,7 @@ mod calculate_tests {
     fn generation_unknown_rank_wins_over_invalid_cv() {
         let tree = build_chain(3);
         let plan = two_rank_plan();
-        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, d!(0.10))]));
 
         let mut snapshots: HashMap<_, _> = HashMap::new();
         snapshots.insert(uuid(0), director_snapshot());
@@ -1186,7 +1191,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: -50.0,
+            cv_amount: d!(-50.0),
         }];
 
         let err = calculate_generation(
@@ -1218,7 +1223,7 @@ mod calculate_tests {
         let tree = build_chain(3);
         let plan = two_rank_plan();
         // Boundary rank outside the ladder: on its own this returns Ok.
-        let structure = threshold_structure("nonexistent_rank", 3, BTreeMap::from([(1, 0.10)]));
+        let structure = threshold_structure("nonexistent_rank", 3, BTreeMap::from([(1, d!(0.10))]));
 
         let mut snapshots: HashMap<_, _> = HashMap::new();
         snapshots.insert(uuid(0), director_snapshot());
@@ -1233,7 +1238,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_generation(
@@ -1260,7 +1265,7 @@ mod calculate_tests {
     fn calculate_single_boundary_threshold_mode() {
         let tree = build_chain(3);
         let plan = two_rank_plan();
-        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, d!(0.10))]));
 
         let mut snapshots: HashMap<_, _> = HashMap::new();
         snapshots.insert(uuid(0), director_snapshot());
@@ -1269,7 +1274,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -1287,9 +1292,9 @@ mod calculate_tests {
         assert_eq!(result[0].earner_id, uuid(0));
         assert_eq!(result[0].source_id, uuid(2));
         assert_eq!(result[0].level, 1);
-        assert_eq!(result[0].rate, Some(0.10));
-        assert_eq!(result[0].cv_amount, 100.0);
-        assert!((result[0].dollar_amount - 10.0).abs() < f64::EPSILON);
+        assert_eq!(result[0].rate, Some(d!(0.10)));
+        assert_d!(result[0].cv_amount, 100.0);
+        assert_d!(result[0].dollar_amount, 10.0);
     }
 
     /// Chain: 0(Dir) -> 1(Assoc) -> 2(Dir) -> 3(Assoc) -> 4(Dir) -> 5(Assoc) -> 6(leaf).
@@ -1298,7 +1303,7 @@ mod calculate_tests {
     #[test]
     fn multiple_boundaries_threshold_mode() {
         let tree = build_chain(7);
-        let rates = BTreeMap::from([(1, 0.10), (2, 0.06), (3, 0.04)]);
+        let rates = BTreeMap::from([(1, d!(0.10)), (2, d!(0.06)), (3, d!(0.04))]);
         let plan = two_rank_plan();
         let structure = threshold_structure("director", 3, rates);
 
@@ -1313,7 +1318,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(6),
-            cv_amount: 200.0,
+            cv_amount: d!(200.0),
         }];
 
         let result = calculate_generation(
@@ -1332,18 +1337,18 @@ mod calculate_tests {
         // Results are sorted by earner_id, so find each by earner.
         let earn_4 = result.iter().find(|e| e.earner_id == uuid(4)).unwrap();
         assert_eq!(earn_4.level, 1);
-        assert_eq!(earn_4.rate, Some(0.10));
-        assert!((earn_4.dollar_amount - 20.0).abs() < f64::EPSILON);
+        assert_eq!(earn_4.rate, Some(d!(0.10)));
+        assert_d!(earn_4.dollar_amount, 20.0);
 
         let earn_2 = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
         assert_eq!(earn_2.level, 2);
-        assert_eq!(earn_2.rate, Some(0.06));
-        assert!((earn_2.dollar_amount - 12.0).abs() < f64::EPSILON);
+        assert_eq!(earn_2.rate, Some(d!(0.06)));
+        assert_d!(earn_2.dollar_amount, 12.0);
 
         let earn_0 = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(earn_0.level, 3);
-        assert_eq!(earn_0.rate, Some(0.04));
-        assert!((earn_0.dollar_amount - 8.0).abs() < f64::EPSILON);
+        assert_eq!(earn_0.rate, Some(d!(0.04)));
+        assert_d!(earn_0.dollar_amount, 8.0);
     }
 
     /// Chain: 0(Dir) -> 1(Assoc) -> 2(Dir) -> 3(Assoc) -> 4(Dir) -> 5(leaf).
@@ -1351,7 +1356,7 @@ mod calculate_tests {
     #[test]
     fn max_generations_caps_walk() {
         let tree = build_chain(6);
-        let rates = BTreeMap::from([(1, 0.10), (2, 0.06), (3, 0.04)]);
+        let rates = BTreeMap::from([(1, d!(0.10)), (2, d!(0.06)), (3, d!(0.04))]);
         let plan = two_rank_plan();
         let structure = threshold_structure("director", 2, rates);
 
@@ -1365,7 +1370,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(5),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -1401,7 +1406,7 @@ mod calculate_tests {
     fn no_boundaries_in_downline() {
         let tree = build_chain(4);
         let plan = two_rank_plan();
-        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, d!(0.10))]));
 
         let mut snapshots = HashMap::new();
         for i in 0..4 {
@@ -1410,7 +1415,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -1434,7 +1439,7 @@ mod calculate_tests {
     fn volume_generator_is_boundary_rank() {
         let tree = build_chain(3);
         let plan = two_rank_plan();
-        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, d!(0.10))]));
 
         let mut snapshots = HashMap::new();
         snapshots.insert(uuid(0), director_snapshot());
@@ -1443,7 +1448,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -1470,7 +1475,7 @@ mod calculate_tests {
     fn omitted_upline_snapshot_is_rejected_with_level_commissions_off() {
         let tree = build_chain(4);
         let plan = two_rank_plan();
-        let rates = BTreeMap::from([(1, 0.10), (2, 0.06)]);
+        let rates = BTreeMap::from([(1, d!(0.10)), (2, d!(0.06))]);
         let structure = threshold_structure("director", 3, rates);
 
         let mut snapshots = HashMap::new();
@@ -1481,7 +1486,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_generation(
@@ -1501,11 +1506,11 @@ mod calculate_tests {
     fn source_not_in_tree_returns_error() {
         let tree = UnilevelTree::new();
         let plan = two_rank_plan();
-        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, d!(0.10))]));
         let snapshots = HashMap::new();
         let volume = vec![VolumeSource {
             source_id: uuid(99),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -1524,14 +1529,14 @@ mod calculate_tests {
     fn negative_cv_returns_error() {
         let tree = build_chain(2);
         let plan = two_rank_plan();
-        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, d!(0.10))]));
         let mut snapshots = HashMap::new();
         snapshots.insert(uuid(0), director_snapshot());
         snapshots.insert(uuid(1), eligible_snapshot());
 
         let volume = vec![VolumeSource {
             source_id: uuid(1),
-            cv_amount: -50.0,
+            cv_amount: d!(-50.0),
         }];
 
         let result = calculate_generation(
@@ -1550,7 +1555,7 @@ mod calculate_tests {
     fn inactive_director_snapshot() -> DistributorSnapshot {
         DistributorSnapshot {
             rank: "director".to_string(),
-            personal_volume: 0.0,
+            personal_volume: d!(0.0),
             status: "inactive".to_string(),
             has_order_in_period: false,
         }
@@ -1563,7 +1568,7 @@ mod calculate_tests {
     #[test]
     fn ineligible_creates_boundary_true() {
         let tree = build_chain(3);
-        let rates = BTreeMap::from([(1, 0.10), (2, 0.05)]);
+        let rates = BTreeMap::from([(1, d!(0.10)), (2, d!(0.05))]);
         let plan = two_rank_plan();
         let structure = threshold_structure("director", 3, rates);
         // ineligible_creates_boundary defaults to true in threshold_structure
@@ -1575,7 +1580,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -1594,8 +1599,8 @@ mod calculate_tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, uuid(0));
         assert_eq!(result[0].level, 2);
-        assert_eq!(result[0].rate, Some(0.05));
-        assert!((result[0].dollar_amount - 5.0).abs() < f64::EPSILON);
+        assert_eq!(result[0].rate, Some(d!(0.05)));
+        assert_d!(result[0].dollar_amount, 5.0);
     }
 
     /// Tree: root(Dir, active) -> mid(Dir, inactive) -> leaf(source).
@@ -1604,7 +1609,7 @@ mod calculate_tests {
     #[test]
     fn ineligible_creates_boundary_false() {
         let tree = build_chain(3);
-        let rates = BTreeMap::from([(1, 0.10), (2, 0.05)]);
+        let rates = BTreeMap::from([(1, d!(0.10)), (2, d!(0.05))]);
         let plan = two_rank_plan();
         let mut structure = threshold_structure("director", 3, rates);
         structure.generation_commission.ineligible_creates_boundary = false;
@@ -1616,7 +1621,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -1635,8 +1640,8 @@ mod calculate_tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, uuid(0));
         assert_eq!(result[0].level, 1);
-        assert_eq!(result[0].rate, Some(0.10));
-        assert!((result[0].dollar_amount - 10.0).abs() < f64::EPSILON);
+        assert_eq!(result[0].rate, Some(d!(0.10)));
+        assert_d!(result[0].dollar_amount, 10.0);
     }
 
     /// Tree: root(Dir, active) -> mid(Dir, inactive) -> leaf(source).
@@ -1646,7 +1651,7 @@ mod calculate_tests {
     #[test]
     fn ineligible_false_empty_consumes_true() {
         let tree = build_chain(3);
-        let rates = BTreeMap::from([(1, 0.10), (2, 0.05)]);
+        let rates = BTreeMap::from([(1, d!(0.10)), (2, d!(0.05))]);
         let plan = two_rank_plan();
         let mut structure = threshold_structure("director", 3, rates);
         structure.generation_commission.ineligible_creates_boundary = false;
@@ -1661,7 +1666,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -1680,8 +1685,8 @@ mod calculate_tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].earner_id, uuid(0));
         assert_eq!(result[0].level, 2);
-        assert_eq!(result[0].rate, Some(0.05));
-        assert!((result[0].dollar_amount - 5.0).abs() < f64::EPSILON);
+        assert_eq!(result[0].rate, Some(d!(0.05)));
+        assert_d!(result[0].dollar_amount, 5.0);
     }
 
     /// Tree: root(Dir, active) -> mid(Dir, active) -> leaf(source).
@@ -1692,7 +1697,7 @@ mod calculate_tests {
     #[test]
     fn empty_consumes_irrelevant_when_all_eligible() {
         let tree = build_chain(3);
-        let rates = BTreeMap::from([(1, 0.10), (2, 0.05)]);
+        let rates = BTreeMap::from([(1, d!(0.10)), (2, d!(0.05))]);
         let plan = two_rank_plan();
         let mut structure = threshold_structure("director", 3, rates);
         structure
@@ -1706,7 +1711,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -1743,17 +1748,17 @@ mod calculate_tests {
         let tree = build_chain(3);
 
         let level_config = LevelCommissionConfig {
-            broad_commission_percent: 0.40,
+            broad_commission_percent: d!(0.40),
             volume_to_dollar_multiplier: None,
             max_depth: 3,
             rate_table: BTreeMap::from([
                 (
                     "associate".to_string(),
-                    BTreeMap::from([(1, 0.05), (2, 0.08)]),
+                    BTreeMap::from([(1, d!(0.05)), (2, d!(0.08))]),
                 ),
                 (
                     "director".to_string(),
-                    BTreeMap::from([(1, 0.05), (2, 0.08)]),
+                    BTreeMap::from([(1, d!(0.05)), (2, d!(0.08))]),
                 ),
             ]),
         };
@@ -1765,7 +1770,7 @@ mod calculate_tests {
             generation_commission: GenerationCommissionConfig {
                 max_generations: 3,
                 max_generations_per_rank: BTreeMap::new(),
-                rates: BTreeMap::from([(1, 0.10)]),
+                rates: BTreeMap::from([(1, d!(0.10))]),
                 boundary_mode: GenerationBoundaryMode::ThresholdRank,
                 boundary_rank: "director".to_string(),
                 empty_generation_consumes_number: false,
@@ -1811,7 +1816,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -1831,23 +1836,23 @@ mod calculate_tests {
         // mid: level 1 from walk = 100 * 0.40 * 1.0 * 0.05 = 2.0
         let mid_level = result
             .iter()
-            .find(|e| e.earner_id == uuid(1) && e.rate == Some(0.05))
+            .find(|e| e.earner_id == uuid(1) && e.rate == Some(d!(0.05)))
             .unwrap();
-        assert!((mid_level.dollar_amount - 2.0).abs() < f64::EPSILON);
+        assert_d!(mid_level.dollar_amount, 2.0);
 
         // root: level 2 from walk = 100 * 0.40 * 1.0 * 0.08 = 3.2
         let root_level = result
             .iter()
-            .find(|e| e.earner_id == uuid(0) && e.rate == Some(0.08))
+            .find(|e| e.earner_id == uuid(0) && e.rate == Some(d!(0.08)))
             .unwrap();
-        assert!((root_level.dollar_amount - 3.2).abs() < f64::EPSILON);
+        assert_d!(root_level.dollar_amount, 3.2);
 
         // root: gen 1 = 100 * 1.0 * 0.10 = 10.0
         let root_gen = result
             .iter()
-            .find(|e| e.earner_id == uuid(0) && e.rate == Some(0.10))
+            .find(|e| e.earner_id == uuid(0) && e.rate == Some(d!(0.10)))
             .unwrap();
-        assert!((root_gen.dollar_amount - 10.0).abs() < f64::EPSILON);
+        assert_d!(root_gen.dollar_amount, 10.0);
     }
 
     /// Chain: 0(Dir) -> 1(no snapshot) -> 2(leaf), level commissions on. The
@@ -1857,16 +1862,16 @@ mod calculate_tests {
         let tree = build_chain(3);
 
         let level_config = LevelCommissionConfig {
-            broad_commission_percent: 0.40,
+            broad_commission_percent: d!(0.40),
             volume_to_dollar_multiplier: None,
             max_depth: 3,
             rate_table: BTreeMap::from([(
                 "associate".to_string(),
-                BTreeMap::from([(1, 0.05), (2, 0.08)]),
+                BTreeMap::from([(1, d!(0.05)), (2, d!(0.08))]),
             )]),
         };
 
-        let mut structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        let mut structure = threshold_structure("director", 3, BTreeMap::from([(1, d!(0.10))]));
         structure.level_commission = Some(level_config);
         structure.level_commissions_enabled = true;
 
@@ -1879,7 +1884,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -1903,7 +1908,7 @@ mod calculate_tests {
     fn level_commissions_enabled_with_no_level_config_is_rejected() {
         let tree = build_chain(3);
         let plan = two_rank_plan();
-        let mut structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        let mut structure = threshold_structure("director", 3, BTreeMap::from([(1, d!(0.10))]));
         structure.level_commissions_enabled = true;
         structure.level_commission = None;
 
@@ -1914,7 +1919,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_generation(
@@ -1944,7 +1949,7 @@ mod calculate_tests {
     fn generation_only_level_disabled() {
         let tree = build_chain(3);
         let plan = two_rank_plan();
-        let mut structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        let mut structure = threshold_structure("director", 3, BTreeMap::from([(1, d!(0.10))]));
         structure.level_commissions_enabled = false;
 
         let mut snapshots = HashMap::new();
@@ -1954,7 +1959,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -1980,7 +1985,7 @@ mod calculate_tests {
     fn generation_only_rejects_volume_with_no_snapshot() {
         let tree = build_chain(3);
         let plan = two_rank_plan();
-        let structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, d!(0.10))]));
 
         // Every node but the source has a snapshot.
         let mut snapshots = HashMap::new();
@@ -1989,7 +1994,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_generation(
@@ -2010,7 +2015,7 @@ mod calculate_tests {
     fn generation_same_rank_rejects_volume_with_no_snapshot() {
         let tree = build_chain(3);
         let plan = two_rank_plan();
-        let mut structure = threshold_structure("director", 3, BTreeMap::from([(1, 0.10)]));
+        let mut structure = threshold_structure("director", 3, BTreeMap::from([(1, d!(0.10))]));
         structure.generation_commission.boundary_mode = GenerationBoundaryMode::SameRank;
 
         // Every node but the source has a snapshot.
@@ -2020,7 +2025,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_generation(
@@ -2043,7 +2048,7 @@ mod calculate_tests {
         let plan = two_rank_plan();
         // Not in two_rank_plan's ladder (associate, director), so the
         // ThresholdRank arm takes its early return.
-        let structure = threshold_structure("nonexistent_rank", 3, BTreeMap::from([(1, 0.10)]));
+        let structure = threshold_structure("nonexistent_rank", 3, BTreeMap::from([(1, d!(0.10))]));
 
         // Every node but the source has a snapshot.
         let mut snapshots = HashMap::new();
@@ -2052,7 +2057,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let err = calculate_generation(
@@ -2075,12 +2080,12 @@ mod calculate_tests {
         let tree = build_chain(3);
 
         let level_config = LevelCommissionConfig {
-            broad_commission_percent: 0.40,
+            broad_commission_percent: d!(0.40),
             volume_to_dollar_multiplier: None,
             max_depth: 3,
             rate_table: BTreeMap::from([(
                 "associate".to_string(),
-                BTreeMap::from([(1, 0.05), (2, 0.08)]),
+                BTreeMap::from([(1, d!(0.05)), (2, d!(0.08))]),
             )]),
         };
 
@@ -2091,7 +2096,7 @@ mod calculate_tests {
             generation_commission: GenerationCommissionConfig {
                 max_generations: 3,
                 max_generations_per_rank: BTreeMap::new(),
-                rates: BTreeMap::from([(1, 0.10)]),
+                rates: BTreeMap::from([(1, d!(0.10))]),
                 boundary_mode: GenerationBoundaryMode::ThresholdRank,
                 boundary_rank: "nonexistent_rank".to_string(),
                 empty_generation_consumes_number: false,
@@ -2123,7 +2128,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(2),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -2143,18 +2148,18 @@ mod calculate_tests {
 
         // mid: level 1 = 100 * 0.40 * 1.0 * 0.05 = 2.0
         let mid = result.iter().find(|e| e.earner_id == uuid(1)).unwrap();
-        assert!((mid.dollar_amount - 2.0).abs() < 1e-10);
+        assert_d!(mid.dollar_amount, 2.0);
 
         // root: level 2 = 100 * 0.40 * 1.0 * 0.08 = 3.2
         let root = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
-        assert!((root.dollar_amount - 3.2).abs() < 1e-10);
+        assert_d!(root.dollar_amount, 3.2);
     }
 
     // -- SameRank mode helpers and tests --
 
     fn same_rank_structure(
         max_generations: u8,
-        rates: BTreeMap<u8, f64>,
+        rates: BTreeMap<u8, AuthoredDec>,
     ) -> GenerationStructureConfig {
         GenerationStructureConfig {
             name: "Generation".to_string(),
@@ -2221,7 +2226,7 @@ mod calculate_tests {
     fn gold_snapshot() -> DistributorSnapshot {
         DistributorSnapshot {
             rank: "gold".to_string(),
-            personal_volume: 150.0,
+            personal_volume: d!(150.0),
             status: "active".to_string(),
             has_order_in_period: true,
         }
@@ -2230,7 +2235,7 @@ mod calculate_tests {
     fn diamond_snapshot() -> DistributorSnapshot {
         DistributorSnapshot {
             rank: "diamond".to_string(),
-            personal_volume: 150.0,
+            personal_volume: d!(150.0),
             status: "active".to_string(),
             has_order_in_period: true,
         }
@@ -2249,7 +2254,7 @@ mod calculate_tests {
         // nothing would fail: the output stays well formed and every earning
         // still points at a real walk. This is the test that would catch it.
         let tree = build_chain(4);
-        let rates = BTreeMap::from([(1, 0.10), (2, 0.05), (3, 0.03)]);
+        let rates = BTreeMap::from([(1, d!(0.10)), (2, d!(0.05)), (3, d!(0.03))]);
         let structure = same_rank_structure(5, rates);
         let plan = three_rank_plan(structure.clone());
 
@@ -2261,7 +2266,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -2330,7 +2335,7 @@ mod calculate_tests {
     #[test]
     fn same_rank_mode_different_earner_ranks() {
         let tree = build_chain(4);
-        let rates = BTreeMap::from([(1, 0.10), (2, 0.05), (3, 0.03)]);
+        let rates = BTreeMap::from([(1, d!(0.10)), (2, d!(0.05)), (3, d!(0.03))]);
         let structure = same_rank_structure(5, rates);
         let plan = three_rank_plan(structure.clone());
 
@@ -2342,7 +2347,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -2360,18 +2365,69 @@ mod calculate_tests {
 
         let earn_low = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
         assert_eq!(earn_low.level, 1);
-        assert_eq!(earn_low.rate, Some(0.10));
-        assert!((earn_low.dollar_amount - 10.0).abs() < f64::EPSILON);
+        assert_eq!(earn_low.rate, Some(d!(0.10)));
+        assert_d!(earn_low.dollar_amount, 10.0);
 
         let earn_mid = result.iter().find(|e| e.earner_id == uuid(1)).unwrap();
         assert_eq!(earn_mid.level, 1);
-        assert_eq!(earn_mid.rate, Some(0.10));
-        assert!((earn_mid.dollar_amount - 10.0).abs() < f64::EPSILON);
+        assert_eq!(earn_mid.rate, Some(d!(0.10)));
+        assert_d!(earn_mid.dollar_amount, 10.0);
 
         let earn_root = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(earn_root.level, 1);
-        assert_eq!(earn_root.rate, Some(0.10));
-        assert!((earn_root.dollar_amount - 10.0).abs() < f64::EPSILON);
+        assert_eq!(earn_root.rate, Some(d!(0.10)));
+        assert_d!(earn_root.dollar_amount, 10.0);
+    }
+
+    /// Guards that tied ordinals give a stable result. It reproduces no defect,
+    /// and it does not check the amounts are right: HEU-646.
+    #[test]
+    fn same_rank_gives_the_same_result_for_two_ranks_on_one_ordinal() {
+        let rates = BTreeMap::from([(1, d!(0.10)), (2, d!(0.05))]);
+        let mut structure = same_rank_structure(5, rates);
+        structure.generation_commission.max_generations_per_rank =
+            BTreeMap::from([("gold".to_string(), 1), ("silver".to_string(), 2)]);
+        let mut plan = three_rank_plan(structure.clone());
+        plan.ranks[2].name = "silver".to_string();
+        plan.ranks[2].ordinal = 2;
+        let volume = vec![VolumeSource {
+            source_id: uuid(3),
+            cv_amount: d!(100.0),
+        }];
+        let mut seen = std::collections::BTreeSet::new();
+        // Rebuilt inside the loop so each pass samples a fresh HashMap order.
+        for _ in 0..32 {
+            let tree = build_chain(4);
+            let snapshots = HashMap::from([
+                (uuid(0), gold_snapshot()),
+                (
+                    uuid(1),
+                    DistributorSnapshot {
+                        rank: "silver".to_string(),
+                        ..gold_snapshot()
+                    },
+                ),
+                (uuid(2), eligible_snapshot()),
+                (uuid(3), eligible_snapshot()),
+            ]);
+            let result = calculate_generation(
+                &tree,
+                &plan,
+                &structure,
+                &snapshots,
+                &volume,
+                &crate::test_support::test_plan_identity(),
+            )
+            .unwrap();
+            let ranks: std::collections::HashSet<_> =
+                result.walks.iter().filter_map(|w| w.rank.clone()).collect();
+            assert!(
+                ranks.contains("gold") && ranks.contains("silver"),
+                "walk ranks: {ranks:?}"
+            );
+            seen.insert(serde_json::to_string(&result).unwrap());
+        }
+        assert_eq!(seen.len(), 1, "distinct results across runs: {seen:?}");
     }
 
     /// Tree: root(Diamond) -> g1(Gold) -> g2(Gold) -> low(Associate) -> leaf(source).
@@ -2382,7 +2438,7 @@ mod calculate_tests {
     #[test]
     fn same_rank_higher_rank_sees_fewer_boundaries() {
         let tree = build_chain(5);
-        let rates = BTreeMap::from([(1, 0.10), (2, 0.05), (3, 0.03)]);
+        let rates = BTreeMap::from([(1, d!(0.10)), (2, d!(0.05)), (3, d!(0.03))]);
         let structure = same_rank_structure(5, rates);
         let plan = three_rank_plan(structure.clone());
 
@@ -2395,7 +2451,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(4),
-            cv_amount: 200.0,
+            cv_amount: d!(200.0),
         }];
 
         let result = calculate_generation(
@@ -2412,17 +2468,17 @@ mod calculate_tests {
         // g2 (Gold): gen 1 — first Gold+ boundary above source
         let earn_g2 = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
         assert_eq!(earn_g2.level, 1);
-        assert_eq!(earn_g2.rate, Some(0.10));
+        assert_eq!(earn_g2.rate, Some(d!(0.10)));
 
         // g1 (Gold): gen 2 — second Gold+ boundary above source
         let earn_g1 = result.iter().find(|e| e.earner_id == uuid(1)).unwrap();
         assert_eq!(earn_g1.level, 2);
-        assert_eq!(earn_g1.rate, Some(0.05));
+        assert_eq!(earn_g1.rate, Some(d!(0.05)));
 
         // root (Diamond): gen 1 — only Diamond+ boundary
         let earn_root = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(earn_root.level, 1);
-        assert_eq!(earn_root.rate, Some(0.10));
+        assert_eq!(earn_root.rate, Some(d!(0.10)));
 
         // low (Associate): gen 1 — first Associate+ boundary above source
         let earn_low = result.iter().find(|e| e.earner_id == uuid(3)).unwrap();
@@ -2432,7 +2488,7 @@ mod calculate_tests {
     fn inactive_gold_snapshot() -> DistributorSnapshot {
         DistributorSnapshot {
             rank: "gold".to_string(),
-            personal_volume: 0.0,
+            personal_volume: d!(0.0),
             status: "inactive".to_string(),
             has_order_in_period: false,
         }
@@ -2451,7 +2507,7 @@ mod calculate_tests {
     #[test]
     fn same_rank_ineligible_creates_boundary_false() {
         let tree = build_chain(4);
-        let rates = BTreeMap::from([(1, 0.10), (2, 0.05)]);
+        let rates = BTreeMap::from([(1, d!(0.10)), (2, d!(0.05))]);
         let mut structure = same_rank_structure(5, rates);
         structure.generation_commission.ineligible_creates_boundary = false;
         let plan = three_rank_plan(structure.clone());
@@ -2464,7 +2520,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(3),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -2496,7 +2552,7 @@ mod calculate_tests {
     fn silver_snapshot() -> DistributorSnapshot {
         DistributorSnapshot {
             rank: "silver".to_string(),
-            personal_volume: 150.0,
+            personal_volume: d!(150.0),
             status: "active".to_string(),
             has_order_in_period: true,
         }
@@ -2576,7 +2632,7 @@ mod calculate_tests {
     #[test]
     fn same_rank_walk_uses_per_rank_depth_cap() {
         let tree = build_chain(5);
-        let rates = BTreeMap::from([(1, 0.10), (2, 0.05), (3, 0.03), (4, 0.02)]);
+        let rates = BTreeMap::from([(1, d!(0.10)), (2, d!(0.05)), (3, d!(0.03)), (4, d!(0.02))]);
         let mut structure = same_rank_structure(10, rates);
         structure.generation_commission.max_generations_per_rank =
             BTreeMap::from([("silver".to_string(), 2), ("diamond".to_string(), 5)]);
@@ -2591,7 +2647,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(4),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -2619,11 +2675,11 @@ mod calculate_tests {
         // Diamond walk produces both diamond earners.
         let earn_3 = result.iter().find(|e| e.earner_id == uuid(3)).unwrap();
         assert_eq!(earn_3.level, 1);
-        assert_eq!(earn_3.rate, Some(0.10));
+        assert_eq!(earn_3.rate, Some(d!(0.10)));
 
         let earn_2 = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
         assert_eq!(earn_2.level, 2);
-        assert_eq!(earn_2.rate, Some(0.05));
+        assert_eq!(earn_2.rate, Some(d!(0.05)));
 
         // Exactly two earnings total: only the diamond walk produces results.
         assert_eq!(result.len(), 2);
@@ -2655,14 +2711,14 @@ mod calculate_tests {
     fn threshold_rank_walk_uses_per_rank_depth_cap() {
         let tree = build_chain(9);
         let rates = BTreeMap::from([
-            (1u8, 0.10),
-            (2u8, 0.08),
-            (3u8, 0.06),
-            (4u8, 0.04),
-            (5u8, 0.03),
-            (6u8, 0.03),
-            (7u8, 0.03),
-            (8u8, 0.02),
+            (1u8, d!(0.10)),
+            (2u8, d!(0.08)),
+            (3u8, d!(0.06)),
+            (4u8, d!(0.04)),
+            (5u8, d!(0.03)),
+            (6u8, d!(0.03)),
+            (7u8, d!(0.03)),
+            (8u8, d!(0.02)),
         ]);
         let mut structure = threshold_structure("silver", 4, rates);
         structure.generation_commission.max_generations_per_rank =
@@ -2678,7 +2734,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(8),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -2707,17 +2763,17 @@ mod calculate_tests {
         // Silver earners within the per-rank cap of 2 must earn.
         let earn_7 = result.iter().find(|e| e.earner_id == uuid(7)).unwrap();
         assert_eq!(earn_7.level, 1);
-        assert_eq!(earn_7.rate, Some(0.10));
+        assert_eq!(earn_7.rate, Some(d!(0.10)));
 
         let earn_6 = result.iter().find(|e| e.earner_id == uuid(6)).unwrap();
         assert_eq!(earn_6.level, 2);
-        assert_eq!(earn_6.rate, Some(0.08));
+        assert_eq!(earn_6.rate, Some(d!(0.08)));
 
         // Diamond earner at gen 8 must earn. Under the OLD code the walk
         // stops at depth 4 and this earner never appears.
         let earn_0 = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(earn_0.level, 8);
-        assert_eq!(earn_0.rate, Some(0.02));
+        assert_eq!(earn_0.rate, Some(d!(0.02)));
 
         // Exactly three earnings: silvers 7 and 6, plus diamond 0.
         assert_eq!(result.len(), 3);
@@ -2728,7 +2784,7 @@ mod calculate_tests {
     fn bronze_snapshot() -> DistributorSnapshot {
         DistributorSnapshot {
             rank: "bronze".to_string(),
-            personal_volume: 150.0,
+            personal_volume: d!(150.0),
             status: "active".to_string(),
             has_order_in_period: true,
         }
@@ -2737,7 +2793,7 @@ mod calculate_tests {
     fn platinum_snapshot() -> DistributorSnapshot {
         DistributorSnapshot {
             rank: "platinum".to_string(),
-            personal_volume: 150.0,
+            personal_volume: d!(150.0),
             status: "active".to_string(),
             has_order_in_period: true,
         }
@@ -2856,13 +2912,13 @@ mod calculate_tests {
     fn calculate_generation_per_rank_depth_threshold_rank_end_to_end() {
         let tree = build_chain(8);
         let rates = BTreeMap::from([
-            (1u8, 0.10),
-            (2u8, 0.08),
-            (3u8, 0.06),
-            (4u8, 0.04),
-            (5u8, 0.03),
-            (6u8, 0.025),
-            (7u8, 0.02),
+            (1u8, d!(0.10)),
+            (2u8, d!(0.08)),
+            (3u8, d!(0.06)),
+            (4u8, d!(0.04)),
+            (5u8, d!(0.03)),
+            (6u8, d!(0.025)),
+            (7u8, d!(0.02)),
         ]);
         let mut structure = threshold_structure("silver", 4, rates);
         structure.generation_commission.max_generations_per_rank = BTreeMap::from([
@@ -2882,7 +2938,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(7),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -2907,22 +2963,22 @@ mod calculate_tests {
         // Gold node 6 earns gen 1.
         let earn_6 = result.iter().find(|e| e.earner_id == uuid(6)).unwrap();
         assert_eq!(earn_6.level, 1);
-        assert_eq!(earn_6.rate, Some(0.10));
-        assert!((earn_6.dollar_amount - 10.0).abs() < f64::EPSILON);
+        assert_eq!(earn_6.rate, Some(d!(0.10)));
+        assert_d!(earn_6.dollar_amount, 10.0);
 
         // Silver node 5 earns gen 2 (within silver cap of 2).
         let earn_5 = result.iter().find(|e| e.earner_id == uuid(5)).unwrap();
         assert_eq!(earn_5.level, 2);
-        assert_eq!(earn_5.rate, Some(0.08));
-        assert!((earn_5.dollar_amount - 8.0).abs() < f64::EPSILON);
+        assert_eq!(earn_5.rate, Some(d!(0.08)));
+        assert_d!(earn_5.dollar_amount, 8.0);
 
         // Diamond node 0 earns gen 7. Walk reaches the diamond cap of 7,
         // proving walk_depth (not max_generations or tree depth) is the
         // binding constraint here.
         let earn_0 = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(earn_0.level, 7);
-        assert_eq!(earn_0.rate, Some(0.02));
-        assert!((earn_0.dollar_amount - 2.0).abs() < f64::EPSILON);
+        assert_eq!(earn_0.rate, Some(d!(0.02)));
+        assert_d!(earn_0.dollar_amount, 2.0);
 
         // Exactly three earnings: gold 6, silver 5, diamond 0.
         assert_eq!(result.len(), 3);
@@ -2957,13 +3013,13 @@ mod calculate_tests {
     fn calculate_generation_per_rank_depth_same_rank_end_to_end() {
         let tree = build_chain(8);
         let rates = BTreeMap::from([
-            (1u8, 0.10),
-            (2u8, 0.08),
-            (3u8, 0.06),
-            (4u8, 0.04),
-            (5u8, 0.03),
-            (6u8, 0.025),
-            (7u8, 0.02),
+            (1u8, d!(0.10)),
+            (2u8, d!(0.08)),
+            (3u8, d!(0.06)),
+            (4u8, d!(0.04)),
+            (5u8, d!(0.03)),
+            (6u8, d!(0.025)),
+            (7u8, d!(0.02)),
         ]);
         let mut structure = same_rank_structure(4, rates);
         structure.generation_commission.max_generations_per_rank = BTreeMap::from([
@@ -2983,7 +3039,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(7),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let result = calculate_generation(
@@ -3010,21 +3066,21 @@ mod calculate_tests {
         // Gold node 6 earns gen 1 in the gold walk.
         let earn_6 = result.iter().find(|e| e.earner_id == uuid(6)).unwrap();
         assert_eq!(earn_6.level, 1);
-        assert_eq!(earn_6.rate, Some(0.10));
-        assert!((earn_6.dollar_amount - 10.0).abs() < f64::EPSILON);
+        assert_eq!(earn_6.rate, Some(d!(0.10)));
+        assert_d!(earn_6.dollar_amount, 10.0);
 
         // Silver node 5 earns gen 2 in the silver walk (gen 2 = silver cap).
         let earn_5 = result.iter().find(|e| e.earner_id == uuid(5)).unwrap();
         assert_eq!(earn_5.level, 2);
-        assert_eq!(earn_5.rate, Some(0.08));
-        assert!((earn_5.dollar_amount - 8.0).abs() < f64::EPSILON);
+        assert_eq!(earn_5.rate, Some(d!(0.08)));
+        assert_d!(earn_5.dollar_amount, 8.0);
 
         // Diamond node 0 earns gen 1 in the diamond walk (only diamond+
         // boundary above the source).
         let earn_0 = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(earn_0.level, 1);
-        assert_eq!(earn_0.rate, Some(0.10));
-        assert!((earn_0.dollar_amount - 10.0).abs() < f64::EPSILON);
+        assert_eq!(earn_0.rate, Some(d!(0.10)));
+        assert_d!(earn_0.dollar_amount, 10.0);
 
         // Exactly three earnings: silver 5, gold 6, diamond 0.
         assert_eq!(result.len(), 3);
@@ -3050,7 +3106,7 @@ mod calculate_tests {
     #[test]
     fn calculate_generation_empty_per_rank_map_preserves_current_behavior() {
         let tree = build_chain(5);
-        let rates = BTreeMap::from([(1u8, 0.10), (2u8, 0.06), (3u8, 0.04)]);
+        let rates = BTreeMap::from([(1u8, d!(0.10)), (2u8, d!(0.06)), (3u8, d!(0.04))]);
 
         // Snapshots: a mix of ranks above the source so the rank lookup
         // is exercised on multiple values.
@@ -3063,7 +3119,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(4),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let max_gen = 3u8;
@@ -3143,7 +3199,7 @@ mod calculate_tests {
     #[test]
     fn calculate_generation_empty_per_rank_map_preserves_same_rank_behavior() {
         let tree = build_chain(5);
-        let rates = BTreeMap::from([(1u8, 0.10), (2u8, 0.06), (3u8, 0.04)]);
+        let rates = BTreeMap::from([(1u8, d!(0.10)), (2u8, d!(0.06)), (3u8, d!(0.04))]);
 
         let mut snapshots = HashMap::new();
         snapshots.insert(uuid(0), diamond_snapshot());
@@ -3154,7 +3210,7 @@ mod calculate_tests {
 
         let volume = vec![VolumeSource {
             source_id: uuid(4),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let max_gen = 3u8;

@@ -1,5 +1,6 @@
 //! Public types for rank evaluation inputs, outputs, and errors.
 
+use crate::decimal::AuthoredDec;
 use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
@@ -43,11 +44,11 @@ pub struct EvaluationInputs {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DistributorPrimitives {
     /// Personal volume generated this period.
-    pub personal_volume: f64,
+    pub personal_volume: AuthoredDec,
 
     /// Volume generated specifically from retail customers.
     /// Used by `StructureQualification.min_retail_volume`.
-    pub retail_volume: f64,
+    pub retail_volume: AuthoredDec,
 
     /// Distributor's status this period (e.g., "active", "suspended").
     pub status: String,
@@ -111,6 +112,10 @@ pub enum EvaluationError {
     /// A tree member that rank evaluation needs has no entry in the inputs.
     #[error("distributor {0} has no rank inputs")]
     DistributorNotInInputs(Uuid),
+
+    /// An arithmetic step has no exact result the engine can hold.
+    #[error(transparent)]
+    Numeric(#[from] crate::decimal::NumericError),
 
     /// Fixpoint iteration in `evaluate_ranks` did not stabilize within the
     /// pass bound. Rank evaluation is monotone, so this is unreachable unless
@@ -367,6 +372,16 @@ mod tests {
         assert!(
             err.to_string().contains("invalid type: null"),
             "expected a serde type error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn a_numeric_error_reads_through_an_evaluation_error() {
+        let one: crate::decimal::Dec = "1".parse().unwrap();
+        let err = one.div_ratio(crate::decimal::Dec::ZERO).unwrap_err();
+        assert_eq!(
+            EvaluationError::from(err).to_string(),
+            "cannot divide 1 by 0: the divisor is zero"
         );
     }
 }

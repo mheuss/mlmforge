@@ -1,5 +1,6 @@
 //! Rank definition and qualification types.
 
+use crate::decimal::AuthoredDec;
 use serde::{Deserialize, Serialize};
 
 use crate::serde_helpers::null_as_empty;
@@ -109,30 +110,30 @@ pub struct StructureQualification {
 
     /// Minimum personal volume (PV) the distributor must generate
     /// this period on this structure.
-    pub personal_volume: f64,
+    pub personal_volume: AuthoredDec,
 
     /// Minimum group volume (GV) from the distributor and their
     /// entire downline on this structure, excluding breakaway groups.
-    pub group_volume: f64,
+    pub group_volume: AuthoredDec,
 
     /// Maximum volume any single leg contributes toward group volume.
     ///
     /// 0, or an absent field, means no cap.
     #[serde(default)]
-    pub max_group_volume_per_leg: f64,
+    pub max_group_volume_per_leg: AuthoredDec,
 
     /// The per-leg cap as a fraction of group_volume, in [0, 1].
     ///
     /// 0, or an absent field, means no cap. Not set together with
     /// max_group_volume_per_leg.
     #[serde(default)]
-    pub max_group_volume_per_leg_fraction: f64,
+    pub max_group_volume_per_leg_fraction: AuthoredDec,
 
     /// Minimum volume from retail customers specifically.
     ///
     /// Ensures the rank is not achieved purely through self-purchases.
     /// Supports regulatory compliance by requiring genuine retail sales.
-    pub min_retail_volume: f64,
+    pub min_retail_volume: AuthoredDec,
 
     /// Team composition requirements on this structure.
     ///
@@ -188,7 +189,7 @@ pub struct DistributorCountRequirement {
     ///
     /// Ensures the leaders being counted are actually producing.
     /// A distributor with the right rank but no volume does not count.
-    pub min_leg_group_volume: f64,
+    pub min_leg_group_volume: AuthoredDec,
 }
 
 /// A per-leg structural requirement for rank qualification.
@@ -218,7 +219,7 @@ pub enum LegPredicate {
     ContainsRank { min_rank: String },
     /// Leg contains a node whose personal volume is at least
     /// `min_personal_volume`.
-    ContainsPersonalVolume { min_personal_volume: f64 },
+    ContainsPersonalVolume { min_personal_volume: AuthoredDec },
 }
 
 /// Where to search for qualifying distributors in the tree.
@@ -329,6 +330,7 @@ pub struct RankFeaturesConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{assert_d, d};
 
     #[test]
     fn deserialize_full_rank_definition() {
@@ -370,10 +372,10 @@ mod tests {
 
         let sq = &rank.qualification.structures[0];
         assert_eq!(sq.structure, "Primary");
-        assert_eq!(sq.personal_volume, 100.0);
-        assert_eq!(sq.group_volume, 5000.0);
-        assert_eq!(sq.max_group_volume_per_leg, 3000.0);
-        assert_eq!(sq.min_retail_volume, 50.0);
+        assert_d!(sq.personal_volume, 100.0);
+        assert_d!(sq.group_volume, 5000.0);
+        assert_d!(sq.max_group_volume_per_leg, 3000.0);
+        assert_d!(sq.min_retail_volume, 50.0);
 
         let dc = sq.distributor_count.as_ref().unwrap();
         assert_eq!(dc.count, 3);
@@ -381,7 +383,7 @@ mod tests {
         assert!(matches!(dc.search_mode, SearchMode::FirstLevels));
         assert_eq!(dc.search_depth, Some(5));
         assert_eq!(dc.total_count, 10);
-        assert_eq!(dc.min_leg_group_volume, 2000.0);
+        assert_d!(dc.min_leg_group_volume, 2000.0);
 
         assert_eq!(
             rank.qualification.required_products,
@@ -479,7 +481,7 @@ mod tests {
         match pred {
             LegPredicate::ContainsPersonalVolume {
                 min_personal_volume,
-            } => assert_eq!(min_personal_volume, 200.0),
+            } => assert_d!(min_personal_volume, 200.0),
             _ => panic!("expected ContainsPersonalVolume variant"),
         }
     }
@@ -550,7 +552,7 @@ mod tests {
             "distributor_count": null
         }"#;
         let sq: StructureQualification = serde_json::from_str(json).unwrap();
-        assert_eq!(sq.max_group_volume_per_leg, 0.0);
+        assert_d!(sq.max_group_volume_per_leg, 0.0);
     }
 
     #[test]
@@ -564,7 +566,7 @@ mod tests {
             "distributor_count": null
         }"#;
         let sq: StructureQualification = serde_json::from_str(json).unwrap();
-        assert_eq!(sq.max_group_volume_per_leg_fraction, 0.6);
+        assert_d!(sq.max_group_volume_per_leg_fraction, 0.6);
     }
 
     #[test]
@@ -577,7 +579,7 @@ mod tests {
             "distributor_count": null
         }"#;
         let sq: StructureQualification = serde_json::from_str(json).unwrap();
-        assert_eq!(sq.max_group_volume_per_leg_fraction, 0.0);
+        assert_d!(sq.max_group_volume_per_leg_fraction, 0.0);
     }
 
     #[test]
@@ -685,11 +687,11 @@ mod tests {
             qualification: RankQualification {
                 structures: vec![StructureQualification {
                     structure: "Primary".to_string(),
-                    personal_volume: 200.0,
-                    group_volume: 10000.0,
-                    max_group_volume_per_leg: 6000.0,
-                    max_group_volume_per_leg_fraction: 0.0,
-                    min_retail_volume: 100.0,
+                    personal_volume: d!(200.0),
+                    group_volume: d!(10000.0),
+                    max_group_volume_per_leg: d!(6000.0),
+                    max_group_volume_per_leg_fraction: d!(0.0),
+                    min_retail_volume: d!(100.0),
                     distributor_count: None,
                     leg_quality: vec![],
                 }],

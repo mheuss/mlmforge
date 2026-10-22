@@ -5,6 +5,7 @@
 //! who don't meet their level's rank threshold. Higher ranks can unlock
 //! additional streams, each an independent commission chain.
 
+use crate::decimal::AuthoredDec;
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -21,7 +22,7 @@ use serde::{Deserialize, Serialize};
 pub struct StreamlineCommissionConfig {
     /// Per-structure CV override. None uses the plan-level multiplier
     /// from `VolumeConfig`.
-    pub volume_to_dollar_multiplier: Option<f64>,
+    pub volume_to_dollar_multiplier: Option<AuthoredDec>,
 
     /// Maximum chain depth for commission payments.
     #[serde(rename = "commissionable_depth")]
@@ -71,7 +72,7 @@ pub struct StreamlineLevel {
     /// 0.05 level on 100 CV at multiplier 1.0 pays 5.00.
     /// `CompensationPlan::validate` rejects out-of-range values on
     /// the `load_plan` path (HEU-517).
-    pub percent: f64,
+    pub percent: AuthoredDec,
 }
 
 /// Multi-stream configuration for streamline plans.
@@ -138,6 +139,7 @@ pub enum StreamAssignmentMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{assert_d, d};
 
     #[test]
     fn deserialize_streamline_config() {
@@ -163,15 +165,15 @@ mod tests {
             }
         }"#;
         let config: StreamlineCommissionConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.volume_to_dollar_multiplier, Some(1.5));
+        assert_eq!(config.volume_to_dollar_multiplier, Some(d!(1.5)));
         assert_eq!(config.max_depth, 7);
         assert_eq!(config.levels.len(), 5);
         assert_eq!(config.levels[0].level, 1);
         assert_eq!(config.levels[0].min_rank, "active");
-        assert_eq!(config.levels[0].percent, 0.05);
+        assert_d!(config.levels[0].percent, 0.05);
         assert_eq!(config.levels[4].level, 5);
         assert_eq!(config.levels[4].min_rank, "platinum");
-        assert_eq!(config.levels[4].percent, 0.01);
+        assert_d!(config.levels[4].percent, 0.01);
 
         let stream_cfg = config.stream_config.as_ref().unwrap();
         assert_eq!(stream_cfg.additional_streams.len(), 3);
@@ -196,7 +198,7 @@ mod tests {
         let level: StreamlineLevel = serde_json::from_str(json).unwrap();
         assert_eq!(level.level, 4);
         assert_eq!(level.min_rank, "gold");
-        assert_eq!(level.percent, 0.03);
+        assert_d!(level.percent, 0.03);
     }
 
     #[test]
@@ -254,10 +256,10 @@ mod tests {
         assert_eq!(config.levels.len(), 2);
         assert_eq!(config.levels[0].level, 1);
         assert_eq!(config.levels[0].min_rank, "active");
-        assert_eq!(config.levels[0].percent, 0.10);
+        assert_d!(config.levels[0].percent, 0.10);
         assert_eq!(config.levels[1].level, 2);
         assert_eq!(config.levels[1].min_rank, "bronze");
-        assert_eq!(config.levels[1].percent, 0.05);
+        assert_d!(config.levels[1].percent, 0.05);
         assert!(config.stream_config.is_none());
     }
 }

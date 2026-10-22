@@ -38,6 +38,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-032: Start a structure over in the same worker](#uc-net-032-start-a-structure-over-in-the-same-worker)
 - [UC-NET-033: Rebuilding a tree from a snapshot and its stream](#uc-net-033-rebuilding-a-tree-from-a-snapshot-and-its-stream)
 - [UC-NET-034: Projecting a removal that moves other nodes](#uc-net-034-projecting-a-removal-that-moves-other-nodes)
+- [UC-NET-035: Exact decimal values for volume and money](#uc-net-035-exact-decimal-values-for-volume-and-money)
 
 ---
 
@@ -273,13 +274,13 @@ alphabetically, including `serde_json::Value`, and the buffer comes back.
 
 | Helper | Field shape |
 |---|---|
-| `u8_keyed_map` | `BTreeMap<u8, f64>` |
-| `rank_keyed_u8_map` | `BTreeMap<String, BTreeMap<u8, f64>>` |
-| `optional_u8_keyed_map` | `Option<BTreeMap<u8, f64>>` |
+| `u8_keyed_map` | `BTreeMap<u8, AuthoredDec>` |
+| `rank_keyed_u8_map` | `BTreeMap<String, BTreeMap<u8, AuthoredDec>>` |
+| `optional_u8_keyed_map` | `Option<BTreeMap<u8, AuthoredDec>>` |
 
 ```rust
 #[serde(deserialize_with = "crate::serde_helpers::u8_keyed_map")]
-pub rates: BTreeMap<u8, f64>,
+pub rates: BTreeMap<u8, AuthoredDec>,
 ```
 
 **When to use this pattern:**
@@ -1288,3 +1289,26 @@ return store.ProjectRemoval(ctx, treeID, projection, eventID, eventVersion)
 - A promote_earliest removal removes only `userID`. Pass `[]string{userID}` as `Users`.
 - An empty `Users` is refused.
 - A relocation that changes parent or slot must target a slot that is free once the removed rows are tombstoned, and that no other relocation vacates. A depth-only relocation keeps its own slot.
+
+### UC-NET-035: Exact decimal values for volume and money
+
+**Added:** Unreleased (HEU-969)
+**Files:** `engine/network-engine/src/decimal.rs`, `engine/network-engine/src/test_support.rs`, `internal/dec/dec.go`
+
+**Problem:** Thresholds, caps and payouts must compare and add exactly. A float can miss. 0.29 x 100000 in `f64` is 28999.999999999996, not 29000.
+
+**Solution:** Rust holds volume and money as `Dec`, and plan values as `AuthoredDec`. The `try_*` methods are exact or return a `NumericError`. Inexact steps go through one of four named operations: `div_ratio`, `mul_div_ratio`, `mul_div_trunc` and `floor_div`. Go holds the same values as `dec.Amount`. Both sides write bare JSON numbers, and the engine writes them normalized.
+
+**Usage:**
+```rust
+let gv = personal.dec().try_add(leg_cv)?;
+if gv >= required.dec() {
+    // qualified
+}
+let paid = matched.mul_div_ratio(pairing.percent, multiplier, min_leg, max_leg)?;
+```
+
+**Notes:**
+- `Dec` has no arithmetic operators. Use the `try_*` methods so every overflow is handled.
+- In tests, build values with `d!` and compare them with `assert_d!`.
+- A `NumericError` names the operation and its inputs. Its kind is `Overflow`, `Precision` or `DivisionByZero`.

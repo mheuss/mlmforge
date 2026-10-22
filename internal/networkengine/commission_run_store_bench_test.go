@@ -11,6 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mlmforge/mlmforge/internal/dec"
+	"github.com/shopspring/decimal"
 )
 
 // NFR1's two targets. Reported in MB (1e6), not MiB, matching how the design
@@ -202,7 +204,7 @@ func buildBenchRows(b *testing.B) []CommissionResultInput {
 	for i := range in {
 		in[i] = CommissionResultInput{
 			EarnerID:     uuid.New(),
-			DollarAmount: float64(i) / 100.0,
+			DollarAmount: dec.Amount{Decimal: decimal.New(int64(i), -2)},
 			Detail:       []byte(`{"v":1,"kind":"commission_earning","level":1,"rate":0.05,"cv_amount":100.0}`),
 		}
 	}

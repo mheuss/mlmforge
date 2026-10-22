@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/mlmforge/mlmforge/internal/dec"
 )
 
 // TestCommissionLifecycleEndToEnd walks the full ADR-013 path: run a period,
@@ -34,12 +35,12 @@ func TestCommissionLifecycleEndToEnd(t *testing.T) {
 	t.Logf("run 1 opened: %s", firstID)
 
 	if err := store.SaveResults(ctx, firstID, "unilevel", []CommissionResultInput{
-		{EarnerID: earner, DollarAmount: 100, Detail: []byte(`{"v":1,"level":1,"rate":0.05}`)},
+		{EarnerID: earner, DollarAmount: dec.MustParse("100"), Detail: []byte(`{"v":1,"level":1,"rate":0.05}`)},
 	}); err != nil {
 		t.Fatalf("SaveResults unilevel: %v", err)
 	}
 	if err := store.SaveResults(ctx, firstID, "binary", []CommissionResultInput{
-		{EarnerID: earner, DollarAmount: 50, Detail: []byte(`{"v":1,"ratio":1.0,"capped":false}`)},
+		{EarnerID: earner, DollarAmount: dec.MustParse("50"), Detail: []byte(`{"v":1,"ratio":1.0,"capped":false}`)},
 	}); err != nil {
 		t.Fatalf("SaveResults binary: %v", err)
 	}
@@ -78,15 +79,15 @@ func TestCommissionLifecycleEndToEnd(t *testing.T) {
 	// alone would pass against a store that swapped the two amounts between
 	// structures. This is also the only place in the repo that reads
 	// Structure off a GetLiveResults return rather than GetResults.
-	byStructure := map[string]float64{}
+	byStructure := map[string]string{}
 	for _, r := range live {
-		byStructure[r.Structure] += r.DollarAmount
+		byStructure[r.Structure] = r.DollarAmount.String()
 	}
-	if byStructure["unilevel"] != 100 || byStructure["binary"] != 50 {
+	if byStructure["unilevel"] != "100" || byStructure["binary"] != "50" {
 		t.Fatalf("live results by structure = %v, want unilevel 100 and binary 50", byStructure)
 	}
-	total := live[0].DollarAmount + live[1].DollarAmount
-	if total != 150 {
+	total := live[0].DollarAmount.Add(live[1].DollarAmount.Decimal)
+	if total.String() != "150" {
 		t.Fatalf("live total = %v, want 150", total)
 	}
 	t.Logf("run 1 complete: %d live results totalling %v", len(live), total)
@@ -112,7 +113,7 @@ func TestCommissionLifecycleEndToEnd(t *testing.T) {
 	}
 
 	if err := store.SaveResults(ctx, secondID, "unilevel", []CommissionResultInput{
-		{EarnerID: earner, DollarAmount: 120, Detail: []byte(`{"v":1,"level":1,"rate":0.06}`)},
+		{EarnerID: earner, DollarAmount: dec.MustParse("120"), Detail: []byte(`{"v":1,"level":1,"rate":0.06}`)},
 	}); err != nil {
 		t.Fatalf("SaveResults on replacement: %v", err)
 	}
@@ -125,7 +126,7 @@ func TestCommissionLifecycleEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLiveResults after replacement: %v", err)
 	}
-	if len(live) != 1 || live[0].DollarAmount != 120 {
+	if len(live) != 1 || !live[0].DollarAmount.Equal(dec.MustParse("120").Decimal) {
 		t.Fatalf("live results = %+v, want one row of 120", live)
 	}
 	if live[0].RunID != secondID {
@@ -181,9 +182,9 @@ func TestCommissionLifecycleEndToEnd(t *testing.T) {
 	// Amounts and detail, not just labels. Archiving that kept the rows but
 	// dropped what they said would be worthless for the dispute resolution
 	// these rows are retained for.
-	archivedAmounts := map[string]float64{}
+	archivedAmounts := map[string]string{}
 	for _, r := range archived {
-		archivedAmounts[r.Structure] += r.DollarAmount
+		archivedAmounts[r.Structure] = r.DollarAmount.String()
 		var detail map[string]any
 		if err := json.Unmarshal(r.Detail, &detail); err != nil {
 			t.Fatalf("archived %s detail is not readable JSON: %v", r.Structure, err)
@@ -192,7 +193,7 @@ func TestCommissionLifecycleEndToEnd(t *testing.T) {
 			t.Fatalf("archived %s detail lost its version: %s", r.Structure, r.Detail)
 		}
 	}
-	if archivedAmounts["unilevel"] != 100 || archivedAmounts["binary"] != 50 {
+	if archivedAmounts["unilevel"] != "100" || archivedAmounts["binary"] != "50" {
 		t.Fatalf("archived amounts = %v, want the original unilevel 100 and binary 50", archivedAmounts)
 	}
 	t.Logf("run 1 archived: voided, superseded_by set, %d results still readable", len(archived))

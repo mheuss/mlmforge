@@ -1,11 +1,18 @@
 package config
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"math/rand/v2"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // --- Valid fixtures: should produce zero errors ---
@@ -608,22 +615,6 @@ func TestSchemaRejectsTenurePeriodsZero(t *testing.T) {
 	)
 }
 
-func TestConvertYAMLToJSONMapAnyAny(t *testing.T) {
-	// Simulate a map[any]any input (yaml.v3 safety net path).
-	input := map[any]any{
-		"name":    "test",
-		42:        "numeric key",
-		int64(99): "int64 key",
-	}
-	result := convertYAMLToJSON(input)
-
-	m, ok := result.(map[string]any)
-	require.True(t, ok, "result should be map[string]any")
-	assert.Equal(t, "test", m["name"])
-	assert.Equal(t, "numeric key", m["42"])
-	assert.Equal(t, "int64 key", m["99"])
-}
-
 // A bare number carries no unit, and the same digits mean a percentage under
 // one reading and currency under the other. HEU-699.
 func TestSchemaRejectsABareMinOverride(t *testing.T) {
@@ -634,4 +625,445 @@ func TestSchemaRejectsABareMinOverride(t *testing.T) {
 	tagged := "min_override:\n              type: currency\n              value: 10.00"
 	bare := replaceInYAML(t, base, tagged, "min_override: 10.00")
 	require.NotEmpty(t, p.validateSchema(bare), "a bare min_override must be rejected")
+}
+
+func convertYAML(t *testing.T, src string) (string, []ValidationError) {
+	t.Helper()
+	var root yaml.Node
+	require.NoError(t, yaml.Unmarshal([]byte(src), &root))
+	doc, errs := yamlNodeToJSON(&root)
+	out, err := json.Marshal(doc)
+	require.NoError(t, err)
+	return string(out), errs
+}
+
+func TestYAMLNumbersKeepTheirTextAsJSONNumbers(t *testing.T) {
+	out, errs := convertYAML(t, "a: 30.30\nb: 1e-7\nc: [1, 2.50]\nrates:\n  1: 0.10\n  2: 0.05\n")
+	require.Empty(t, errs)
+	assert.Equal(t, `{"a":30.30,"b":1e-7,"c":[1,2.50],"rates":{"1":0.10,"2":0.05}}`, out)
+}
+
+func TestYAMLNumericFormsOutsideJSONAreRefused(t *testing.T) {
+	for _, form := range []string{".inf", "-.inf", ".nan", "0x10", "0o17", "1_000", "+5", ".5", "1.", "01"} {
+		_, errs := convertYAML(t, "a: "+form+"\n")
+		require.Len(t, errs, 1, form)
+		assert.Equal(t, "/a", errs[0].Path, form)
+		assert.Equal(t, "invalid_number", errs[0].Code, form)
+		assert.Equal(t, SeverityError, errs[0].Severity, form)
+	}
+}
+
+func TestYAMLMergeKeepsExplicitKeysAndTheFirstMergedValue(t *testing.T) {
+	out, errs := convertYAML(t, "one: &o {x: 1}\ntwo: &t {x: 2, z: 9}\nboth:\n  <<: [*o, *t]\n  y: 3\nover:\n  <<: *o\n  x: 5\n")
+	require.Empty(t, errs)
+	assert.Equal(t, `{"both":{"x":1,"y":3,"z":9},"one":{"x":1},"over":{"x":5},"two":{"x":2,"z":9}}`, out)
+}
+
+func TestYAMLAliasCarriesTheAnchoredNumber(t *testing.T) {
+	out, errs := convertYAML(t, "base: &rate 0.07\nuse: *rate\n")
+	require.Empty(t, errs)
+	assert.Equal(t, `{"base":0.07,"use":0.07}`, out)
+}
+
+func TestYAMLNumericKeysAreStringified(t *testing.T) {
+	out, errs := convertYAML(t, "rates:\n  1: 0.10\n  12: 0.02\n")
+	require.Empty(t, errs)
+	assert.Equal(t, `{"rates":{"1":0.10,"12":0.02}}`, out)
+}
+
+func TestYAMLKeysThatCollideAfterStringifyingAreRefused(t *testing.T) {
+	_, errs := convertYAML(t, "m:\n  1: a\n  \"1\": b\n")
+	require.Len(t, errs, 1)
+	assert.Equal(t, "/m/1", errs[0].Path)
+	assert.Equal(t, "duplicate_key", errs[0].Code)
+}
+
+func TestYAMLSelfReferentialAliasIsRefused(t *testing.T) {
+	_, errs := convertYAML(t, "a: &a\n  b: *a\n")
+	require.NotEmpty(t, errs)
+	assert.Equal(t, "alias_cycle", errs[0].Code)
+}
+
+func TestYAMLMergeCycleIsRefused(t *testing.T) {
+	_, errs := convertYAML(t, "a: &a\n  <<: *a\n  x: 1\n")
+	require.NotEmpty(t, errs)
+	assert.Equal(t, "alias_cycle", errs[0].Code)
+}
+
+func TestYAMLAliasAmplificationStopsAtTheBudget(t *testing.T) {
+	src := "l0: &l0 [x, x, x, x, x, x, x, x, x, x]\n"
+	for i := 1; i <= 7; i++ {
+		prev := fmt.Sprintf("*l%d", i-1)
+		src += fmt.Sprintf("l%d: &l%d [%s%s]\n", i, i, strings.Repeat(prev+", ", 9), prev)
+	}
+	_, errs := convertYAML(t, src)
+	require.NotEmpty(t, errs)
+	assert.Equal(t, "document_too_large", errs[len(errs)-1].Code)
+}
+
+func TestYAMLHugeExponentIsRefused(t *testing.T) {
+	_, errs := convertYAML(t, "a: 0e-2147483648\n")
+	require.Len(t, errs, 1)
+	assert.Equal(t, "invalid_number", errs[0].Code)
+}
+
+func TestSchemaBoundsCompareExactly(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/leg-cap-fraction-plan.yaml")
+	require.Empty(t, p.validateSchema(base))
+	over := replaceInYAML(t, base, "max_group_volume_per_leg_fraction: 0.6", "max_group_volume_per_leg_fraction: 1.00000000000000000001")
+	require.NotEmpty(t, p.validateSchema(over), "a fraction above 1 by 1e-20 must fail the schema maximum")
+}
+
+func TestYAMLMergeAmplificationStopsAtTheBudget(t *testing.T) {
+	src := "m0: &m0 {}\n"
+	for i := 1; i <= 8; i++ {
+		prev := fmt.Sprintf("*m%d", i-1)
+		src += fmt.Sprintf("m%d: &m%d {<<: [%s%s]}\n", i, i, strings.Repeat(prev+", ", 9), prev)
+	}
+	_, errs := convertYAML(t, src)
+	require.NotEmpty(t, errs)
+	assert.Equal(t, "document_too_large", errs[len(errs)-1].Code)
+}
+
+func TestYAMLMergeFormsOutsideTheMergeRuleAreRefused(t *testing.T) {
+	cases := map[string]string{
+		"s: &s [{x: 1}]\nm:\n  <<: *s\n":         "invalid_merge",
+		"a: &a {x: 1}\nm:\n  <<: [[*a]]\n":       "invalid_merge",
+		"s: &s [{x: 1}]\nm:\n  <<: [*s]\n":       "invalid_merge",
+		"m:\n  <<: 1\n":                          "invalid_merge",
+		"a: &a {x: 1}\nm:\n  <<: *a\n  <<: *a\n": "duplicate_key",
+	}
+	for src, code := range cases {
+		_, errs := convertYAML(t, src)
+		require.Len(t, errs, 1, src)
+		assert.Equal(t, code, errs[0].Code, src)
+	}
+}
+
+func TestYAMLErrorIsReportedOncePerSourceNode(t *testing.T) {
+	cases := map[string]string{
+		"x: &x .inf\ny: [*x, *x, *x]\n":                      "invalid_number",
+		"a: &a {1: x, \"1\": y}\nb: {<<: *a}\nc: {<<: *a}\n": "duplicate_key",
+	}
+	for src, code := range cases {
+		_, errs := convertYAML(t, src)
+		require.Len(t, errs, 1, src)
+		assert.Equal(t, code, errs[0].Code, src)
+	}
+}
+
+func TestYAMLDuplicateKeysThroughAliasesStopAtTheBudget(t *testing.T) {
+	src := "d: &d {" + strings.Repeat("a: 1, ", 98) + "a: 1}\nr: [" + strings.Repeat("*d, ", 10999) + "*d]\n"
+	_, errs := convertYAML(t, src)
+	require.NotEmpty(t, errs)
+	assert.Equal(t, "document_too_large", errs[len(errs)-1].Code)
+}
+
+func TestYAMLBudgetErrorSurvivesANodeThatAlreadyFailed(t *testing.T) {
+	body := "x: &x .inf\nl1: &l1 [" + strings.Repeat("*x, ", 99) + "*x]\nl2: &l2 [" + strings.Repeat("*l1, ", 99) + "*l1]\nl3: [" + strings.Repeat("*l2, ", 99) + "*l2]\n"
+	for _, prefix := range []string{"", "w: [0]\n"} {
+		_, errs := convertYAML(t, prefix+body)
+		codes := make([]string, len(errs))
+		for i, e := range errs {
+			codes[i] = e.Code
+		}
+		assert.Contains(t, codes, "document_too_large", "prefix %q", prefix)
+	}
+}
+
+func bytesAllocatedBy(f func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	f()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+func TestSchemaRefusesExcessiveAliasingBeforeConverting(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	src := "l0: &l0 [x, x, x, x, x, x, x, x, x, x]\n"
+	for i := 1; i <= 7; i++ {
+		prev := fmt.Sprintf("*l%d", i-1)
+		src += fmt.Sprintf("l%d: &l%d [%s%s]\n", i, i, strings.Repeat(prev+", ", 9), prev)
+	}
+
+	errs := p.validateSchema([]byte(src))
+
+	require.Len(t, errs, 1)
+	assert.Equal(t, "yaml_parse_error", errs[0].Code)
+	assert.Contains(t, errs[0].Message, "excessive aliasing")
+}
+
+func TestSchemaNestedMergeChainStaysSmall(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	keys := make([]string, 3000)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("k%d: 0", i)
+	}
+	src := "m: " + strings.Repeat("{<<: ", 3000) + "{" + strings.Join(keys, ", ") + "}" + strings.Repeat("}", 3000) + "\n"
+
+	allocated := bytesAllocatedBy(func() { p.validateSchema([]byte(src)) })
+
+	assert.Less(t, allocated, uint64(64<<20))
+}
+
+func TestSchemaAliasedLongNumberStaysSmall(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	src := "s: &s 1." + strings.Repeat("3", 20000) + "\nr: [" + strings.Repeat("*s, ", 299) + "*s]\n"
+
+	allocated := bytesAllocatedBy(func() { p.validateSchema([]byte(src)) })
+
+	assert.Less(t, allocated, uint64(64<<20))
+}
+
+func TestSchemaLongAliasKeyDoesNotRepeatInEveryError(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	src := "k: &k " + strings.Repeat("a", 20000) + "\nm:\n  *k : [" + strings.Repeat(".inf, ", 999) + ".inf]\n"
+
+	errs := p.validateSchema([]byte(src))
+
+	require.NotEmpty(t, errs)
+	var size int
+	for _, e := range errs {
+		size += len(e.Path) + len(e.Message)
+	}
+	assert.Less(t, size, 1<<20)
+}
+
+func walkerCost(t *testing.T, src string) (errs []ValidationError, allocated uint64, elapsed time.Duration) {
+	t.Helper()
+	var root yaml.Node
+	require.NoError(t, yaml.Unmarshal([]byte(src), &root))
+	start := time.Now()
+	allocated = bytesAllocatedBy(func() { _, errs = yamlNodeToJSON(&root) })
+	return errs, allocated, time.Since(start)
+}
+
+func errorTextSize(errs []ValidationError) int {
+	size := 0
+	for _, e := range errs {
+		size += len(e.Path) + len(e.Message)
+	}
+	return size
+}
+
+func TestYAMLNestingBeyondTheLimitIsRefused(t *testing.T) {
+	_, errs := convertYAML(t, "a: "+strings.Repeat("[", 100)+strings.Repeat("]", 100)+"\n")
+
+	require.Len(t, errs, 1)
+	assert.Equal(t, "document_too_deep", errs[0].Code)
+	assert.Equal(t, "the walk reached depth 65, counting each alias and merge followed; the limit is 64", errs[0].Message)
+}
+
+func TestYAMLConversionStopsAfterTheErrorCap(t *testing.T) {
+	_, errs := convertYAML(t, "a: ["+strings.Repeat(".inf, ", 499)+".inf]\n")
+
+	require.Len(t, errs, 101)
+	assert.Equal(t, "invalid_number", errs[99].Code)
+	assert.Equal(t, "too_many_errors", errs[100].Code)
+}
+
+func TestYAMLDuplicateLongKeyStatesItsLengthOutsideTheQuotes(t *testing.T) {
+	key := strings.Repeat("a", 100)
+	_, errs := convertYAML(t, "k: &k "+key+"\nm: {*k : 1, *k : 2}\n")
+
+	require.Len(t, errs, 1)
+	assert.Equal(t, "/m/"+strings.Repeat("a", 64)+"...", errs[0].Path)
+	assert.Equal(t, `mapping key "`+strings.Repeat("a", 64)+`"... (100 bytes) appears more than once after conversion to JSON`, errs[0].Message)
+}
+
+func TestYAMLDeepMappingsUnderAliasedListsStaySmall(t *testing.T) {
+	key := strings.Repeat("k", 64)
+	src := "w: &w [" + strings.Repeat("1, ", 599) + "1]\nm: " + strings.Repeat("{"+key+": ", 9500) + "[" + strings.Repeat("*w, ", 599) + "*w]" + strings.Repeat("}", 9500) + "\n"
+
+	_, allocated, _ := walkerCost(t, src)
+
+	assert.Less(t, allocated, uint64(64<<20))
+}
+
+func TestYAMLDeepErrorsKeepLittleText(t *testing.T) {
+	key := strings.Repeat("k", 64)
+	src := "m: " + strings.Repeat("{"+key+": ", 9000) + "[" + strings.Repeat(".inf, ", 9999) + ".inf]" + strings.Repeat("}", 9000) + "\n"
+
+	errs, _, _ := walkerCost(t, src)
+
+	assert.Less(t, errorTextSize(errs), 1<<20)
+}
+
+func TestYAMLAliasedKeyIsConvertedOnce(t *testing.T) {
+	keys := make([]string, 900)
+	for i := range keys {
+		keys[i] = "  ? !!binary " + base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%0768d", i))) + "\n  : 0\n"
+	}
+	src := "m: &m\n" + strings.Join(keys, "") + "r: [" + strings.Repeat("*m, ", 499) + "*m]\n"
+
+	errs, allocated, _ := walkerCost(t, src)
+
+	require.Empty(t, errs)
+	assert.Less(t, allocated, uint64(384<<20))
+}
+
+// hostileShape is one generated document and the error code its shape must
+// produce, or "" when it must convert cleanly.
+type hostileShape struct {
+	name string
+	src  string
+	want string
+}
+
+func between(r *rand.Rand, lo, hi int) int {
+	return lo + r.IntN(hi-lo+1)
+}
+
+// wrap nests body inside depth containers of mixed kinds.
+func wrap(r *rand.Rand, depth int, body string) string {
+	var open, closers strings.Builder
+	var stack []byte
+	for range depth {
+		if r.IntN(2) == 0 {
+			open.WriteString("[")
+			stack = append(stack, ']')
+		} else {
+			open.WriteString("{" + strings.Repeat("k", between(r, 1, 64)) + ": ")
+			stack = append(stack, '}')
+		}
+	}
+	for i := len(stack) - 1; i >= 0; i-- {
+		closers.WriteByte(stack[i])
+	}
+	return open.String() + body + closers.String()
+}
+
+func aliasList(name string, count int) string {
+	return "[" + strings.Repeat("*"+name+", ", count-1) + "*" + name + "]"
+}
+
+const hostileShapeCount = 7
+
+// hostileYAML builds a document of at most about 1 MB in the given shape.
+// Each shape's parameters are drawn so the shape reaches the code it names.
+func hostileYAML(r *rand.Rand, shape int) hostileShape {
+	switch shape {
+	case 0:
+		w, m := between(r, 500, 1000), between(r, 2500, 20000)
+		src := "w: &w [" + strings.Repeat("0, ", w-1) + "0]\nb: " + wrap(r, between(r, 0, 50), aliasList("w", m)) + "\n"
+		return hostileShape{"alias fan-out", src, "document_too_large"}
+	case 1:
+		return hostileShape{"deep nesting", "b: " + wrap(r, between(r, 70, 9000), "0") + "\n", "document_too_deep"}
+	case 2:
+		n := between(r, 150, 20000)
+		return hostileShape{"error spray", "b: " + wrap(r, between(r, 0, 50), "["+strings.Repeat(".inf, ", n-1)+".inf]") + "\n", "too_many_errors"}
+	case 3:
+		fan := between(r, 5, 10)
+		levels := 2
+		for total := fan * fan; total < 1_200_000; total *= fan {
+			levels++
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "m0: &m0 {x0: 1, x1: 2}\n")
+		for i := 1; i <= levels; i++ {
+			fmt.Fprintf(&b, "m%d: &m%d {<<: %s}\n", i, i, aliasList(fmt.Sprintf("m%d", i-1), fan))
+		}
+		return hostileShape{"merge chain", b.String(), "document_too_large"}
+	case 4:
+		text := strings.Repeat("QUFB", between(r, 256, 98304))
+		src := "s: &s !!binary " + text + "\nb: " + wrap(r, between(r, 0, 50), aliasList("s", between(r, 100, 3000))) + "\n"
+		return hostileShape{"aliased long scalar", src, ""}
+	case 5:
+		key := strings.Repeat("k", between(r, 1025, 200000))
+		m := between(r, 100, 3000)
+		src := "k: &k " + key + "\nb: [" + strings.Repeat("{*k : 0}, ", m-1) + "{*k : 0}]\n"
+		return hostileShape{"aliased long key", src, "invalid_key"}
+	default:
+		number := "1" + strings.Repeat("0", between(r, 400, 200000))
+		if r.IntN(2) == 0 {
+			number = fmt.Sprintf("1e%d", between(r, 400, 99999))
+		}
+		src := "n: &n " + number + "\nb: " + wrap(r, between(r, 0, 50), aliasList("n", between(r, 100, 3000))) + "\n"
+		return hostileShape{"out-of-range number", src, "invalid_number"}
+	}
+}
+
+func TestYAMLWalkerStaysBoundedOnHostileDocuments(t *testing.T) {
+	r := rand.New(rand.NewPCG(969, 1))
+	for i := range 4 * hostileShapeCount {
+		doc := hostileYAML(r, i%hostileShapeCount)
+		require.LessOrEqual(t, len(doc.src), 1<<20, "document %d (%s)", i, doc.name)
+
+		errs, allocated, elapsed := walkerCost(t, doc.src)
+
+		codes := make([]string, len(errs))
+		for j, e := range errs {
+			codes[j] = e.Code
+		}
+		if doc.want == "" {
+			assert.Empty(t, codes, "document %d (%s)", i, doc.name)
+		} else {
+			assert.Contains(t, codes, doc.want, "document %d (%s)", i, doc.name)
+		}
+		assert.Less(t, allocated, uint64(256<<20), "document %d (%s) allocated %d bytes", i, doc.name, allocated)
+		assert.Less(t, elapsed, 2*time.Second, "document %d (%s)", i, doc.name)
+		assert.Less(t, errorTextSize(errs), 1<<20, "document %d (%s)", i, doc.name)
+	}
+}
+
+func TestYAMLKeyLongerThanTheLimitIsRefused(t *testing.T) {
+	_, errs := convertYAML(t, "k: &k "+strings.Repeat("k", 1025)+"\nm: {*k : 1}\n")
+
+	require.Len(t, errs, 1)
+	assert.Equal(t, "invalid_key", errs[0].Code)
+	assert.Equal(t, "a mapping key is 1025 bytes long; the limit is 1024", errs[0].Message)
+}
+
+func TestYAMLAliasedLongScalarIsConvertedOnce(t *testing.T) {
+	src := "b: &b !!binary " + strings.Repeat("QUFB", 16384) + "\nr: [" + strings.Repeat("*b, ", 1999) + "*b]\n"
+
+	_, allocated, _ := walkerCost(t, src)
+
+	assert.Less(t, allocated, uint64(32<<20))
+}
+
+func TestSchemaRefusesAnOutOfRangeNumberInANumericField(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/leg-cap-fraction-plan.yaml")
+	require.Empty(t, p.validateSchema(base))
+	src := replaceInYAML(t, base, "volume_to_dollar_multiplier: 1.0", "volume_to_dollar_multiplier: 1e400")
+
+	errs := p.validateSchema(src)
+
+	require.Len(t, errs, 1)
+	assert.Equal(t, "/volume/volume_to_dollar_multiplier", errs[0].Path)
+	assert.Equal(t, "invalid_number", errs[0].Code)
+}
+
+func TestSchemaRefusesAnOutOfRangeNumberInAStringField(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/leg-cap-fraction-plan.yaml")
+	require.Empty(t, p.validateSchema(base))
+	src := replaceInYAML(t, base, "name: Leg Cap Fraction Plan", "name: 1e400")
+
+	errs := p.validateSchema(src)
+
+	require.Len(t, errs, 1)
+	assert.Equal(t, "/name", errs[0].Path)
+	assert.Equal(t, "invalid_number", errs[0].Code)
+}
+
+func TestSchemaAcceptsAQuotedOutOfRangeNumberInAStringField(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/leg-cap-fraction-plan.yaml")
+	require.Empty(t, p.validateSchema(base))
+	src := replaceInYAML(t, base, "name: Leg Cap Fraction Plan", "name: '1e400'")
+
+	assert.Empty(t, p.validateSchema(src))
 }

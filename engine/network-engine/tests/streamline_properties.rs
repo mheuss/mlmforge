@@ -1,7 +1,9 @@
 mod common;
 
-use common::{uuid_from_index, walk_order_fingerprint};
+use common::{cents, uuid_from_index, walk_order_fingerprint};
 use network_engine::config::streamline::StreamAssignmentMode;
+use network_engine::d;
+use network_engine::decimal::Dec;
 use network_engine::streamline::engine::{StreamlineConfig, StreamlineEngine};
 use proptest::prelude::*;
 use std::collections::HashSet;
@@ -181,13 +183,13 @@ proptest! {
         let levels: Vec<StreamlineLevel> = (1..=max_depth).map(|l| StreamlineLevel {
             level: l,
             min_rank: "member".to_string(),
-            percent: 0.05,
+            percent: d!(0.05),
         }).collect();
 
         let structure = StreamlineStructureConfig {
             name: "Test".to_string(),
             streamline_commission: StreamlineCommissionConfig {
-                volume_to_dollar_multiplier: Some(1.0),
+                volume_to_dollar_multiplier: Some(d!(1.0)),
                 max_depth,
                 levels,
                 stream_config: None,
@@ -204,7 +206,7 @@ proptest! {
         for i in 1..=chain_depth {
             snapshots.insert(uuid_from_index(i), DistributorSnapshot {
                 rank: "member".to_string(),
-                personal_volume: 150.0,
+                personal_volume: d!(150.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
             });
@@ -213,7 +215,7 @@ proptest! {
         // Volume at the bottom of the chain.
         let volume = vec![VolumeSource {
             source_id: uuid_from_index(chain_depth),
-            cv_amount: 100.0,
+            cv_amount: d!(100.0),
         }];
 
         let earnings = calculate_streamline(&engine, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity())
@@ -251,8 +253,8 @@ proptest! {
     #[test]
     fn commission_dollar_value_law(
         chain_depth in 2_usize..8,
-        cv_amount in 1.0f64..10_000.0,
-        multiplier in 0.1f64..5.0,
+        cv_amount in cents(100, 1_000_000),
+        multiplier in cents(10, 500),
     ) {
         use std::collections::HashMap;
         use network_engine::commission::calculate_streamline;
@@ -269,7 +271,7 @@ proptest! {
         let levels: Vec<StreamlineLevel> = (1..=max_depth).map(|l| StreamlineLevel {
             level: l,
             min_rank: "member".to_string(),
-            percent: 0.01 * l as f64,
+            percent: format!("{l}e-2").parse().unwrap(),
         }).collect();
 
         let structure = StreamlineStructureConfig {
@@ -292,7 +294,7 @@ proptest! {
         for i in 1..=chain_depth {
             snapshots.insert(uuid_from_index(i), DistributorSnapshot {
                 rank: "member".to_string(),
-                personal_volume: 150.0,
+                personal_volume: d!(150.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
             });
@@ -313,7 +315,7 @@ proptest! {
         prop_assert!(!earnings.is_empty(), "expected at least one earning");
 
         // streamline.rs:137 hardcodes broad_pct = 1.0.
-        let broad_pct = 1.0f64;
+        let broad_pct: Dec = d!(1.0);
         let cfg_levels = &structure.streamline_commission.levels;
         for earning in &earnings {
             let percent = cfg_levels
@@ -322,9 +324,16 @@ proptest! {
                 .map(|l| l.percent)
                 .expect("earning level should map to a configured streamline level");
 
-            let expected = cv_amount * broad_pct * multiplier * percent;
+            let expected = cv_amount
+                .dec()
+                .try_mul(broad_pct)
+                .unwrap()
+                .try_mul(multiplier)
+                .unwrap()
+                .try_mul(percent)
+                .unwrap();
             prop_assert!(
-                (earning.dollar_amount - expected).abs() < 1e-10,
+                earning.dollar_amount == expected,
                 "level {}: dollar {} != cv {} * broad {} * mult {} * pct {} = {}",
                 earning.level,
                 earning.dollar_amount,
@@ -380,7 +389,7 @@ proptest! {
             .map(|i| StreamlineLevel {
                 level: i as u8,
                 min_rank: format!("r{i}"),
-                percent: 0.01 * i as f64,
+                percent: format!("{i}e-2").parse().unwrap(),
             })
             .collect();
 
@@ -395,7 +404,7 @@ proptest! {
             let structure = StreamlineStructureConfig {
                 name: "Test".to_string(),
                 streamline_commission: StreamlineCommissionConfig {
-                    volume_to_dollar_multiplier: Some(1.0),
+                    volume_to_dollar_multiplier: Some(d!(1.0)),
                     max_depth: level_count as u8,
                     levels,
                     stream_config: None,
@@ -417,7 +426,7 @@ proptest! {
             for i in 1..=chain_depth {
                 snapshots.insert(uuid_from_index(i), DistributorSnapshot {
                     rank: "r2".to_string(),
-                    personal_volume: 150.0,
+                    personal_volume: d!(150.0),
                     status: "active".to_string(),
                     has_order_in_period: true,
                 });
@@ -425,7 +434,7 @@ proptest! {
 
             let volume = vec![VolumeSource {
                 source_id: uuid_from_index(chain_depth),
-                cv_amount: 100.0,
+                cv_amount: d!(100.0),
             }];
 
             calculate_streamline(&engine, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity())
@@ -515,16 +524,7 @@ fn build_multi_stream_engine(stream_count: u32) -> StreamlineEngine {
 
 proptest! {
     /// A walk index comes from the response's total order, never from the
-    /// order the calculator happened to emit walks in.
-    ///
-    /// Streamline is the only calculator where those two orders differ.
-    /// Unilevel emits one walk per volume source in slice order, and
-    /// generation SameRank emits rank-outer over a list already sorted by
-    /// ordinal, source-inner over the volume slice. Both already match what
-    /// `walk_order::assign_indexes` produces, so neither can detect the sort
-    /// being removed. `calculate_streamline` iterates
-    /// `engine.active_streams()`, which is `self.streams.values()` on a
-    /// `HashMap`, and that is the one emission order the sort has to correct.
+    /// order the engine's stream map iterates in.
     ///
     /// Two engines, not one engine twice. A single `HashMap` repeats its own
     /// iteration order, so re-running against one engine is vacuous, which
@@ -542,12 +542,12 @@ proptest! {
         let levels = vec![StreamlineLevel {
             level: 1,
             min_rank: "member".to_string(),
-            percent: 0.05,
+            percent: d!(0.05),
         }];
         let structure = StreamlineStructureConfig {
             name: "Test".to_string(),
             streamline_commission: StreamlineCommissionConfig {
-                volume_to_dollar_multiplier: Some(1.0),
+                volume_to_dollar_multiplier: Some(d!(1.0)),
                 max_depth: 1,
                 levels,
                 stream_config: None,
@@ -561,7 +561,7 @@ proptest! {
 
         let snapshot = DistributorSnapshot {
             rank: "member".to_string(),
-            personal_volume: 150.0,
+            personal_volume: d!(150.0),
             status: "active".to_string(),
             has_order_in_period: true,
         };
@@ -576,9 +576,9 @@ proptest! {
         // pays its root; the rest are single-member streams whose walk records
         // a traversal that reached the top immediately. Both are walks, and
         // walks are what this property orders.
-        let mut volume = vec![VolumeSource { source_id: stream_one_child(), cv_amount: 100.0 }];
+        let mut volume = vec![VolumeSource { source_id: stream_one_child(), cv_amount: d!(100.0) }];
         for s in 2..=stream_count {
-            volume.push(VolumeSource { source_id: stream_root(s), cv_amount: 100.0 });
+            volume.push(VolumeSource { source_id: stream_root(s), cv_amount: d!(100.0) });
         }
 
         let identity = network_engine::test_support::test_plan_identity();
@@ -613,10 +613,7 @@ proptest! {
 
         prop_assert_eq!(walk_order_fingerprint(&a.walks), walk_order_fingerprint(&b.walks));
         // The whole result, not just the walks: earnings and plan identity are
-        // part of what must not move, and streamline appends each stream's
-        // earnings in that same iteration order. An append, not a sum. Were it
-        // ever a sum, float non-associativity plus the prop_assume above would
-        // make this flake rather than fail cleanly.
+        // part of what must not move.
         prop_assert_eq!(a, b);
     }
 }

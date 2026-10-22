@@ -251,7 +251,7 @@ proptest! {
 
 proptest! {
     /// The cycle-commission dollar law from `calculate_board_commissions`
-    /// (board_plan.rs:35-36): a cycle is capped exactly when its number
+    /// a cycle is capped exactly when its number
     /// exceeds `max_cycles_per_period`. Capped cycles pay $0, uncapped
     /// cycles pay `cycle_commission`.
     ///

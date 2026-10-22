@@ -206,7 +206,8 @@ pub struct BinaryCommissionEarning {
     /// Volume matched between legs: min(left, right).
     pub matched_volume: Dec,
 
-    /// Balance ratio applied. 1.0 for WeakerLeg, min/max for VolumeRatio.
+    /// The balance ratio reported with this earning: 1 for WeakerLeg, min/max
+    /// for VolumeRatio. It is reported, not used to compute `dollar_amount`.
     pub ratio: Dec,
 
     /// The pairing percent from config.
@@ -348,8 +349,7 @@ pub struct Walk {
     ///
     /// **Not knowable at construction.** Design 029 requires indexes to come
     /// from a defined total order applied across the whole response, never
-    /// from the order walks happened to be emitted in, which for streamline
-    /// is a `HashMap` iteration.
+    /// from the order walks happened to be emitted in.
     ///
     /// The emitters set this to a collector id, unique within one
     /// calculator's collector. `walk_order::assign_indexes` then sorts the

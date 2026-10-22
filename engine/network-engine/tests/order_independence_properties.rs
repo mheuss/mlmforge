@@ -45,8 +45,11 @@ fn second_rank_thresholds() -> (u64, u64) {
     let rank = &plan().ranks[1];
     let gates = &rank.qualification;
     assert!(
-        gates.structures.len() == 1 && gates.required_products.is_empty(),
-        "expected ranks[1] to have one structure and no required products, got {gates:?}"
+        gates.structures.len() == 1
+            && gates.required_products.is_empty()
+            && gates.window.is_none()
+            && gates.tenure.is_none(),
+        "expected ranks[1] to have one structure and no products, window or tenure gate, got {gates:?}"
     );
     let q = &gates.structures[0];
     assert!(

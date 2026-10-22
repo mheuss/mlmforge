@@ -346,11 +346,6 @@ impl Dec {
     pub const ZERO: Dec = Dec(Decimal::ZERO);
     pub const ONE: Dec = Dec(Decimal::ONE);
 
-    /// Wrap a `Decimal`.
-    pub const fn new(value: Decimal) -> Self {
-        Dec(value)
-    }
-
     pub fn is_zero(self) -> bool {
         self.0.is_zero()
     }

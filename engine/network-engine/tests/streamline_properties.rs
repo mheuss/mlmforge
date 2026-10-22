@@ -524,16 +524,7 @@ fn build_multi_stream_engine(stream_count: u32) -> StreamlineEngine {
 
 proptest! {
     /// A walk index comes from the response's total order, never from the
-    /// order the calculator happened to emit walks in.
-    ///
-    /// Streamline is the only calculator where those two orders differ.
-    /// Unilevel emits one walk per volume source in slice order, and
-    /// generation SameRank emits rank-outer over a list already sorted by
-    /// ordinal, source-inner over the volume slice. Both already match what
-    /// `walk_order::assign_indexes` produces, so neither can detect the sort
-    /// being removed. `calculate_streamline` iterates
-    /// `engine.active_streams()`, which is `self.streams.values()` on a
-    /// `HashMap`, and that is the one emission order the sort has to correct.
+    /// order the engine's stream map iterates in.
     ///
     /// Two engines, not one engine twice. A single `HashMap` repeats its own
     /// iteration order, so re-running against one engine is vacuous, which

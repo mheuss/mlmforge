@@ -129,7 +129,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 pub(crate) fn parse_params_as<T: serde::de::DeserializeOwned>(
     params: &serde_json::value::RawValue,
 ) -> Result<T, String> {
-    // Path tracking allocates per key, so only a failed parse pays for it.
+    // Re-parsing with path tracking costs more, so only a failed parse does it.
     serde_json::from_str(params.get()).map_err(|plain| {
         let mut deserializer = serde_json::Deserializer::from_str(params.get());
         match serde_path_to_error::deserialize::<_, T>(&mut deserializer) {
@@ -469,7 +469,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_params_as_names_only_the_element_holding_a_tagged_enum() {
+    fn parse_params_as_stops_a_value_error_path_at_the_tagged_enum_element() {
         let err =
             parse_params_as::<Overrides>(&raw(r#"{"overrides":[{"type":"rate","value":1e15}]}"#))
                 .unwrap_err();

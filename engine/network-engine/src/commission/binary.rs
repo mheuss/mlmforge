@@ -217,7 +217,8 @@ fn apply_aggregate_cap(
 /// snapshot names a rank the plan does not define, if a snapshot's
 /// personal_volume is negative, if the owner of any position in the tree has
 /// no snapshot, if a volume source is not found in the tree, if a volume source
-/// has an invalid cv_amount, or if an exact result cannot be held.
+/// has an invalid cv_amount, if a carried leg volume is negative, or if an
+/// exact result cannot be held.
 pub fn calculate_binary_pairing(
     tree: &BinaryTree,
     plan: &CompensationPlan,
@@ -4477,6 +4478,48 @@ mod tests {
                 test_uuid(1)
             )
         );
+    }
+
+    #[test]
+    fn negative_carried_legs_name_the_lowest_position_and_its_left_leg() {
+        let tree = three_node_tree();
+        let plan = test_plan(default_eligibility());
+        let structure = test_binary_structure();
+        let snapshots = HashMap::from([
+            (test_uuid(1), eligible_snapshot()),
+            (test_uuid(2), eligible_snapshot()),
+            (test_uuid(3), eligible_snapshot()),
+        ]);
+        for _ in 0..32 {
+            // Rebuilt inside the loop, so each pass gets a fresh iteration order.
+            let carry = HashMap::from([
+                (
+                    test_uuid(3),
+                    LegVolumes {
+                        left: d!(-1),
+                        right: d!(-2),
+                    },
+                ),
+                (
+                    test_uuid(2),
+                    LegVolumes {
+                        left: d!(-3),
+                        right: d!(-4),
+                    },
+                ),
+            ]);
+            let err =
+                calculate_binary_pairing(&tree, &plan, &structure, &snapshots, &[], &carry, None)
+                    .unwrap_err();
+            assert_eq!(
+                err,
+                CalculationError::NegativeCarriedLegVolume {
+                    position: test_uuid(2),
+                    leg: BinaryLeg::Left,
+                    volume: d!(-3),
+                }
+            );
+        }
     }
 
     #[test]

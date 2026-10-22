@@ -451,11 +451,11 @@ The Go `TestContractFixtures` runs each fixture as its own subtest. It names eve
 
 The Go runner talks to the built worker. Rebuild the worker after the mutation, and again after you restore the file. (HEU-960)
 
-## A Determinism Test Only Bites On Streamline
+## A Calculator-Level Determinism Test Cannot Catch The Walk Sort
 
 `walk_order::assign_indexes` sorts a response's walks into a total order, but
-for four of the five calculators that sort is a no-op. They already emit in the
-order it produces.
+for all five calculators that sort is a no-op. They already emit in the order
+it produces.
 
 | Calculator | Emission order | Sort is |
 | -- | -- | -- |
@@ -463,13 +463,14 @@ order it produces.
 | `calculate_matrix` | same | a no-op |
 | `calculate_stairstep` | `for source in volume` | a no-op |
 | `calculate_generation` SameRank | rank-outer over `unique_ranks`, sorted by ordinal first, then `for source in volume` | a no-op |
-| `calculate_streamline` | `for stream in engine.active_streams()`, a `HashMap` values iteration | **load-bearing** |
+| `calculate_streamline` | active streams sorted by stream id (HEU-969) | a no-op |
 
-So a "two runs produce identical indexes" property written against unilevel or
-generation cannot fail. Deleting the sort outright leaves it green. Write that
-property against streamline, in `tests/streamline_properties.rs`.
+So a "two runs produce identical indexes" property written against any
+calculator cannot fail. Deleting the sort outright leaves it green. The sort's
+own unit tests in `walk_order.rs` pin it. Streamline emitted in `HashMap` order
+until HEU-969 sorted its streams.
 
-Two more traps in it. Build **two** engines rather than running one twice: a
+Two traps apply to any test that relies on `HashMap` order. Build **two** engines rather than running one twice: a
 single `HashMap` repeats its own iteration order, so the one-engine version is
 vacuous. And two separately built maps get different `RandomState` keys but not
 necessarily a different order for a small table, so `prop_assume!` that the two
@@ -489,7 +490,7 @@ Verified by deleting the sort and watching which tests failed. (HEU-641)
 - An authored value must have an absolute value below 10^15, with at most 10 decimal places.
 - serde_json's `arbitrary_precision` is a normal dependency of both crates. A number on the wire never passes through `f64`.
 - Tests write decimal values with `d!()`, and compare against a literal with `assert_d!`.
-- A request line that is not valid JSON gets `INVALID_REQUEST` with an empty `id`.
+- A request line that does not parse as a request gets `INVALID_REQUEST` with an empty `id`.
 
 ## sha2 0.11 Returns An Array With No `LowerHex`
 

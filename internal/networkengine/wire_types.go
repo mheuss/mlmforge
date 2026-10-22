@@ -165,11 +165,12 @@ type BinaryCommissionEarningDTO struct {
 	LeftVolume    dec.Amount `json:"left_volume"`
 	RightVolume   dec.Amount `json:"right_volume"`
 	MatchedVolume dec.Amount `json:"matched_volume"`
-	// Ratio echoes the balance ratio used for the match: 1.0 for weaker-leg,
-	// the leg min/max ratio for volume-ratio mode. Cycle-step mode reports 0.0.
+	// Ratio echoes the balance ratio the engine reports: 1 for weaker-leg, the
+	// leg min/max ratio for volume-ratio mode, and 0 for cycle-step mode. It is
+	// reported, not used to compute DollarAmount.
 	Ratio dec.Amount `json:"ratio"`
 	// Percent echoes the configured pairing commission rate as a fraction in [0, 1] (0.10 = 10%).
-	// Cycle-step mode has no per-earning rate and reports 0.0.
+	// Cycle-step mode has no per-earning rate and reports 0.
 	Percent      dec.Amount `json:"percent"`
 	DollarAmount dec.Amount `json:"dollar_amount"`
 	Capped       bool       `json:"capped"`

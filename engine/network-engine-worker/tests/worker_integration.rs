@@ -2412,7 +2412,7 @@ fn calculate_binary_pairing_writes_the_same_bytes_in_every_worker() {
         snap = snap,
     );
     let mut seen = std::collections::BTreeSet::new();
-    // A fresh process per pass, so each samples a fresh HashMap order.
+    // A fresh process per pass, so each pass gets fresh hash seeds.
     for _ in 0..8 {
         let mut worker = common::spawn_worker();
         load_binary_test_plan(&mut worker);
@@ -4069,7 +4069,7 @@ fn board_calculate_writes_the_same_bytes_in_every_worker() {
         BP_STRUCTURE, events
     );
     let mut seen = std::collections::BTreeSet::new();
-    // A fresh process per pass, so each samples a fresh HashMap order.
+    // A fresh process per pass, so each pass gets fresh hash seeds.
     for _ in 0..8 {
         let mut worker = common::spawn_worker();
         load_board_test_plan(&mut worker);

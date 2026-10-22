@@ -83,6 +83,9 @@
 - Rank evaluation refuses a request that leaves out a member of any tree a rank above the lowest names. The error names the lowest missing user ID. Before, an omitted leg could lower an upline's evaluated rank with no error. A distributor in none of those trees is still accepted and holds the lowest rank. Protocol 22. (HEU-965)
 - For values of up to 15 significant digits, a fractional per-leg cap now equals the fixed cap it stands for. The engine multiplies the decimal fraction and group volume exactly. 29% of 100,000 used to cap at 28,999.999999999996. That could withhold a rank that the fixed cap of 29,000 awards. Protocol 23. (HEU-966)
 - The engine computes volume and money as exact decimals, not `f64`. Numbers on the wire stay bare JSON numbers. They are now written without trailing zeros, so `500.0` becomes `500`. A quoted number is refused. An authored value must have an absolute value below 10^15, with at most 10 decimal places. Protocol 24. (HEU-969, phase 1)
+- New refusals with exact decimals. The engine refuses a negative carried binary leg volume, and a sum or product it cannot hold exactly (`Overflow` or `Precision`). Go refuses a quoted number on the wire, and YAML number forms JSON does not have, such as hex, `1_000`, `+5`, `5.` and `.5`. (HEU-969, phase 1)
+- A volume-ratio payout rounds once, half to even, at 13 decimal places. An aggregate-cap share truncates at 13 places, and each earner's last share takes the remainder, so the shares sum exactly to the cap. (HEU-969, phase 1)
+- The plan hash changes for a plan value that f64 wrote in exponent form. `0.0000001` used to be written `1e-7`. (HEU-969, phase 1)
 
 ### Fixed
 - Production `unwrap()` in unilevel.rs replaced with `match` on `Option`

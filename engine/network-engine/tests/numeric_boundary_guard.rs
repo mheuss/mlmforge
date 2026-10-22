@@ -1,8 +1,7 @@
 //! Production code on the numeric boundary holds no f64 and no lossy conversion.
 //!
-//! This is a best-effort tripwire. The decimal newtypes and the exact JSON
-//! number reader are what keep floats out. A text scan only catches the
-//! obvious reintroduction. It cannot see an untyped float literal such as
+//! This is a best-effort tripwire. A text scan only catches the obvious
+//! reintroduction. It cannot see an untyped float literal such as
 //! `try_from(0.07)`, or a float reached through a type alias defined outside
 //! the scanned files.
 

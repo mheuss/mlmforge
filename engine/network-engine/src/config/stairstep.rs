@@ -129,7 +129,7 @@ pub struct DifferentialConfig {
 ///
 /// Both variants are struct variants deliberately. Serde's internally tagged
 /// representation accepts struct variants, unit variants, and newtypes around
-/// a struct or map, but not a newtype around a bare scalar, so `Rate(f64)`
+/// a struct or map, but not a newtype around a bare scalar, so `Rate(AuthoredDec)`
 /// would compile and fail to round-trip.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]

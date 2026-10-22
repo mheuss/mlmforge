@@ -1,7 +1,7 @@
 //! Engine-side validation of a loaded compensation plan.
 //!
 //! The engine is the system of record for money, so it can't assume the
-//! upstream Go JSON-schema pipeline ran. A direct caller, the planned
+//! upstream Go JSON-schema pipeline ran. A direct caller, the
 //! out-of-process transport, or a pipeline bug could hand it a
 //! structurally-valid but semantically-broken plan. `CompensationPlan::validate`
 //! is the engine's own trust boundary: it turns out-of-range values (which
@@ -415,8 +415,7 @@ impl StreamlineCommissionConfig {
         // The message names the offending entry rather than echoing the table,
         // which is attacker-sized here.
         //
-        // Keys may carry leading zeros, so "1" and "01" both name level 1. A
-        // duplicate fails this check at its second copy.
+        // A duplicate level fails this check at its second copy.
         for (idx, level) in self.levels.iter().enumerate() {
             if usize::from(level.level) != idx + 1 {
                 return Err(format!(

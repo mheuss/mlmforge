@@ -404,43 +404,23 @@ impl StreamlineCommissionConfig {
                 self.max_depth
             ));
         }
-        // Go rejects an empty table (empty_compression_table,
-        // internal/config/rules.go). Mirror it. An empty table pays
-        // nothing at any level, which is a config error rather than a valid
-        // plan.
+        // An empty table pays nothing at any level, which is a config error
+        // rather than a valid plan.
         if self.levels.is_empty() {
             return Err("dynamic_compression must have at least one level".to_string());
         }
         // The threshold vector is indexed by declared level and the rate table
         // is keyed by the declared level, so the two agree only when the
         // declared levels are a contiguous ascending run starting at 1. This
-        // gate does not trust that the Go pipeline ran (HEU-517).
-        //
-        // Go splits that guarantee across two files, and the split matters if
-        // you are checking parity. validateStreamlineCommission
-        // (internal/config/rules.go) enforces the *set*: it sorts a
-        // copy of the level keys first, so it is indifferent to order and
-        // would accept [2, 1]. The *order* comes from sortStreamlineLevels
-        // (internal/config/translate.go), which sorts ascending before the
-        // array is handed to Rust. Reading rules.go alone makes this check look
-        // stricter than Go. It is not, but only because that sort exists.
+        // gate does not trust that the caller checked it (HEU-517).
         //
         // The expected value is computed in usize so it cannot overflow: a
         // table longer than 255 entries must reject at position 255, not wrap.
         // The message names the offending entry rather than echoing the table,
         // which is attacker-sized here.
         //
-        // Duplicates are parity too, not an added rule. Keys may carry leading
-        // zeros, so "1" and "01" are both valid keys naming level 1. A duplicate
-        // is representable, and Go rejects it through non_sequential_levels: the
-        // sorted list becomes [1, 1, ...] and fails n != j+1 at index 1.
-        //
-        // Note it is caught there and nowhere else. The duplicate_value guard
-        // in validateU8MapKeys never sees dynamic_compression:
-        // it takes a map[string]dec.Amount, and the rate-table path into it
-        // goes through getRateTable, whose switch returns nil for
-        // StreamlineCommission. So a "1"/"01" collision here surfaces as a
-        // sequencing error, not a duplicate one.
+        // Keys may carry leading zeros, so "1" and "01" both name level 1. A
+        // duplicate fails this check at its second copy.
         for (idx, level) in self.levels.iter().enumerate() {
             if usize::from(level.level) != idx + 1 {
                 return Err(format!(
@@ -452,9 +432,8 @@ impl StreamlineCommissionConfig {
                 ));
             }
         }
-        // Go rejects depth < level count (depth_less_than_levels,
-        // internal/config/rules.go). Without this, a table of 255 levels
-        // with depth 254 passes Rust and fails Go.
+        // A depth below the level count can never reach the deepest declared
+        // levels.
         if usize::from(self.max_depth) < self.levels.len() {
             return Err(format!(
                 "commissionable_depth ({}) must be >= number of levels ({})",
@@ -807,7 +786,6 @@ mod tests {
 
     #[test]
     fn streamline_rejects_empty_compression_table() {
-        // Mirrors Go's empty_compression_table (internal/config/rules.go).
         // An empty table pays nothing at any level, which is a config error.
         let config = streamline_with_levels(&[], 3);
         let err = config.validate().unwrap_err();
@@ -819,7 +797,6 @@ mod tests {
 
     #[test]
     fn streamline_rejects_non_contiguous_levels() {
-        // Mirrors Go's non_sequential_levels (internal/config/rules.go).
         // One check catches all three malformed shapes: out of order fails at
         // the first transposed entry, a gap at the entry after it, and a
         // duplicate at the second copy.
@@ -838,7 +815,6 @@ mod tests {
 
     #[test]
     fn streamline_rejects_depth_below_level_count() {
-        // Mirrors Go's depth_less_than_levels (internal/config/rules.go).
         let err = streamline_with_levels(&[1, 2], 1).validate().unwrap_err();
         assert!(
             err.contains("commissionable_depth"),

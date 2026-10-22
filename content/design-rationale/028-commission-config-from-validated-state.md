@@ -32,7 +32,7 @@ So "valid by construction" is a claim about the plan, not about all of `WorkerSt
 
 The class it removes is config-versus-structure mismatch. It does not cover data-versus-structure mismatch. Board cycle events carry no structure or plan identity, so a caller can still submit events produced under one board structure while naming another, and get the second one's rates applied to the first one's events. HEU-614 tracks that.
 
-**The guard the gate restores is narrower than it sounds.** `BoardPlanConfig::validate` checks one thing: `cycle_commission` is finite and non-negative. Only the negative half is reachable over the wire, because JSON has no NaN literal and serde_json rejects float overflow. The non-finite half covers configs built in Rust, not requests.
+**The guard the gate restores is narrower than it sounds.** `BoardPlanConfig::validate` checks one thing: `cycle_commission` is non-negative. Decimal values cannot be NaN or infinite, so there is no non-finite case to check.
 
 **Per-calculation data is different.** Snapshots and volume change every call and describe a period, not a policy. They belong on the request. Config describes policy and belongs in state.
 

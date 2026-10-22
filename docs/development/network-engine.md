@@ -482,13 +482,14 @@ Verified by deleting the sort and watching which tests failed. (HEU-641)
 - `AuthoredDec` and `Dec` read JSON numbers only, and refuse a quoted number.
 - Adding, subtracting and multiplying give the exact result or a `NumericError`, never a rounded one.
 - Four operations are inexact, each with one rule:
-  - E1, `div_ratio`, the reported volume ratio: rust_decimal 1.43's `checked_div`, half to even at the largest scale of 28 or below that fits 96 bits.
-  - E2, `mul_div_ratio`, the volume-ratio payout: rounded once, half to even, at 13 places, or at the largest smaller scale that fits 96 bits.
-  - E3, `mul_div_trunc`, a capped share: truncated toward zero at a given scale, 13 for the aggregate cap.
-  - E4, `floor_div`, a cycle count: rounded down to an integer.
-- An authored value must be below 10^15 in size, with at most 10 decimal places.
+  - E1 is `div_ratio`, the reported volume ratio. It follows rust_decimal 1.43's `checked_div`: half to even at the largest scale of 28 or below that fits 96 bits.
+  - E2 is `mul_div_ratio`, the volume-ratio payout. It rounds once, half to even, at 13 places. When 13 places do not fit 96 bits, it uses the largest smaller scale that does.
+  - E3 is `mul_div_trunc`, a capped share. It truncates toward zero at a given scale, which is 13 for the aggregate cap.
+  - E4 is `floor_div`, a cycle count. It rounds down to an integer.
+- An authored value must have an absolute value below 10^15, with at most 10 decimal places.
 - serde_json's `arbitrary_precision` is a normal dependency of both crates, so a number on the wire never passes through `f64`.
-- Tests write decimal values with `d!()`.
+- Tests write decimal values with `d!()`, and compare against a literal with `assert_d!`.
+- A request line that is not valid JSON gets `INVALID_REQUEST` with an empty `id`.
 
 ## sha2 0.11 Returns An Array With No `LowerHex`
 

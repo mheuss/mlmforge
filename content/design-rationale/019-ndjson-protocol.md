@@ -58,7 +58,7 @@ The remaining fields describe the log event. `level` is the severity (`error`, `
 
 The Rust `Request` struct deserializes `params` as `Box<serde_json::value::RawValue>` instead of `serde_json::Value`. This preserves the raw JSON bytes without intermediate parsing.
 
-`serde_json::Value` uses `BTreeMap` for objects, which reorders keys alphabetically. This breaks two things: non-string map keys (like `BTreeMap<u8, f64>` in rate tables, where integer keys are serialized as JSON strings) and adjacently-tagged enums when the `type` field appears after the content field.
+`serde_json::Value` uses `BTreeMap` for objects, which reorders keys alphabetically. This breaks two things: non-string map keys (like the `u8` level keys in rate tables, where integer keys are serialized as JSON strings) and adjacently-tagged enums when the `type` field appears after the content field.
 
 `RawValue` avoids both problems. The handler deserializes params directly into the target type, bypassing the intermediate `Value` representation. When params are omitted, a default of `{}` is used.
 

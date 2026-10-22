@@ -14,6 +14,7 @@ use crate::config::CompensationPlan;
 use crate::config::PassUpConfig;
 use crate::config::commission::{CompressionConfig, CompressionMode};
 use crate::config::eligibility::{ActiveLegTier, CommissionEligibility};
+use crate::decimal::{AuthoredDec, Dec};
 use crate::tree::navigator::TreeNavigator;
 use crate::tree::node::Node;
 
@@ -62,12 +63,12 @@ pub(crate) struct LevelWalkConfig<'a> {
     /// (HEU-517), so the counter, not upstream validation, is what makes
     /// this safe.
     pub max_depth: u8,
-    pub broad_pct: f64,
-    pub multiplier: f64,
+    pub broad_pct: Dec,
+    pub multiplier: Dec,
     pub compression: Option<&'a CompressionConfig>,
     pub threshold_ordinal: Option<u16>,
     pub rank_ordinals: &'a HashMap<&'a str, u16>,
-    pub rate_table: &'a BTreeMap<String, BTreeMap<u8, f64>>,
+    pub rate_table: &'a BTreeMap<String, BTreeMap<u8, AuthoredDec>>,
     /// Optional pass-up skip sets. When present, distributors are
     /// skipped (without consuming a level) for volume sources in
     /// their skip set.
@@ -116,7 +117,7 @@ pub(crate) fn validate_snapshot_ranks(
     }
 }
 
-/// Reject a snapshot whose personal volume is non-finite or negative.
+/// Reject a snapshot whose personal volume is negative.
 ///
 /// On `Err`, the user ID is the lowest among the offending snapshots.
 pub(crate) fn validate_snapshot_volumes(
@@ -124,7 +125,7 @@ pub(crate) fn validate_snapshot_volumes(
 ) -> Result<(), CalculationError> {
     let offender = snapshots
         .iter()
-        .filter(|(_, s)| !s.personal_volume.is_finite() || s.personal_volume < 0.0)
+        .filter(|(_, s)| s.personal_volume.is_negative())
         .min_by_key(|(id, _)| **id);
     match offender {
         Some((user_id, s)) => Err(CalculationError::InvalidPersonalVolume(
@@ -226,9 +227,9 @@ pub(crate) fn determine_max_depth(active_leg_count: u16, tiers: &[ActiveLegTier]
     None // no tier matched, use config max_depth
 }
 
-/// Validate that a volume source's CV amount is finite and non-negative.
+/// Validate that a volume source's CV amount is non-negative.
 pub(crate) fn validate_cv(source: &VolumeSource) -> Result<(), CalculationError> {
-    if !source.cv_amount.is_finite() || source.cv_amount < 0.0 {
+    if source.cv_amount.is_negative() {
         return Err(CalculationError::InvalidCvAmount(
             source.source_id,
             source.cv_amount,
@@ -440,15 +441,16 @@ pub(crate) fn build_pass_up_context<T: TreeNavigator>(
 ///
 /// Called once during config construction. The debug_assert catches
 /// this in development; the tracing::warn surfaces it in production.
-pub(crate) fn validate_broad_pct(broad_pct: f64) {
+pub(crate) fn validate_broad_pct(broad_pct: Dec) {
+    let in_range = !broad_pct.is_negative() && broad_pct <= Dec::ONE;
     debug_assert!(
-        (0.0..=1.0).contains(&broad_pct),
+        in_range,
         "broad_commission_percent out of range: {}",
         broad_pct
     );
-    if !(0.0..=1.0).contains(&broad_pct) {
+    if !in_range {
         tracing::warn!(
-            broad_percent = broad_pct,
+            broad_percent = %broad_pct,
             "broad_commission_percent outside [0.0, 1.0]; commissions may be overstated"
         );
     }
@@ -642,9 +644,9 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                 .get(&snapshot.rank)
                 .and_then(|levels| levels.get(&level_u8))
                 .copied()
-                .unwrap_or(0.0);
+                .unwrap_or(AuthoredDec::ZERO);
 
-            if rate > 0.0 {
+            if rate > AuthoredDec::ZERO {
                 steps.push(WalkStep {
                     node_id: node.user_id,
                     outcome: StepOutcome::Paid,
@@ -655,9 +657,14 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
                     earner_id: node.user_id,
                     source_id: source.source_id,
                     level: level_u8,
-                    rate: Some(rate),
-                    cv_amount: source.cv_amount,
-                    dollar_amount: source.cv_amount * config.broad_pct * config.multiplier * rate,
+                    rate: Some(rate.dec()),
+                    cv_amount: source.cv_amount.dec(),
+                    dollar_amount: source
+                        .cv_amount
+                        .dec()
+                        .try_mul(config.broad_pct)?
+                        .try_mul(config.multiplier)?
+                        .try_mul(rate)?,
                     walk: Some(collector_id),
                 });
             } else {
@@ -700,9 +707,9 @@ mod tests {
     use crate::config::PassUpConfig;
     use crate::config::commission::{CompressionConfig, CompressionMode};
     use crate::config::eligibility::ActiveLegTier;
-    use crate::d;
     use crate::tree::test_helpers::test_uuid;
     use crate::tree::unilevel::UnilevelTree;
+    use crate::{assert_d, d};
 
     // --- build_rank_ordinals ---
 
@@ -848,14 +855,14 @@ mod tests {
 
     // --- validate_snapshot_volumes ---
 
-    fn snapshot_with_pv(pv: f64) -> DistributorSnapshot {
+    fn snapshot_with_pv(pv: AuthoredDec) -> DistributorSnapshot {
         DistributorSnapshot {
             personal_volume: pv,
             ..snapshot_with_rank("associate")
         }
     }
 
-    fn assert_rejects_volume(pv: f64) {
+    fn assert_rejects_volume(pv: AuthoredDec) {
         let mut snapshots = HashMap::new();
         snapshots.insert(test_uuid(1), snapshot_with_pv(pv));
 
@@ -864,25 +871,10 @@ mod tests {
             matches!(
                 err,
                 CalculationError::InvalidPersonalVolume(id, observed)
-                    if id == test_uuid(1) && observed.to_bits() == pv.to_bits()
+                    if id == test_uuid(1) && observed == pv
             ),
             "got {err:?}"
         );
-    }
-
-    #[test]
-    fn validate_snapshot_volumes_rejects_nan() {
-        assert_rejects_volume(f64::NAN);
-    }
-
-    #[test]
-    fn validate_snapshot_volumes_rejects_positive_infinity() {
-        assert_rejects_volume(f64::INFINITY);
-    }
-
-    #[test]
-    fn validate_snapshot_volumes_rejects_negative_infinity() {
-        assert_rejects_volume(f64::NEG_INFINITY);
     }
 
     #[test]
@@ -905,9 +897,9 @@ mod tests {
         // Rebuilt inside the loop so each pass samples a fresh HashMap order.
         for _ in 0..32 {
             let mut snapshots = HashMap::new();
-            snapshots.insert(test_uuid(3), snapshot_with_pv(f64::NAN));
+            snapshots.insert(test_uuid(3), snapshot_with_pv(d!(-3.0)));
             snapshots.insert(test_uuid(1), snapshot_with_pv(d!(-1.0)));
-            snapshots.insert(test_uuid(4), snapshot_with_pv(f64::INFINITY));
+            snapshots.insert(test_uuid(4), snapshot_with_pv(d!(-4.0)));
             snapshots.insert(test_uuid(2), snapshot_with_pv(d!(150.0)));
 
             assert_eq!(
@@ -927,12 +919,12 @@ mod tests {
 
     #[test]
     fn invalid_personal_volume_message_states_the_user_and_the_observed_value() {
-        let err = CalculationError::InvalidPersonalVolume(test_uuid(1), f64::NAN);
+        let err = CalculationError::InvalidPersonalVolume(test_uuid(1), d!(-0.5));
 
         assert_eq!(
             err.to_string(),
             format!(
-                "snapshot for {} has personal_volume NaN; it must be finite and not negative",
+                "snapshot for {} has personal_volume -0.5; it must not be negative",
                 test_uuid(1)
             )
         );
@@ -995,7 +987,7 @@ mod tests {
         // can make the rank error win.
         let plan = test_plan_with_ranks(&[("associate", 1)]);
         let mut snapshots = HashMap::new();
-        snapshots.insert(test_uuid(1), snapshot_with_pv(f64::NAN));
+        snapshots.insert(test_uuid(1), snapshot_with_pv(d!(-2.0)));
         snapshots.insert(test_uuid(2), snapshot_with_rank("diamond"));
 
         assert_eq!(
@@ -1176,24 +1168,6 @@ mod tests {
         let source = VolumeSource {
             source_id: uuid_from_index(1),
             cv_amount: d!(-1.0),
-        };
-        assert!(validate_cv(&source).is_err());
-    }
-
-    #[test]
-    fn validate_cv_rejects_nan() {
-        let source = VolumeSource {
-            source_id: uuid_from_index(1),
-            cv_amount: f64::NAN,
-        };
-        assert!(validate_cv(&source).is_err());
-    }
-
-    #[test]
-    fn validate_cv_rejects_infinity() {
-        let source = VolumeSource {
-            source_id: uuid_from_index(1),
-            cv_amount: f64::INFINITY,
         };
         assert!(validate_cv(&source).is_err());
     }
@@ -1441,15 +1415,6 @@ mod tests {
     // --- Additional tests from code quality review ---
 
     #[test]
-    fn validate_cv_rejects_negative_infinity() {
-        let source = VolumeSource {
-            source_id: uuid_from_index(1),
-            cv_amount: f64::NEG_INFINITY,
-        };
-        assert!(validate_cv(&source).is_err());
-    }
-
-    #[test]
     fn determine_max_depth_no_tier_matches_with_nonempty_tiers() {
         // Tiers exist but active_leg_count is below all thresholds
         let tiers = vec![ActiveLegTier {
@@ -1490,7 +1455,7 @@ mod tests {
     }
 
     /// A rate table that pays at every level from 1 to 255.
-    fn full_depth_rate_table() -> BTreeMap<String, BTreeMap<u8, f64>> {
+    fn full_depth_rate_table() -> BTreeMap<String, BTreeMap<u8, AuthoredDec>> {
         let mut rates = BTreeMap::new();
         for l in 1..=255u8 {
             rates.insert(l, d!(0.01));
@@ -1500,7 +1465,7 @@ mod tests {
         table
     }
 
-    fn test_rate_table() -> BTreeMap<String, BTreeMap<u8, f64>> {
+    fn test_rate_table() -> BTreeMap<String, BTreeMap<u8, AuthoredDec>> {
         let mut table = BTreeMap::new();
         let mut rates = BTreeMap::new();
         rates.insert(1, d!(0.05));
@@ -1512,7 +1477,7 @@ mod tests {
 
     fn test_walk_config<'a>(
         rank_ordinals: &'a HashMap<&'a str, u16>,
-        rate_table: &'a BTreeMap<String, BTreeMap<u8, f64>>,
+        rate_table: &'a BTreeMap<String, BTreeMap<u8, AuthoredDec>>,
     ) -> LevelWalkConfig<'a> {
         LevelWalkConfig {
             max_depth: 5,
@@ -1982,7 +1947,7 @@ mod tests {
         assert_eq!(result[0].earner_id, test_uuid(0));
         assert_eq!(result[0].level, 1);
         assert_eq!(result[0].rate, Some(d!(0.05)));
-        assert!((result[0].dollar_amount - 2.0).abs() < 1e-10); // 100 * 0.40 * 1.0 * 0.05
+        assert_d!(result[0].dollar_amount, 2.0); // 100 * 0.40 * 1.0 * 0.05
     }
 
     #[test]
@@ -2483,7 +2448,7 @@ mod tests {
 
     fn test_walk_config_with_thresholds<'a>(
         rank_ordinals: &'a HashMap<&'a str, u16>,
-        rate_table: &'a BTreeMap<String, BTreeMap<u8, f64>>,
+        rate_table: &'a BTreeMap<String, BTreeMap<u8, AuthoredDec>>,
         thresholds: &'a [u16],
     ) -> LevelWalkConfig<'a> {
         LevelWalkConfig {

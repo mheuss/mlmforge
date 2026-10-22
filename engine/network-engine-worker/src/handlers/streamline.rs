@@ -1,3 +1,4 @@
+use network_engine::decimal::Dec;
 use std::collections::HashMap;
 
 use network_engine::commission::{
@@ -423,7 +424,7 @@ fn find_streamline_structure<'a>(
 struct FrozenStreamSkip {
     volume_index: usize,
     source_id: Uuid,
-    cv_amount: f64,
+    cv_amount: Dec,
     stream_id: u32,
 }
 
@@ -529,7 +530,7 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
                     frozen_stream_skips.push(FrozenStreamSkip {
                         volume_index,
                         source_id: source.source_id,
-                        cv_amount: source.cv_amount,
+                        cv_amount: source.cv_amount.dec(),
                         stream_id,
                     });
                 }

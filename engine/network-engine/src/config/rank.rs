@@ -1,5 +1,6 @@
 //! Rank definition and qualification types.
 
+use crate::decimal::AuthoredDec;
 use serde::{Deserialize, Serialize};
 
 use crate::serde_helpers::null_as_empty;
@@ -109,30 +110,30 @@ pub struct StructureQualification {
 
     /// Minimum personal volume (PV) the distributor must generate
     /// this period on this structure.
-    pub personal_volume: f64,
+    pub personal_volume: AuthoredDec,
 
     /// Minimum group volume (GV) from the distributor and their
     /// entire downline on this structure, excluding breakaway groups.
-    pub group_volume: f64,
+    pub group_volume: AuthoredDec,
 
     /// Maximum volume any single leg contributes toward group volume.
     ///
     /// 0, or an absent field, means no cap.
     #[serde(default)]
-    pub max_group_volume_per_leg: f64,
+    pub max_group_volume_per_leg: AuthoredDec,
 
     /// The per-leg cap as a fraction of group_volume, in [0, 1].
     ///
     /// 0, or an absent field, means no cap. Not set together with
     /// max_group_volume_per_leg.
     #[serde(default)]
-    pub max_group_volume_per_leg_fraction: f64,
+    pub max_group_volume_per_leg_fraction: AuthoredDec,
 
     /// Minimum volume from retail customers specifically.
     ///
     /// Ensures the rank is not achieved purely through self-purchases.
     /// Supports regulatory compliance by requiring genuine retail sales.
-    pub min_retail_volume: f64,
+    pub min_retail_volume: AuthoredDec,
 
     /// Team composition requirements on this structure.
     ///
@@ -188,7 +189,7 @@ pub struct DistributorCountRequirement {
     ///
     /// Ensures the leaders being counted are actually producing.
     /// A distributor with the right rank but no volume does not count.
-    pub min_leg_group_volume: f64,
+    pub min_leg_group_volume: AuthoredDec,
 }
 
 /// A per-leg structural requirement for rank qualification.
@@ -218,7 +219,7 @@ pub enum LegPredicate {
     ContainsRank { min_rank: String },
     /// Leg contains a node whose personal volume is at least
     /// `min_personal_volume`.
-    ContainsPersonalVolume { min_personal_volume: f64 },
+    ContainsPersonalVolume { min_personal_volume: AuthoredDec },
 }
 
 /// Where to search for qualifying distributors in the tree.

@@ -318,7 +318,7 @@ proptest! {
 
             let expected = if should_cap { d!(0.0) } else { cycle_commission };
             prop_assert!(
-                (earning.dollar_amount - expected).abs() < 1e-10,
+                earning.dollar_amount == expected.dec(),
                 "cycle {} (capped={}): dollar {} != expected {}",
                 earning.cycle_number,
                 earning.capped,

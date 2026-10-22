@@ -1,5 +1,6 @@
 //! Commission eligibility types.
 
+use crate::decimal::AuthoredDec;
 use serde::{Deserialize, Serialize};
 
 use crate::serde_helpers::null_as_empty;
@@ -16,7 +17,7 @@ pub struct CommissionEligibility {
     ///
     /// Most plans set 100-150 PV. Zero disables the requirement.
     #[serde(rename = "min_personal_volume")]
-    pub minimum_pv: f64,
+    pub minimum_pv: AuthoredDec,
 
     /// When true, the distributor must have at least one order in the
     /// current period.

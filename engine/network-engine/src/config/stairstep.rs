@@ -6,6 +6,7 @@
 //! total group volume. Optional generation overrides pay on breakaway
 //! groups beyond the first.
 
+use crate::decimal::AuthoredDec;
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -81,7 +82,7 @@ pub struct BreakawayTier {
     /// receive this tier's override.
     pub min_split_out_groups: u8,
     /// Override rate applied to Split-Out Group volume. 0.0-1.0.
-    pub rate: f64,
+    pub rate: AuthoredDec,
 }
 
 /// How override commissions are calculated after breakaway.
@@ -112,7 +113,7 @@ pub struct DifferentialConfig {
     ///
     /// Override = this rank's rate minus breakaway leader's rate.
     /// Keys are rank names. Values are percentages between 0.0 and 1.0.
-    pub rank_rates: BTreeMap<String, f64>,
+    pub rank_rates: BTreeMap<String, AuthoredDec>,
 
     /// Floor applied when the rank gap is zero or negative.
     ///
@@ -133,8 +134,8 @@ pub struct DifferentialConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum MinOverride {
-    Rate { value: f64 },
-    Currency { value: f64 },
+    Rate { value: AuthoredDec },
+    Currency { value: AuthoredDec },
 }
 
 /// Configuration for fixed override calculation.
@@ -148,7 +149,7 @@ pub struct FixedOverrideConfig {
     ///
     /// The ancestor's rank determines the override rate directly.
     /// Keys are rank names. Values are percentages between 0.0 and 1.0.
-    pub rank_rates: BTreeMap<String, f64>,
+    pub rank_rates: BTreeMap<String, AuthoredDec>,
 }
 
 /// Multi-generation override configuration for breakaway groups.
@@ -174,7 +175,7 @@ pub struct BreakawayGenerationConfig {
         rename = "generation_rates",
         deserialize_with = "crate::serde_helpers::u8_keyed_map"
     )]
-    pub rates: BTreeMap<u8, f64>,
+    pub rates: BTreeMap<u8, AuthoredDec>,
 
     /// Rank that creates a generation boundary.
     ///
@@ -351,8 +352,8 @@ mod tests {
         let err = serde_json::from_str::<DifferentialConfig>(json)
             .expect_err("a bare number carries no unit and must be rejected");
         assert!(
-            err.to_string().contains("MinOverride"),
-            "error should name the type it expected: {err}"
+            err.to_string().contains("missing field `type`"),
+            "error should name the missing tag: {err}"
         );
     }
 

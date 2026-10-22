@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::commission::types::VolumeSource;
 use crate::config::rank::RankDefinition;
+use crate::decimal::{Dec, NumericError};
 use crate::rank::predicates::satisfies;
 use crate::rank::types::{DistributorPrimitives, EvaluatedRank, EvaluationError};
 use crate::tree::navigator::TreeNavigator;
@@ -14,20 +15,21 @@ use crate::tree::navigator::TreeNavigator;
 ///
 /// Built once per `evaluate_ranks` call and reused across predicate evaluations.
 pub(crate) struct VolumeIndex {
-    by_source: HashMap<Uuid, f64>,
+    by_source: HashMap<Uuid, Dec>,
 }
 
 impl VolumeIndex {
-    pub(crate) fn build(sources: &[VolumeSource]) -> Self {
-        let mut by_source: HashMap<Uuid, f64> = HashMap::new();
+    pub(crate) fn build(sources: &[VolumeSource]) -> Result<Self, NumericError> {
+        let mut by_source: HashMap<Uuid, Dec> = HashMap::new();
         for src in sources {
-            *by_source.entry(src.source_id).or_insert(0.0) += src.cv_amount;
+            let total = by_source.entry(src.source_id).or_insert(Dec::ZERO);
+            *total = total.try_add(src.cv_amount)?;
         }
-        Self { by_source }
+        Ok(Self { by_source })
     }
 
-    pub(crate) fn cv_for(&self, user_id: Uuid) -> f64 {
-        self.by_source.get(&user_id).copied().unwrap_or(0.0)
+    pub(crate) fn cv_for(&self, user_id: Uuid) -> Dec {
+        self.by_source.get(&user_id).copied().unwrap_or(Dec::ZERO)
     }
 }
 
@@ -152,6 +154,7 @@ pub(crate) fn iterate_to_fixpoint(
 mod tests {
     use super::*;
     use crate::commission::types::VolumeSource;
+    use crate::decimal::AuthoredDec;
     use crate::{assert_d, d};
     use proptest::prelude::*;
     use uuid::Uuid;
@@ -161,7 +164,7 @@ mod tests {
         let distributors = HashMap::new();
         let ranks: Vec<RankDefinition> = vec![];
         let trees: HashMap<String, &dyn TreeNavigator> = HashMap::new();
-        let vi = VolumeIndex::build(&[]);
+        let vi = VolumeIndex::build(&[]).unwrap();
         let ords = HashMap::new();
         let window = vec!["2026-05".to_string()];
         let history = HashMap::new();
@@ -195,9 +198,9 @@ mod tests {
                 cv_amount: d!(200.0),
             },
         ];
-        let idx = VolumeIndex::build(&sources);
-        assert!((idx.cv_for(a) - 150.0).abs() < 1e-9);
-        assert!((idx.cv_for(b) - 200.0).abs() < 1e-9);
+        let idx = VolumeIndex::build(&sources).unwrap();
+        assert_d!(idx.cv_for(a), 150);
+        assert_d!(idx.cv_for(b), 200);
         assert_d!(idx.cv_for(Uuid::from_u128(99)), 0.0);
     }
 
@@ -315,7 +318,7 @@ mod tests {
         DemotionPolicy, RankDefinition, RankQualification, StructureQualification,
     };
 
-    fn linear_rank(name: &str, ord: u16, structure: &str, pv: f64) -> RankDefinition {
+    fn linear_rank(name: &str, ord: u16, structure: &str, pv: AuthoredDec) -> RankDefinition {
         RankDefinition {
             name: name.to_string(),
             ordinal: ord,
@@ -324,7 +327,7 @@ mod tests {
                     structure: structure.to_string(),
                     personal_volume: pv,
                     group_volume: d!(0.0),
-                    max_group_volume_per_leg: f64::MAX,
+                    max_group_volume_per_leg: AuthoredDec::ZERO,
                     max_group_volume_per_leg_fraction: d!(0.0),
                     min_retail_volume: d!(0.0),
                     distributor_count: None,
@@ -347,7 +350,7 @@ mod tests {
         tree.add_root(Uuid::from_u128(1), 0).unwrap();
         let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
         nav.insert("Test".to_string(), &tree);
-        let idx = VolumeIndex::build(&[]);
+        let idx = VolumeIndex::build(&[]).unwrap();
 
         let primitives = DistributorPrimitives {
             personal_volume: d!(250.0),
@@ -401,7 +404,7 @@ mod tests {
         tree.add_root(Uuid::from_u128(1), 0).unwrap();
         let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
         nav.insert("Test".to_string(), &tree);
-        let idx = VolumeIndex::build(&[]);
+        let idx = VolumeIndex::build(&[]).unwrap();
 
         let primitives = DistributorPrimitives {
             personal_volume: d!(0.0),
@@ -453,7 +456,7 @@ mod tests {
         tree.add_root(Uuid::from_u128(1), 0).unwrap();
         let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
         nav.insert("Test".to_string(), &tree);
-        let idx = VolumeIndex::build(&[]);
+        let idx = VolumeIndex::build(&[]).unwrap();
 
         let primitives = DistributorPrimitives {
             personal_volume: d!(100.0),
@@ -540,7 +543,7 @@ mod tests {
                     structure: "uni".to_string(),
                     personal_volume: d!(0.0),
                     group_volume: d!(0.0),
-                    max_group_volume_per_leg: f64::MAX,
+                    max_group_volume_per_leg: AuthoredDec::ZERO,
                     max_group_volume_per_leg_fraction: d!(0.0),
                     min_retail_volume: d!(0.0),
                     distributor_count: None,
@@ -561,7 +564,7 @@ mod tests {
                     structure: "uni".to_string(),
                     personal_volume: d!(0.0),
                     group_volume: d!(0.0),
-                    max_group_volume_per_leg: f64::MAX,
+                    max_group_volume_per_leg: AuthoredDec::ZERO,
                     max_group_volume_per_leg_fraction: d!(0.0),
                     min_retail_volume: d!(0.0),
                     distributor_count: Some(DistributorCountRequirement {
@@ -596,7 +599,7 @@ mod tests {
         distributors.insert(subject, prim.clone());
         distributors.insert(child, prim);
 
-        let volume_index = VolumeIndex::build(&[]);
+        let volume_index = VolumeIndex::build(&[]).unwrap();
 
         // The heuristic order places `subject` first. Its exact reverse places
         // `subject` last. The fixpoint result must be identical for both.
@@ -678,7 +681,7 @@ mod tests {
                 structure: "uni".to_string(),
                 personal_volume: d!(100.0),
                 group_volume: d!(0.0),
-                max_group_volume_per_leg: f64::MAX,
+                max_group_volume_per_leg: AuthoredDec::ZERO,
                 max_group_volume_per_leg_fraction: d!(0.0),
                 min_retail_volume: d!(0.0),
                 distributor_count: dc,
@@ -738,7 +741,7 @@ mod tests {
             // Only personal volume is randomized; status and order activity
             // are held constant so order is the lone varying dimension.
             let prim = |pv: u32| DistributorPrimitives {
-                personal_volume: pv as f64,
+                personal_volume: pv.to_string().parse().unwrap(),
                 retail_volume: d!(0.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
@@ -749,7 +752,7 @@ mod tests {
             distributors.insert(b, prim(pv_b));
             distributors.insert(c, prim(pv_c));
 
-            let volume_index = VolumeIndex::build(&[]);
+            let volume_index = VolumeIndex::build(&[]).unwrap();
 
             // Every ordering of the three distributors must converge to the
             // same fixpoint. Six permutations is exhaustive for three users.

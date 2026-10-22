@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;
 
 use crate::config::{CompensationPlan, StreamlineStructureConfig};
+use crate::decimal::{AuthoredDec, Dec};
 use crate::streamline::StreamlineEngine;
 
 use super::types::{
@@ -17,10 +18,10 @@ use super::{walk, walk_order};
 /// Calculate streamline commissions across all active streams.
 ///
 /// Rejects an invalid dynamic-compression config, a snapshot naming a rank the
-/// plan does not define, a snapshot whose personal_volume is negative or not
-/// finite, and a stream member with no snapshot, frozen streams included. Also
-/// rejects volume it cannot pay: a source with a non-finite or negative CV
-/// amount, or a source held by no stream. A source held only by a frozen stream
+/// plan does not define, a snapshot whose personal_volume is negative, and a
+/// stream member with no snapshot, frozen streams included. Also rejects volume
+/// it cannot pay: a source with a negative CV amount, or a source held by no
+/// stream. A source held only by a frozen stream
 /// is accepted and earns nothing.
 ///
 /// Each unfrozen stream is walked independently. Dynamic compression
@@ -121,7 +122,7 @@ pub fn calculate_streamline(
     for level in &structure.streamline_commission.levels {
         level_rates.insert(level.level, level.percent);
     }
-    let mut rate_table: BTreeMap<String, BTreeMap<u8, f64>> = BTreeMap::new();
+    let mut rate_table: BTreeMap<String, BTreeMap<u8, AuthoredDec>> = BTreeMap::new();
     for rank in &plan.ranks {
         rate_table.insert(rank.name.clone(), level_rates.clone());
     }
@@ -163,8 +164,8 @@ pub fn calculate_streamline(
 
         let config = walk::LevelWalkConfig {
             max_depth,
-            broad_pct: 1.0,
-            multiplier,
+            broad_pct: Dec::ONE,
+            multiplier: multiplier.dec(),
             compression: None,
             threshold_ordinal: None,
             rank_ordinals: &rank_ordinals,
@@ -260,7 +261,7 @@ mod tests {
         test_helpers::make_rank(name, ordinal, vec!["test_streamline".to_string()])
     }
 
-    fn level(n: u8, min_rank: &str, percent: f64) -> StreamlineLevel {
+    fn level(n: u8, min_rank: &str, percent: AuthoredDec) -> StreamlineLevel {
         StreamlineLevel {
             level: n,
             min_rank: min_rank.to_string(),
@@ -494,7 +495,7 @@ mod tests {
         // Assert the shape, not the count. Ungated, the walk pays 4, 3 and 2 —
         // also three earnings, so a length check passes either way and never
         // sees the compression this test is named for.
-        let shape: Vec<(Uuid, u8, Option<f64>)> = earnings
+        let shape: Vec<(Uuid, u8, Option<Dec>)> = earnings
             .iter()
             .map(|e| (e.earner_id, e.level, e.rate))
             .collect();
@@ -767,7 +768,7 @@ mod tests {
     }
 
     #[test]
-    fn calculate_streamline_rejects_a_nan_personal_volume() {
+    fn calculate_streamline_rejects_a_negative_personal_volume() {
         let engine = make_engine(5);
         let structure = make_structure(
             vec![
@@ -796,7 +797,7 @@ mod tests {
                 },
             );
         }
-        snapshots.get_mut(&test_uuid(1)).unwrap().personal_volume = f64::NAN;
+        snapshots.get_mut(&test_uuid(1)).unwrap().personal_volume = d!(-0.5);
 
         let volume = vec![VolumeSource {
             source_id: test_uuid(5),
@@ -817,7 +818,7 @@ mod tests {
             matches!(
                 err,
                 CalculationError::InvalidPersonalVolume(id, pv)
-                    if id == test_uuid(1) && pv.is_nan()
+                    if id == test_uuid(1) && pv == d!(-0.5)
             ),
             "got {err:?}"
         );
@@ -1095,7 +1096,7 @@ mod tests {
         // calculate_streamline ends with walk_order::assemble, which sorts by
         // (earner_id, source_id, level, walk). test_uuid puts the index in the
         // leading byte, so the earners come back ascending: 1, 2, 4.
-        let shape: Vec<(Uuid, u8, Option<f64>)> = from_shuffled
+        let shape: Vec<(Uuid, u8, Option<Dec>)> = from_shuffled
             .iter()
             .map(|e| (e.earner_id, e.level, e.rate))
             .collect();
@@ -1291,7 +1292,7 @@ mod tests {
         let (engine, plan, structure, snapshots) = validation_fixture();
         let volume = vec![VolumeSource {
             source_id: test_uuid(99),
-            cv_amount: f64::NAN,
+            cv_amount: d!(-1.0),
         }];
 
         let result = calculate_streamline(
@@ -1333,7 +1334,7 @@ mod tests {
         );
     }
 
-    fn earnings_from_member_three(engine: &StreamlineEngine) -> Vec<(Uuid, Uuid, u8, f64)> {
+    fn earnings_from_member_three(engine: &StreamlineEngine) -> Vec<(Uuid, Uuid, u8, Dec)> {
         let structure = make_structure(vec![level(1, "associate", d!(0.10))], 5);
         let plan = test_helpers::build_test_plan(
             test_helpers::default_eligibility(),
@@ -1488,7 +1489,7 @@ mod tests {
     }
 
     /// Faults resolve per source in input order, not per check across the
-    /// slice. The first source's tree fault must beat the second source's NaN.
+    /// slice. The first source's tree fault must beat the second source's negative CV.
     #[test]
     fn faults_resolve_per_source_in_input_order() {
         let (engine, plan, structure, snapshots) = validation_fixture();
@@ -1499,7 +1500,7 @@ mod tests {
             },
             VolumeSource {
                 source_id: test_uuid(3),
-                cv_amount: f64::NAN,
+                cv_amount: d!(-1.0),
             },
         ];
 
@@ -1530,7 +1531,7 @@ mod tests {
             },
             VolumeSource {
                 source_id: test_uuid(4),
-                cv_amount: f64::NAN,
+                cv_amount: d!(-1.0),
             },
         ];
 

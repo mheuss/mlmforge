@@ -5,6 +5,7 @@
 //! who don't meet their level's rank threshold. Higher ranks can unlock
 //! additional streams, each an independent commission chain.
 
+use crate::decimal::AuthoredDec;
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -21,7 +22,7 @@ use serde::{Deserialize, Serialize};
 pub struct StreamlineCommissionConfig {
     /// Per-structure CV override. None uses the plan-level multiplier
     /// from `VolumeConfig`.
-    pub volume_to_dollar_multiplier: Option<f64>,
+    pub volume_to_dollar_multiplier: Option<AuthoredDec>,
 
     /// Maximum chain depth for commission payments.
     #[serde(rename = "commissionable_depth")]
@@ -71,7 +72,7 @@ pub struct StreamlineLevel {
     /// 0.05 level on 100 CV at multiplier 1.0 pays 5.00.
     /// `CompensationPlan::validate` rejects out-of-range values on
     /// the `load_plan` path (HEU-517).
-    pub percent: f64,
+    pub percent: AuthoredDec,
 }
 
 /// Multi-stream configuration for streamline plans.

@@ -1,7 +1,7 @@
 mod common;
 use common::{
     build_matrix_plan, build_matrix_plan_with_eligibility, build_two_rank_matrix_plan, cents,
-    member_snapshot, uuid_from_index,
+    member_snapshot, uuid_from_index, whole,
 };
 
 use network_engine::commission::{
@@ -11,6 +11,7 @@ use network_engine::config::commission::{CompressionConfig, CompressionMode};
 use network_engine::config::eligibility::CommissionEligibility;
 use network_engine::config::matrix::SpilloverDirection;
 use network_engine::d;
+use network_engine::decimal::Dec;
 use network_engine::tree::matrix::MatrixTree;
 use proptest::prelude::*;
 use std::collections::HashMap;
@@ -65,7 +66,7 @@ proptest! {
         let (plan, structure) = build_matrix_plan(3, 9, 5);
         let broad_pct = structure.level_commission.broad_commission_percent;
         let multiplier = plan.volume.volume_to_dollar_multiplier;
-        let rate: f64 = d!(0.05);
+        let rate: Dec = d!(0.05);
 
         let mut tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
         tree.add_root(uuid_from_index(0), 0).unwrap();
@@ -89,10 +90,16 @@ proptest! {
         let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         prop_assert_eq!(result.len(), 1);
-        let expected = cv * broad_pct * multiplier * rate;
-        let diff = (result[0].dollar_amount - expected).abs();
+        let expected = cv
+            .dec()
+            .try_mul(broad_pct)
+            .unwrap()
+            .try_mul(multiplier)
+            .unwrap()
+            .try_mul(rate)
+            .unwrap();
         prop_assert!(
-            diff < 1e-10,
+            result[0].dollar_amount == expected,
             "Dollar amount {} != expected {}",
             result[0].dollar_amount,
             expected
@@ -250,7 +257,7 @@ proptest! {
         let (plan, structure) = build_matrix_plan(3, 9, 5);
         let broad_pct = structure.level_commission.broad_commission_percent;
         let multiplier = plan.volume.volume_to_dollar_multiplier;
-        let max_rate: f64 = d!(0.05);
+        let max_rate: Dec = d!(0.05);
         let effective_depth = structure.level_commission.max_depth
             .min(structure.matrix_params.height);
 
@@ -281,10 +288,19 @@ proptest! {
 
         let result = calculate_matrix(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
-        let total: f64 = result.iter().map(|e| e.dollar_amount).sum();
-        let upper_bound = cv * broad_pct * multiplier * max_rate * (effective_depth as f64);
+        let total = Dec::sum(result.iter().map(|e| e.dollar_amount)).unwrap();
+        let upper_bound = cv
+            .dec()
+            .try_mul(broad_pct)
+            .unwrap()
+            .try_mul(multiplier)
+            .unwrap()
+            .try_mul(max_rate)
+            .unwrap()
+            .try_mul(whole::<Dec>(effective_depth))
+            .unwrap();
         prop_assert!(
-            total <= upper_bound + 1e-10,
+            total <= upper_bound,
             "Total payout {} exceeds upper bound {}",
             total, upper_bound
         );

@@ -5,6 +5,7 @@
 //! the two legs. Two calculation modes exist: percentage-based pairing
 //! (modern) and fixed-amount cycle/step (legacy).
 
+use crate::decimal::AuthoredDec;
 use serde::{Deserialize, Serialize};
 
 /// Binary commission configuration.
@@ -16,7 +17,7 @@ use serde::{Deserialize, Serialize};
 pub struct BinaryCommissionConfig {
     /// Per-structure CV override. None uses the plan-level multiplier
     /// from `VolumeConfig`.
-    pub volume_to_dollar_multiplier: Option<f64>,
+    pub volume_to_dollar_multiplier: Option<AuthoredDec>,
 
     /// Pairing or cycle/step. The two modes are mutually exclusive.
     pub mode: BinaryCommissionMode,
@@ -55,7 +56,7 @@ pub struct PairingConfig {
     ///
     /// Typical range 10-12%. Applied after leg volumes are matched
     /// according to the `calculation` method.
-    pub percent: f64,
+    pub percent: AuthoredDec,
 
     /// How to determine the payout amount from leg volumes.
     pub calculation: PairingCalculation,
@@ -64,7 +65,7 @@ pub struct PairingConfig {
     ///
     /// Protects the company from outsized payouts in a single period.
     /// Applied after the pairing calculation.
-    pub cap_per_period: Option<f64>,
+    pub cap_per_period: Option<AuthoredDec>,
 
     /// What happens to leg volumes after the commission run.
     ///
@@ -77,7 +78,7 @@ pub struct PairingConfig {
     /// Only applies when `volume_after_payout` is `carry_forward`.
     /// None means unlimited carry. Prevents excessive accumulation
     /// on the stronger leg.
-    pub carry_forward_cap: Option<f64>,
+    pub carry_forward_cap: Option<AuthoredDec>,
 
     /// How caps apply when one owner has multiple positions.
     /// Defaults to PerPosition. Only meaningful when ownership map
@@ -180,14 +181,14 @@ pub struct CycleStepConfig {
     ///
     /// Applied after all cycles are calculated. Limits total CycleStep
     /// earnings for a single position in one period.
-    pub cap_per_period: Option<f64>,
+    pub cap_per_period: Option<AuthoredDec>,
 
     /// Maximum volume that can carry forward into the next period.
     ///
     /// Applied when computing next-period carry-forward state,
     /// regardless of `volume_after_cycle`. None means unlimited carry.
     /// Prevents excessive accumulation on either leg.
-    pub carry_forward_cap: Option<f64>,
+    pub carry_forward_cap: Option<AuthoredDec>,
 
     /// How caps apply when one owner has multiple positions.
     /// Defaults to PerPosition. Only meaningful when ownership map
@@ -203,10 +204,10 @@ pub struct CycleStepConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CycleStep {
     /// Volume threshold that must be met on both legs.
-    pub threshold: f64,
+    pub threshold: AuthoredDec,
 
     /// Fixed dollar amount paid when the threshold is reached.
-    pub amount: f64,
+    pub amount: AuthoredDec,
 }
 
 impl CycleStepConfig {
@@ -222,17 +223,16 @@ impl CycleStepConfig {
         }
 
         for step in &self.steps {
-            if !step.threshold.is_finite() || step.threshold <= 0.0 {
-                return Err("step threshold must be positive and finite".into());
+            if step.threshold <= AuthoredDec::ZERO {
+                return Err("step threshold must be positive".into());
             }
-            if !step.amount.is_finite() || step.amount <= 0.0 {
-                return Err("step amount must be positive and finite".into());
+            if step.amount <= AuthoredDec::ZERO {
+                return Err("step amount must be positive".into());
             }
         }
 
         // Sort before duplicate check so adjacent comparison works.
-        self.steps
-            .sort_by(|a, b| a.threshold.total_cmp(&b.threshold));
+        self.steps.sort_by_key(|a| a.threshold);
 
         for pair in self.steps.windows(2) {
             if pair[0].threshold == pair[1].threshold {
@@ -247,14 +247,14 @@ impl CycleStepConfig {
         }
 
         if let Some(cap) = self.cap_per_period {
-            if cap < 0.0 || !cap.is_finite() {
-                return Err("cap_per_period must be non-negative and finite".into());
+            if cap.is_negative() {
+                return Err("cap_per_period must be non-negative".into());
             }
         }
 
         if let Some(cap) = self.carry_forward_cap {
-            if cap < 0.0 || !cap.is_finite() {
-                return Err("carry_forward_cap must be non-negative and finite".into());
+            if cap.is_negative() {
+                return Err("carry_forward_cap must be non-negative".into());
             }
         }
 
@@ -468,10 +468,7 @@ mod tests {
             VolumeAfterPayout::FullFlush,
         );
         let result = config.validate();
-        assert_eq!(
-            result.unwrap_err(),
-            "step threshold must be positive and finite"
-        );
+        assert_eq!(result.unwrap_err(), "step threshold must be positive");
     }
 
     #[test]
@@ -484,10 +481,7 @@ mod tests {
             VolumeAfterPayout::FullFlush,
         );
         let result = config.validate();
-        assert_eq!(
-            result.unwrap_err(),
-            "step amount must be positive and finite"
-        );
+        assert_eq!(result.unwrap_err(), "step amount must be positive");
     }
 
     #[test]

@@ -5,6 +5,7 @@
 //! leader meets a rank threshold. The earning depth grows as leaders
 //! build leaders. There is no fixed depth limit.
 
+use crate::decimal::AuthoredDec;
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -47,7 +48,7 @@ pub struct GenerationCommissionConfig {
         rename = "generation_rates",
         deserialize_with = "crate::serde_helpers::u8_keyed_map"
     )]
-    pub rates: BTreeMap<u8, f64>,
+    pub rates: BTreeMap<u8, AuthoredDec>,
 
     /// How generation boundaries are determined.
     pub boundary_mode: GenerationBoundaryMode,
@@ -70,7 +71,7 @@ pub struct GenerationCommissionConfig {
 
     /// Per-structure CV override. None uses the plan-level multiplier
     /// from `VolumeConfig`.
-    pub volume_to_dollar_multiplier: Option<f64>,
+    pub volume_to_dollar_multiplier: Option<AuthoredDec>,
 
     /// Whether ineligible boundary-rank distributors still create generation
     /// boundaries.

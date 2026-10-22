@@ -1,5 +1,6 @@
 //! Public types for rank evaluation inputs, outputs, and errors.
 
+use crate::decimal::AuthoredDec;
 use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
@@ -43,11 +44,11 @@ pub struct EvaluationInputs {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DistributorPrimitives {
     /// Personal volume generated this period.
-    pub personal_volume: f64,
+    pub personal_volume: AuthoredDec,
 
     /// Volume generated specifically from retail customers.
     /// Used by `StructureQualification.min_retail_volume`.
-    pub retail_volume: f64,
+    pub retail_volume: AuthoredDec,
 
     /// Distributor's status this period (e.g., "active", "suspended").
     pub status: String,

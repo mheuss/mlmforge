@@ -5,6 +5,7 @@
 //! CapsConfig protects the company and distributors through per-distributor
 //! and company-wide payout limits.
 
+use crate::decimal::AuthoredDec;
 use serde::{Deserialize, Serialize};
 
 /// Payout configuration.
@@ -26,7 +27,7 @@ pub struct PayoutConfig {
     /// Commissions below this threshold roll over to the next period.
     /// Prevents micro-payouts that cost more to process than they're worth.
     #[serde(rename = "minimum_amount")]
-    pub minimum_payout: f64,
+    pub minimum_payout: AuthoredDec,
 
     /// When true, distributors can request partial payouts above the minimum.
     ///
@@ -57,7 +58,7 @@ pub struct PayoutMethod {
     ///
     /// Interpretation (flat vs. percentage) is company-defined.
     /// Applied when this payment method is selected for disbursement.
-    pub fee: f64,
+    pub fee: AuthoredDec,
 }
 
 /// Commission cap configuration.
@@ -72,14 +73,14 @@ pub struct CapsConfig {
     /// None means uncapped. When set, no distributor can earn more than
     /// this amount in a single commission period.
     #[serde(rename = "per_distributor_per_period")]
-    pub per_distributor_cap: Option<f64>,
+    pub per_distributor_cap: Option<AuthoredDec>,
 
     /// Maximum percentage of company volume paid as commissions.
     ///
     /// Industry standard is 40-45%. If total commissions exceed this
     /// percentage of total company volume, the enforcement strategy
     /// determines how to reduce payouts.
-    pub company_payout_cap_percent: f64,
+    pub company_payout_cap_percent: AuthoredDec,
 
     /// How caps are enforced when exceeded.
     #[serde(rename = "cap_enforcement")]

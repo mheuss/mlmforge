@@ -1,5 +1,6 @@
 //! Result and event types for board plan operations.
 
+use crate::decimal::Dec;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -129,7 +130,7 @@ pub struct BoardCycleEarning {
     pub board_id: Uuid,
 
     /// Dollar amount earned.
-    pub dollar_amount: f64,
+    pub dollar_amount: Dec,
 
     /// Which cycle number this is for the member in the current period.
     pub cycle_number: u32,

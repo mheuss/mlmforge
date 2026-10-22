@@ -1,6 +1,7 @@
 //! Serde helpers shared by the plan config types and the worker's request
 //! params.
 
+use crate::decimal::AuthoredDec;
 use std::collections::BTreeMap;
 
 /// Deserializes a value, reading an explicit JSON `null` as `T::default()`.
@@ -60,7 +61,7 @@ where
 /// Serde's map visitor collapses that to the last value before this function
 /// sees it, so the collision is already gone. Go's `encoding/json` does the
 /// same, so both sides agree — but do not read the check below as covering it.
-fn parse_u8_keys<E>(raw: BTreeMap<String, f64>) -> Result<BTreeMap<u8, f64>, E>
+fn parse_u8_keys<E>(raw: BTreeMap<String, AuthoredDec>) -> Result<BTreeMap<u8, AuthoredDec>, E>
 where
     E: serde::de::Error,
 {
@@ -86,7 +87,7 @@ where
     Ok(out)
 }
 
-/// Deserializes a `BTreeMap<u8, f64>` from JSON string keys.
+/// Deserializes a `BTreeMap<u8, AuthoredDec>` from JSON string keys.
 ///
 /// JSON object keys are always strings. Reading them into `BTreeMap<u8, _>`
 /// directly works only on `serde_json`'s native path, which coerces string keys
@@ -97,11 +98,12 @@ where
 ///
 /// See `config/mod.rs` on `StructureConfig` for why the buffer gets used, and
 /// UC-NET-007 in `docs/use-cases/network-engine.md`.
-pub(crate) fn u8_keyed_map<'de, D>(deserializer: D) -> Result<BTreeMap<u8, f64>, D::Error>
+pub(crate) fn u8_keyed_map<'de, D>(deserializer: D) -> Result<BTreeMap<u8, AuthoredDec>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let string_keyed = <BTreeMap<String, f64> as serde::Deserialize>::deserialize(deserializer)?;
+    let string_keyed =
+        <BTreeMap<String, AuthoredDec> as serde::Deserialize>::deserialize(deserializer)?;
     parse_u8_keys::<D::Error>(string_keyed)
 }
 
@@ -113,29 +115,31 @@ where
 /// at the outer field.
 pub(crate) fn rank_keyed_u8_map<'de, D>(
     deserializer: D,
-) -> Result<BTreeMap<String, BTreeMap<u8, f64>>, D::Error>
+) -> Result<BTreeMap<String, BTreeMap<u8, AuthoredDec>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let raw =
-        <BTreeMap<String, BTreeMap<String, f64>> as serde::Deserialize>::deserialize(deserializer)?;
+    let raw = <BTreeMap<String, BTreeMap<String, AuthoredDec>> as serde::Deserialize>::deserialize(
+        deserializer,
+    )?;
     raw.into_iter()
         .map(|(rank, rates)| parse_u8_keys::<D::Error>(rates).map(|parsed| (rank, parsed)))
         .collect()
 }
 
-/// Deserializes an optional `BTreeMap<u8, f64>` from JSON string keys.
+/// Deserializes an optional `BTreeMap<u8, AuthoredDec>` from JSON string keys.
 ///
 /// Same reasoning as [`u8_keyed_map`]. Pair it with `#[serde(default)]` at the
 /// call site: `deserialize_with` disables serde's built-in "absent `Option` is
 /// `None`" handling, and without `default` the field silently becomes required.
 pub(crate) fn optional_u8_keyed_map<'de, D>(
     deserializer: D,
-) -> Result<Option<BTreeMap<u8, f64>>, D::Error>
+) -> Result<Option<BTreeMap<u8, AuthoredDec>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let raw = <Option<BTreeMap<String, f64>> as serde::Deserialize>::deserialize(deserializer)?;
+    let raw =
+        <Option<BTreeMap<String, AuthoredDec>> as serde::Deserialize>::deserialize(deserializer)?;
     raw.map(parse_u8_keys::<D::Error>).transpose()
 }
 
@@ -149,13 +153,13 @@ mod tests {
     #[derive(Debug, Deserialize)]
     struct Flat {
         #[serde(deserialize_with = "u8_keyed_map")]
-        rates: BTreeMap<u8, f64>,
+        rates: BTreeMap<u8, AuthoredDec>,
     }
 
     #[derive(Debug, Deserialize)]
     struct Nested {
         #[serde(deserialize_with = "rank_keyed_u8_map")]
-        table: BTreeMap<String, BTreeMap<u8, f64>>,
+        table: BTreeMap<String, BTreeMap<u8, AuthoredDec>>,
     }
 
     // `default` is mandatory alongside `deserialize_with` on an Option field.
@@ -164,7 +168,7 @@ mod tests {
     #[derive(Debug, Deserialize)]
     struct Optional {
         #[serde(default, deserialize_with = "optional_u8_keyed_map")]
-        rates: Option<BTreeMap<u8, f64>>,
+        rates: Option<BTreeMap<u8, AuthoredDec>>,
     }
 
     #[test]

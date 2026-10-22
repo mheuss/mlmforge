@@ -472,11 +472,7 @@ pub(crate) fn handle_board_calculate_commissions(
     request: &Request,
 ) -> Response {
     // Config comes from the plan validated by handle_load_plan, never from
-    // request params (HEU-603, design rationale 028). BoardPlanConfig::validate
-    // checks exactly one thing: cycle_commission is finite and non-negative.
-    // Only the negative half is reachable from a request. JSON carries no NaN
-    // literal and serde_json rejects float overflow, so a wire value is always
-    // finite. The non-finite guard covers in-process construction.
+    // request params (HEU-603, design rationale 028).
     //
     // Unlike the six sibling handlers this one never reads state.trees. Cycle
     // events arrive on the request, so a tree lookup would add a precondition

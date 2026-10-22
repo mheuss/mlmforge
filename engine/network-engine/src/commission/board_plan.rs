@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::board_plan::types::{BoardCommissionResult, BoardCycleEarning, CycleEvent};
 use crate::config::board_plan::BoardPlanConfig;
+use crate::decimal::Dec;
 
 /// Calculate board cycle commissions for a set of cycle events.
 ///
@@ -33,7 +34,11 @@ pub fn calculate_board_commissions(
         *count += 1;
 
         let capped = *count > config.max_cycles_per_period;
-        let dollar_amount = if capped { 0.0 } else { config.cycle_commission };
+        let dollar_amount = if capped {
+            Dec::ZERO
+        } else {
+            config.cycle_commission.dec()
+        };
 
         earnings.push(BoardCycleEarning {
             earner_id: member,

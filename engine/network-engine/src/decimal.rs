@@ -369,6 +369,16 @@ impl Dec {
 impl AuthoredDec {
     pub const ZERO: AuthoredDec = AuthoredDec(Decimal::ZERO);
 
+    /// Wrap a `Decimal`, for constants built with `rust_decimal_macros::dec!`.
+    pub(crate) const fn new(value: Decimal) -> Self {
+        AuthoredDec(value)
+    }
+
+    /// Hold an engine-derived value in an authored field.
+    pub(crate) fn from_resolved(value: Dec) -> AuthoredDec {
+        AuthoredDec(value.0)
+    }
+
     /// The value as an engine decimal, for arithmetic.
     pub fn dec(self) -> Dec {
         Dec(self.0)
@@ -437,6 +447,42 @@ impl FromStr for AuthoredDec {
     fn from_str(text: &str) -> Result<AuthoredDec, ParseDecError> {
         let (value, written_scale) = parse_exact(text)?;
         AuthoredDec::within_envelope(value, written_scale, text)
+    }
+}
+
+fn serialize_normalized<S: serde::Serializer>(
+    value: Decimal,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    use serde::Serialize;
+    serde_json::Number::from_str(&value.normalize().to_string())
+        .map_err(serde::ser::Error::custom)?
+        .serialize(serializer)
+}
+
+impl serde::Serialize for Dec {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serialize_normalized(self.0, serializer)
+    }
+}
+
+impl serde::Serialize for AuthoredDec {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serialize_normalized(self.0, serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Dec {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Dec, D::Error> {
+        let number = serde_json::Number::deserialize(deserializer)?;
+        number.as_str().parse().map_err(serde::de::Error::custom)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for AuthoredDec {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<AuthoredDec, D::Error> {
+        let number = serde_json::Number::deserialize(deserializer)?;
+        number.as_str().parse().map_err(serde::de::Error::custom)
     }
 }
 
@@ -1030,5 +1076,84 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize, Debug)]
+    #[serde(tag = "type", rename_all = "snake_case")]
+    enum Tagged {
+        Rate { value: AuthoredDec },
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq)]
+    struct Carried {
+        left: Dec,
+        right: Option<Dec>,
+    }
+
+    #[test]
+    fn a_newtype_inside_a_tagged_enum_reads_its_exact_text() {
+        let tagged: Tagged = serde_json::from_str(r#"{"value":1.50,"type":"rate"}"#).unwrap();
+        assert_eq!(
+            serde_json::to_string(&tagged).unwrap(),
+            r#"{"type":"rate","value":1.5}"#
+        );
+    }
+
+    #[test]
+    fn output_is_the_normalized_bare_number() {
+        let carried: Carried = serde_json::from_str(r#"{"left":2.000000,"right":-0.0}"#).unwrap();
+        assert_eq!(
+            serde_json::to_string(&carried).unwrap(),
+            r#"{"left":2,"right":0}"#
+        );
+    }
+
+    #[test]
+    fn a_quoted_number_is_refused() {
+        let err = serde_json::from_str::<Carried>(r#"{"left":"2","right":null}"#).unwrap_err();
+        assert!(err.to_string().contains("invalid type: string"), "{err}");
+        let err = serde_json::from_str::<Tagged>(r#"{"type":"rate","value":"2"}"#).unwrap_err();
+        assert!(err.to_string().contains("invalid type: string"), "{err}");
+    }
+
+    #[test]
+    fn authored_values_at_the_envelope_edges_round_trip_on_the_wire() {
+        for text in [
+            r#"{"type":"rate","value":999999999999999.9999999999}"#,
+            r#"{"type":"rate","value":-999999999999999.9999999999}"#,
+            r#"{"type":"rate","value":0.0000000001}"#,
+        ] {
+            let tagged: Tagged = serde_json::from_str(text).unwrap();
+            assert_eq!(serde_json::to_string(&tagged).unwrap(), text);
+        }
+    }
+
+    #[test]
+    fn an_authored_value_outside_the_envelope_is_refused_on_the_wire() {
+        let err = serde_json::from_str::<Tagged>(r#"{"type":"rate","value":1e15}"#).unwrap_err();
+        assert!(err.to_string().contains("below 10^15"), "{err}");
+    }
+
+    #[test]
+    fn an_over_precise_carried_value_is_refused_not_rounded() {
+        let err = serde_json::from_str::<Carried>(
+            r#"{"left":0.00000000000000000000000000001,"right":null}"#,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("more than 28 decimal places"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_wide_exact_number_round_trips_through_a_value() {
+        let value: serde_json::Value =
+            serde_json::from_str(r#"{"left":123456789012345678.123456789,"right":null}"#).unwrap();
+        let carried: Carried = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            serde_json::to_string(&carried).unwrap(),
+            r#"{"left":123456789012345678.123456789,"right":null}"#
+        );
     }
 }

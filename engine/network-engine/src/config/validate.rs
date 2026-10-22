@@ -12,8 +12,8 @@
 //! Scope is deliberately the money-path invariants the calculators assume, not
 //! a field-by-field mirror of the JSON schema — that contract is HEU-513
 //! codegen territory. Concretely: commission percents in `[0, 1]`, CV-to-dollar
-//! multipliers finite and positive, per-period caps and per-leg rank caps
-//! finite and non-negative, breakaway tiers non-empty and `<= 255`, matrix
+//! multipliers positive, per-period caps and per-leg rank caps non-negative,
+//! breakaway tiers non-empty and `<= 255`, matrix
 //! parameters the engine can actually run (`width >= 2`, breadth-first
 //! spillover only), and structure names unique across the plan so name-based
 //! lookup is unambiguous.
@@ -46,23 +46,22 @@ use super::stairstep::{BreakawayConfig, MinOverride, OverrideMode, OverrideStrat
 use super::streamline::StreamlineCommissionConfig;
 use super::volume::VolumeConfig;
 use super::{CompensationPlan, StructureConfig};
+use crate::decimal::{AuthoredDec, Dec};
 
 // --- numeric helpers ------------------------------------------------------
 
-/// A value that must be a fraction: finite and within `[0, 1]`.
-fn check_fraction(field: &str, v: f64) -> Result<(), String> {
-    if !v.is_finite() || !(0.0..=1.0).contains(&v) {
+/// A value that must be a fraction within `[0, 1]`.
+fn check_fraction(field: &str, v: AuthoredDec) -> Result<(), String> {
+    if v.is_negative() || v.dec() > Dec::ONE {
         return Err(format!("{field} must be a fraction in [0.0, 1.0], got {v}"));
     }
     Ok(())
 }
 
 /// A multiplier or threshold that must be strictly positive.
-fn check_positive(field: &str, v: f64) -> Result<(), String> {
-    if !v.is_finite() || v <= 0.0 {
-        return Err(format!(
-            "{field} must be finite and greater than 0, got {v}"
-        ));
+fn check_positive(field: &str, v: AuthoredDec) -> Result<(), String> {
+    if v <= AuthoredDec::ZERO {
+        return Err(format!("{field} must be greater than 0, got {v}"));
     }
     Ok(())
 }
@@ -76,9 +75,9 @@ fn check_min_override(v: &MinOverride) -> Result<(), String> {
 }
 
 /// A monetary amount or cap that may be zero but not negative.
-fn check_non_negative(field: &str, v: f64) -> Result<(), String> {
-    if !v.is_finite() || v < 0.0 {
-        return Err(format!("{field} must be finite and non-negative, got {v}"));
+fn check_non_negative(field: &str, v: AuthoredDec) -> Result<(), String> {
+    if v.is_negative() {
+        return Err(format!("{field} must be non-negative, got {v}"));
     }
     Ok(())
 }
@@ -87,15 +86,15 @@ fn check_non_negative(field: &str, v: f64) -> Result<(), String> {
 /// an unset optional multiplier passes. Every commission fixture leaves the
 /// per-structure `volume_to_dollar_multiplier` null, so treating `None` as a
 /// failure would reject every real plan.
-fn check_optional_positive(field: &str, v: Option<f64>) -> Result<(), String> {
+fn check_optional_positive(field: &str, v: Option<AuthoredDec>) -> Result<(), String> {
     match v {
         Some(x) => check_positive(field, x),
         None => Ok(()),
     }
 }
 
-/// Optional cap: absent is fine, present must be finite and non-negative.
-fn check_optional_non_negative(field: &str, v: Option<f64>) -> Result<(), String> {
+/// Optional cap: absent is fine, present must be non-negative.
+fn check_optional_non_negative(field: &str, v: Option<AuthoredDec>) -> Result<(), String> {
     match v {
         Some(x) => check_non_negative(field, x),
         None => Ok(()),
@@ -204,7 +203,7 @@ impl CompensationPlan {
                 ("group_volume", group_volume),
                 ("min_retail_volume", min_retail_volume),
             ] {
-                if *value != 0.0 {
+                if !value.is_zero() {
                     return refuse(format!("sets {field} {value} on structure '{structure}'"));
                 }
             }
@@ -231,7 +230,9 @@ impl CompensationPlan {
                     &format!("{at} max_group_volume_per_leg_fraction"),
                     sq.max_group_volume_per_leg_fraction,
                 )?;
-                if sq.max_group_volume_per_leg > 0.0 && sq.max_group_volume_per_leg_fraction > 0.0 {
+                if sq.max_group_volume_per_leg > AuthoredDec::ZERO
+                    && sq.max_group_volume_per_leg_fraction > AuthoredDec::ZERO
+                {
                     return Err(format!(
                         "{at} sets both max_group_volume_per_leg and max_group_volume_per_leg_fraction"
                     ));
@@ -553,7 +554,7 @@ impl BreakawayConfig {
 impl BoardPlanConfig {
     fn validate(&self) -> Result<(), String> {
         // A cycle pays this fixed amount on cycle-out (the board dollar law,
-        // HEU-530); a negative or non-finite value would mint or corrupt money.
+        // HEU-530); a negative value would mint or corrupt money.
         check_non_negative("cycle_commission", self.cycle_commission)
     }
 }
@@ -609,16 +610,13 @@ mod tests {
         assert!(check_fraction("f", d!(0.5)).is_ok());
         assert!(check_fraction("f", d!(-0.01)).is_err());
         assert!(check_fraction("f", d!(1.01)).is_err());
-        assert!(check_fraction("f", f64::NAN).is_err());
-        assert!(check_fraction("f", f64::INFINITY).is_err());
     }
 
     #[test]
-    fn positive_rejects_zero_negative_and_nonfinite() {
+    fn positive_rejects_zero_and_negative() {
         assert!(check_positive("m", d!(0.001)).is_ok());
         assert!(check_positive("m", d!(0.0)).is_err());
         assert!(check_positive("m", d!(-1.0)).is_err());
-        assert!(check_positive("m", f64::NAN).is_err());
     }
 
     #[test]
@@ -630,7 +628,6 @@ mod tests {
         assert!(check_non_negative("c", d!(0.0)).is_ok());
         assert!(check_non_negative("c", d!(10.0)).is_ok());
         assert!(check_non_negative("c", d!(-0.01)).is_err());
-        assert!(check_non_negative("c", f64::INFINITY).is_err());
     }
 
     #[test]
@@ -643,7 +640,11 @@ mod tests {
 
     // --- representative type validators ---
 
-    fn level_config(broad: f64, multiplier: Option<f64>, rate: f64) -> LevelCommissionConfig {
+    fn level_config(
+        broad: AuthoredDec,
+        multiplier: Option<AuthoredDec>,
+        rate: AuthoredDec,
+    ) -> LevelCommissionConfig {
         let mut inner = BTreeMap::new();
         inner.insert(1u8, rate);
         let mut rate_table = BTreeMap::new();
@@ -1220,10 +1221,6 @@ mod tests {
                 "sets min_retail_volume 10 on structure 'main'",
             ),
             (
-                |r| r.qualification.structures[0].personal_volume = f64::NAN,
-                "sets personal_volume NaN on structure 'main'",
-            ),
-            (
                 |r| {
                     r.qualification.structures[0].distributor_count =
                         Some(DistributorCountRequirement {
@@ -1345,20 +1342,15 @@ mod tests {
     // --- per-leg cap ---
 
     #[test]
-    fn plan_rejects_a_per_leg_cap_that_is_negative_or_not_finite() {
-        for (value, shown) in [
-            (d!(-1.0), "-1"),
-            (f64::NAN, "NaN"),
-            (f64::INFINITY, "inf"),
-            (f64::NEG_INFINITY, "-inf"),
-        ] {
+    fn plan_rejects_a_per_leg_cap_that_is_negative() {
+        for (value, shown) in [(d!(-1.0), "-1"), (d!(-0.01), "-0.01")] {
             let mut plan = plan_with_two_ranks();
             let mut entry = zero_threshold("main");
             entry.max_group_volume_per_leg = value;
             plan.ranks[1].qualification.structures = vec![entry];
             let err = plan.validate().unwrap_err();
             let want = format!(
-                "rank 'gold' structure 'main' max_group_volume_per_leg must be finite and non-negative, got {shown}"
+                "rank 'gold' structure 'main' max_group_volume_per_leg must be non-negative, got {shown}"
             );
             assert!(err.contains(&want), "expected {want:?}, got: {err}");
         }
@@ -1372,7 +1364,7 @@ mod tests {
         plan.ranks[1].qualification.structures = vec![zero_threshold("main"), second];
         let err = plan.validate().unwrap_err();
         assert!(
-            err.contains("rank 'gold' structure 'second' max_group_volume_per_leg must be finite and non-negative, got -1"),
+            err.contains("rank 'gold' structure 'second' max_group_volume_per_leg must be non-negative, got -1"),
             "unexpected error: {err}"
         );
     }
@@ -1385,19 +1377,14 @@ mod tests {
         plan.ranks[0].qualification.structures = vec![entry];
         let err = plan.validate().unwrap_err();
         assert!(
-            err.contains("rank 'associate' structure 'main' max_group_volume_per_leg must be finite and non-negative, got -1"),
+            err.contains("rank 'associate' structure 'main' max_group_volume_per_leg must be non-negative, got -1"),
             "unexpected error: {err}"
         );
     }
 
     #[test]
-    fn plan_rejects_a_per_leg_cap_fraction_outside_zero_to_one_or_not_finite() {
-        for (value, shown) in [
-            (d!(-0.1), "-0.1"),
-            (d!(1.1), "1.1"),
-            (f64::NAN, "NaN"),
-            (f64::INFINITY, "inf"),
-        ] {
+    fn plan_rejects_a_per_leg_cap_fraction_outside_zero_to_one() {
+        for (value, shown) in [(d!(-0.1), "-0.1"), (d!(1.1), "1.1")] {
             let mut plan = plan_with_two_ranks();
             let mut entry = zero_threshold("main");
             entry.max_group_volume_per_leg_fraction = value;

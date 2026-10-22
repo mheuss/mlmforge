@@ -1,6 +1,6 @@
 mod common;
 
-use common::uuid_from_index;
+use common::{uuid_from_index, whole};
 use network_engine::config::rank::{
     DemotionPolicy, DistributorCountRequirement, LegPredicate, LegQualityRequirement,
     RankDefinition, RankQualification, RankQualificationWindow, SearchMode, StructureQualification,
@@ -8,6 +8,7 @@ use network_engine::config::rank::{
 };
 use network_engine::config::{CompensationPlan, StructureConfig, UnilevelStructureConfig};
 use network_engine::d;
+use network_engine::decimal::AuthoredDec;
 use network_engine::rank::{DistributorPrimitives, EvaluationInputs, evaluate_ranks};
 use network_engine::tree::navigator::TreeNavigator;
 use network_engine::tree::unilevel::UnilevelTree;
@@ -44,7 +45,7 @@ fn build_random_plan() -> CompensationPlan {
                     structure: "Test".to_string(),
                     personal_volume: d!(0.0),
                     group_volume: d!(0.0),
-                    max_group_volume_per_leg: f64::MAX,
+                    max_group_volume_per_leg: AuthoredDec::ZERO,
                     max_group_volume_per_leg_fraction: d!(0.0),
                     min_retail_volume: d!(0.0),
                     distributor_count: None,
@@ -65,7 +66,7 @@ fn build_random_plan() -> CompensationPlan {
                     structure: "Test".to_string(),
                     personal_volume: d!(100.0),
                     group_volume: d!(0.0),
-                    max_group_volume_per_leg: f64::MAX,
+                    max_group_volume_per_leg: AuthoredDec::ZERO,
                     max_group_volume_per_leg_fraction: d!(0.0),
                     min_retail_volume: d!(0.0),
                     distributor_count: None,
@@ -101,7 +102,7 @@ proptest! {
         let mut distributors = HashMap::new();
         for i in 0..size {
             distributors.insert(uuid_from_index(i), DistributorPrimitives {
-                personal_volume: (seed_pv as f64) + (i as f64),
+                personal_volume: whole(seed_pv as usize + i),
                 retail_volume: d!(0.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
@@ -147,14 +148,14 @@ proptest! {
         let mut distributors_high = HashMap::new();
         for i in 0..size {
             distributors_low.insert(uuid_from_index(i), DistributorPrimitives {
-                personal_volume: base_pv as f64,
+                personal_volume: whole(base_pv),
                 retail_volume: d!(0.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
                 active_products: vec![],
             });
             distributors_high.insert(uuid_from_index(i), DistributorPrimitives {
-                personal_volume: (base_pv + increase) as f64,
+                personal_volume: whole(base_pv + increase),
                 retail_volume: d!(0.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
@@ -218,7 +219,7 @@ proptest! {
         let mut b = HashMap::new();
         for i in 0..size {
             let p = DistributorPrimitives {
-                personal_volume: (seed_pv as f64) + (i as f64),
+                personal_volume: whole(seed_pv as usize + i),
                 retail_volume: d!(0.0),
                 status: "active".to_string(),
                 has_order_in_period: true,
@@ -305,7 +306,7 @@ proptest! {
         let rank = |name: &str,
                     ordinal: u16,
                     structure: &str,
-                    pv: f64,
+                    pv: AuthoredDec,
                     dc: Option<DistributorCountRequirement>| RankDefinition {
             name: name.to_string(),
             ordinal,
@@ -314,7 +315,7 @@ proptest! {
                     structure: structure.to_string(),
                     personal_volume: pv,
                     group_volume: d!(0.0),
-                    max_group_volume_per_leg: f64::MAX,
+                    max_group_volume_per_leg: AuthoredDec::ZERO,
                     max_group_volume_per_leg_fraction: d!(0.0),
                     min_retail_volume: d!(0.0),
                     distributor_count: dc,
@@ -337,7 +338,7 @@ proptest! {
         ];
 
         let prim = |pv: u32| DistributorPrimitives {
-            personal_volume: pv as f64,
+            personal_volume: whole(pv),
             retail_volume: d!(0.0),
             status: "active".to_string(),
             has_order_in_period: true,
@@ -365,7 +366,7 @@ proptest! {
 
 /// Builds `DistributorPrimitives` with the given personal volume. The other
 /// fields are fixed: active, with an order in the period.
-fn prim(pv: f64) -> DistributorPrimitives {
+fn prim(pv: AuthoredDec) -> DistributorPrimitives {
     DistributorPrimitives {
         personal_volume: pv,
         retail_volume: d!(0.0),
@@ -379,32 +380,33 @@ fn prim(pv: f64) -> DistributorPrimitives {
 /// requirement), `mid` (ordinal 2, PV >= `mid_pv`) and `gated` (ordinal 3,
 /// PV >= 0) which additionally requires `gated_leg_quality`.
 fn leg_quality_plan(
-    mid_pv: f64,
+    mid_pv: AuthoredDec,
     gated_leg_quality: Vec<LegQualityRequirement>,
 ) -> CompensationPlan {
-    let rank = |name: &str, ordinal: u16, pv: f64, leg_quality: Vec<LegQualityRequirement>| {
-        RankDefinition {
-            name: name.to_string(),
-            ordinal,
-            qualification: RankQualification {
-                structures: vec![StructureQualification {
-                    structure: "Test".to_string(),
-                    personal_volume: pv,
-                    group_volume: d!(0.0),
-                    max_group_volume_per_leg: f64::MAX,
-                    max_group_volume_per_leg_fraction: d!(0.0),
-                    min_retail_volume: d!(0.0),
-                    distributor_count: None,
-                    leg_quality,
-                }],
-                required_products: vec![],
-                window: None,
-                tenure: None,
-            },
-            qualified_structures: vec!["Test".to_string()],
-            demotion_policy: DemotionPolicy::PromotionOnly,
-        }
-    };
+    let rank =
+        |name: &str, ordinal: u16, pv: AuthoredDec, leg_quality: Vec<LegQualityRequirement>| {
+            RankDefinition {
+                name: name.to_string(),
+                ordinal,
+                qualification: RankQualification {
+                    structures: vec![StructureQualification {
+                        structure: "Test".to_string(),
+                        personal_volume: pv,
+                        group_volume: d!(0.0),
+                        max_group_volume_per_leg: AuthoredDec::ZERO,
+                        max_group_volume_per_leg_fraction: d!(0.0),
+                        min_retail_volume: d!(0.0),
+                        distributor_count: None,
+                        leg_quality,
+                    }],
+                    required_products: vec![],
+                    window: None,
+                    tenure: None,
+                },
+                qualified_structures: vec!["Test".to_string()],
+                demotion_policy: DemotionPolicy::PromotionOnly,
+            }
+        };
     let mut plan = build_random_plan();
     plan.ranks = vec![
         rank("base", 1, d!(0.0), vec![]),
@@ -444,7 +446,7 @@ proptest! {
             vec![LegQualityRequirement {
                 count: required,
                 predicate: LegPredicate::ContainsPersonalVolume {
-                    min_personal_volume: threshold as f64,
+                    min_personal_volume: whole(threshold),
                 },
             }],
         );
@@ -452,7 +454,7 @@ proptest! {
         let mut distributors = HashMap::new();
         distributors.insert(uuid_from_index(0), prim(d!(50.0)));
         for (i, pv) in child_pvs.iter().enumerate() {
-            distributors.insert(uuid_from_index(i + 1), prim(*pv as f64));
+            distributors.insert(uuid_from_index(i + 1), prim(whole(*pv)));
         }
         let inputs = EvaluationInputs {
             distributors,
@@ -513,7 +515,7 @@ proptest! {
         // `gated` needs `required` legs each containing a `mid`-or-better
         // node; a child reaches `mid` once its PV clears `mid_threshold`.
         let plan = leg_quality_plan(
-            mid_threshold as f64,
+            whole(mid_threshold),
             vec![LegQualityRequirement {
                 count: required,
                 predicate: LegPredicate::ContainsRank {
@@ -528,7 +530,7 @@ proptest! {
             let mut distributors = HashMap::new();
             distributors.insert(uuid_from_index(0), prim(d!(300.0)));
             for (i, pv) in child_pvs.iter().enumerate() {
-                distributors.insert(uuid_from_index(i + 1), prim((*pv + bump) as f64));
+                distributors.insert(uuid_from_index(i + 1), prim(whole(*pv + bump)));
             }
             let result = evaluate_ranks(
                 &plan,
@@ -580,7 +582,7 @@ fn windowed_plan(qualifying_periods: u8, window_periods: u8) -> CompensationPlan
                     structure: "Test".to_string(),
                     personal_volume: d!(0.0),
                     group_volume: d!(0.0),
-                    max_group_volume_per_leg: f64::MAX,
+                    max_group_volume_per_leg: AuthoredDec::ZERO,
                     max_group_volume_per_leg_fraction: d!(0.0),
                     min_retail_volume: d!(0.0),
                     distributor_count: None,
@@ -804,7 +806,7 @@ fn tenure_plan(periods: u8) -> CompensationPlan {
                 structure: "Test".to_string(),
                 personal_volume: d!(0.0),
                 group_volume: d!(0.0),
-                max_group_volume_per_leg: f64::MAX,
+                max_group_volume_per_leg: AuthoredDec::ZERO,
                 max_group_volume_per_leg_fraction: d!(0.0),
                 min_retail_volume: d!(0.0),
                 distributor_count: None,
@@ -1028,7 +1030,7 @@ proptest! {
 
         let mut distributors = HashMap::new();
         for i in 0..in_tree + out_of_tree {
-            distributors.insert(uuid_from_index(i), prim(pv as f64));
+            distributors.insert(uuid_from_index(i), prim(whole(pv)));
         }
         let inputs = EvaluationInputs {
             distributors,

@@ -9,6 +9,7 @@ use crate::config::binary::{
 };
 use crate::config::eligibility::CommissionEligibility;
 use crate::config::{BinaryStructureConfig, CompensationPlan};
+use crate::decimal::{AuthoredDec, Dec, NumericError};
 use crate::tree::binary::BinaryTree;
 use crate::tree::node::NodeIndex;
 
@@ -40,11 +41,11 @@ fn aggregate_volume(
     snapshots: &HashMap<Uuid, DistributorSnapshot>,
     volume: &[VolumeSource],
     ownership: Option<&HashMap<Uuid, Uuid>>,
-) -> Result<HashMap<Uuid, f64>, CalculationError> {
-    let mut totals: HashMap<Uuid, f64> = HashMap::new();
+) -> Result<HashMap<Uuid, Dec>, CalculationError> {
+    let mut totals: HashMap<Uuid, Dec> = HashMap::new();
 
     for source in volume {
-        if !source.cv_amount.is_finite() || source.cv_amount < 0.0 {
+        if source.cv_amount.is_negative() {
             return Err(CalculationError::InvalidCvAmount(
                 source.source_id,
                 source.cv_amount,
@@ -62,7 +63,8 @@ fn aggregate_volume(
             return Err(CalculationError::SourceNotInSnapshot(owner));
         }
 
-        *totals.entry(source.source_id).or_insert(0.0) += source.cv_amount;
+        let total = totals.entry(source.source_id).or_insert(Dec::ZERO);
+        *total = total.try_add(source.cv_amount)?;
     }
 
     Ok(totals)
@@ -89,9 +91,9 @@ fn evaluate_eligibility(
 /// leg volumes (current period + carry-forward).
 fn accumulate_leg_volumes(
     tree: &BinaryTree,
-    volume_totals: &HashMap<Uuid, f64>,
+    volume_totals: &HashMap<Uuid, Dec>,
     carry_forward: &HashMap<Uuid, LegVolumes>,
-) -> HashMap<Uuid, LegVolumes> {
+) -> Result<HashMap<Uuid, LegVolumes>, NumericError> {
     let arena = tree.arena();
     let slots = tree.slots();
 
@@ -104,18 +106,19 @@ fn accumulate_leg_volumes(
     nodes_by_depth.sort_by_key(|n| std::cmp::Reverse(n.2));
 
     // Subtree totals: personal volume + children's subtree totals.
-    let mut subtree_totals: HashMap<NodeIndex, f64> = HashMap::new();
+    let mut subtree_totals: HashMap<NodeIndex, Dec> = HashMap::new();
 
     for &(idx, uid, _depth) in &nodes_by_depth {
-        let personal = volume_totals.get(&uid).copied().unwrap_or(0.0);
+        let personal = volume_totals.get(&uid).copied().unwrap_or(Dec::ZERO);
 
         let children = &arena.node(idx).children;
-        let child_sum: f64 = children
-            .iter()
-            .map(|c| subtree_totals.get(c).copied().unwrap_or(0.0))
-            .sum();
+        let child_sum = Dec::sum(
+            children
+                .iter()
+                .map(|c| subtree_totals.get(c).copied().unwrap_or(Dec::ZERO)),
+        )?;
 
-        subtree_totals.insert(idx, personal + child_sum);
+        subtree_totals.insert(idx, personal.try_add(child_sum)?);
     }
 
     // Compute per-distributor leg volumes from slot positions.
@@ -124,46 +127,47 @@ fn accumulate_leg_volumes(
     for &(idx, uid, _depth) in &nodes_by_depth {
         let node_slots = slots.get(&idx).copied().unwrap_or([None, None]);
 
-        let left_subtree = node_slots[0]
-            .map(|c| subtree_totals.get(&c).copied().unwrap_or(0.0))
-            .unwrap_or(0.0);
-
-        let right_subtree = node_slots[1]
-            .map(|c| subtree_totals.get(&c).copied().unwrap_or(0.0))
-            .unwrap_or(0.0);
+        let subtree_of = |slot: Option<NodeIndex>| {
+            slot.and_then(|c| subtree_totals.get(&c).copied())
+                .unwrap_or(Dec::ZERO)
+        };
+        let left_subtree = subtree_of(node_slots[0]);
+        let right_subtree = subtree_of(node_slots[1]);
 
         let prior = carry_forward.get(&uid);
-        let left = left_subtree + prior.map(|p| p.left).unwrap_or(0.0);
-        let right = right_subtree + prior.map(|p| p.right).unwrap_or(0.0);
+        let left = left_subtree.try_add(prior.map(|p| p.left).unwrap_or(Dec::ZERO))?;
+        let right = right_subtree.try_add(prior.map(|p| p.right).unwrap_or(Dec::ZERO))?;
 
         leg_volumes.insert(uid, LegVolumes { left, right });
     }
 
-    leg_volumes
+    Ok(leg_volumes)
 }
 
 /// Sorts `earnings` by `(earner_id, position_id)`, then scales each owner's
 /// earnings pro rata when their total exceeds `cap`.
-fn apply_aggregate_cap(earnings: &mut [BinaryCommissionEarning], cap: f64) {
-    // Float addition depends on order, so each owner's total is summed in
-    // position order.
+fn apply_aggregate_cap(
+    earnings: &mut [BinaryCommissionEarning],
+    cap: Dec,
+) -> Result<(), NumericError> {
     earnings.sort_by(|a, b| {
         a.earner_id
             .cmp(&b.earner_id)
             .then_with(|| a.position_id.cmp(&b.position_id))
     });
-    let mut owner_totals: HashMap<Uuid, f64> = HashMap::new();
+    let mut owner_totals: HashMap<Uuid, Dec> = HashMap::new();
     for e in earnings.iter() {
-        *owner_totals.entry(e.earner_id).or_insert(0.0) += e.dollar_amount;
+        let total = owner_totals.entry(e.earner_id).or_insert(Dec::ZERO);
+        *total = total.try_add(e.dollar_amount)?;
     }
     for e in earnings.iter_mut() {
         let total = owner_totals[&e.earner_id];
         if total > cap {
-            let scale = cap / total;
-            e.dollar_amount *= scale;
+            e.dollar_amount = e.dollar_amount.mul_div_trunc(cap, total, 13)?;
             e.capped = true;
         }
     }
+    Ok(())
 }
 
 /// Calculate binary pairing commissions for a commission period.
@@ -176,9 +180,9 @@ fn apply_aggregate_cap(earnings: &mut [BinaryCommissionEarning], cap: f64) {
 ///
 /// Returns `CalculationError` if the cycle-step config is invalid, if a
 /// snapshot names a rank the plan does not define, if a snapshot's
-/// personal_volume is negative or not finite, if the owner of any position in
-/// the tree has no snapshot, if a volume source is not found in the tree, or
-/// if a volume source has an invalid cv_amount.
+/// personal_volume is negative, if the owner of any position in the tree has
+/// no snapshot, if a volume source is not found in the tree, if a volume source
+/// has an invalid cv_amount, or if an amount leaves the numeric envelope.
 pub fn calculate_binary_pairing(
     tree: &BinaryTree,
     plan: &CompensationPlan,
@@ -190,14 +194,11 @@ pub fn calculate_binary_pairing(
 ) -> Result<BinaryCalculationResult, CalculationError> {
     let pairing = match &structure.binary_commission.mode {
         BinaryCommissionMode::Pairing(config) => {
-            debug_assert!(
-                (0.0..=1.0).contains(&config.percent),
-                "pairing.percent out of range: {}",
-                config.percent
-            );
-            if !(0.0..=1.0).contains(&config.percent) {
+            let in_range = !config.percent.is_negative() && config.percent.dec() <= Dec::ONE;
+            debug_assert!(in_range, "pairing.percent out of range: {}", config.percent);
+            if !in_range {
                 tracing::warn!(
-                    percent = config.percent,
+                    percent = %config.percent,
                     "pairing percent outside [0.0, 1.0]; commissions may be overstated"
                 );
             }
@@ -236,7 +237,7 @@ pub fn calculate_binary_pairing(
     // Phase 1: Prep
     let volume_totals = aggregate_volume(tree, snapshots, volume, ownership)?;
     let eligibility_cache = evaluate_eligibility(snapshots, &plan.eligibility);
-    let working_legs = accumulate_leg_volumes(tree, &volume_totals, carry_forward);
+    let working_legs = accumulate_leg_volumes(tree, &volume_totals, carry_forward)?;
 
     // Phase 2: Calculate
     let mut earnings = Vec::new();
@@ -249,7 +250,7 @@ pub fn calculate_binary_pairing(
         }
 
         let matched = legs.left.min(legs.right);
-        if matched == 0.0 {
+        if matched.is_zero() {
             continue;
         }
 
@@ -260,17 +261,27 @@ pub fn calculate_binary_pairing(
         };
 
         let ratio = match pairing.calculation {
-            PairingCalculation::WeakerLeg => 1.0,
+            PairingCalculation::WeakerLeg => Dec::ONE,
             PairingCalculation::VolumeRatio => {
-                if max_leg > 0.0 {
-                    min_leg / max_leg
+                if max_leg > Dec::ZERO {
+                    min_leg.div_ratio(max_leg)?
                 } else {
-                    0.0
+                    Dec::ZERO
                 }
             }
         };
 
-        let raw_amount = matched * pairing.percent * multiplier * ratio;
+        let raw_amount = match pairing.calculation {
+            PairingCalculation::WeakerLeg => {
+                matched.try_mul(pairing.percent)?.try_mul(multiplier)?
+            }
+            PairingCalculation::VolumeRatio if max_leg > Dec::ZERO => matched
+                .try_mul(pairing.percent)?
+                .try_mul(multiplier)?
+                .try_mul(min_leg)?
+                .div_ratio(max_leg)?,
+            PairingCalculation::VolumeRatio => Dec::ZERO,
+        };
 
         // In aggregate mode with an ownership map, skip per-position cap here.
         // The aggregate post-processing (Phase 2b) enforces the cap across
@@ -285,7 +296,7 @@ pub fn calculate_binary_pairing(
         let (dollar_amount, capped) = if use_aggregate_cap {
             (raw_amount, false)
         } else {
-            match pairing.cap_per_period {
+            match pairing.cap_per_period.map(AuthoredDec::dec) {
                 Some(cap) if raw_amount > cap => (cap, true),
                 _ => (raw_amount, false),
             }
@@ -298,7 +309,7 @@ pub fn calculate_binary_pairing(
             right_volume: legs.right,
             matched_volume: matched,
             ratio,
-            percent: pairing.percent,
+            percent: pairing.percent.dec(),
             dollar_amount,
             capped,
         });
@@ -312,7 +323,7 @@ pub fn calculate_binary_pairing(
             MultiPositionCapMode::Aggregate
         ) && ownership.is_some()
         {
-            apply_aggregate_cap(&mut earnings, cap);
+            apply_aggregate_cap(&mut earnings, cap.dec())?;
         }
     }
 
@@ -326,27 +337,27 @@ pub fn calculate_binary_pairing(
 
         // Non-eligible distributors: nothing was matched/paid, so
         // matched is effectively 0 for carry-forward purposes.
-        let effective_matched = if eligible { matched } else { 0.0 };
+        let effective_matched = if eligible { matched } else { Dec::ZERO };
 
         let (new_left, new_right) = match pairing.volume_after_payout {
-            VolumeAfterPayout::FullFlush => (0.0, 0.0),
+            VolumeAfterPayout::FullFlush => (Dec::ZERO, Dec::ZERO),
             VolumeAfterPayout::NetOff => (
-                legs.left - effective_matched,
-                legs.right - effective_matched,
+                legs.left.try_sub(effective_matched)?,
+                legs.right.try_sub(effective_matched)?,
             ),
             VolumeAfterPayout::CarryForward => {
                 if legs.left <= legs.right {
                     // Left is weaker
-                    (0.0, legs.right - effective_matched)
+                    (Dec::ZERO, legs.right.try_sub(effective_matched)?)
                 } else {
                     // Right is weaker
-                    (legs.left - effective_matched, 0.0)
+                    (legs.left.try_sub(effective_matched)?, Dec::ZERO)
                 }
             }
         };
 
         // Apply carry_forward_cap if set.
-        let (capped_left, capped_right) = match pairing.carry_forward_cap {
+        let (capped_left, capped_right) = match pairing.carry_forward_cap.map(AuthoredDec::dec) {
             Some(cap) => (new_left.min(cap), new_right.min(cap)),
             None => (new_left, new_right),
         };
@@ -354,8 +365,8 @@ pub fn calculate_binary_pairing(
         new_carry_forward.insert(
             *uid,
             LegVolumes {
-                left: capped_left.max(0.0),
-                right: capped_right.max(0.0),
+                left: capped_left.max(Dec::ZERO),
+                right: capped_right.max(Dec::ZERO),
             },
         );
     }
@@ -412,14 +423,14 @@ fn calculate_binary_cycle_step(
     // Phase 1: Prep (shared with pairing calculator)
     let volume_totals = aggregate_volume(tree, snapshots, volume, ownership)?;
     let eligibility_cache = evaluate_eligibility(snapshots, &plan.eligibility);
-    let working_legs = accumulate_leg_volumes(tree, &volume_totals, carry_forward);
+    let working_legs = accumulate_leg_volumes(tree, &volume_totals, carry_forward)?;
 
     // Steps are sorted by validate() above. Use the validated copy.
     let steps = &validated_config.steps;
 
     // Phase 2: Calculate
     // Track post-cycle leg volumes for carry-forward computation.
-    let mut post_cycle_legs: HashMap<Uuid, (f64, f64)> = HashMap::new();
+    let mut post_cycle_legs: HashMap<Uuid, (Dec, Dec)> = HashMap::new();
     let mut earnings = Vec::new();
 
     for (uid, legs) in &working_legs {
@@ -436,14 +447,15 @@ fn calculate_binary_cycle_step(
         let original_right = legs.right;
         let mut left = legs.left;
         let mut right = legs.right;
-        let mut total_earnings = 0.0;
+        let mut total_earnings = Dec::ZERO;
 
         // Compute full cycle payout (all steps qualify) and highest threshold.
-        let sum_of_amounts: f64 = steps.iter().map(|s| s.amount).sum();
+        let sum_of_amounts = Dec::sum(steps.iter().map(|s| s.amount.dec()))?;
         let highest = steps
             .last()
             .expect("validate() guarantees non-empty steps")
-            .threshold;
+            .threshold
+            .dec();
 
         // Closed-form full-cycle calculation for CarryForward mode.
         // Avoids O(cycles × steps) loop for large volumes.
@@ -452,18 +464,18 @@ fn calculate_binary_cycle_step(
             match validated_config.volume_after_cycle {
                 VolumeAfterPayout::FullFlush => {
                     // At most one complete cycle. Pay all steps, zero legs.
-                    total_earnings += sum_of_amounts;
-                    left = 0.0;
-                    right = 0.0;
+                    total_earnings = total_earnings.try_add(sum_of_amounts)?;
+                    left = Dec::ZERO;
+                    right = Dec::ZERO;
                 }
                 VolumeAfterPayout::CarryForward => {
                     // Compute how many full cycles fit in O(1).
-                    // Add epsilon before floor to avoid IEEE 754 undercounting
-                    // (e.g., 0.3/0.1 = 2.999... should floor to 3, not 2).
-                    let full_cycles = (matched / highest + 1e-9).floor() as u64;
-                    total_earnings += full_cycles as f64 * sum_of_amounts;
-                    left -= full_cycles as f64 * highest;
-                    right -= full_cycles as f64 * highest;
+                    let full_cycles = matched.floor_div(highest)?;
+                    total_earnings =
+                        total_earnings.try_add(full_cycles.try_mul(sum_of_amounts)?)?;
+                    let consumed = full_cycles.try_mul(highest)?;
+                    left = left.try_sub(consumed)?;
+                    right = right.try_sub(consumed)?;
                 }
                 VolumeAfterPayout::NetOff => {
                     unreachable!("net_off is validated out for cycle step")
@@ -473,10 +485,10 @@ fn calculate_binary_cycle_step(
 
         // Handle one remaining partial cycle (if any volume remains).
         let remaining_matched = left.min(right);
-        if remaining_matched >= steps[0].threshold {
+        if remaining_matched >= steps[0].threshold.dec() {
             for step in steps.iter() {
-                if remaining_matched >= step.threshold {
-                    total_earnings += step.amount;
+                if remaining_matched >= step.threshold.dec() {
+                    total_earnings = total_earnings.try_add(step.amount)?;
                 }
             }
             // Partial cycle: no volume subtraction.
@@ -486,7 +498,7 @@ fn calculate_binary_cycle_step(
         post_cycle_legs.insert(*uid, (left, right));
 
         // No earnings to emit if nothing was earned.
-        if total_earnings == 0.0 {
+        if total_earnings.is_zero() {
             continue;
         }
 
@@ -502,7 +514,7 @@ fn calculate_binary_cycle_step(
         let (dollar_amount, capped) = if use_aggregate_cap {
             (total_earnings, false)
         } else {
-            match validated_config.cap_per_period {
+            match validated_config.cap_per_period.map(AuthoredDec::dec) {
                 Some(cap) if total_earnings > cap => (cap, true),
                 _ => (total_earnings, false),
             }
@@ -514,8 +526,8 @@ fn calculate_binary_cycle_step(
             left_volume: original_left,
             right_volume: original_right,
             matched_volume: original_left.min(original_right),
-            ratio: 0.0,
-            percent: 0.0,
+            ratio: Dec::ZERO,
+            percent: Dec::ZERO,
             dollar_amount,
             capped,
         });
@@ -528,7 +540,7 @@ fn calculate_binary_cycle_step(
             MultiPositionCapMode::Aggregate
         ) && ownership.is_some()
         {
-            apply_aggregate_cap(&mut earnings, cap);
+            apply_aggregate_cap(&mut earnings, cap.dec())?;
         }
     }
 
@@ -536,19 +548,23 @@ fn calculate_binary_cycle_step(
     let mut new_carry_forward = HashMap::new();
 
     for uid in working_legs.keys() {
-        let (new_left, new_right) = post_cycle_legs.get(uid).copied().unwrap_or((0.0, 0.0));
+        let (new_left, new_right) = post_cycle_legs
+            .get(uid)
+            .copied()
+            .unwrap_or((Dec::ZERO, Dec::ZERO));
 
         // Apply carry_forward_cap if set.
-        let (capped_left, capped_right) = match validated_config.carry_forward_cap {
-            Some(cap) => (new_left.min(cap), new_right.min(cap)),
-            None => (new_left, new_right),
-        };
+        let (capped_left, capped_right) =
+            match validated_config.carry_forward_cap.map(AuthoredDec::dec) {
+                Some(cap) => (new_left.min(cap), new_right.min(cap)),
+                None => (new_left, new_right),
+            };
 
         new_carry_forward.insert(
             *uid,
             LegVolumes {
-                left: capped_left.max(0.0),
-                right: capped_right.max(0.0),
+                left: capped_left.max(Dec::ZERO),
+                right: capped_right.max(Dec::ZERO),
             },
         );
     }
@@ -970,7 +986,7 @@ mod tests {
 
     // --- Cap enforcement tests ---
 
-    fn capped_structure(cap: f64) -> BinaryStructureConfig {
+    fn capped_structure(cap: AuthoredDec) -> BinaryStructureConfig {
         BinaryStructureConfig {
             name: "Test Binary".to_string(),
             binary_commission: BinaryCommissionConfig {
@@ -1484,38 +1500,6 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn nan_cv_amount_returns_error() {
-        let tree = three_node_tree();
-        let plan = test_plan(default_eligibility());
-        let structure = test_binary_structure();
-
-        let mut snapshots = HashMap::new();
-        snapshots.insert(test_uuid(1), eligible_snapshot());
-        snapshots.insert(test_uuid(2), eligible_snapshot());
-        snapshots.insert(test_uuid(3), eligible_snapshot());
-
-        let volume = vec![VolumeSource {
-            source_id: test_uuid(2),
-            cv_amount: f64::NAN,
-        }];
-
-        let result = calculate_binary_pairing(
-            &tree,
-            &plan,
-            &structure,
-            &snapshots,
-            &volume,
-            &HashMap::new(),
-            None,
-        );
-
-        assert!(matches!(
-            result,
-            Err(CalculationError::InvalidCvAmount(_, _))
-        ));
-    }
-
     // --- Edge case tests ---
 
     #[test]
@@ -1969,7 +1953,7 @@ mod tests {
     }
 
     #[test]
-    fn calculate_binary_pairing_rejects_a_nan_personal_volume() {
+    fn calculate_binary_pairing_rejects_a_negative_personal_volume() {
         let tree = three_node_tree();
         let plan = test_plan(default_eligibility());
         let structure = test_binary_structure();
@@ -1978,7 +1962,7 @@ mod tests {
         snapshots.insert(
             test_uuid(1),
             DistributorSnapshot {
-                personal_volume: f64::NAN,
+                personal_volume: d!(-0.5),
                 ..eligible_snapshot()
             },
         );
@@ -2011,7 +1995,7 @@ mod tests {
             matches!(
                 err,
                 CalculationError::InvalidPersonalVolume(id, pv)
-                    if id == test_uuid(1) && pv.is_nan()
+                    if id == test_uuid(1) && pv == d!(-0.5)
             ),
             "got {err:?}"
         );
@@ -2205,7 +2189,7 @@ mod tests {
     }
 
     #[test]
-    fn pairing_in_cycle_step_mode_rejects_a_nan_personal_volume() {
+    fn pairing_in_cycle_step_mode_rejects_a_negative_personal_volume() {
         let steps = vec![CycleStep {
             threshold: d!(300.0),
             amount: d!(25.0),
@@ -2218,7 +2202,7 @@ mod tests {
         snapshots.insert(
             test_uuid(1),
             DistributorSnapshot {
-                personal_volume: f64::NAN,
+                personal_volume: d!(-0.5),
                 ..eligible_snapshot()
             },
         );
@@ -2251,7 +2235,7 @@ mod tests {
             matches!(
                 err,
                 CalculationError::InvalidPersonalVolume(id, pv)
-                    if id == test_uuid(1) && pv.is_nan()
+                    if id == test_uuid(1) && pv == d!(-0.5)
             ),
             "got {err:?}"
         );
@@ -3095,8 +3079,9 @@ mod tests {
 
         // Each position independently capped to $150.
         for e in &owner_earnings {
-            assert!(
-                (e.dollar_amount - 150.0).abs() < 1e-10,
+            assert_d!(
+                e.dollar_amount,
+                150.0,
                 "each position should be capped to 150.0, got {}",
                 e.dollar_amount
             );
@@ -3192,9 +3177,10 @@ mod tests {
             .collect();
         assert_eq!(owner_earnings.len(), 2);
 
-        let total: f64 = owner_earnings.iter().map(|e| e.dollar_amount).sum();
-        assert!(
-            (total - 300.0).abs() < 1e-10,
+        let total = Dec::sum(owner_earnings.iter().map(|e| e.dollar_amount)).unwrap();
+        assert_d!(
+            total,
+            300.0,
             "aggregate total should be 300.0, got {}",
             total
         );
@@ -3202,8 +3188,9 @@ mod tests {
         // Pro-rata: each position had equal raw earnings ($175),
         // so each gets half the cap: $150.
         for e in &owner_earnings {
-            assert!(
-                (e.dollar_amount - 150.0).abs() < 1e-10,
+            assert_d!(
+                e.dollar_amount,
+                150.0,
                 "each position should earn 150.0, got {}",
                 e.dollar_amount
             );
@@ -3528,13 +3515,15 @@ mod tests {
         // pos2: left=1000, right=500, matched=500. CarryForward: left keeps
         // excess (1000-500=500), right zeroed.
         let cf2 = &result.carry_forward[&test_uuid(2)];
-        assert!(
-            (cf2.left - 500.0).abs() < 1e-10,
+        assert_d!(
+            cf2.left,
+            500.0,
             "pos2 left carry: expected 500.0, got {}",
             cf2.left
         );
-        assert!(
-            cf2.right.abs() < 1e-10,
+        assert_d!(
+            cf2.right,
+            0,
             "pos2 right carry: expected 0.0, got {}",
             cf2.right
         );
@@ -3542,13 +3531,15 @@ mod tests {
         // pos3: left=200, right=800, matched=200. CarryForward: right keeps
         // excess (800-200=600), left zeroed.
         let cf3 = &result.carry_forward[&test_uuid(3)];
-        assert!(
-            cf3.left.abs() < 1e-10,
+        assert_d!(
+            cf3.left,
+            0,
             "pos3 left carry: expected 0.0, got {}",
             cf3.left
         );
-        assert!(
-            (cf3.right - 600.0).abs() < 1e-10,
+        assert_d!(
+            cf3.right,
+            600.0,
             "pos3 right carry: expected 600.0, got {}",
             cf3.right
         );
@@ -3662,17 +3653,19 @@ mod tests {
             .collect();
         assert_eq!(owner_earnings.len(), 2);
 
-        let total: f64 = owner_earnings.iter().map(|e| e.dollar_amount).sum();
-        assert!(
-            (total - 500.0).abs() < 1e-10,
+        let total = Dec::sum(owner_earnings.iter().map(|e| e.dollar_amount)).unwrap();
+        assert_d!(
+            total,
+            500.0,
             "aggregate total should be 500.0, got {}",
             total
         );
 
         // Pro-rata: each position should get 250.0.
         for e in &owner_earnings {
-            assert!(
-                (e.dollar_amount - 250.0).abs() < 1e-10,
+            assert_d!(
+                e.dollar_amount,
+                250.0,
                 "each position should earn 250.0, got {}",
                 e.dollar_amount
             );
@@ -3751,8 +3744,9 @@ mod tests {
 
         // Each earns 300.0, neither capped at 500.
         for e in &owner_earnings {
-            assert!(
-                (e.dollar_amount - 300.0).abs() < 1e-10,
+            assert_d!(
+                e.dollar_amount,
+                300.0,
                 "each position should earn 300.0, got {}",
                 e.dollar_amount
             );
@@ -3836,9 +3830,10 @@ mod tests {
             .collect();
         assert_eq!(owner_earnings.len(), 2);
 
-        let total: f64 = owner_earnings.iter().map(|e| e.dollar_amount).sum();
-        assert!(
-            (total - 100.0).abs() < 1e-10,
+        let total = Dec::sum(owner_earnings.iter().map(|e| e.dollar_amount)).unwrap();
+        assert_d!(
+            total,
+            100.0,
             "aggregate total should be 100.0, got {}",
             total
         );
@@ -3855,13 +3850,15 @@ mod tests {
             .find(|e| e.position_id == test_uuid(3))
             .unwrap();
 
-        assert!(
-            (pos_a.dollar_amount - 6.25).abs() < 1e-10,
+        assert_d!(
+            pos_a.dollar_amount,
+            6.25,
             "pos_a should get 6.25, got {}",
             pos_a.dollar_amount
         );
-        assert!(
-            (pos_b.dollar_amount - 93.75).abs() < 1e-10,
+        assert_d!(
+            pos_b.dollar_amount,
+            93.75,
             "pos_b should get 93.75, got {}",
             pos_b.dollar_amount
         );
@@ -3915,8 +3912,9 @@ mod tests {
 
         // Root earns: 500 * 0.10 = 50.0, capped at 30.0 per-position.
         assert_eq!(result.earnings.len(), 1);
-        assert!(
-            (result.earnings[0].dollar_amount - 30.0).abs() < 1e-10,
+        assert_d!(
+            result.earnings[0].dollar_amount,
+            30.0,
             "should be capped at 30.0 per-position, got {}",
             result.earnings[0].dollar_amount
         );
@@ -3930,13 +3928,13 @@ mod tests {
         use crate::test_strategies::cents;
         use proptest::prelude::*;
 
-        /// Generate a random volume amount (positive, finite).
-        fn arb_volume() -> impl Strategy<Value = f64> {
+        /// Generate a random volume amount (non-negative, whole cents).
+        fn arb_volume() -> impl Strategy<Value = AuthoredDec> {
             cents(0, 1_000_000)
         }
 
         /// Generate a pair of leg volumes for a balanced-to-unbalanced tree.
-        fn arb_leg_pair() -> impl Strategy<Value = (f64, f64)> {
+        fn arb_leg_pair() -> impl Strategy<Value = (AuthoredDec, AuthoredDec)> {
             (arb_volume(), arb_volume())
         }
 
@@ -3963,12 +3961,12 @@ mod tests {
                     &tree, &plan, &structure, &snapshots, &volume, &HashMap::new(), None,
                 ).unwrap();
 
-                let total_payout: f64 = result.earnings.iter().map(|e| e.dollar_amount).sum();
+                let total_payout = Dec::sum(result.earnings.iter().map(|e| e.dollar_amount)).unwrap();
                 let matched = left_vol.min(right_vol);
-                let theoretical_max = matched * 0.10 * 1.0; // percent * multiplier
+                let theoretical_max = matched.dec().try_mul(like(&Dec::ZERO, "0.10")).unwrap(); // percent * multiplier
 
                 prop_assert!(
-                    total_payout <= theoretical_max + 1e-10,
+                    total_payout <= theoretical_max,
                     "total payout {} exceeded theoretical max {}",
                     total_payout,
                     theoretical_max
@@ -4101,12 +4099,12 @@ mod tests {
 
                 for legs in result.carry_forward.values() {
                     prop_assert!(
-                        legs.left <= cap + 1e-10,
+                        legs.left <= cap.dec(),
                         "left carry-forward {} exceeded cap {}",
                         legs.left, cap
                     );
                     prop_assert!(
-                        legs.right <= cap + 1e-10,
+                        legs.right <= cap.dec(),
                         "right carry-forward {} exceeded cap {}",
                         legs.right, cap
                     );
@@ -4140,7 +4138,7 @@ mod tests {
 
                 for earning in &result.earnings {
                     prop_assert!(
-                        earning.dollar_amount <= cap + 1e-10,
+                        earning.dollar_amount <= cap.dec(),
                         "earner {} paid {} which exceeds cap_per_period {}",
                         earning.earner_id, earning.dollar_amount, cap
                     );
@@ -4200,18 +4198,17 @@ mod tests {
 
                 // Total paid across both periods should never exceed total
                 // matched volume across both periods (at the configured rate).
-                let total_paid: f64 = result_p1.earnings.iter()
+                let total_paid = Dec::sum(result_p1.earnings.iter()
                     .chain(result_p2.earnings.iter())
-                    .map(|e| e.dollar_amount)
-                    .sum();
+                    .map(|e| e.dollar_amount)).unwrap();
 
                 // Total input volume across both periods.
-                let total_left = left_p1 + left_p2;
-                let total_right = right_p1 + right_p2;
-                let theoretical_max = total_left.min(total_right) * 0.10 * 1.0;
+                let total_left = left_p1.dec().try_add(left_p2).unwrap();
+                let total_right = right_p1.dec().try_add(right_p2).unwrap();
+                let theoretical_max = total_left.min(total_right).try_mul(like(&Dec::ZERO, "0.10")).unwrap();
 
                 prop_assert!(
-                    total_paid <= theoretical_max + 1e-10,
+                    total_paid <= theoretical_max,
                     "two-period total payout {} exceeded theoretical max {}",
                     total_paid, theoretical_max
                 );
@@ -4220,9 +4217,9 @@ mod tests {
     }
 
     #[test]
-    fn apply_aggregate_cap_gives_the_same_bits_in_every_input_order() {
+    fn apply_aggregate_cap_gives_the_same_amounts_in_every_input_order() {
         let owner = test_uuid(100);
-        let earning = |position: u8, amount: f64| BinaryCommissionEarning {
+        let earning = |position: u8, amount: Dec| BinaryCommissionEarning {
             earner_id: owner,
             position_id: test_uuid(position),
             left_volume: d!(0.0),
@@ -4236,9 +4233,9 @@ mod tests {
         let base = [
             earning(1, d!(0.2)),
             earning(2, d!(0.1)),
-            earning(3, d!(0.30000000000000004)),
+            earning(3, d!(0.3)),
         ];
-        let pinned = [0.03333333333333333f64, 0.016666666666666666, 0.05].map(f64::to_bits);
+        let pinned: [Dec; 3] = [d!(0.0333333333333), d!(0.0166666666666), d!(0.05)];
         for order in [
             [0, 1, 2],
             [0, 2, 1],
@@ -4248,12 +4245,11 @@ mod tests {
             [2, 1, 0],
         ] {
             let mut earnings: Vec<_> = order.iter().map(|&i| base[i].clone()).collect();
-            apply_aggregate_cap(&mut earnings, d!(0.1));
+            apply_aggregate_cap(&mut earnings, d!(0.1)).unwrap();
             earnings.sort_by_key(|e| e.position_id);
-            let amounts: Vec<f64> = earnings.iter().map(|e| e.dollar_amount).collect();
-            let bits: Vec<u64> = amounts.iter().map(|a| a.to_bits()).collect();
+            let amounts: Vec<Dec> = earnings.iter().map(|e| e.dollar_amount).collect();
             assert_eq!(
-                bits,
+                amounts,
                 pinned.to_vec(),
                 "input order {order:?} gave {amounts:?}"
             );
@@ -4262,5 +4258,195 @@ mod tests {
                 "input order {order:?} left an earning uncapped"
             );
         }
+    }
+
+    #[test]
+    fn cycle_step_pays_when_ten_ten_plus_twenty_twenty_meets_thirty_thirty() {
+        let steps = vec![CycleStep {
+            threshold: d!(30.30),
+            amount: d!(25),
+        }];
+        let structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+        let snapshots = HashMap::from([
+            (test_uuid(1), eligible_snapshot()),
+            (test_uuid(2), eligible_snapshot()),
+            (test_uuid(3), eligible_snapshot()),
+        ]);
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: d!(10.10),
+            },
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: d!(20.20),
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: d!(30.30),
+            },
+        ];
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(result.earnings.len(), 1);
+        assert_d!(result.earnings[0].dollar_amount, 25);
+    }
+
+    #[test]
+    fn cycle_step_total_of_ten_ten_plus_twenty_twenty_sits_exactly_at_a_thirty_thirty_cap() {
+        let steps = vec![
+            CycleStep {
+                threshold: d!(100),
+                amount: d!(10.10),
+            },
+            CycleStep {
+                threshold: d!(200),
+                amount: d!(20.20),
+            },
+        ];
+        let mut structure = test_cycle_step_structure(steps, VolumeAfterPayout::FullFlush);
+        if let BinaryCommissionMode::CycleStep(config) = &mut structure.binary_commission.mode {
+            config.cap_per_period = Some(d!(30.30));
+        }
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+        let snapshots = HashMap::from([
+            (test_uuid(1), eligible_snapshot()),
+            (test_uuid(2), eligible_snapshot()),
+            (test_uuid(3), eligible_snapshot()),
+        ]);
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: d!(500),
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: d!(500),
+            },
+        ];
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap();
+        let earning = &result.earnings[0];
+        assert_d!(earning.dollar_amount, 30.30);
+        assert!(!earning.capped);
+    }
+
+    #[test]
+    fn pairing_of_one_hundred_at_seven_percent_does_not_exceed_a_seven_cap() {
+        let structure = BinaryStructureConfig {
+            name: "Test Binary".to_string(),
+            binary_commission: BinaryCommissionConfig {
+                volume_to_dollar_multiplier: None,
+                mode: BinaryCommissionMode::Pairing(PairingConfig {
+                    percent: d!(0.07),
+                    cap_per_period: Some(d!(7)),
+                    ..test_pairing_config()
+                }),
+            },
+        };
+        let tree = three_node_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+        let snapshots = HashMap::from([
+            (test_uuid(1), eligible_snapshot()),
+            (test_uuid(2), eligible_snapshot()),
+            (test_uuid(3), eligible_snapshot()),
+        ]);
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(2),
+                cv_amount: d!(100),
+            },
+            VolumeSource {
+                source_id: test_uuid(3),
+                cv_amount: d!(100),
+            },
+        ];
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            None,
+        )
+        .unwrap();
+        let earning = &result.earnings[0];
+        assert_d!(earning.dollar_amount, 7);
+        assert!(!earning.capped);
+    }
+
+    #[test]
+    fn aggregate_total_of_one_hundred_at_seven_percent_does_not_exceed_a_seven_cap() {
+        let structure = BinaryStructureConfig {
+            name: "Test Binary".to_string(),
+            binary_commission: BinaryCommissionConfig {
+                volume_to_dollar_multiplier: None,
+                mode: BinaryCommissionMode::Pairing(PairingConfig {
+                    percent: d!(0.07),
+                    cap_per_period: Some(d!(7)),
+                    multi_position_cap_mode: MultiPositionCapMode::Aggregate,
+                    ..test_pairing_config()
+                }),
+            },
+        };
+        let tree = multi_position_tree();
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+        let owner = test_uuid(100);
+        let ownership = HashMap::from([(test_uuid(2), owner), (test_uuid(3), owner)]);
+        let snapshots = HashMap::from([
+            (owner, eligible_snapshot()),
+            (test_uuid(1), eligible_snapshot()),
+            (test_uuid(4), eligible_snapshot()),
+            (test_uuid(5), eligible_snapshot()),
+            (test_uuid(6), eligible_snapshot()),
+            (test_uuid(7), eligible_snapshot()),
+        ]);
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(4),
+                cv_amount: d!(100),
+            },
+            VolumeSource {
+                source_id: test_uuid(5),
+                cv_amount: d!(100),
+            },
+        ];
+        let result = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            Some(&ownership),
+        )
+        .unwrap();
+        let earning = result
+            .earnings
+            .iter()
+            .find(|e| e.position_id == test_uuid(2))
+            .expect("position 2 matches 100 against 100");
+        assert_d!(earning.dollar_amount, 7);
+        assert!(!earning.capped);
     }
 }

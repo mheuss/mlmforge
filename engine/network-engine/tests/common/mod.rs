@@ -641,3 +641,8 @@ pub fn walk_order_fingerprint(walks: &[Walk]) -> Vec<WalkOrderKey> {
 pub fn cents<T: FromLiteral + std::fmt::Debug>(lo: u64, hi: u64) -> impl Strategy<Value = T> {
     (lo..hi).prop_map(|c| T::from_literal(&format!("{}.{:02}", c / 100, c % 100)))
 }
+
+/// An integer as any decimal test type.
+pub fn whole<T: FromLiteral>(v: impl std::fmt::Display) -> T {
+    T::from_literal(&v.to_string())
+}

@@ -523,7 +523,10 @@ fn compare_json_keeps_strings_and_numbers_apart() {
 }
 
 #[test]
-fn canonical_number_refuses_an_exponent_past_i64() {
+fn compare_json_does_not_panic_on_an_exponent_past_i64() {
+    let expected: serde_json::Value = serde_json::from_str(r#"[1e99999999999999999999]"#).unwrap();
+    let actual: serde_json::Value = serde_json::from_str(r#"[1]"#).unwrap();
+    assert!(compare_json("", &expected, &actual).is_err());
     assert_eq!(canonical_number("1e99999999999999999999"), None);
     assert_eq!(canonical_number("1e-99999999999999999999"), None);
     assert_eq!(canonical_number("10e9223372036854775807"), None);

@@ -3855,7 +3855,7 @@ fn load_plan_rejects_board_cycle_commission_negative() {
         resp
     );
     assert!(
-        resp.contains("cycle_commission") && resp.contains("must be finite and non-negative"),
+        resp.contains("cycle_commission") && resp.contains("must be non-negative"),
         "expected the board dollar-law gate to reject it, not a deserialize \
          failure or an unrelated check, got: {}",
         resp

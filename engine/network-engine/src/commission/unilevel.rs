@@ -19,9 +19,10 @@ use super::{walk, walk_order};
 /// # Errors
 ///
 /// Returns `CalculationError` if a snapshot names a rank the plan does not
-/// define, if a snapshot's personal_volume is negative or not finite, if a
-/// distributor in the tree has no snapshot, if a volume source is not found in
-/// the tree, or if a volume source's cv_amount is negative or not finite.
+/// define, if a snapshot's personal_volume is negative, if a distributor in the
+/// tree has no snapshot, if a volume source is not found in the tree, if a
+/// volume source's cv_amount is negative, or if an amount leaves the numeric
+/// envelope.
 pub fn calculate_unilevel(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -36,7 +37,7 @@ pub fn calculate_unilevel(
     let eligibility_cache = walk::evaluate_eligibility(snapshots, tree, &plan.eligibility);
 
     let broad_pct = structure.level_commission.broad_commission_percent;
-    walk::validate_broad_pct(broad_pct);
+    walk::validate_broad_pct(broad_pct.dec());
 
     let multiplier = structure
         .level_commission
@@ -53,8 +54,8 @@ pub fn calculate_unilevel(
 
     let config = walk::LevelWalkConfig {
         max_depth: structure.level_commission.max_depth,
-        broad_pct,
-        multiplier,
+        broad_pct: broad_pct.dec(),
+        multiplier: multiplier.dec(),
         compression,
         threshold_ordinal,
         rank_ordinals: &rank_ordinals,
@@ -85,8 +86,9 @@ pub fn calculate_unilevel(
 
 #[cfg(test)]
 mod tests {
-    use crate::d;
+    use crate::decimal::AuthoredDec;
     use crate::test_support::like;
+    use crate::{assert_d, d};
     // Result-shape coverage for the calculators lives here rather than being
     // repeated five times: the assembly is shared through walk_order::assemble,
     // so a break in it breaks all five the same way.
@@ -120,7 +122,7 @@ mod tests {
         }
     }
 
-    fn test_rate_table() -> BTreeMap<String, BTreeMap<u8, f64>> {
+    fn test_rate_table() -> BTreeMap<String, BTreeMap<u8, AuthoredDec>> {
         let mut table = BTreeMap::new();
 
         let mut associate = BTreeMap::new();
@@ -140,7 +142,9 @@ mod tests {
         table
     }
 
-    fn test_structure(rate_table: BTreeMap<String, BTreeMap<u8, f64>>) -> UnilevelStructureConfig {
+    fn test_structure(
+        rate_table: BTreeMap<String, BTreeMap<u8, AuthoredDec>>,
+    ) -> UnilevelStructureConfig {
         UnilevelStructureConfig {
             name: "Test Unilevel".to_string(),
             level_commission: LevelCommissionConfig {
@@ -398,13 +402,13 @@ mod tests {
         let mid_earning = result.iter().find(|e| e.earner_id == test_uuid(2)).unwrap();
         assert_eq!(mid_earning.level, 1);
         assert_eq!(mid_earning.rate, Some(d!(0.05)));
-        assert!((mid_earning.dollar_amount - 2.0).abs() < f64::EPSILON);
+        assert_d!(mid_earning.dollar_amount, 2.0);
 
         // root(1) is silver at level 2: 100 * 0.40 * 1.0 * 0.06 = 2.4
         let root_earning = result.iter().find(|e| e.earner_id == test_uuid(1)).unwrap();
         assert_eq!(root_earning.level, 2);
         assert_eq!(root_earning.rate, Some(d!(0.06)));
-        assert!((root_earning.dollar_amount - 2.4).abs() < f64::EPSILON);
+        assert_d!(root_earning.dollar_amount, 2.4);
     }
 
     #[test]
@@ -497,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    fn calculate_unilevel_rejects_a_nan_personal_volume() {
+    fn calculate_unilevel_rejects_a_negative_personal_volume() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
@@ -510,7 +514,7 @@ mod tests {
         snapshots.insert(
             test_uuid(1),
             DistributorSnapshot {
-                personal_volume: f64::NAN,
+                personal_volume: d!(-0.5),
                 ..eligible_snapshot()
             },
         );
@@ -535,7 +539,7 @@ mod tests {
             matches!(
                 err,
                 CalculationError::InvalidPersonalVolume(id, pv)
-                    if id == test_uuid(1) && pv.is_nan()
+                    if id == test_uuid(1) && pv == d!(-0.5)
             ),
             "got {err:?}"
         );
@@ -679,8 +683,7 @@ mod tests {
 
         assert_eq!(result.len(), 1);
         // 200.0 * 0.50 * 0.80 * 0.07 (silver level 1) = 5.6
-        let expected = 200.0 * 0.50 * 0.80 * 0.07;
-        assert!((result[0].dollar_amount - expected).abs() < f64::EPSILON);
+        assert_d!(result[0].dollar_amount, 5.6);
     }
 
     #[test]
@@ -722,8 +725,7 @@ mod tests {
         .earnings;
 
         // 100 * 0.40 * 0.75 * 0.07 = 2.1
-        let expected = 100.0 * 0.40 * 0.75 * 0.07;
-        assert!((result[0].dollar_amount - expected).abs() < f64::EPSILON);
+        assert_d!(result[0].dollar_amount, 2.1);
     }
 
     // --- compression tests ---
@@ -903,8 +905,9 @@ mod tests {
                 .unwrap_or_else(|| panic!("mid={mid_rank:?} root did not earn: {earnings:?}"));
             assert_eq!(root.level, 2, "mid={mid_rank:?}");
             assert_eq!(root.rate, Some(d!(0.06)), "mid={mid_rank:?}");
-            assert!(
-                (root.dollar_amount - 2.40).abs() < 1e-9,
+            assert_d!(
+                root.dollar_amount,
+                2.40,
                 "mid={mid_rank:?} paid {}",
                 root.dollar_amount
             );
@@ -1585,99 +1588,6 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn error_nan_cv_amount() {
-        let mut tree = UnilevelTree::new();
-        tree.add_root(test_uuid(1), 0).unwrap();
-
-        let structure = test_structure(test_rate_table());
-        let plan = test_plan(default_eligibility());
-        let mut snapshots = HashMap::new();
-        snapshots.insert(test_uuid(1), eligible_snapshot());
-
-        let volume = vec![VolumeSource {
-            source_id: test_uuid(1),
-            cv_amount: f64::NAN,
-        }];
-
-        let result = calculate_unilevel(
-            &tree,
-            &plan,
-            &structure,
-            &snapshots,
-            &volume,
-            &crate::test_support::test_plan_identity(),
-        );
-
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CalculationError::InvalidCvAmount(id, _) if id == test_uuid(1)
-        ));
-    }
-
-    #[test]
-    fn error_positive_infinity_cv_amount() {
-        let mut tree = UnilevelTree::new();
-        tree.add_root(test_uuid(1), 0).unwrap();
-
-        let structure = test_structure(test_rate_table());
-        let plan = test_plan(default_eligibility());
-        let mut snapshots = HashMap::new();
-        snapshots.insert(test_uuid(1), eligible_snapshot());
-
-        let volume = vec![VolumeSource {
-            source_id: test_uuid(1),
-            cv_amount: f64::INFINITY,
-        }];
-
-        let result = calculate_unilevel(
-            &tree,
-            &plan,
-            &structure,
-            &snapshots,
-            &volume,
-            &crate::test_support::test_plan_identity(),
-        );
-
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CalculationError::InvalidCvAmount(id, _) if id == test_uuid(1)
-        ));
-    }
-
-    #[test]
-    fn error_negative_infinity_cv_amount() {
-        let mut tree = UnilevelTree::new();
-        tree.add_root(test_uuid(1), 0).unwrap();
-
-        let structure = test_structure(test_rate_table());
-        let plan = test_plan(default_eligibility());
-        let mut snapshots = HashMap::new();
-        snapshots.insert(test_uuid(1), eligible_snapshot());
-
-        let volume = vec![VolumeSource {
-            source_id: test_uuid(1),
-            cv_amount: f64::NEG_INFINITY,
-        }];
-
-        let result = calculate_unilevel(
-            &tree,
-            &plan,
-            &structure,
-            &snapshots,
-            &volume,
-            &crate::test_support::test_plan_identity(),
-        );
-
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CalculationError::InvalidCvAmount(id, _) if id == test_uuid(1)
-        ));
-    }
-
     // --- edge case tests ---
 
     #[test]
@@ -1791,8 +1701,8 @@ mod tests {
             .collect();
         assert_eq!(from_2.len(), 1);
         assert_eq!(from_3.len(), 1);
-        assert!((from_2[0].cv_amount - 100.0).abs() < f64::EPSILON);
-        assert!((from_3[0].cv_amount - 200.0).abs() < f64::EPSILON);
+        assert_d!(from_2[0].cv_amount, 100.0);
+        assert_d!(from_3[0].cv_amount, 200.0);
     }
 
     #[test]
@@ -1924,17 +1834,17 @@ mod tests {
         // rep_a1(4) at level 1: associate rate = 0.05
         let e4 = result.iter().find(|e| e.earner_id == test_uuid(4)).unwrap();
         assert_eq!(e4.level, 1);
-        assert!((e4.dollar_amount - 100.0 * 0.40 * 1.0 * 0.05).abs() < f64::EPSILON);
+        assert_d!(e4.dollar_amount, 2); // 100 * 0.40 * 1.0 * 0.05
 
         // leader_a(2) at level 2: silver rate = 0.06
         let e2 = result.iter().find(|e| e.earner_id == test_uuid(2)).unwrap();
         assert_eq!(e2.level, 2);
-        assert!((e2.dollar_amount - 100.0 * 0.40 * 1.0 * 0.06).abs() < f64::EPSILON);
+        assert_d!(e2.dollar_amount, 2.4); // 100 * 0.40 * 1.0 * 0.06
 
         // company(1) at level 3: gold rate = 0.06
         let e1 = result.iter().find(|e| e.earner_id == test_uuid(1)).unwrap();
         assert_eq!(e1.level, 3);
-        assert!((e1.dollar_amount - 100.0 * 0.40 * 1.0 * 0.06).abs() < f64::EPSILON);
+        assert_d!(e1.dollar_amount, 2.4); // 100 * 0.40 * 1.0 * 0.06
     }
 
     #[test]
@@ -2034,7 +1944,7 @@ mod tests {
 
     // --- pass-up integration tests ---
 
-    fn pass_up_rate_table() -> BTreeMap<String, BTreeMap<u8, f64>> {
+    fn pass_up_rate_table() -> BTreeMap<String, BTreeMap<u8, AuthoredDec>> {
         let mut table = BTreeMap::new();
         let mut silver = BTreeMap::new();
         silver.insert(1, d!(0.05));
@@ -2047,7 +1957,7 @@ mod tests {
     }
 
     fn structure_with_pass_up(
-        rate_table: BTreeMap<String, BTreeMap<u8, f64>>,
+        rate_table: BTreeMap<String, BTreeMap<u8, AuthoredDec>>,
         pass_up: PassUpConfig,
     ) -> UnilevelStructureConfig {
         UnilevelStructureConfig {

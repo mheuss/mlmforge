@@ -7,6 +7,7 @@ use network_engine::config::rank::{
 };
 use network_engine::config::{CompensationPlan, StructureConfig, UnilevelStructureConfig};
 use network_engine::d;
+use network_engine::decimal::AuthoredDec;
 use network_engine::rank::{
     DistributorPrimitives, EvaluatedRank, EvaluationError, EvaluationInputs, evaluate_ranks,
     structures_above_lowest_rank,
@@ -19,7 +20,7 @@ use network_engine::types::TreePosition;
 use std::collections::{BTreeSet, HashMap};
 use uuid::Uuid;
 
-fn primitives(pv: f64) -> DistributorPrimitives {
+fn primitives(pv: AuthoredDec) -> DistributorPrimitives {
     DistributorPrimitives {
         personal_volume: pv,
         retail_volume: d!(0.0),
@@ -59,7 +60,7 @@ fn linear_plan() -> CompensationPlan {
                     structure: "Test".to_string(),
                     personal_volume: d!(0.0),
                     group_volume: d!(0.0),
-                    max_group_volume_per_leg: f64::MAX,
+                    max_group_volume_per_leg: AuthoredDec::ZERO,
                     max_group_volume_per_leg_fraction: d!(0.0),
                     min_retail_volume: d!(0.0),
                     distributor_count: None,
@@ -80,7 +81,7 @@ fn linear_plan() -> CompensationPlan {
                     structure: "Test".to_string(),
                     personal_volume: d!(100.0),
                     group_volume: d!(0.0),
-                    max_group_volume_per_leg: f64::MAX,
+                    max_group_volume_per_leg: AuthoredDec::ZERO,
                     max_group_volume_per_leg_fraction: d!(0.0),
                     min_retail_volume: d!(0.0),
                     distributor_count: None,
@@ -686,7 +687,7 @@ fn evaluate_ranks_with_populated_leg_quality_gates_rank() {
                     structure: "Test".to_string(),
                     personal_volume: d!(0.0),
                     group_volume: d!(0.0),
-                    max_group_volume_per_leg: f64::MAX,
+                    max_group_volume_per_leg: AuthoredDec::ZERO,
                     max_group_volume_per_leg_fraction: d!(0.0),
                     min_retail_volume: d!(0.0),
                     distributor_count: None,
@@ -707,7 +708,7 @@ fn evaluate_ranks_with_populated_leg_quality_gates_rank() {
                     structure: "Test".to_string(),
                     personal_volume: d!(50.0),
                     group_volume: d!(0.0),
-                    max_group_volume_per_leg: f64::MAX,
+                    max_group_volume_per_leg: AuthoredDec::ZERO,
                     max_group_volume_per_leg_fraction: d!(0.0),
                     min_retail_volume: d!(0.0),
                     distributor_count: None,
@@ -1026,7 +1027,7 @@ fn evaluate_ranks_converges_on_cyclic_ancestry() {
             structure: structure.to_string(),
             personal_volume: d!(0.0),
             group_volume: d!(0.0),
-            max_group_volume_per_leg: f64::MAX,
+            max_group_volume_per_leg: AuthoredDec::ZERO,
             max_group_volume_per_leg_fraction: d!(0.0),
             min_retail_volume: d!(0.0),
             distributor_count: dc,
@@ -1145,7 +1146,7 @@ fn evaluate_ranks_resolves_recursive_leg_quality_ladder() {
                 structure: "Test".to_string(),
                 personal_volume: d!(50.0),
                 group_volume: d!(0.0),
-                max_group_volume_per_leg: f64::MAX,
+                max_group_volume_per_leg: AuthoredDec::ZERO,
                 max_group_volume_per_leg_fraction: d!(0.0),
                 min_retail_volume: d!(0.0),
                 distributor_count: None,
@@ -1290,7 +1291,7 @@ fn windowed_plan() -> CompensationPlan {
                     structure: "Test".to_string(),
                     personal_volume: d!(0.0),
                     group_volume: d!(0.0),
-                    max_group_volume_per_leg: f64::MAX,
+                    max_group_volume_per_leg: AuthoredDec::ZERO,
                     max_group_volume_per_leg_fraction: d!(0.0),
                     min_retail_volume: d!(0.0),
                     distributor_count: None,
@@ -1311,7 +1312,7 @@ fn windowed_plan() -> CompensationPlan {
                     structure: "Test".to_string(),
                     personal_volume: d!(0.0),
                     group_volume: d!(0.0),
-                    max_group_volume_per_leg: f64::MAX,
+                    max_group_volume_per_leg: AuthoredDec::ZERO,
                     max_group_volume_per_leg_fraction: d!(0.0),
                     min_retail_volume: d!(0.0),
                     distributor_count: None,
@@ -1450,7 +1451,7 @@ fn tenure_plan() -> CompensationPlan {
                     structure: "Test".to_string(),
                     personal_volume: d!(0.0),
                     group_volume: d!(0.0),
-                    max_group_volume_per_leg: f64::MAX,
+                    max_group_volume_per_leg: AuthoredDec::ZERO,
                     max_group_volume_per_leg_fraction: d!(0.0),
                     min_retail_volume: d!(0.0),
                     distributor_count: None,
@@ -1471,7 +1472,7 @@ fn tenure_plan() -> CompensationPlan {
                     structure: "Test".to_string(),
                     personal_volume: d!(0.0),
                     group_volume: d!(0.0),
-                    max_group_volume_per_leg: f64::MAX,
+                    max_group_volume_per_leg: AuthoredDec::ZERO,
                     max_group_volume_per_leg_fraction: d!(0.0),
                     min_retail_volume: d!(0.0),
                     distributor_count: None,

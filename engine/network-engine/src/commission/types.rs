@@ -1,6 +1,7 @@
 //! Types for commission calculation.
 
 use crate::config::matrix::SpilloverDirection;
+use crate::decimal::{AuthoredDec, Dec};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -19,7 +20,7 @@ pub struct DistributorSnapshot {
     pub rank: String,
 
     /// Personal volume generated this period.
-    pub personal_volume: f64,
+    pub personal_volume: AuthoredDec,
 
     /// Distributor's current status (e.g., "active", "grace", "suspended").
     pub status: String,
@@ -38,7 +39,7 @@ pub struct VolumeSource {
     pub source_id: Uuid,
 
     /// Commission volume points generated.
-    pub cv_amount: f64,
+    pub cv_amount: AuthoredDec,
 }
 
 /// A single commission earning. One entry per earner per volume source.
@@ -65,13 +66,13 @@ pub struct CommissionEarning {
     ///
     /// Serialized even when null. Omitting the key would make an unrecorded
     /// rate indistinguishable from a missing field.
-    pub rate: Option<f64>,
+    pub rate: Option<Dec>,
 
     /// Input commission volume from the source.
-    pub cv_amount: f64,
+    pub cv_amount: Dec,
 
     /// Final payout amount in the plan's base currency.
-    pub dollar_amount: f64,
+    pub dollar_amount: Dec,
 
     /// Index of the walk that produced this earning.
     ///
@@ -113,13 +114,13 @@ pub enum CalculationError {
     #[error("snapshot for {0} names rank {1:?}; the loaded plan's rank ladder does not contain it")]
     UnknownSnapshotRank(Uuid, String),
 
-    /// A volume source has a non-finite or negative cv_amount.
+    /// A volume source has a negative cv_amount.
     #[error("volume source {0} has invalid cv_amount: {1}")]
-    InvalidCvAmount(Uuid, f64),
+    InvalidCvAmount(Uuid, AuthoredDec),
 
-    /// A snapshot has a non-finite or negative personal_volume.
-    #[error("snapshot for {0} has personal_volume {1}; it must be finite and not negative")]
-    InvalidPersonalVolume(Uuid, f64),
+    /// A snapshot has a negative personal_volume.
+    #[error("snapshot for {0} has personal_volume {1}; it must not be negative")]
+    InvalidPersonalVolume(Uuid, AuthoredDec),
 
     /// Commission config failed validation.
     #[error("config error: {0}")]
@@ -152,8 +153,8 @@ pub enum CalculationError {
 /// calculation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LegVolumes {
-    pub left: f64,
-    pub right: f64,
+    pub left: Dec,
+    pub right: Dec,
 }
 
 /// A single binary pairing commission earning.
@@ -171,22 +172,22 @@ pub struct BinaryCommissionEarning {
     pub position_id: Uuid,
 
     /// Total volume in the left leg (current period + carry-forward).
-    pub left_volume: f64,
+    pub left_volume: Dec,
 
     /// Total volume in the right leg (current period + carry-forward).
-    pub right_volume: f64,
+    pub right_volume: Dec,
 
     /// Volume matched between legs: min(left, right).
-    pub matched_volume: f64,
+    pub matched_volume: Dec,
 
     /// Balance ratio applied. 1.0 for WeakerLeg, min/max for VolumeRatio.
-    pub ratio: f64,
+    pub ratio: Dec,
 
     /// The pairing percent from config.
-    pub percent: f64,
+    pub percent: Dec,
 
     /// Final payout amount after multiplier and cap.
-    pub dollar_amount: f64,
+    pub dollar_amount: Dec,
 
     /// True if cap_per_period reduced this earning.
     pub capped: bool,

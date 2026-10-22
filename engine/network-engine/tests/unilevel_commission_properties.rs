@@ -10,6 +10,7 @@ use network_engine::config::PassUpConfig;
 use network_engine::config::commission::{CompressionConfig, CompressionMode};
 use network_engine::config::eligibility::{ActiveLegTier, CommissionEligibility};
 use network_engine::d;
+use network_engine::decimal::{AuthoredDec, Dec};
 use network_engine::tree::unilevel::UnilevelTree;
 use proptest::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -18,7 +19,7 @@ use std::collections::{HashMap, HashSet};
 /// eligible/ineligible distributors based on PV.
 fn build_test_plan_with_min_pv(
     max_depth: u8,
-    min_pv: f64,
+    min_pv: AuthoredDec,
 ) -> (
     network_engine::config::CompensationPlan,
     network_engine::config::UnilevelStructureConfig,
@@ -91,7 +92,7 @@ proptest! {
         let (plan, structure) = build_unilevel_plan(3);
         let broad_pct = structure.level_commission.broad_commission_percent;
         let multiplier = plan.volume.volume_to_dollar_multiplier;
-        let rate: f64 = d!(0.05); // all levels use 0.05
+        let rate: Dec = d!(0.05); // all levels use 0.05
 
         let mut tree = UnilevelTree::new();
         tree.add_root(uuid_from_index(0), 0).unwrap();
@@ -116,10 +117,16 @@ proptest! {
             calculate_unilevel(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
 
         prop_assert_eq!(result.len(), 1);
-        let expected = cv * broad_pct * multiplier * rate;
-        let diff = (result[0].dollar_amount - expected).abs();
+        let expected = cv
+            .dec()
+            .try_mul(broad_pct)
+            .unwrap()
+            .try_mul(multiplier)
+            .unwrap()
+            .try_mul(rate)
+            .unwrap();
         prop_assert!(
-            diff < 1e-10,
+            result[0].dollar_amount == expected,
             "Dollar amount {} != expected {}",
             result[0].dollar_amount,
             expected
@@ -789,11 +796,11 @@ proptest! {
                 .unwrap()
                 .earnings;
 
-        let total_with: f64 = result_with.iter().map(|e| e.dollar_amount).sum();
-        let total_without: f64 = result_without.iter().map(|e| e.dollar_amount).sum();
+        let total_with = Dec::sum(result_with.iter().map(|e| e.dollar_amount)).unwrap();
+        let total_without = Dec::sum(result_without.iter().map(|e| e.dollar_amount)).unwrap();
 
         prop_assert!(
-            total_with <= total_without + 1e-10,
+            total_with <= total_without,
             "Pass-up total ({}) exceeds no-pass-up total ({})",
             total_with, total_without
         );

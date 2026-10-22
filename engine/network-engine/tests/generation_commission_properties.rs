@@ -2,12 +2,13 @@ mod common;
 
 use common::{
     build_generation_plan, build_same_rank_generation_plan, cents, snapshot_with_rank,
-    uuid_from_index, walk_order_fingerprint,
+    uuid_from_index, walk_order_fingerprint, whole,
 };
 
 use network_engine::commission::{DistributorSnapshot, VolumeSource, calculate_generation};
-use network_engine::d;
+use network_engine::decimal::{AuthoredDec, Dec};
 use network_engine::tree::unilevel::UnilevelTree;
+use network_engine::{assert_d, d};
 use proptest::prelude::*;
 use std::collections::{HashMap, HashSet};
 
@@ -134,14 +135,14 @@ fn reference_tree_threshold_mode() {
         .find(|e| e.earner_id == uuid_from_index(3))
         .expect("Dave should earn");
     assert_eq!(dave.level, 1);
-    assert!((dave.dollar_amount - 10.0).abs() < 1e-10);
+    assert_d!(dave.dollar_amount, 10.0);
 
     let alice = result
         .iter()
         .find(|e| e.earner_id == uuid_from_index(0))
         .expect("Alice should earn");
     assert_eq!(alice.level, 2);
-    assert!((alice.dollar_amount - 7.0).abs() < 1e-10);
+    assert_d!(alice.dollar_amount, 7.0);
 
     // --- Volume from Henry (50 CV) ---
     // Walk from Henry upward: Alice (Director, gen 1).
@@ -164,7 +165,7 @@ fn reference_tree_threshold_mode() {
     assert_eq!(result.len(), 1, "Henry volume: expected 1 earner");
     assert_eq!(result[0].earner_id, uuid_from_index(0));
     assert_eq!(result[0].level, 1);
-    assert!((result[0].dollar_amount - 5.0).abs() < 1e-10);
+    assert_d!(result[0].dollar_amount, 5.0);
 
     // --- Volume from Grace (75 CV) ---
     // Walk from Grace upward: Bob (skip), Alice (Director, gen 1).
@@ -187,7 +188,7 @@ fn reference_tree_threshold_mode() {
     assert_eq!(result.len(), 1, "Grace volume: expected 1 earner");
     assert_eq!(result[0].earner_id, uuid_from_index(0));
     assert_eq!(result[0].level, 1);
-    assert!((result[0].dollar_amount - 7.5).abs() < 1e-10);
+    assert_d!(result[0].dollar_amount, 7.5);
 
     // --- Volume from Bob (200 CV) ---
     // Walk from Bob upward: Alice (Director, gen 1).
@@ -210,7 +211,7 @@ fn reference_tree_threshold_mode() {
     assert_eq!(result.len(), 1, "Bob volume: expected 1 earner");
     assert_eq!(result[0].earner_id, uuid_from_index(0));
     assert_eq!(result[0].level, 1);
-    assert!((result[0].dollar_amount - 20.0).abs() < 1e-10);
+    assert_d!(result[0].dollar_amount, 20.0);
 
     // --- Multiple sources at once ---
     // Eve (100) + Henry (50): should produce earnings for both sources combined.
@@ -245,10 +246,11 @@ fn reference_tree_threshold_mode() {
         .collect();
     assert_eq!(alice_earnings.len(), 2, "Alice should have 2 earnings");
 
-    let alice_total: f64 = alice_earnings.iter().map(|e| e.dollar_amount).sum();
+    let alice_total = Dec::sum(alice_earnings.iter().map(|e| e.dollar_amount)).unwrap();
     // 7.0 (gen 2 from Eve) + 5.0 (gen 1 from Henry) = 12.0
-    assert!(
-        (alice_total - 12.0).abs() < 1e-10,
+    assert_d!(
+        alice_total,
+        12.0,
         "Alice total: expected 12.0, got {}",
         alice_total
     );
@@ -298,7 +300,7 @@ fn build_random_chain(
 }
 
 /// Strategy: generate a tree size and a set of director positions within it.
-fn generation_inputs() -> impl Strategy<Value = (usize, Vec<usize>, f64, u8)> {
+fn generation_inputs() -> impl Strategy<Value = (usize, Vec<usize>, AuthoredDec, u8)> {
     (3..30usize).prop_flat_map(|size| {
         let directors = proptest::collection::vec(0..size, 0..size / 2 + 1);
         let cv = cents(0, 1_000_000);
@@ -442,18 +444,18 @@ proptest! {
         }];
 
         let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
-        let total_payout: f64 = result.iter().map(|e| e.dollar_amount).sum();
+        let total_payout = Dec::sum(result.iter().map(|e| e.dollar_amount)).unwrap();
 
         // Upper bound: cv * multiplier * sum(all gen rates)
-        let rate_sum: f64 = structure.generation_commission.rates.values().sum();
+        let rate_sum = Dec::sum(structure.generation_commission.rates.values().map(|r| r.dec())).unwrap();
         let multiplier = structure
             .generation_commission
             .volume_to_dollar_multiplier
             .unwrap_or(plan.volume.volume_to_dollar_multiplier);
-        let upper_bound = cv * multiplier * rate_sum;
+        let upper_bound = cv.dec().try_mul(multiplier).unwrap().try_mul(rate_sum).unwrap();
 
         prop_assert!(
-            total_payout <= upper_bound + 1e-6,
+            total_payout <= upper_bound,
             "Total payout {} exceeds upper bound {}",
             total_payout, upper_bound
         );
@@ -504,7 +506,7 @@ fn build_multi_rank_chain(
 }
 
 /// Strategy for SameRank mode: tree size + rank assignments per node.
-fn same_rank_inputs() -> impl Strategy<Value = (usize, Vec<u8>, f64, u8)> {
+fn same_rank_inputs() -> impl Strategy<Value = (usize, Vec<u8>, AuthoredDec, u8)> {
     (3..20usize).prop_flat_map(|size| {
         let ranks = proptest::collection::vec(0..3u8, size..=size);
         let cv = cents(0, 500_000);
@@ -625,20 +627,27 @@ proptest! {
         }];
 
         let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
-        let total_payout: f64 = result.iter().map(|e| e.dollar_amount).sum();
+        let total_payout = Dec::sum(result.iter().map(|e| e.dollar_amount)).unwrap();
 
         // Upper bound: each of the 3 rank ordinals can produce up to
         // (cv * multiplier * sum_of_rates) earnings independently.
-        let rate_sum: f64 = structure.generation_commission.rates.values().sum();
+        let rate_sum = Dec::sum(structure.generation_commission.rates.values().map(|r| r.dec())).unwrap();
         let multiplier = structure
             .generation_commission
             .volume_to_dollar_multiplier
             .unwrap_or(plan.volume.volume_to_dollar_multiplier);
         let num_ranks = 3u32; // associate, silver, director
-        let upper_bound = cv * multiplier * rate_sum * num_ranks as f64;
+        let upper_bound = cv
+            .dec()
+            .try_mul(multiplier)
+            .unwrap()
+            .try_mul(rate_sum)
+            .unwrap()
+            .try_mul(whole::<Dec>(num_ranks))
+            .unwrap();
 
         prop_assert!(
-            total_payout <= upper_bound + 1e-6,
+            total_payout <= upper_bound,
             "SameRank: total payout {} exceeds upper bound {}",
             total_payout, upper_bound
         );

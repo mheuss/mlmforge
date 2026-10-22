@@ -3,6 +3,7 @@ mod common;
 use common::{cents, uuid_from_index, walk_order_fingerprint};
 use network_engine::config::streamline::StreamAssignmentMode;
 use network_engine::d;
+use network_engine::decimal::Dec;
 use network_engine::streamline::engine::{StreamlineConfig, StreamlineEngine};
 use proptest::prelude::*;
 use std::collections::HashSet;
@@ -270,7 +271,7 @@ proptest! {
         let levels: Vec<StreamlineLevel> = (1..=max_depth).map(|l| StreamlineLevel {
             level: l,
             min_rank: "member".to_string(),
-            percent: 0.01 * l as f64,
+            percent: format!("{l}e-2").parse().unwrap(),
         }).collect();
 
         let structure = StreamlineStructureConfig {
@@ -314,7 +315,7 @@ proptest! {
         prop_assert!(!earnings.is_empty(), "expected at least one earning");
 
         // streamline.rs:137 hardcodes broad_pct = 1.0.
-        let broad_pct: f64 = d!(1.0);
+        let broad_pct: Dec = d!(1.0);
         let cfg_levels = &structure.streamline_commission.levels;
         for earning in &earnings {
             let percent = cfg_levels
@@ -323,9 +324,16 @@ proptest! {
                 .map(|l| l.percent)
                 .expect("earning level should map to a configured streamline level");
 
-            let expected = cv_amount * broad_pct * multiplier * percent;
+            let expected = cv_amount
+                .dec()
+                .try_mul(broad_pct)
+                .unwrap()
+                .try_mul(multiplier)
+                .unwrap()
+                .try_mul(percent)
+                .unwrap();
             prop_assert!(
-                (earning.dollar_amount - expected).abs() < 1e-10,
+                earning.dollar_amount == expected,
                 "level {}: dollar {} != cv {} * broad {} * mult {} * pct {} = {}",
                 earning.level,
                 earning.dollar_amount,
@@ -381,7 +389,7 @@ proptest! {
             .map(|i| StreamlineLevel {
                 level: i as u8,
                 min_rank: format!("r{i}"),
-                percent: 0.01 * i as f64,
+                percent: format!("{i}e-2").parse().unwrap(),
             })
             .collect();
 

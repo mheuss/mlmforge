@@ -5,6 +5,7 @@
 //! Re-entry rules control whether cycled-out members rejoin new boards.
 //! Cascade limits prevent runaway chain reactions from a single add.
 
+use crate::decimal::AuthoredDec;
 use std::num::NonZeroU32;
 
 use serde::{Deserialize, Serialize};
@@ -16,7 +17,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BoardPlanConfig {
     /// Fixed dollar amount earned when cycling out of a board.
-    pub cycle_commission: f64,
+    pub cycle_commission: AuthoredDec,
 
     /// Whether cycled-out members automatically re-enter a new board.
     pub re_entry_enabled: bool,

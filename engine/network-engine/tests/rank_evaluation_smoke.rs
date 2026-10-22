@@ -1,10 +1,11 @@
 mod common;
 
 use network_engine::d;
+use network_engine::decimal::AuthoredDec;
 use std::collections::HashMap;
 use std::time::Instant;
 
-use common::uuid_from_index;
+use common::{uuid_from_index, whole};
 use network_engine::config::rank::{
     DemotionPolicy, RankDefinition, RankQualification, StructureQualification,
 };
@@ -52,9 +53,9 @@ fn build_seven_rank_plan() -> CompensationPlan {
             qualification: RankQualification {
                 structures: vec![StructureQualification {
                     structure: "Test".to_string(),
-                    personal_volume: (i as f64) * 50.0,
+                    personal_volume: whole(i * 50),
                     group_volume: d!(0.0),
-                    max_group_volume_per_leg: f64::MAX,
+                    max_group_volume_per_leg: AuthoredDec::ZERO,
                     max_group_volume_per_leg_fraction: d!(0.0),
                     min_retail_volume: d!(0.0),
                     distributor_count: None,
@@ -98,7 +99,7 @@ fn evaluate_ranks_completes_in_reasonable_time_on_10k_distributors() {
         distributors.insert(
             uuid_from_index(i),
             DistributorPrimitives {
-                personal_volume: (i % 500) as f64,
+                personal_volume: whole(i % 500),
                 retail_volume: d!(0.0),
                 status: "active".to_string(),
                 has_order_in_period: true,

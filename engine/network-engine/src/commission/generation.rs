@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::config::generation::GenerationBoundaryMode;
 use crate::config::{CompensationPlan, GenerationStructureConfig};
+use crate::decimal::{AuthoredDec, Dec, NumericError};
 use crate::tree::unilevel::UnilevelTree;
 
 use super::types::{
@@ -209,7 +210,7 @@ fn emit_generation_earnings(
     source: &VolumeSource,
     gen_config: &crate::config::generation::GenerationCommissionConfig,
     eligibility_cache: &HashMap<Uuid, walk::EligibilityResult>,
-    multiplier: f64,
+    multiplier: Dec,
     // The walk these entries came from. Taken as a parameter rather than
     // derived from `source`, because SameRank runs one traversal per
     // (rank, source): deriving it would collapse every rank onto one walk,
@@ -217,7 +218,7 @@ fn emit_generation_earnings(
     // fail loudly.
     collector_id: u32,
     earnings: &mut Vec<CommissionEarning>,
-) {
+) -> Result<(), NumericError> {
     for entry in gen_entries {
         // Ineligible earners are in the boundary set (they define structure)
         // but must not earn.
@@ -232,9 +233,9 @@ fn emit_generation_earnings(
             .rates
             .get(&entry.generation)
             .copied()
-            .unwrap_or(0.0);
+            .unwrap_or(AuthoredDec::ZERO);
 
-        if rate <= 0.0 {
+        if rate <= AuthoredDec::ZERO {
             continue;
         }
 
@@ -242,12 +243,13 @@ fn emit_generation_earnings(
             earner_id: entry.earner_id,
             source_id: source.source_id,
             level: entry.generation,
-            rate: Some(rate),
-            cv_amount: source.cv_amount,
-            dollar_amount: source.cv_amount * multiplier * rate,
+            rate: Some(rate.dec()),
+            cv_amount: source.cv_amount.dec(),
+            dollar_amount: source.cv_amount.dec().try_mul(multiplier)?.try_mul(rate)?,
             walk: Some(collector_id),
         });
     }
+    Ok(())
 }
 
 /// Calculate generation commissions for a set of volume events.
@@ -264,10 +266,11 @@ fn emit_generation_earnings(
 /// # Errors
 ///
 /// Returns `CalculationError` if a snapshot names a rank the plan does not
-/// define, if a snapshot's personal_volume is negative or not finite, if a
-/// distributor in the tree has no snapshot, if a volume source is not found in
-/// the tree, if a volume source has an invalid CV amount, or if level
-/// commissions are enabled with no level commission config.
+/// define, if a snapshot's personal_volume is negative, if a distributor in the
+/// tree has no snapshot, if a volume source is not found in the tree, if a
+/// volume source has an invalid CV amount, if level commissions are enabled
+/// with no level commission config, or if an amount leaves the numeric
+/// envelope.
 pub fn calculate_generation(
     tree: &UnilevelTree,
     plan: &CompensationPlan,
@@ -312,8 +315,8 @@ pub fn calculate_generation(
 
         let level_config = walk::LevelWalkConfig {
             max_depth: lc.max_depth,
-            broad_pct: lc.broad_commission_percent,
-            multiplier: lc_multiplier,
+            broad_pct: lc.broad_commission_percent.dec(),
+            multiplier: lc_multiplier.dec(),
             compression: structure.compression.as_ref(),
             threshold_ordinal,
             rank_ordinals: &rank_ordinals,
@@ -430,10 +433,10 @@ pub fn calculate_generation(
                     source,
                     gen_config,
                     &eligibility_cache,
-                    multiplier,
+                    multiplier.dec(),
                     collector_id,
                     &mut earnings,
-                );
+                )?;
             }
         }
 
@@ -513,10 +516,10 @@ pub fn calculate_generation(
                         source,
                         gen_config,
                         &eligibility_cache,
-                        multiplier,
+                        multiplier.dec(),
                         collector_id,
                         &mut earnings,
-                    );
+                    )?;
                 }
             }
         }
@@ -989,6 +992,7 @@ mod tests {
 
 #[cfg(test)]
 mod calculate_tests {
+    use crate::decimal::AuthoredDec;
     use crate::{assert_d, d};
     use std::collections::{BTreeMap, HashMap};
 
@@ -1020,7 +1024,7 @@ mod calculate_tests {
     fn threshold_structure(
         boundary_rank: &str,
         max_generations: u8,
-        rates: BTreeMap<u8, f64>,
+        rates: BTreeMap<u8, AuthoredDec>,
     ) -> GenerationStructureConfig {
         GenerationStructureConfig {
             name: "Generation".to_string(),
@@ -1125,7 +1129,7 @@ mod calculate_tests {
     }
 
     #[test]
-    fn calculate_generation_rejects_a_nan_personal_volume() {
+    fn calculate_generation_rejects_a_negative_personal_volume() {
         let tree = build_chain(3);
         let plan = two_rank_plan();
         let structure = threshold_structure("director", 3, BTreeMap::from([(1, d!(0.10))]));
@@ -1135,7 +1139,7 @@ mod calculate_tests {
         snapshots.insert(
             uuid(1),
             DistributorSnapshot {
-                personal_volume: f64::NAN,
+                personal_volume: d!(-0.5),
                 ..eligible_snapshot()
             },
         );
@@ -1160,7 +1164,7 @@ mod calculate_tests {
             matches!(
                 err,
                 CalculationError::InvalidPersonalVolume(id, pv)
-                    if id == uuid(1) && pv.is_nan()
+                    if id == uuid(1) && pv == d!(-0.5)
             ),
             "got {err:?}"
         );
@@ -1291,7 +1295,7 @@ mod calculate_tests {
         assert_eq!(result[0].level, 1);
         assert_eq!(result[0].rate, Some(d!(0.10)));
         assert_d!(result[0].cv_amount, 100.0);
-        assert!((result[0].dollar_amount - 10.0).abs() < f64::EPSILON);
+        assert_d!(result[0].dollar_amount, 10.0);
     }
 
     /// Chain: 0(Dir) -> 1(Assoc) -> 2(Dir) -> 3(Assoc) -> 4(Dir) -> 5(Assoc) -> 6(leaf).
@@ -1335,17 +1339,17 @@ mod calculate_tests {
         let earn_4 = result.iter().find(|e| e.earner_id == uuid(4)).unwrap();
         assert_eq!(earn_4.level, 1);
         assert_eq!(earn_4.rate, Some(d!(0.10)));
-        assert!((earn_4.dollar_amount - 20.0).abs() < f64::EPSILON);
+        assert_d!(earn_4.dollar_amount, 20.0);
 
         let earn_2 = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
         assert_eq!(earn_2.level, 2);
         assert_eq!(earn_2.rate, Some(d!(0.06)));
-        assert!((earn_2.dollar_amount - 12.0).abs() < f64::EPSILON);
+        assert_d!(earn_2.dollar_amount, 12.0);
 
         let earn_0 = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(earn_0.level, 3);
         assert_eq!(earn_0.rate, Some(d!(0.04)));
-        assert!((earn_0.dollar_amount - 8.0).abs() < f64::EPSILON);
+        assert_d!(earn_0.dollar_amount, 8.0);
     }
 
     /// Chain: 0(Dir) -> 1(Assoc) -> 2(Dir) -> 3(Assoc) -> 4(Dir) -> 5(leaf).
@@ -1597,7 +1601,7 @@ mod calculate_tests {
         assert_eq!(result[0].earner_id, uuid(0));
         assert_eq!(result[0].level, 2);
         assert_eq!(result[0].rate, Some(d!(0.05)));
-        assert!((result[0].dollar_amount - 5.0).abs() < f64::EPSILON);
+        assert_d!(result[0].dollar_amount, 5.0);
     }
 
     /// Tree: root(Dir, active) -> mid(Dir, inactive) -> leaf(source).
@@ -1638,7 +1642,7 @@ mod calculate_tests {
         assert_eq!(result[0].earner_id, uuid(0));
         assert_eq!(result[0].level, 1);
         assert_eq!(result[0].rate, Some(d!(0.10)));
-        assert!((result[0].dollar_amount - 10.0).abs() < f64::EPSILON);
+        assert_d!(result[0].dollar_amount, 10.0);
     }
 
     /// Tree: root(Dir, active) -> mid(Dir, inactive) -> leaf(source).
@@ -1683,7 +1687,7 @@ mod calculate_tests {
         assert_eq!(result[0].earner_id, uuid(0));
         assert_eq!(result[0].level, 2);
         assert_eq!(result[0].rate, Some(d!(0.05)));
-        assert!((result[0].dollar_amount - 5.0).abs() < f64::EPSILON);
+        assert_d!(result[0].dollar_amount, 5.0);
     }
 
     /// Tree: root(Dir, active) -> mid(Dir, active) -> leaf(source).
@@ -1835,21 +1839,21 @@ mod calculate_tests {
             .iter()
             .find(|e| e.earner_id == uuid(1) && e.rate == Some(d!(0.05)))
             .unwrap();
-        assert!((mid_level.dollar_amount - 2.0).abs() < f64::EPSILON);
+        assert_d!(mid_level.dollar_amount, 2.0);
 
         // root: level 2 from walk = 100 * 0.40 * 1.0 * 0.08 = 3.2
         let root_level = result
             .iter()
             .find(|e| e.earner_id == uuid(0) && e.rate == Some(d!(0.08)))
             .unwrap();
-        assert!((root_level.dollar_amount - 3.2).abs() < f64::EPSILON);
+        assert_d!(root_level.dollar_amount, 3.2);
 
         // root: gen 1 = 100 * 1.0 * 0.10 = 10.0
         let root_gen = result
             .iter()
             .find(|e| e.earner_id == uuid(0) && e.rate == Some(d!(0.10)))
             .unwrap();
-        assert!((root_gen.dollar_amount - 10.0).abs() < f64::EPSILON);
+        assert_d!(root_gen.dollar_amount, 10.0);
     }
 
     /// Chain: 0(Dir) -> 1(no snapshot) -> 2(leaf), level commissions on. The
@@ -2145,18 +2149,18 @@ mod calculate_tests {
 
         // mid: level 1 = 100 * 0.40 * 1.0 * 0.05 = 2.0
         let mid = result.iter().find(|e| e.earner_id == uuid(1)).unwrap();
-        assert!((mid.dollar_amount - 2.0).abs() < 1e-10);
+        assert_d!(mid.dollar_amount, 2.0);
 
         // root: level 2 = 100 * 0.40 * 1.0 * 0.08 = 3.2
         let root = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
-        assert!((root.dollar_amount - 3.2).abs() < 1e-10);
+        assert_d!(root.dollar_amount, 3.2);
     }
 
     // -- SameRank mode helpers and tests --
 
     fn same_rank_structure(
         max_generations: u8,
-        rates: BTreeMap<u8, f64>,
+        rates: BTreeMap<u8, AuthoredDec>,
     ) -> GenerationStructureConfig {
         GenerationStructureConfig {
             name: "Generation".to_string(),
@@ -2363,17 +2367,17 @@ mod calculate_tests {
         let earn_low = result.iter().find(|e| e.earner_id == uuid(2)).unwrap();
         assert_eq!(earn_low.level, 1);
         assert_eq!(earn_low.rate, Some(d!(0.10)));
-        assert!((earn_low.dollar_amount - 10.0).abs() < f64::EPSILON);
+        assert_d!(earn_low.dollar_amount, 10.0);
 
         let earn_mid = result.iter().find(|e| e.earner_id == uuid(1)).unwrap();
         assert_eq!(earn_mid.level, 1);
         assert_eq!(earn_mid.rate, Some(d!(0.10)));
-        assert!((earn_mid.dollar_amount - 10.0).abs() < f64::EPSILON);
+        assert_d!(earn_mid.dollar_amount, 10.0);
 
         let earn_root = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(earn_root.level, 1);
         assert_eq!(earn_root.rate, Some(d!(0.10)));
-        assert!((earn_root.dollar_amount - 10.0).abs() < f64::EPSILON);
+        assert_d!(earn_root.dollar_amount, 10.0);
     }
 
     /// Tree: root(Diamond) -> g1(Gold) -> g2(Gold) -> low(Associate) -> leaf(source).
@@ -2910,13 +2914,13 @@ mod calculate_tests {
         let earn_6 = result.iter().find(|e| e.earner_id == uuid(6)).unwrap();
         assert_eq!(earn_6.level, 1);
         assert_eq!(earn_6.rate, Some(d!(0.10)));
-        assert!((earn_6.dollar_amount - 10.0).abs() < f64::EPSILON);
+        assert_d!(earn_6.dollar_amount, 10.0);
 
         // Silver node 5 earns gen 2 (within silver cap of 2).
         let earn_5 = result.iter().find(|e| e.earner_id == uuid(5)).unwrap();
         assert_eq!(earn_5.level, 2);
         assert_eq!(earn_5.rate, Some(d!(0.08)));
-        assert!((earn_5.dollar_amount - 8.0).abs() < f64::EPSILON);
+        assert_d!(earn_5.dollar_amount, 8.0);
 
         // Diamond node 0 earns gen 7. Walk reaches the diamond cap of 7,
         // proving walk_depth (not max_generations or tree depth) is the
@@ -2924,7 +2928,7 @@ mod calculate_tests {
         let earn_0 = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(earn_0.level, 7);
         assert_eq!(earn_0.rate, Some(d!(0.02)));
-        assert!((earn_0.dollar_amount - 2.0).abs() < f64::EPSILON);
+        assert_d!(earn_0.dollar_amount, 2.0);
 
         // Exactly three earnings: gold 6, silver 5, diamond 0.
         assert_eq!(result.len(), 3);
@@ -3013,20 +3017,20 @@ mod calculate_tests {
         let earn_6 = result.iter().find(|e| e.earner_id == uuid(6)).unwrap();
         assert_eq!(earn_6.level, 1);
         assert_eq!(earn_6.rate, Some(d!(0.10)));
-        assert!((earn_6.dollar_amount - 10.0).abs() < f64::EPSILON);
+        assert_d!(earn_6.dollar_amount, 10.0);
 
         // Silver node 5 earns gen 2 in the silver walk (gen 2 = silver cap).
         let earn_5 = result.iter().find(|e| e.earner_id == uuid(5)).unwrap();
         assert_eq!(earn_5.level, 2);
         assert_eq!(earn_5.rate, Some(d!(0.08)));
-        assert!((earn_5.dollar_amount - 8.0).abs() < f64::EPSILON);
+        assert_d!(earn_5.dollar_amount, 8.0);
 
         // Diamond node 0 earns gen 1 in the diamond walk (only diamond+
         // boundary above the source).
         let earn_0 = result.iter().find(|e| e.earner_id == uuid(0)).unwrap();
         assert_eq!(earn_0.level, 1);
         assert_eq!(earn_0.rate, Some(d!(0.10)));
-        assert!((earn_0.dollar_amount - 10.0).abs() < f64::EPSILON);
+        assert_d!(earn_0.dollar_amount, 10.0);
 
         // Exactly three earnings: silver 5, gold 6, diamond 0.
         assert_eq!(result.len(), 3);

@@ -4,7 +4,10 @@
 //! constructors. It is not part of the stable runtime API for production
 //! callers. Keep it narrow and biased toward obvious defaults.
 
+use rust_decimal_macros::dec;
 use uuid::Uuid;
+
+use crate::decimal::{AuthoredDec, Dec};
 
 use crate::commission::DistributorSnapshot;
 use crate::config::bonus::BonusConfig;
@@ -39,7 +42,7 @@ pub fn build_test_plan(
         volume: VolumeConfig {
             inhibit_signup_volume: false,
             base_currency: "USD".to_string(),
-            volume_to_dollar_multiplier: 1.0,
+            volume_to_dollar_multiplier: AuthoredDec::new(dec!(1.0)),
             deduct_qualifying_volume: false,
         },
         ranks: vec![make_rank("associate", 1, vec![structure_name.to_string()])],
@@ -66,16 +69,16 @@ pub fn build_test_plan(
         },
         payout: PayoutConfig {
             currency: "USD".to_string(),
-            minimum_payout: 50.0,
+            minimum_payout: AuthoredDec::new(dec!(50.0)),
             allow_partial_payout: true,
             payment_methods: vec![PayoutMethod {
                 method_type: "bank_transfer".to_string(),
-                fee: 2.50,
+                fee: AuthoredDec::new(dec!(2.50)),
             }],
         },
         caps: CapsConfig {
             per_distributor_cap: None,
-            company_payout_cap_percent: 0.42,
+            company_payout_cap_percent: AuthoredDec::new(dec!(0.42)),
             enforcement: CapEnforcement::ProRata,
             enable_clawback: false,
         },
@@ -102,7 +105,7 @@ pub fn uuid_from_index(i: usize) -> Uuid {
 pub fn member_snapshot() -> DistributorSnapshot {
     DistributorSnapshot {
         rank: "member".to_string(),
-        personal_volume: 100.0,
+        personal_volume: AuthoredDec::new(dec!(100.0)),
         status: "active".to_string(),
         has_order_in_period: true,
     }
@@ -151,8 +154,15 @@ pub trait FromLiteral {
     fn from_literal(text: &str) -> Self;
 }
 
-impl FromLiteral for f64 {
-    fn from_literal(text: &str) -> f64 {
+impl FromLiteral for Dec {
+    fn from_literal(text: &str) -> Self {
+        text.parse()
+            .unwrap_or_else(|e| panic!("test literal {text:?}: {e}"))
+    }
+}
+
+impl FromLiteral for AuthoredDec {
+    fn from_literal(text: &str) -> Self {
         text.parse()
             .unwrap_or_else(|e| panic!("test literal {text:?}: {e}"))
     }
@@ -197,46 +207,52 @@ macro_rules! assert_d {
 
 #[cfg(test)]
 mod tests {
+    use crate::decimal::Dec;
+
+    fn dec(text: &str) -> Dec {
+        text.parse().unwrap()
+    }
+
     #[test]
     fn assert_d_accepts_an_equal_value() {
-        let rate: f64 = 0.07;
+        let rate = dec("0.07");
         crate::assert_d!(rate, 0.07);
     }
 
     #[test]
     #[should_panic(expected = "assertion `left == right` failed")]
     fn assert_d_panics_on_an_unequal_value() {
-        let rate: f64 = 0.07;
+        let rate = dec("0.07");
         crate::assert_d!(rate, 0.08);
     }
 
     #[test]
     fn assert_d_takes_a_negative_literal_and_a_message() {
-        let rate: f64 = -0.5;
+        let rate = dec("-0.5");
         crate::assert_d!(rate, -0.5, "rate for level {}", 1);
     }
 
     #[test]
     #[should_panic(expected = "rate for level 1")]
     fn assert_d_reports_its_message_on_a_mismatch() {
-        let rate: f64 = 0.07;
+        let rate = dec("0.07");
         crate::assert_d!(rate, 0.08, "rate for level {}", 1);
     }
 
     #[test]
     fn assert_d_keeps_a_temporary_alive_for_the_comparison() {
-        crate::assert_d!(*std::cell::RefCell::new(0.07f64).borrow(), 0.07);
+        crate::assert_d!(*std::cell::RefCell::new(dec("0.07")).borrow(), 0.07);
     }
 
     #[test]
     fn d_builds_the_value_its_literal_names() {
-        let positive: f64 = crate::d!(10.10);
-        let negative: f64 = crate::d!(-0.5);
-        let exponent: f64 = crate::d!(1e-9);
-        let grouped: f64 = crate::d!(10_000.25);
+        let positive: Dec = crate::d!(10.10);
+        let negative: Dec = crate::d!(-0.5);
+        let exponent: Dec = crate::d!(1e-9);
+        let grouped: Dec = crate::d!(10_000.25);
         assert_eq!(
             (positive, negative, exponent, grouped),
-            (10.10, -0.5, 1e-9, 10_000.25)
+            (dec("10.10"), dec("-0.5"), dec("1e-9"), dec("10000.25"))
         );
     }
 }

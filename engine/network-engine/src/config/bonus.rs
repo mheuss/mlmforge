@@ -4,6 +4,7 @@
 //! Each bonus is independently optional. A plan can activate any
 //! combination by populating the corresponding field in `BonusConfig`.
 
+use crate::decimal::AuthoredDec;
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -85,7 +86,7 @@ pub struct MatchingBonusConfig {
     /// Deserialized via `crate::serde_helpers::u8_keyed_map` so the keys
     /// parse whether or not serde buffered this value.
     #[serde(deserialize_with = "crate::serde_helpers::u8_keyed_map")]
-    pub rates: BTreeMap<u8, f64>,
+    pub rates: BTreeMap<u8, AuthoredDec>,
 
     /// Which commission types are matched. References commission type
     /// names such as "level" or "binary".
@@ -104,7 +105,7 @@ pub struct MatchingBonusConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SponsorBonusConfig {
     /// Fixed dollar amount or percentage, depending on `amount_type`.
-    pub amount: f64,
+    pub amount: AuthoredDec,
 
     /// Whether `amount` is a fixed dollar value or a percentage.
     pub amount_type: AmountType,
@@ -154,7 +155,7 @@ pub struct FastStartBonusConfig {
         rename = "rate_table",
         deserialize_with = "crate::serde_helpers::rank_keyed_u8_map"
     )]
-    pub enhanced_rate_table: BTreeMap<String, BTreeMap<u8, f64>>,
+    pub enhanced_rate_table: BTreeMap<String, BTreeMap<u8, AuthoredDec>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -169,7 +170,7 @@ pub struct FastStartBonusConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RankAdvancementBonusConfig {
     /// Rank name to bonus amount paid when reaching that rank.
-    pub amounts: BTreeMap<String, f64>,
+    pub amounts: BTreeMap<String, AuthoredDec>,
 
     /// When true, each rank bonus is paid only the first time achieved.
     /// Requires `track_achieved_rank` in `RankTrackingConfig`.
@@ -196,7 +197,7 @@ pub struct LeadershipDevelopmentBonusConfig {
     /// Deserialized via `crate::serde_helpers::u8_keyed_map` so the keys
     /// parse whether or not serde buffered this value.
     #[serde(deserialize_with = "crate::serde_helpers::u8_keyed_map")]
-    pub rates: BTreeMap<u8, f64>,
+    pub rates: BTreeMap<u8, AuthoredDec>,
 
     /// How to handle multi-rank jumps.
     pub rank_skip_mode: RankSkipMode,
@@ -229,7 +230,7 @@ pub struct InfinityBonusConfig {
 
     /// Used when `rate_mode` is `Flat`. The same rate at every
     /// generation.
-    pub flat_rate: Option<f64>,
+    pub flat_rate: Option<AuthoredDec>,
 
     /// Used when `rate_mode` is `Decreasing`. Generation (1-indexed)
     /// to rate. Rate decreases per generation.
@@ -242,7 +243,7 @@ pub struct InfinityBonusConfig {
         default,
         deserialize_with = "crate::serde_helpers::optional_u8_keyed_map"
     )]
-    pub decreasing_rates: Option<BTreeMap<u8, f64>>,
+    pub decreasing_rates: Option<BTreeMap<u8, AuthoredDec>>,
 
     /// Whether rates are flat or decreasing per generation.
     pub rate_mode: InfinityRateMode,
@@ -294,7 +295,7 @@ pub struct LifestyleTier {
     pub min_rank: String,
 
     /// Monthly (per-period) bonus amount.
-    pub amount: f64,
+    pub amount: AuthoredDec,
 
     /// Number of periods the bonus continues after falling below rank.
     /// 0 means no grace.
@@ -315,7 +316,7 @@ pub struct PoolBonusConfig {
     pub name: String,
 
     /// Percentage of company volume allocated to this pool.
-    pub source_percent: f64,
+    pub source_percent: AuthoredDec,
 
     /// How distributors qualify for the pool.
     pub qualification: PoolQualification,
@@ -360,7 +361,7 @@ pub enum PoolQualificationMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VelocityQualification {
     /// Volume that must be reached.
-    pub volume_target: f64,
+    pub volume_target: AuthoredDec,
 
     /// Time window for the target.
     pub timeframe: VelocityTimeframe,
@@ -387,7 +388,7 @@ pub struct PoolShares {
     pub mode: PoolShareMode,
 
     /// Maximum per-distributor share when mode is `EqualShare`.
-    pub equal_share_cap: Option<f64>,
+    pub equal_share_cap: Option<AuthoredDec>,
 }
 
 /// How pool shares are calculated.
@@ -423,11 +424,11 @@ pub struct MatrixCompletionBonusConfig {
         rename = "per_level",
         deserialize_with = "crate::serde_helpers::u8_keyed_map"
     )]
-    pub per_level_amounts: BTreeMap<u8, f64>,
+    pub per_level_amounts: BTreeMap<u8, AuthoredDec>,
 
     /// Bonus paid when the entire matrix is complete.
     #[serde(rename = "full_matrix")]
-    pub full_matrix_amount: f64,
+    pub full_matrix_amount: AuthoredDec,
 }
 
 // ---------------------------------------------------------------------------
@@ -441,7 +442,7 @@ pub struct MatrixCompletionBonusConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PositionBonusConfig {
     /// Fixed or percentage amount.
-    pub amount: f64,
+    pub amount: AuthoredDec,
 
     /// Whether `amount` is a fixed dollar value or a percentage.
     pub amount_type: AmountType,

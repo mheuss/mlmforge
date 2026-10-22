@@ -15,7 +15,7 @@ pub(crate) fn handle_evaluate_ranks(state: &WorkerState, request: &Request) -> R
     };
     let inputs: EvaluationInputs = match parse_params_as(&request.params) {
         Ok(p) => p,
-        Err(e) => return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string()),
+        Err(e) => return Response::error(request.id.clone(), "INVALID_PARAMS", e),
     };
 
     // A structure with no navigable tree returns STRUCTURE_NOT_FOUND.

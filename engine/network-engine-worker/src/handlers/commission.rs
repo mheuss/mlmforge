@@ -153,7 +153,7 @@ pub(crate) fn handle_calculate_unilevel(state: &WorkerState, request: &Request) 
     let params: CalculateUnilevelParams = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
-            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+            return Response::error(request.id.clone(), "INVALID_PARAMS", e);
         }
     };
     let tree = match require_unilevel_tree(state, &params.structure_name, &request.id) {
@@ -196,7 +196,7 @@ pub(crate) fn handle_calculate_generation(state: &WorkerState, request: &Request
     let params: CalculateGenerationParams = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
-            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+            return Response::error(request.id.clone(), "INVALID_PARAMS", e);
         }
     };
     let tree = match require_unilevel_tree(state, &params.structure_name, &request.id) {
@@ -235,7 +235,7 @@ pub(crate) fn handle_calculate_binary_pairing(state: &WorkerState, request: &Req
     let params: CalculateBinaryPairingParams = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
-            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+            return Response::error(request.id.clone(), "INVALID_PARAMS", e);
         }
     };
     let tree = match require_binary_tree(state, &params.structure_name, &request.id) {
@@ -289,7 +289,7 @@ pub(crate) fn handle_calculate_matrix(state: &WorkerState, request: &Request) ->
     let params: CalculateMatrixParams = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
-            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+            return Response::error(request.id.clone(), "INVALID_PARAMS", e);
         }
     };
     let tree = match require_matrix_tree(state, &params.structure_name, &request.id) {
@@ -332,7 +332,7 @@ pub(crate) fn handle_calculate_stairstep(state: &WorkerState, request: &Request)
     let params: CalculateStairstepParams = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
-            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+            return Response::error(request.id.clone(), "INVALID_PARAMS", e);
         }
     };
     // Stairstep operates on a unilevel tree, so reuse require_unilevel_tree.

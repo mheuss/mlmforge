@@ -120,7 +120,7 @@ pub(crate) fn handle_create_board_plan(state: &mut WorkerState, request: &Reques
     let params: Params = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
-            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+            return Response::error(request.id.clone(), "INVALID_PARAMS", e);
         }
     };
 
@@ -504,7 +504,7 @@ pub(crate) fn handle_board_calculate_commissions(
 
     let params: Params = match parse_params_as(&request.params) {
         Ok(p) => p,
-        Err(e) => return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string()),
+        Err(e) => return Response::error(request.id.clone(), "INVALID_PARAMS", e),
     };
 
     let structure = match find_board_plan_structure(plan, &params.structure_name) {

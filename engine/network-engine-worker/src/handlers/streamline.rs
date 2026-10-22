@@ -104,7 +104,7 @@ pub(crate) fn handle_create_streamline(state: &mut WorkerState, request: &Reques
     let params: Params = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
-            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+            return Response::error(request.id.clone(), "INVALID_PARAMS", e);
         }
     };
 
@@ -481,7 +481,7 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
     let params: Params = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
-            return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
+            return Response::error(request.id.clone(), "INVALID_PARAMS", e);
         }
     };
 

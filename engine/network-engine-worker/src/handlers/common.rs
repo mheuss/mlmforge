@@ -129,9 +129,14 @@ fn sha256_hex(bytes: &[u8]) -> String {
 pub(crate) fn parse_params_as<T: serde::de::DeserializeOwned>(
     params: &serde_json::value::RawValue,
 ) -> Result<T, String> {
-    let mut deserializer = serde_json::Deserializer::from_str(params.get());
-    serde_path_to_error::deserialize(&mut deserializer)
-        .map_err(|e| format!("{}: {}", e.path(), e.inner()))
+    // Path tracking allocates per key, so only a failed parse pays for it.
+    serde_json::from_str(params.get()).map_err(|plain| {
+        let mut deserializer = serde_json::Deserializer::from_str(params.get());
+        match serde_path_to_error::deserialize::<_, T>(&mut deserializer) {
+            Err(pathed) => pathed.to_string(),
+            Ok(_) => plain.to_string(),
+        }
+    })
 }
 
 pub(crate) fn handle_load_plan(state: &mut WorkerState, request: &Request) -> Response {
@@ -429,6 +434,48 @@ pub(crate) fn parse_u32_param(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug, serde::Deserialize)]
+    struct Volumes {
+        #[allow(dead_code)]
+        volume: Vec<network_engine::commission::VolumeSource>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct Overrides {
+        #[allow(dead_code)]
+        overrides: Vec<network_engine::config::stairstep::MinOverride>,
+    }
+
+    fn raw(text: &str) -> Box<serde_json::value::RawValue> {
+        serde_json::value::RawValue::from_string(text.to_string()).unwrap()
+    }
+
+    #[test]
+    fn parse_params_as_gives_the_plain_error_with_its_path_in_front() {
+        let text =
+            r#"{"volume":[{"source_id":"00000000-0000-0000-0000-000000000001","cv_amount":1e15}]}"#;
+        let plain = serde_json::from_str::<Volumes>(text)
+            .unwrap_err()
+            .to_string();
+        let pathed = parse_params_as::<Volumes>(&raw(text)).unwrap_err();
+        assert_eq!(pathed, format!("volume[0].cv_amount: {plain}"));
+    }
+
+    #[test]
+    fn parse_params_as_leaves_out_an_empty_path() {
+        let err = parse_params_as::<Volumes>(&raw("{}")).unwrap_err();
+        assert!(err.starts_with("missing field `volume`"), "{err}");
+    }
+
+    #[test]
+    fn parse_params_as_names_only_the_element_holding_a_tagged_enum() {
+        let err =
+            parse_params_as::<Overrides>(&raw(r#"{"overrides":[{"type":"rate","value":1e15}]}"#))
+                .unwrap_err();
+        assert!(err.starts_with("overrides[0]: "), "{err}");
+        assert!(err.contains("below 10^15"), "{err}");
+    }
 
     #[test]
     fn a_sponsorless_removal_maps_to_its_own_wire_code() {

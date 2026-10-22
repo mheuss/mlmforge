@@ -810,15 +810,17 @@ fn expected_plan_hash(plan_json: &str) -> String {
     format!("sha256:{hex}")
 }
 
-/// Asserts `resp` is a refusal with `code` whose message holds `path` and `inner`.
-fn assert_refused_at_path(resp: &str, code: &str, path: &str, inner: &str) {
-    assert!(
-        resp.contains(r#""ok":false"#),
-        "expected a refusal, got: {resp}"
-    );
-    assert!(resp.contains(code), "expected {code}, got: {resp}");
-    assert!(resp.contains(path), "expected the path {path}, got: {resp}");
-    assert!(resp.contains(inner), "expected {inner:?}, got: {resp}");
+/// Asserts `resp` is a refusal with `code` whose message starts with `prefix`,
+/// then `path`, then text holding `inner`.
+fn assert_refused_at_path(resp: &str, code: &str, prefix: &str, path: &str, inner: &str) {
+    let parsed: serde_json::Value = serde_json::from_str(resp).unwrap();
+    assert_eq!(parsed["ok"], false, "response: {resp}");
+    assert_eq!(parsed["error"]["code"], code, "response: {resp}");
+    let message = parsed["error"]["message"].as_str().unwrap();
+    let rest = message
+        .strip_prefix(&format!("{prefix}{path}: "))
+        .unwrap_or_else(|| panic!("message: {message}"));
+    assert!(rest.contains(inner), "message: {message}");
 }
 
 #[test]
@@ -836,6 +838,7 @@ fn load_plan_refuses_an_authored_value_of_ten_to_the_fifteenth_and_names_its_pat
     assert_refused_at_path(
         &resp,
         "INVALID_PLAN",
+        "failed to deserialize plan: ",
         "volume.volume_to_dollar_multiplier",
         "below 10^15",
     );
@@ -858,6 +861,7 @@ fn load_plan_refuses_a_quoted_number_and_names_its_path() {
     assert_refused_at_path(
         &resp,
         "INVALID_PLAN",
+        "failed to deserialize plan: ",
         "volume.volume_to_dollar_multiplier",
         "invalid type: string",
     );
@@ -881,6 +885,7 @@ fn load_plan_refuses_eleven_decimal_places_and_names_its_path() {
     assert_refused_at_path(
         &resp,
         "INVALID_PLAN",
+        "failed to deserialize plan: ",
         "ranks[0].qualification.structures[0].personal_volume",
         "at most 10 decimal places",
     );
@@ -907,6 +912,7 @@ fn calculate_unilevel_refuses_a_quoted_cv_amount_and_names_its_path() {
     assert_refused_at_path(
         &resp,
         "INVALID_PARAMS",
+        "",
         "volume[0].cv_amount",
         "invalid type: string",
     );
@@ -918,6 +924,7 @@ fn calculate_unilevel_refuses_an_out_of_envelope_cv_amount_and_names_its_path() 
     assert_refused_at_path(
         &resp,
         "INVALID_PARAMS",
+        "",
         "volume[0].cv_amount",
         "below 10^15",
     );
@@ -929,6 +936,7 @@ fn calculate_unilevel_refuses_eleven_decimal_places_and_names_its_path() {
     assert_refused_at_path(
         &resp,
         "INVALID_PARAMS",
+        "",
         "volume[0].cv_amount",
         "at most 10 decimal places",
     );

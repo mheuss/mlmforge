@@ -437,7 +437,7 @@ impl StreamlineCommissionConfig {
         //
         // Note it is caught there and nowhere else. The duplicate_value guard
         // in validateU8MapKeys (rules.go:118) never sees dynamic_compression:
-        // it takes a map[string]float64 and is reached only through
+        // it takes a map[string]dec.Amount and is reached only through
         // getRateTable (rules.go:98), whose switch returns nil for
         // StreamlineCommission. So a "1"/"01" collision here surfaces as a
         // sequencing error, not a duplicate one.

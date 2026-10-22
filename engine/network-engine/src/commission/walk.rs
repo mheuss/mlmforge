@@ -670,7 +670,7 @@ pub(crate) fn walk_level_commissions<T: TreeNavigator>(
             } else {
                 // Eligible and uncompressed, but the rate table had no entry
                 // for this rank at this level, so the lookup above fell back
-                // to 0.0. The level is still consumed by the increment below,
+                // to zero. The level is still consumed by the increment below,
                 // so this is a forfeit and not a skip. Omitting this step
                 // leaves steps.len() short of the counter for every zero-rate
                 // node, which compiles and passes every fixture.

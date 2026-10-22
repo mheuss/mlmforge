@@ -241,7 +241,6 @@ fn round_held_quotient(product: Dec, divisor: Dec) -> Option<Decimal> {
     let quotient = product.0.checked_div(divisor.0)?;
     let scale = quotient.scale();
     if scale <= PAYOUT_SCALE {
-        // Half to even at the largest scale that fits is E2's own rule at 13 places or fewer.
         return Some(quotient);
     }
     // A result within one unit at its own scale sits on the same side of every
@@ -1116,15 +1115,21 @@ mod tests {
     #[test]
     fn mul_div_ratio_does_not_round_a_tie_made_by_an_earlier_rounding() {
         let one = d("1");
-        let paid =
-            d("4499999999999999").mul_div_ratio(one, one, one, d("30000000000000000000000000000"));
-        assert_eq!(paid.unwrap().to_string(), "0.0000000000001");
-        let exact = round_held_quotient(d("4499999999999999"), d("30000000000000000000000000000"));
-        assert_eq!(exact, None);
+        let divisor = d("30000000000000000000000000000");
+        for (a, paid) in [
+            ("4499999999999999", "0.0000000000001"),
+            ("-4499999999999999", "-0.0000000000001"),
+            ("1500000000000001", "0.0000000000001"),
+            ("-1500000000000001", "-0.0000000000001"),
+        ] {
+            assert_eq!(round_held_quotient(d(a), divisor), None, "{a}");
+            let got = d(a).mul_div_ratio(one, one, one, divisor).unwrap();
+            assert_eq!(got.to_string(), paid, "{a}");
+        }
     }
 
     #[test]
-    fn mul_div_ratio_returns_an_exact_quotient_without_the_wide_path() {
+    fn round_held_quotient_keeps_an_exact_quotient_of_three_places() {
         let held = round_held_quotient(d("12.5"), d("4"));
         assert_eq!(held.map(|q| q.to_string()), Some("3.125".to_string()));
         let paid = d("12.5").mul_div_ratio(d("1"), d("1"), d("1"), d("4"));
@@ -1372,6 +1377,33 @@ mod tests {
                 (Some(expected), Ok(got)) => prop_assert_eq!(got, expected),
                 (None, Err(e)) => prop_assert_eq!(e.kind, NumericErrorKind::Overflow),
                 (expected, got) => prop_assert!(false, "expected {:?}, got {:?}", expected, got),
+            }
+        }
+
+        #[test]
+        fn mul_div_ratio_matches_the_wide_path_beside_thirteen_place_midpoints(
+            k in -1000i128..1000,
+            divisor_mantissa in prop_oneof![
+                1i128..1000,
+                (1i128 << 40)..(1i128 << 66),
+            ],
+            divisor_scale in 0u32..=14,
+            offset in -3i128..=3,
+            negative in any::<bool>(),
+        ) {
+            let sign = if negative { -1 } else { 1 };
+            let divisor = Dec(Decimal::from_i128_with_scale(sign * divisor_mantissa, divisor_scale));
+            let held = (10 * k + 5) * divisor_mantissa + offset;
+            let a = Dec(Decimal::from_i128_with_scale(held, 14 + divisor_scale));
+            let one = Dec::ONE;
+            let wide = wide_mul_div_ratio([a, one, one, one], divisor, PAYOUT_SCALE).map(|q| q.normalize());
+            match (a.mul_div_ratio(one, one, one, divisor), wide) {
+                (Ok(x), Ok(y)) => prop_assert_eq!(
+                    (x.0.mantissa(), x.0.scale()),
+                    (y.mantissa(), y.scale())
+                ),
+                (Err(x), Err(y)) => prop_assert_eq!(x.kind, y),
+                (x, y) => prop_assert!(false, "public {:?}, wide {:?}", x, y),
             }
         }
 

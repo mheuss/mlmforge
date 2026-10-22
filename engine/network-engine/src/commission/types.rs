@@ -782,7 +782,9 @@ mod tests {
     #[test]
     fn every_output_type_writes_normalized_numbers() {
         let two: Dec = d!(2.000000);
-        let zero: Dec = d!(-0.0);
+        let half: Dec = d!(0.5);
+        let zero = half.try_sub(half).unwrap();
+        assert_eq!(format!("{zero:?}"), "Dec(0.0)");
         let texts = [
             serde_json::to_string(&CommissionEarning {
                 earner_id: uuid_from_index(1),
@@ -827,7 +829,7 @@ mod tests {
         ];
         for text in &texts {
             assert!(!text.contains(":2.0"), "{text}");
-            assert!(!text.contains(":-0"), "{text}");
+            assert!(!text.contains(":0.0"), "{text}");
         }
         assert!(
             texts[0].contains(r#""rate":2,"cv_amount":0,"dollar_amount":2,"#),

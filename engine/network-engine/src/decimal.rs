@@ -1388,7 +1388,12 @@ mod tests {
 
     #[test]
     fn output_is_the_normalized_bare_number() {
-        let carried: Carried = serde_json::from_str(r#"{"left":2.000000,"right":-0.0}"#).unwrap();
+        let scaled_zero = d("0.5").try_sub(d("0.5")).unwrap();
+        assert_eq!(format!("{:?}", scaled_zero), "Dec(0.0)");
+        let carried = Carried {
+            left: d("2.000000"),
+            right: Some(scaled_zero),
+        };
         assert_eq!(
             serde_json::to_string(&carried).unwrap(),
             r#"{"left":2,"right":0}"#

@@ -2264,11 +2264,11 @@ fn build_binary_calc_tree(worker: &mut std::process::Child) {
 
 #[test]
 fn frozen_stream_skips_write_normalized_cv_amounts() {
+    use std::str::FromStr as _;
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../testdata/contracts/calculate_streamline_frozen.json"
     );
-    use std::str::FromStr as _;
     let fixture: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let mut worker = common::spawn_worker();
@@ -2337,6 +2337,7 @@ fn an_inexact_product_is_a_precision_error_through_the_worker() {
         &format!(r#"{{"{NODE_A}":{{"left":0.0000000000000000000000000001,"right":0}}}}"#),
     );
     assert!(resp.contains("CALCULATION_ERROR"), "{resp}");
+    assert!(resp.contains(r#""message":"cannot multiply"#), "{resp}");
     assert!(resp.contains("more than 28 decimal places"), "{resp}");
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -2360,28 +2361,25 @@ fn carry_forward_round_trips_exactly_into_the_next_period() {
     let first = binary_pairing_with(
         &mut worker,
         "[]",
-        &format!(r#"{{"{NODE_A}":{{"left":12345.6789,"right":0}}}}"#),
+        &format!(r#"{{"{NODE_A}":{{"left":12345.678901234567890123,"right":0}}}}"#),
     );
+    let parsed: serde_json::Value = serde_json::from_str(&first).unwrap();
+    assert_eq!(parsed["ok"], true, "first period failed: {first}");
+    let carry_text = parsed["result"]["carry_forward"].to_string();
     assert!(
-        first.contains(r#""ok":true"#),
-        "first period failed: {first}"
+        carry_text.contains(&format!(r#""{NODE_A}":{{"left":12345.678901234567890123,"#)),
+        "{carry_text}"
     );
-    let carry_at = first
-        .find(r#""carry_forward":"#)
-        .expect("carry_forward in the response")
-        + r#""carry_forward":"#.len();
-    let carry_text =
-        serde_json::value::RawValue::from_string(first[carry_at..first.len() - 2].to_string())
-            .map(|raw| raw.get().to_string())
-            .unwrap_or_else(|e| panic!("carry_forward text is not one JSON value ({e}): {first}"));
-    assert!(carry_text.contains("12345.6789"), "{carry_text}");
 
     let second = binary_pairing_with(
         &mut worker,
         &format!(r#"[{{"source_id":"{NODE_C}","cv_amount":1}}]"#),
         &carry_text,
     );
-    assert!(second.contains(r#""left_volume":12345.6789,"#), "{second}");
+    assert!(
+        second.contains(r#""left_volume":12345.678901234567890123,"#),
+        "{second}"
+    );
     drop(worker.stdin.take());
     worker.wait().unwrap();
 }
@@ -2397,6 +2395,7 @@ fn an_over_precise_carry_forward_value_is_refused() {
         &format!(r#"{{"{NODE_A}":{{"left":0.00000000000000000000000000001,"right":0}}}}"#),
     );
     assert!(resp.contains("INVALID_PARAMS"), "{resp}");
+    assert!(resp.contains("carry_forward"), "{resp}");
     assert!(resp.contains("more than 28 decimal places"), "{resp}");
     drop(worker.stdin.take());
     worker.wait().unwrap();

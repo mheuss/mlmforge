@@ -13,7 +13,7 @@ use network_engine::serde_helpers::null_as_empty;
 use uuid::Uuid;
 
 use super::common::{
-    require_binary_tree, require_matrix_tree, require_plan, require_plan_identity,
+    parse_params_as, require_binary_tree, require_matrix_tree, require_plan, require_plan_identity,
     require_unilevel_tree,
 };
 use crate::protocol::{Request, Response};
@@ -150,7 +150,7 @@ pub(crate) fn handle_calculate_unilevel(state: &WorkerState, request: &Request) 
         Ok(i) => i,
         Err(resp) => return resp,
     };
-    let params: CalculateUnilevelParams = match serde_json::from_str(request.params.get()) {
+    let params: CalculateUnilevelParams = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
             return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
@@ -193,7 +193,7 @@ pub(crate) fn handle_calculate_generation(state: &WorkerState, request: &Request
         Ok(i) => i,
         Err(resp) => return resp,
     };
-    let params: CalculateGenerationParams = match serde_json::from_str(request.params.get()) {
+    let params: CalculateGenerationParams = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
             return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
@@ -232,7 +232,7 @@ pub(crate) fn handle_calculate_binary_pairing(state: &WorkerState, request: &Req
         Ok(p) => p,
         Err(resp) => return resp,
     };
-    let params: CalculateBinaryPairingParams = match serde_json::from_str(request.params.get()) {
+    let params: CalculateBinaryPairingParams = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
             return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
@@ -286,7 +286,7 @@ pub(crate) fn handle_calculate_matrix(state: &WorkerState, request: &Request) ->
         Ok(i) => i,
         Err(resp) => return resp,
     };
-    let params: CalculateMatrixParams = match serde_json::from_str(request.params.get()) {
+    let params: CalculateMatrixParams = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
             return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
@@ -329,7 +329,7 @@ pub(crate) fn handle_calculate_stairstep(state: &WorkerState, request: &Request)
         Ok(i) => i,
         Err(resp) => return resp,
     };
-    let params: CalculateStairstepParams = match serde_json::from_str(request.params.get()) {
+    let params: CalculateStairstepParams = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
             return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());

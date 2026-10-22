@@ -7,7 +7,9 @@ use network_engine::config::{BoardPlanStructureConfig, CompensationPlan, Structu
 use network_engine::serde_helpers::null_as_empty;
 use uuid::Uuid;
 
-use super::common::{extract_structure_name, parse_params, parse_uuid, require_plan};
+use super::common::{
+    extract_structure_name, parse_params, parse_params_as, parse_uuid, require_plan,
+};
 use crate::protocol::{Request, Response};
 use crate::state::{TreeInstance, WorkerState};
 
@@ -115,7 +117,7 @@ pub(crate) fn handle_create_board_plan(state: &mut WorkerState, request: &Reques
         timestamp: i64,
     }
 
-    let params: Params = match serde_json::from_str(request.params.get()) {
+    let params: Params = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
             return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
@@ -500,7 +502,7 @@ pub(crate) fn handle_board_calculate_commissions(
         period_cycle_counts: HashMap<Uuid, u32>,
     }
 
-    let params: Params = match serde_json::from_str(request.params.get()) {
+    let params: Params = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string()),
     };

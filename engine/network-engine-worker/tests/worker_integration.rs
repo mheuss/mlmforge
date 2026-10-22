@@ -810,6 +810,130 @@ fn expected_plan_hash(plan_json: &str) -> String {
     format!("sha256:{hex}")
 }
 
+/// Asserts `resp` is a refusal with `code` whose message holds `path` and `inner`.
+fn assert_refused_at_path(resp: &str, code: &str, path: &str, inner: &str) {
+    assert!(
+        resp.contains(r#""ok":false"#),
+        "expected a refusal, got: {resp}"
+    );
+    assert!(resp.contains(code), "expected {code}, got: {resp}");
+    assert!(resp.contains(path), "expected the path {path}, got: {resp}");
+    assert!(resp.contains(inner), "expected {inner:?}, got: {resp}");
+}
+
+#[test]
+fn load_plan_refuses_an_authored_value_of_ten_to_the_fifteenth_and_names_its_path() {
+    let mut worker = common::spawn_worker();
+    let plan = TEST_PLAN_JSON.replace(
+        r#""volume_to_dollar_multiplier": 1.0,"#,
+        r#""volume_to_dollar_multiplier": 1e15,"#,
+    );
+    assert_ne!(
+        plan, TEST_PLAN_JSON,
+        "the multiplier replacement did not match"
+    );
+    let resp = send_load_plan(&mut worker, &plan);
+    assert_refused_at_path(
+        &resp,
+        "INVALID_PLAN",
+        "volume.volume_to_dollar_multiplier",
+        "below 10^15",
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn load_plan_refuses_a_quoted_number_and_names_its_path() {
+    let mut worker = common::spawn_worker();
+    let plan = TEST_PLAN_JSON.replace(
+        r#""volume_to_dollar_multiplier": 1.0,"#,
+        r#""volume_to_dollar_multiplier": "1","#,
+    );
+    assert_ne!(
+        plan, TEST_PLAN_JSON,
+        "the multiplier replacement did not match"
+    );
+    let resp = send_load_plan(&mut worker, &plan);
+    assert_refused_at_path(
+        &resp,
+        "INVALID_PLAN",
+        "volume.volume_to_dollar_multiplier",
+        "invalid type: string",
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn load_plan_refuses_eleven_decimal_places_and_names_its_path() {
+    let mut worker = common::spawn_worker();
+    let plan = TEST_PLAN_JSON.replacen(
+        r#""structures": [],"#,
+        r#""structures": [{"structure": "Test", "personal_volume": 0.00000000001, "group_volume": 0.0, "max_group_volume_per_leg": 0.0, "min_retail_volume": 0.0, "distributor_count": null}],"#,
+        1,
+    );
+    assert_ne!(
+        plan, TEST_PLAN_JSON,
+        "the structures replacement did not match"
+    );
+    let resp = send_load_plan(&mut worker, &plan);
+    assert_refused_at_path(
+        &resp,
+        "INVALID_PLAN",
+        "ranks[0].qualification.structures[0].personal_volume",
+        "at most 10 decimal places",
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+/// Sends `calculate_unilevel` with one volume entry whose `cv_amount` is `cv`.
+fn calculate_unilevel_with_cv(cv: &str) -> String {
+    let mut worker = common::spawn_worker();
+    load_test_plan(&mut worker);
+    let request = format!(
+        r#"{{"id":"u-path","op":"calculate_unilevel","params":{{"structure":"Test","snapshots":{{}},"volume":[{{"source_id":"{GRANDCHILD}","cv_amount":{cv}}}]}}}}"#
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+    resp
+}
+
+#[test]
+fn calculate_unilevel_refuses_a_quoted_cv_amount_and_names_its_path() {
+    let resp = calculate_unilevel_with_cv(r#""100""#);
+    assert_refused_at_path(
+        &resp,
+        "INVALID_PARAMS",
+        "volume[0].cv_amount",
+        "invalid type: string",
+    );
+}
+
+#[test]
+fn calculate_unilevel_refuses_an_out_of_envelope_cv_amount_and_names_its_path() {
+    let resp = calculate_unilevel_with_cv("1e15");
+    assert_refused_at_path(
+        &resp,
+        "INVALID_PARAMS",
+        "volume[0].cv_amount",
+        "below 10^15",
+    );
+}
+
+#[test]
+fn calculate_unilevel_refuses_eleven_decimal_places_and_names_its_path() {
+    let resp = calculate_unilevel_with_cv("0.00000000001");
+    assert_refused_at_path(
+        &resp,
+        "INVALID_PARAMS",
+        "volume[0].cv_amount",
+        "at most 10 decimal places",
+    );
+}
+
 #[test]
 fn load_plan_records_a_plan_hash_over_the_bytes_it_received() {
     let mut worker = common::spawn_worker();

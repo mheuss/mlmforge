@@ -125,8 +125,17 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("sha256:{hex}")
 }
 
+/// Deserialize `params` as `T`, naming the field path in the error.
+pub(crate) fn parse_params_as<T: serde::de::DeserializeOwned>(
+    params: &serde_json::value::RawValue,
+) -> Result<T, String> {
+    let mut deserializer = serde_json::Deserializer::from_str(params.get());
+    serde_path_to_error::deserialize(&mut deserializer)
+        .map_err(|e| format!("{}: {}", e.path(), e.inner()))
+}
+
 pub(crate) fn handle_load_plan(state: &mut WorkerState, request: &Request) -> Response {
-    match serde_json::from_str::<CompensationPlan>(request.params.get()) {
+    match parse_params_as::<CompensationPlan>(&request.params) {
         Ok(mut plan) => {
             // The engine is the system of record for money and does not trust
             // that the upstream Go schema pipeline ran (HEU-517). Gate the plan

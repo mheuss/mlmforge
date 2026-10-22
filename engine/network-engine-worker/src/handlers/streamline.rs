@@ -12,8 +12,8 @@ use network_engine::streamline::engine::StreamlineConfig;
 use uuid::Uuid;
 
 use super::common::{
-    extract_structure_name, parse_params, parse_u32_param, parse_uuid, require_plan,
-    require_plan_identity,
+    extract_structure_name, parse_params, parse_params_as, parse_u32_param, parse_uuid,
+    require_plan, require_plan_identity,
 };
 use crate::protocol::{Request, Response};
 use crate::state::{TreeInstance, WorkerState};
@@ -101,7 +101,7 @@ pub(crate) fn handle_create_streamline(state: &mut WorkerState, request: &Reques
         true
     }
 
-    let params: Params = match serde_json::from_str(request.params.get()) {
+    let params: Params = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
             return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());
@@ -478,7 +478,7 @@ pub(crate) fn handle_calculate_streamline(state: &WorkerState, request: &Request
         volume: Vec<VolumeSource>,
     }
 
-    let params: Params = match serde_json::from_str(request.params.get()) {
+    let params: Params = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
             return Response::error(request.id.clone(), "INVALID_PARAMS", e.to_string());

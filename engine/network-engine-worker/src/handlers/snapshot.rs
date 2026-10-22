@@ -4,7 +4,7 @@ use network_engine::tree::binary::BinaryTree;
 use network_engine::tree::matrix::MatrixTree;
 use network_engine::tree::unilevel::UnilevelTree;
 
-use super::common::parse_params;
+use super::common::{parse_params, parse_params_as};
 use crate::protocol::{Request, Response};
 use crate::state::{TreeInstance, WorkerState};
 
@@ -93,7 +93,7 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
         data: Box<serde_json::value::RawValue>,
     }
 
-    let params: Params = match serde_json::from_str(request.params.get()) {
+    let params: Params = match parse_params_as(&request.params) {
         Ok(p) => p,
         Err(e) => {
             return Response::error(

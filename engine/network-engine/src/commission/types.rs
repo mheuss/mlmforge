@@ -207,7 +207,8 @@ pub struct BinaryCommissionEarning {
     pub matched_volume: Dec,
 
     /// The balance ratio reported with this earning: 1 for WeakerLeg, min/max
-    /// for VolumeRatio. It is reported, not used to compute `dollar_amount`.
+    /// for VolumeRatio, 0 for cycle-step. It is reported, not used to compute
+    /// `dollar_amount`.
     pub ratio: Dec,
 
     /// The pairing percent from config.

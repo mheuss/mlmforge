@@ -676,10 +676,6 @@ proptest! {
     /// cannot reach walk *content* today. If some future change let it reach
     /// the steps or the stop, these two runs would disagree and this fails.
     ///
-    /// The property that exercises the ordering lives in
-    /// `streamline_properties.rs`, because streamline is the only calculator
-    /// whose emission order is a `HashMap` iteration.
-    ///
     /// The two snapshot maps below hold identical content and are built in
     /// opposite insertion orders. Calling one calculator twice over a single
     /// map would be weaker still: a `HashMap` generally repeats its own

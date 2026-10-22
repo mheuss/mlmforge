@@ -250,10 +250,9 @@ proptest! {
 // ---------------------------------------------------------------------------
 
 proptest! {
-    /// The cycle-commission dollar law from `calculate_board_commissions`
-    /// a cycle is capped exactly when its number
-    /// exceeds `max_cycles_per_period`. Capped cycles pay $0, uncapped
-    /// cycles pay `cycle_commission`.
+    /// A cycle is capped exactly when its number exceeds
+    /// `max_cycles_per_period`. Capped cycles pay $0, uncapped cycles pay
+    /// `cycle_commission`.
     ///
     /// Drives the real calculator with synthetic cycle events for a single
     /// member, generating `max_cycles + extra` events (extra >= 1) so both

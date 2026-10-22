@@ -613,8 +613,7 @@ proptest! {
 
         prop_assert_eq!(walk_order_fingerprint(&a.walks), walk_order_fingerprint(&b.walks));
         // The whole result, not just the walks: earnings and plan identity are
-        // part of what must not move, and streamline appends each stream's
-        // earnings in that same iteration order.
+        // part of what must not move.
         prop_assert_eq!(a, b);
     }
 }

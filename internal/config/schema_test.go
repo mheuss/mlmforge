@@ -1033,9 +1033,11 @@ func TestYAMLAliasedLongScalarIsConvertedOnce(t *testing.T) {
 func TestSchemaRefusesAnOutOfRangeNumberInANumericField(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)
-	src := strings.Replace(string(readFixture(t, "valid/leg-cap-fraction-plan.yaml")), "volume_to_dollar_multiplier: 1.0", "volume_to_dollar_multiplier: 1e400", 1)
+	base := readFixture(t, "valid/leg-cap-fraction-plan.yaml")
+	require.Empty(t, p.validateSchema(base))
+	src := replaceInYAML(t, base, "volume_to_dollar_multiplier: 1.0", "volume_to_dollar_multiplier: 1e400")
 
-	errs := p.validateSchema([]byte(src))
+	errs := p.validateSchema(src)
 
 	require.Len(t, errs, 1)
 	assert.Equal(t, "/volume/volume_to_dollar_multiplier", errs[0].Path)
@@ -1045,9 +1047,11 @@ func TestSchemaRefusesAnOutOfRangeNumberInANumericField(t *testing.T) {
 func TestSchemaRefusesAnOutOfRangeNumberInAStringField(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)
-	src := strings.Replace(string(readFixture(t, "valid/leg-cap-fraction-plan.yaml")), "name: Leg Cap Fraction Plan", "name: 1e400", 1)
+	base := readFixture(t, "valid/leg-cap-fraction-plan.yaml")
+	require.Empty(t, p.validateSchema(base))
+	src := replaceInYAML(t, base, "name: Leg Cap Fraction Plan", "name: 1e400")
 
-	errs := p.validateSchema([]byte(src))
+	errs := p.validateSchema(src)
 
 	require.Len(t, errs, 1)
 	assert.Equal(t, "/name", errs[0].Path)
@@ -1057,7 +1061,9 @@ func TestSchemaRefusesAnOutOfRangeNumberInAStringField(t *testing.T) {
 func TestSchemaAcceptsAQuotedOutOfRangeNumberInAStringField(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)
-	src := strings.Replace(string(readFixture(t, "valid/leg-cap-fraction-plan.yaml")), "name: Leg Cap Fraction Plan", "name: '1e400'", 1)
+	base := readFixture(t, "valid/leg-cap-fraction-plan.yaml")
+	require.Empty(t, p.validateSchema(base))
+	src := replaceInYAML(t, base, "name: Leg Cap Fraction Plan", "name: '1e400'")
 
-	assert.Empty(t, p.validateSchema([]byte(src)))
+	assert.Empty(t, p.validateSchema(src))
 }

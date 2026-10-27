@@ -32,6 +32,15 @@ under test could not resolve its own default paths. It reported every row as
 caught. It scored a perfect run. It was testing nothing. The failing case was
 the same one every time. It had nothing to do with any mutation.
 
+A scratch copy of a Cargo crate is a common way to meet this. If a directory
+above the copy holds a workspace manifest that does not list it, cargo refuses
+to build the copy until `[workspace]` is appended to its own `Cargo.toml`. The
+crate can also reach files outside its own directory, for
+instance a data file it pulls in with `include_str!`, and the copy has none of
+them until you bring them across. A copy that does not compile fails every row
+the same way. Build the untouched copy and pass its tests, with a count, before
+reading any mutation against it.
+
 ## The harness lies in four ways, and all four look like a clean pass
 
 Every one of these produces zero failing tests. So does a suite that genuinely

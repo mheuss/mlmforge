@@ -5172,8 +5172,7 @@ mod tests {
 
     #[test]
     fn a_volume_ratio_payout_rounds_from_its_thirteen_place_value() {
-        // Exact 0.004999999999975… is held at 13 places as 0.0050000000000,
-        // which then rounds up to a cent. Rounding the exact value gives 0.
+        // The exact payout is 0.004999999999975…, just under half a cent.
         assert_d!(
             volume_ratio_payout(d!(0.10), None, d!(1), d!(20.0000000001)),
             0.01

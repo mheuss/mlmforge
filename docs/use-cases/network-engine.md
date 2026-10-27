@@ -127,7 +127,7 @@ for &(rank_name, ordinal) in &unique_ranks {
 }
 ```
 
-**Notes:** The `breakaway_set` name is a semantic mismatch documented in design-rationale 024. If a third consumer appears (HEU-288 infinity commission mode), extract a shared interface with a cleaner name. The project's three-case abstraction threshold applies. Update: a third consumer arrived in HEU-428 — `walk_multi_tier_overrides` in `commission/stairstep.rs` uses `count_generations_upward` with `|_| true` for boundary detection. The abstraction trigger is technically met but the semantic-mismatch payoff is muted for this consumer (its boundary set IS the breakaway set). Defer the rename until HEU-288 or a future consumer makes the rename pay. The `(rank_name, ordinal)` dedup key relies on rank ordinals being unique across the rank ladder; HEU-440 tracks adding upstream validation.
+**Notes:** The `breakaway_set` name is a semantic mismatch documented in design-rationale 024. If a third consumer appears (HEU-288 infinity commission mode), extract a shared interface with a cleaner name. The project's three-case abstraction threshold applies. Update: a third consumer arrived in HEU-428 — `walk_multi_tier_overrides` in `commission/stairstep.rs` uses `count_generations_upward` with `|_| true` for boundary detection. The abstraction trigger is technically met but the semantic-mismatch payoff is muted for this consumer (its boundary set IS the breakaway set). Defer the rename until HEU-288 or a future consumer makes the rename pay. The `(rank_name, ordinal)` dedup key relies on rank ordinals being unique across the rank ladder. Go and the engine both refuse a plan whose rank ordinals repeat or do not ascend.
 
 ---
 

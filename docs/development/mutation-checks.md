@@ -460,7 +460,8 @@ Mutate a copy of the engine, never the tracked `.rs` files. Editing the tracked
 source leaves `engine/target/` built from a mutant, and the next honest run uses
 it.
 
-1. Copy `engine/` without `target/` into a scratch directory.
+1. Copy `engine/` without `target/` into a scratch directory, along with any
+   file the crate reaches outside `engine/`, at the same path relative to it.
 2. Apply the mutation to the copy.
 3. Build the copy with its own `CARGO_TARGET_DIR`.
 4. Copy `internal/networkengine/transport_test.go` into the scratch directory.

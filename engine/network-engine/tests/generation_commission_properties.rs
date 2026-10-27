@@ -452,8 +452,6 @@ proptest! {
             .generation_commission
             .volume_to_dollar_multiplier
             .unwrap_or(plan.volume.volume_to_dollar_multiplier);
-        // Each earning is rounded on its own, so the money bound is the sum of
-        // each earning's rounded maximum, and the rate bound stays unrounded.
         let rounded_bound = Dec::sum(result.iter().map(|e| {
             cv.dec()
                 .try_mul(multiplier)
@@ -653,8 +651,6 @@ proptest! {
             .volume_to_dollar_multiplier
             .unwrap_or(plan.volume.volume_to_dollar_multiplier);
         let num_ranks = 3u32; // associate, silver, director
-        // Each earning is rounded on its own, so the money bound is the sum of
-        // each earning's rounded maximum, and the rate bound stays unrounded.
         let rounded_bound = Dec::sum(result.iter().map(|e| {
             cv.dec()
                 .try_mul(multiplier)

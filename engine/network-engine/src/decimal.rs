@@ -68,7 +68,7 @@ pub enum NumericErrorKind {
 
 /// An arithmetic operation that has no exact result the engine can hold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
-#[error("cannot {op} {lhs} {} {rhs}{}: {kind}", .op.joiner(), .op.after_rhs())]
+#[error("cannot {op} {lhs} {} {rhs}{}: {kind}", .op.joiner(), .op.after_rhs(self.rhs))]
 pub struct NumericError {
     pub op: NumericOp,
     pub lhs: Dec,
@@ -87,8 +87,9 @@ impl NumericOp {
     }
 
     /// The words after the right operand in an error message.
-    fn after_rhs(&self) -> &'static str {
+    fn after_rhs(&self, rhs: Dec) -> &'static str {
         match self {
+            NumericOp::Allocate { .. } if rhs == Dec::ONE => " share",
             NumericOp::Allocate { .. } => " shares",
             _ => "",
         }
@@ -1867,6 +1868,14 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "cannot allocate -2 at scale 2 across 2 shares: a value is negative"
+        );
+    }
+
+    #[test]
+    fn an_allocation_error_names_one_share_in_the_singular() {
+        assert_eq!(
+            alloc(&["1"], "2.005", 2).unwrap_err().to_string(),
+            "cannot allocate 2.005 at scale 2 across 1 share: the value is not a whole number of units at that scale"
         );
     }
 

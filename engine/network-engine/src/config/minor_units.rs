@@ -74,11 +74,12 @@ impl CompensationPlan {
                         ..
                     }) = &c.breakaway
                     {
-                        if let MinOverride::Currency { value } = diff.min_override {
-                            check(
+                        match diff.min_override {
+                            MinOverride::Currency { value } => check(
                                 &format!("structure '{}': differential min_override", c.name),
                                 value,
-                            )?;
+                            )?,
+                            MinOverride::Rate { .. } => {}
                         }
                     }
                 }
@@ -228,6 +229,7 @@ mod tests {
             ))
         );
         assert_eq!(whole_units(&set, d!(2.01)), Ok(()));
+        assert_eq!(whole_units(&set, d!(2.010)), Ok(()));
     }
 
     fn level() -> LevelCommissionConfig {
@@ -517,6 +519,25 @@ mod tests {
             plan.check_whole_minor_units(),
             Err("payout: minimum_amount 1.5 is not a whole number of JPY minor units, which have 0 decimal places".to_string())
         );
+    }
+
+    #[test]
+    fn a_jpy_plan_accepts_a_whole_yen_written_with_a_decimal_place() {
+        let mut plan = usd_plan();
+        plan.volume.base_currency = "JPY".to_string();
+        plan.payout.currency = "JPY".to_string();
+        plan.payout.minimum_payout = d!(50.0);
+        assert_eq!(plan.check_whole_minor_units(), Ok(()));
+    }
+
+    #[test]
+    fn a_negative_half_cent_is_refused_and_a_negative_cent_accepted() {
+        let set = |p: &mut CompensationPlan, v| p.payout.minimum_payout = v;
+        assert_eq!(
+            whole_units(set, d!(-2.005)),
+            Err("payout: minimum_amount -2.005 is not a whole number of USD minor units, which have 2 decimal places".to_string())
+        );
+        assert_eq!(whole_units(set, d!(-2.01)), Ok(()));
     }
 
     #[test]

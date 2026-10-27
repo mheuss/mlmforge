@@ -1082,7 +1082,7 @@ fn load_plan_refuses_a_currency_missing_from_the_minor_unit_table() {
 }
 
 #[test]
-fn load_plan_refuses_a_minimum_payout_of_half_a_cent_and_names_the_field() {
+fn load_plan_refuses_a_minimum_payout_with_a_half_cent_and_names_the_field() {
     let mut worker = common::spawn_worker();
     let plan = TEST_PLAN_JSON.replace(r#""minimum_amount": 50.0"#, r#""minimum_amount": 50.005"#);
     let resp = send_load_plan(&mut worker, &plan);
@@ -1098,15 +1098,19 @@ fn load_plan_refuses_a_minimum_payout_of_half_a_cent_and_names_the_field() {
 #[test]
 fn load_plan_accepts_a_percentage_sponsor_and_position_amount_of_one_and_a_half_percent() {
     let mut worker = common::spawn_worker();
-    let plan = TEST_PLAN_JSON
-        .replace(
-            r#""sponsor": null"#,
-            r#""sponsor": {"amount": 0.015, "amount_type": "percentage", "qualifying_products": []}"#,
-        )
-        .replace(
-            r#""position": null"#,
-            r#""position": {"amount": 0.015, "amount_type": "percentage", "sponsored_only": false}"#,
-        );
+    let with_sponsor = TEST_PLAN_JSON.replace(
+        r#""sponsor": null"#,
+        r#""sponsor": {"amount": 0.015, "amount_type": "percentage", "qualifying_products": []}"#,
+    );
+    assert_ne!(
+        with_sponsor, TEST_PLAN_JSON,
+        "the sponsor replacement did not match"
+    );
+    let plan = with_sponsor.replace(
+        r#""position": null"#,
+        r#""position": {"amount": 0.015, "amount_type": "percentage", "sponsored_only": false}"#,
+    );
+    assert_ne!(plan, with_sponsor, "the position replacement did not match");
     let resp = send_load_plan(&mut worker, &plan);
     assert!(
         resp.contains(r#""ok":true"#),

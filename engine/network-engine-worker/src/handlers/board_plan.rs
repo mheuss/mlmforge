@@ -521,10 +521,23 @@ pub(crate) fn handle_board_calculate_commissions(
         }
     };
 
+    let Some(minor_units) = network_engine::currency::minor_units(&plan.volume.base_currency)
+    else {
+        return Response::error(
+            request.id.clone(),
+            "CALCULATION_ERROR",
+            format!(
+                "plan base_currency {:?} is not in the minor-unit table",
+                plan.volume.base_currency
+            ),
+        );
+    };
+
     let result = calculate_board_commissions(
         &params.cycle_events,
         &params.period_cycle_counts,
         &structure.board_cycling,
+        minor_units,
     );
 
     Response::success(request.id.clone(), &result)

@@ -285,7 +285,7 @@ proptest! {
             })
             .collect();
 
-        let result = calculate_board_commissions(&events, &HashMap::new(), &config);
+        let result = calculate_board_commissions(&events, &HashMap::new(), &config, 2);
         prop_assert_eq!(result.earnings.len(), n_events as usize);
 
         for (i, earning) in result.earnings.iter().enumerate() {
@@ -315,9 +315,9 @@ proptest! {
                 max_cycles
             );
 
-            let expected = if should_cap { d!(0.0) } else { cycle_commission };
+            let expected = if should_cap { d!(0.0) } else { cycle_commission.dec().round_minor(2) };
             prop_assert!(
-                earning.dollar_amount == expected.dec(),
+                earning.dollar_amount == expected,
                 "cycle {} (capped={}): dollar {} != expected {}",
                 earning.cycle_number,
                 earning.capped,

@@ -140,6 +140,10 @@ pub enum CalculationError {
     #[error("pairing percent {0} is outside [0, 1]")]
     PairingPercentOutOfRange(AuthoredDec),
 
+    /// A binary cap is not a whole number of the plan currency's minor units.
+    #[error("cap_per_period {cap} is not a whole number of {currency} minor units")]
+    CapNotWholeMinorUnits { cap: AuthoredDec, currency: String },
+
     /// The plan's base currency is not in the minor-unit table.
     #[error("plan base_currency {0:?} is not in the minor-unit table")]
     UnknownCurrency(String),

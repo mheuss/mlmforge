@@ -9,7 +9,7 @@ use crate::config::binary::{
 };
 use crate::config::eligibility::CommissionEligibility;
 use crate::config::{BinaryStructureConfig, CompensationPlan};
-use crate::decimal::{AuthoredDec, Dec, NumericError, PAYOUT_SCALE};
+use crate::decimal::{AuthoredDec, Dec, NumericError};
 use crate::tree::binary::BinaryTree;
 use crate::tree::node::NodeIndex;
 
@@ -18,7 +18,7 @@ use super::types::{
     BinaryCalculationResult, BinaryCommissionEarning, BinaryLeg, CalculationError,
     DistributorSnapshot, LegVolumes, VolumeSource,
 };
-use super::walk;
+use super::{finalize, walk};
 
 /// Resolve a position_id to its owner_id.
 ///
@@ -173,12 +173,12 @@ fn sorted_positions(legs: &HashMap<Uuid, LegVolumes>) -> Vec<Uuid> {
     positions
 }
 
-/// Sorts `earnings` by `(earner_id, position_id)`. Where an owner's total
-/// exceeds `cap`, splits the cap across that owner's earnings so the shares
-/// sum exactly to it.
+/// Sorts `earnings` by `(earner_id, position_id)` and settles each owner's
+/// earnings against `cap` at `minor_units` decimal places.
 fn apply_aggregate_cap(
     earnings: &mut [BinaryCommissionEarning],
     cap: Dec,
+    minor_units: u32,
 ) -> Result<(), NumericError> {
     earnings.sort_by(|a, b| {
         a.earner_id
@@ -186,23 +186,58 @@ fn apply_aggregate_cap(
             .then_with(|| a.position_id.cmp(&b.position_id))
     });
     for group in earnings.chunk_by_mut(|a, b| a.earner_id == b.earner_id) {
-        let total = Dec::sum(group.iter().map(|e| e.dollar_amount))?;
-        if total <= cap {
+        let raw: Vec<Dec> = group.iter().map(|e| e.dollar_amount).collect();
+        let raw_total = Dec::sum(raw.iter().copied())?;
+        let rounded: Vec<Dec> = raw.iter().map(|a| a.round_minor(minor_units)).collect();
+        let rounded_total = Dec::sum(rounded.iter().copied())?;
+        if raw_total <= cap && rounded_total <= cap {
+            for (e, amount) in group.iter_mut().zip(rounded) {
+                e.dollar_amount = amount;
+            }
             continue;
         }
-        let Some((last, rest)) = group.split_last_mut() else {
-            continue;
-        };
-        let mut allocated = Dec::ZERO;
-        for e in rest {
-            e.dollar_amount = e.dollar_amount.mul_div_trunc(cap, total, PAYOUT_SCALE)?;
+        let shares = Dec::allocate_largest_remainder(&raw, cap, minor_units)?;
+        for (e, amount) in group.iter_mut().zip(shares) {
+            e.dollar_amount = amount;
             e.capped = true;
-            allocated = allocated.try_add(e.dollar_amount)?;
         }
-        last.dollar_amount = cap.try_sub(allocated)?;
-        last.capped = true;
     }
     Ok(())
+}
+
+/// Rounds every earning to `minor_units` decimal places, or settles each
+/// owner's earnings against `aggregate_cap` when there is one.
+fn finalize_earnings(
+    earnings: &mut [BinaryCommissionEarning],
+    aggregate_cap: Option<Dec>,
+    minor_units: u32,
+) -> Result<(), NumericError> {
+    match aggregate_cap {
+        Some(cap) => apply_aggregate_cap(earnings, cap, minor_units),
+        None => {
+            for e in earnings.iter_mut() {
+                e.dollar_amount = e.dollar_amount.round_minor(minor_units);
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Refuse a cap that is not a whole number of the plan currency's minor units.
+fn check_cap_whole(
+    cap: Option<AuthoredDec>,
+    plan: &CompensationPlan,
+    minor_units: u32,
+) -> Result<(), CalculationError> {
+    match cap {
+        Some(cap) if cap.dec().round_minor(minor_units) != cap.dec() => {
+            Err(CalculationError::CapNotWholeMinorUnits {
+                cap,
+                currency: plan.volume.base_currency.clone(),
+            })
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Calculate binary pairing commissions for a commission period.
@@ -214,11 +249,13 @@ fn apply_aggregate_cap(
 /// # Errors
 ///
 /// Returns `CalculationError` if the cycle-step config is invalid, if the
-/// pairing percent is outside [0, 1], if a snapshot names a rank the plan does not define, if a snapshot's
-/// personal_volume is negative, if the owner of any position in the tree has
-/// no snapshot, if a volume source is not found in the tree, if a volume source
-/// has an invalid cv_amount, if a carried leg volume is negative, or if an
-/// exact result cannot be held.
+/// pairing percent is outside [0, 1], if a snapshot names a rank the plan
+/// does not define, if a snapshot's personal_volume is negative, if the owner
+/// of any position in the tree has no snapshot, if a volume source is not
+/// found in the tree, if a volume source has an invalid cv_amount, if a
+/// carried leg volume is negative, if the plan's base currency is not in the
+/// minor-unit table, if the cap is not a whole number of its minor units, or
+/// if an exact result cannot be held.
 pub fn calculate_binary_pairing(
     tree: &BinaryTree,
     plan: &CompensationPlan,
@@ -252,6 +289,8 @@ pub fn calculate_binary_pairing(
     // Below the match on purpose. The Pairing arm's percent check and the
     // CycleStep arm's config validation each stay first on their own path,
     // and the CycleStep arm has already returned by here.
+    let minor_units = finalize::plan_minor_units(plan)?;
+    check_cap_whole(pairing.cap_per_period, plan, minor_units)?;
     check_carried_legs(carry_forward)?;
     walk::validate_snapshots(
         plan,
@@ -348,17 +387,16 @@ pub fn calculate_binary_pairing(
         });
     }
 
-    // Phase 2b: Aggregate cap post-processing for multi-position mode.
-    // Per-position cap was skipped above when aggregate mode is active.
-    if let Some(cap) = pairing.cap_per_period {
-        if matches!(
-            pairing.multi_position_cap_mode,
-            MultiPositionCapMode::Aggregate
-        ) && ownership.is_some()
-        {
-            apply_aggregate_cap(&mut earnings, cap.dec())?;
-        }
-    }
+    // Phase 2b: finalize.
+    let aggregate = matches!(
+        pairing.multi_position_cap_mode,
+        MultiPositionCapMode::Aggregate
+    ) && ownership.is_some();
+    let aggregate_cap = pairing
+        .cap_per_period
+        .filter(|_| aggregate)
+        .map(AuthoredDec::dec);
+    finalize_earnings(&mut earnings, aggregate_cap, minor_units)?;
 
     // Phase 3: Post-payout carry-forward
     let mut new_carry_forward = HashMap::new();
@@ -445,6 +483,8 @@ fn calculate_binary_cycle_step(
     validated_config
         .validate()
         .map_err(CalculationError::ConfigError)?;
+    let minor_units = finalize::plan_minor_units(plan)?;
+    check_cap_whole(validated_config.cap_per_period, plan, minor_units)?;
 
     check_carried_legs(carry_forward)?;
     walk::validate_snapshots(
@@ -571,16 +611,16 @@ fn calculate_binary_cycle_step(
         });
     }
 
-    // Phase 2b: Aggregate cap post-processing for multi-position mode.
-    if let Some(cap) = validated_config.cap_per_period {
-        if matches!(
-            validated_config.multi_position_cap_mode,
-            MultiPositionCapMode::Aggregate
-        ) && ownership.is_some()
-        {
-            apply_aggregate_cap(&mut earnings, cap.dec())?;
-        }
-    }
+    // Phase 2b: finalize.
+    let aggregate = matches!(
+        validated_config.multi_position_cap_mode,
+        MultiPositionCapMode::Aggregate
+    ) && ownership.is_some();
+    let aggregate_cap = validated_config
+        .cap_per_period
+        .filter(|_| aggregate)
+        .map(AuthoredDec::dec);
+    finalize_earnings(&mut earnings, aggregate_cap, minor_units)?;
 
     // Phase 3: Post-payout carry-forward
     let mut new_carry_forward = HashMap::new();
@@ -4033,7 +4073,7 @@ mod tests {
                 let total_payout = Dec::sum(result.earnings.iter().map(|e| e.dollar_amount)).unwrap();
                 let matched = left_vol.min(right_vol);
                 let percent: Dec = d!(0.10);
-                let theoretical_max = matched.dec().try_mul(percent).unwrap();
+                let theoretical_max = matched.dec().try_mul(percent).unwrap().round_minor(2);
 
                 prop_assert!(
                     total_payout <= theoretical_max,
@@ -4266,22 +4306,27 @@ mod tests {
                     prop_assert!(legs.right >= d!(0.0), "P2 right carry-forward negative: {}", legs.right);
                 }
 
-                // Total paid across both periods should never exceed total
-                // matched volume across both periods (at the configured rate).
-                let total_paid = Dec::sum(result_p1.earnings.iter()
-                    .chain(result_p2.earnings.iter())
-                    .map(|e| e.dollar_amount)).unwrap();
+                let both = || result_p1.earnings.iter().chain(result_p2.earnings.iter());
+                let total_paid = Dec::sum(both().map(|e| e.dollar_amount)).unwrap();
+                let percent: Dec = d!(0.10);
+                let rounded_max = Dec::sum(
+                    both().map(|e| e.matched_volume.try_mul(percent).unwrap().round_minor(2)),
+                )
+                .unwrap();
+                prop_assert!(
+                    total_paid <= rounded_max,
+                    "two-period total payout {} exceeded the sum of rounded earning maxima {}",
+                    total_paid, rounded_max
+                );
 
-                // Total input volume across both periods.
+                // Matched volume across both periods stays within the input volume.
                 let total_left = left_p1.dec().try_add(left_p2).unwrap();
                 let total_right = right_p1.dec().try_add(right_p2).unwrap();
-                let percent: Dec = d!(0.10);
-                let theoretical_max = total_left.min(total_right).try_mul(percent).unwrap();
-
+                let total_matched = Dec::sum(both().map(|e| e.matched_volume)).unwrap();
                 prop_assert!(
-                    total_paid <= theoretical_max,
-                    "two-period total payout {} exceeded theoretical max {}",
-                    total_paid, theoretical_max
+                    total_matched <= total_left.min(total_right),
+                    "two-period matched volume {} exceeded the input volume {}",
+                    total_matched, total_left.min(total_right)
                 );
             }
         }
@@ -4306,11 +4351,7 @@ mod tests {
             earning(2, d!(0.1)),
             earning(3, d!(0.3)),
         ];
-        let pinned: [Dec; 3] = [
-            d!(0.0333333333333),
-            d!(0.0166666666666),
-            d!(0.0500000000001),
-        ];
+        let pinned: [Dec; 3] = [d!(0.03), d!(0.02), d!(0.05)];
         for order in [
             [0, 1, 2],
             [0, 2, 1],
@@ -4320,7 +4361,7 @@ mod tests {
             [2, 1, 0],
         ] {
             let mut earnings: Vec<_> = order.iter().map(|&i| base[i].clone()).collect();
-            apply_aggregate_cap(&mut earnings, d!(0.1)).unwrap();
+            apply_aggregate_cap(&mut earnings, d!(0.1), 2).unwrap();
             earnings.sort_by_key(|e| e.position_id);
             let amounts: Vec<Dec> = earnings.iter().map(|e| e.dollar_amount).collect();
             assert_eq!(
@@ -4754,39 +4795,86 @@ mod tests {
             }
         }
 
+        fn amounts(earnings: &[BinaryCommissionEarning]) -> Vec<Dec> {
+            earnings.iter().map(|e| e.dollar_amount).collect()
+        }
+
         #[test]
-        fn three_earnings_of_one_split_a_cap_of_two_exactly() {
+        fn three_earnings_of_one_split_a_cap_of_two_by_largest_remainder() {
             let mut earnings = vec![
                 earning(1, 2, d!(1)),
                 earning(1, 3, d!(1)),
                 earning(1, 4, d!(1)),
             ];
-            apply_aggregate_cap(&mut earnings, d!(2)).unwrap();
-            let amounts: Vec<Dec> = earnings.iter().map(|e| e.dollar_amount).collect();
-            assert_eq!(
-                amounts,
-                vec![
-                    d!(0.6666666666666),
-                    d!(0.6666666666666),
-                    d!(0.6666666666668)
-                ]
-            );
-            assert_eq!(Dec::sum(amounts).unwrap(), d!(2));
+            apply_aggregate_cap(&mut earnings, d!(2), 2).unwrap();
+            assert_eq!(amounts(&earnings), vec![d!(0.67), d!(0.67), d!(0.66)]);
             assert!(earnings.iter().all(|e| e.capped));
         }
 
         #[test]
-        fn totals_at_or_below_the_cap_are_left_alone() {
-            for total in [d!(1.99), d!(2)] {
-                let one: Dec = d!(1);
-                let mut earnings = vec![
-                    earning(1, 2, one),
-                    earning(1, 3, Dec::try_sub(total, one).unwrap()),
-                ];
-                let before = earnings.clone();
-                apply_aggregate_cap(&mut earnings, d!(2)).unwrap();
-                assert_eq!(earnings, before);
-            }
+        fn three_equal_shares_of_a_two_cent_cap_give_one_one_and_zero() {
+            let mut earnings = vec![
+                earning(1, 2, d!(1)),
+                earning(1, 3, d!(1)),
+                earning(1, 4, d!(1)),
+            ];
+            apply_aggregate_cap(&mut earnings, d!(0.02), 2).unwrap();
+            assert_eq!(amounts(&earnings), vec![d!(0.01), d!(0.01), d!(0)]);
+        }
+
+        #[test]
+        fn a_raw_total_below_the_cap_whose_rounding_exceeds_it_is_allocated() {
+            let mut earnings = vec![
+                earning(1, 2, d!(0.005)),
+                earning(1, 3, d!(0.005)),
+                earning(1, 4, d!(0.005)),
+            ];
+            apply_aggregate_cap(&mut earnings, d!(0.02), 2).unwrap();
+            assert_eq!(amounts(&earnings), vec![d!(0.01), d!(0.01), d!(0)]);
+            assert!(earnings.iter().all(|e| e.capped));
+        }
+
+        #[test]
+        fn a_raw_total_exactly_at_the_cap_whose_rounding_exceeds_it_is_allocated() {
+            let mut earnings = vec![
+                earning(1, 2, d!(0.005)),
+                earning(1, 3, d!(0.005)),
+                earning(1, 4, d!(0.010)),
+            ];
+            apply_aggregate_cap(&mut earnings, d!(0.02), 2).unwrap();
+            assert_eq!(amounts(&earnings), vec![d!(0.01), d!(0), d!(0.01)]);
+            assert!(earnings.iter().all(|e| e.capped));
+        }
+
+        #[test]
+        fn unequal_shares_over_the_cap_go_to_the_largest_remainders() {
+            let mut earnings = vec![
+                earning(1, 2, d!(0.70)),
+                earning(1, 3, d!(0.20)),
+                earning(1, 4, d!(0.13)),
+            ];
+            apply_aggregate_cap(&mut earnings, d!(1.00), 2).unwrap();
+            assert_eq!(amounts(&earnings), vec![d!(0.68), d!(0.19), d!(0.13)]);
+        }
+
+        #[test]
+        fn unequal_shares_under_the_cap_whose_rounding_exceeds_it_are_allocated() {
+            let mut earnings = vec![
+                earning(1, 2, d!(0.335)),
+                earning(1, 3, d!(0.335)),
+                earning(1, 4, d!(0.325)),
+            ];
+            apply_aggregate_cap(&mut earnings, d!(1.00), 2).unwrap();
+            assert_eq!(amounts(&earnings), vec![d!(0.34), d!(0.34), d!(0.32)]);
+            assert!(earnings.iter().all(|e| e.capped));
+        }
+
+        #[test]
+        fn totals_whose_rounding_stays_within_the_cap_are_only_rounded() {
+            let mut earnings = vec![earning(1, 2, d!(1.004)), earning(1, 3, d!(0.985))];
+            apply_aggregate_cap(&mut earnings, d!(2), 2).unwrap();
+            assert_eq!(amounts(&earnings), vec![d!(1), d!(0.99)]);
+            assert!(earnings.iter().all(|e| !e.capped));
         }
 
         #[test]
@@ -4797,11 +4885,8 @@ mod tests {
                 earning(1, 3, d!(500000000000000.5)),
                 earning(1, 4, d!(123456789012345.67)),
             ];
-            apply_aggregate_cap(&mut earnings, cap).unwrap();
-            assert_eq!(
-                Dec::sum(earnings.iter().map(|e| e.dollar_amount)).unwrap(),
-                cap
-            );
+            apply_aggregate_cap(&mut earnings, cap, 2).unwrap();
+            assert_eq!(Dec::sum(amounts(&earnings)).unwrap(), cap);
             assert!(earnings.iter().all(|e| !e.dollar_amount.is_negative()));
         }
 
@@ -4834,31 +4919,35 @@ mod tests {
                 }
                 let raw_by_position: HashMap<Uuid, Dec> =
                     earnings.iter().map(|e| (e.position_id, e.dollar_amount)).collect();
-                apply_aggregate_cap(&mut earnings, cap).unwrap();
+                apply_aggregate_cap(&mut earnings, cap, 2).unwrap();
                 for (owner, raw_amounts) in raw {
                     let raw_total = Dec::sum(raw_amounts.iter().copied()).unwrap();
+                    let rounded_total =
+                        Dec::sum(raw_amounts.iter().map(|a| a.round_minor(2))).unwrap();
                     let shares: Vec<_> = earnings.iter().filter(|e| e.earner_id == owner).collect();
                     let total = Dec::sum(shares.iter().map(|e| e.dollar_amount)).unwrap();
                     prop_assert!(shares.iter().all(|e| !e.dollar_amount.is_negative()));
-                    if raw_total > cap {
+                    prop_assert!(shares.iter().all(|e| e.dollar_amount.round_minor(2) == e.dollar_amount));
+                    if raw_total > cap || rounded_total > cap {
                         prop_assert_eq!(total, cap);
                         prop_assert!(shares.iter().all(|e| e.capped));
-                        let last = shares.iter().map(|e| e.position_id).max().unwrap();
-                        let unit: Dec = d!(0.0000000000001);
+                        let unit: Dec = d!(0.01);
                         for e in &shares {
                             let floor = raw_by_position[&e.position_id]
-                                .mul_div_trunc(cap, raw_total, 13)
+                                .mul_div_trunc(cap, raw_total, 2)
                                 .unwrap();
-                            if e.position_id == last {
-                                let ceiling = shares.iter().fold(floor, |c, _| c.try_add(unit).unwrap());
-                                prop_assert!(e.dollar_amount >= floor);
-                                prop_assert!(e.dollar_amount < ceiling);
-                            } else {
-                                prop_assert_eq!(e.dollar_amount, floor);
-                            }
+                            prop_assert!(
+                                e.dollar_amount == floor
+                                    || e.dollar_amount == floor.try_add(unit).unwrap()
+                            );
                         }
                     } else {
-                        prop_assert_eq!(total, raw_total);
+                        for e in &shares {
+                            prop_assert_eq!(
+                                e.dollar_amount,
+                                raw_by_position[&e.position_id].round_minor(2)
+                            );
+                        }
                         prop_assert!(shares.iter().all(|e| !e.capped));
                     }
                 }
@@ -5029,6 +5118,88 @@ mod tests {
     }
 
     #[test]
+    fn a_volume_ratio_payout_is_rounded_to_a_cent() {
+        assert_d!(volume_ratio_payout(d!(0.10), None, d!(1), d!(3)), 0.03);
+    }
+
+    #[test]
+    fn a_cap_that_is_not_whole_cents_is_refused() {
+        let tree = three_node_tree();
+        let structure = capped_structure(d!(2.005));
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+        let mut snapshots = HashMap::new();
+        for n in 1..=3 {
+            snapshots.insert(test_uuid(n), eligible_snapshot());
+        }
+        let err = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &[],
+            &HashMap::new(),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            CalculationError::CapNotWholeMinorUnits {
+                cap: d!(2.005),
+                currency: "USD".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn a_cycle_step_cap_that_is_not_whole_cents_is_refused() {
+        let tree = three_node_tree();
+        let steps = vec![CycleStep {
+            threshold: d!(300.0),
+            amount: d!(25.0),
+        }];
+        let mut structure = test_cycle_step_structure(steps, VolumeAfterPayout::CarryForward);
+        if let BinaryCommissionMode::CycleStep(cfg) = &mut structure.binary_commission.mode {
+            cfg.cap_per_period = Some(d!(2.005));
+        }
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+        let err = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &HashMap::new(),
+            &[],
+            &HashMap::new(),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            CalculationError::CapNotWholeMinorUnits {
+                cap: d!(2.005),
+                currency: "USD".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn an_unknown_plan_currency_is_refused_by_binary_pairing() {
+        let tree = three_node_tree();
+        let mut plan = test_plan(default_eligibility());
+        plan.volume.base_currency = "ZZZ".to_string();
+        let err = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &test_binary_structure(),
+            &HashMap::new(),
+            &[],
+            &HashMap::new(),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err, CalculationError::UnknownCurrency("ZZZ".to_string()));
+    }
+
+    #[test]
     fn volume_ratio_pays_legs_of_nine_hundred_trillion_at_ten_percent() {
         let paid = volume_ratio_payout(
             d!(0.1),
@@ -5047,7 +5218,7 @@ mod tests {
             d!(1700.37),
             d!(2500.11),
         );
-        assert_d!(paid, 32.1236769348048);
+        assert_d!(paid, 32.12);
     }
 
     #[test]
@@ -5158,13 +5329,13 @@ mod tests {
         assert_eq!(
             owned,
             [
-                (test_uuid(2), d!(3.3333333333333), false),
-                (test_uuid(3), d!(13.3333333333333), false),
+                (test_uuid(2), d!(3.33), false),
+                (test_uuid(3), d!(13.33), false),
             ]
         );
         assert_eq!(
             Dec::sum(owned.iter().map(|(_, amount, _)| *amount)).unwrap(),
-            d!(16.6666666666666)
+            d!(16.66)
         );
     }
 }

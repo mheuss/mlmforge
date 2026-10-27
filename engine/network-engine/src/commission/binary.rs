@@ -223,13 +223,15 @@ fn finalize_earnings(
     }
 }
 
-/// Refuse a cap that is not a whole number of the plan currency's minor units.
-fn check_cap_whole(
+/// Refuse a cap that is negative or not a whole number of the plan currency's
+/// minor units.
+fn check_cap(
     cap: Option<AuthoredDec>,
     plan: &CompensationPlan,
     minor_units: u32,
 ) -> Result<(), CalculationError> {
     match cap {
+        Some(cap) if cap.is_negative() => Err(CalculationError::NegativeCap(cap)),
         Some(cap) if cap.dec().round_minor(minor_units) != cap.dec() => {
             Err(CalculationError::CapNotWholeMinorUnits {
                 cap,
@@ -254,8 +256,8 @@ fn check_cap_whole(
 /// of any position in the tree has no snapshot, if a volume source is not
 /// found in the tree, if a volume source has an invalid cv_amount, if a
 /// carried leg volume is negative, if the plan's base currency is not in the
-/// minor-unit table, if the cap is not a whole number of its minor units, or
-/// if an exact result cannot be held.
+/// minor-unit table, if the cap is negative or not a whole number of the base
+/// currency's minor units, or if an exact result cannot be held.
 pub fn calculate_binary_pairing(
     tree: &BinaryTree,
     plan: &CompensationPlan,
@@ -290,7 +292,7 @@ pub fn calculate_binary_pairing(
     // CycleStep arm's config validation each stay first on their own path,
     // and the CycleStep arm has already returned by here.
     let minor_units = finalize::plan_minor_units(plan)?;
-    check_cap_whole(pairing.cap_per_period, plan, minor_units)?;
+    check_cap(pairing.cap_per_period, plan, minor_units)?;
     check_carried_legs(carry_forward)?;
     walk::validate_snapshots(
         plan,
@@ -311,6 +313,13 @@ pub fn calculate_binary_pairing(
     let working_legs = accumulate_leg_volumes(tree, &volume_totals, carry_forward)?;
     // Visit positions in id order so a failed calculation names the same operands every run.
     let positions = sorted_positions(&working_legs);
+
+    // Aggregate mode skips the per-position cap, because capping first would
+    // change each position's share of the aggregate cap.
+    let use_aggregate_cap = matches!(
+        pairing.multi_position_cap_mode,
+        MultiPositionCapMode::Aggregate
+    ) && ownership.is_some();
 
     // Phase 2: Calculate
     let mut earnings = Vec::new();
@@ -355,16 +364,6 @@ pub fn calculate_binary_pairing(
             PairingCalculation::VolumeRatio => Dec::ZERO,
         };
 
-        // In aggregate mode with an ownership map, skip per-position cap here.
-        // The aggregate post-processing (Phase 2b) enforces the cap across
-        // all of an owner's positions with pro-rata scaling, which preserves
-        // relative distribution. Applying per-position cap first would distort
-        // the proportions before pro-rata scaling.
-        let use_aggregate_cap = matches!(
-            pairing.multi_position_cap_mode,
-            MultiPositionCapMode::Aggregate
-        ) && ownership.is_some();
-
         let (dollar_amount, capped) = if use_aggregate_cap {
             (raw_amount, false)
         } else {
@@ -388,13 +387,9 @@ pub fn calculate_binary_pairing(
     }
 
     // Phase 2b: finalize.
-    let aggregate = matches!(
-        pairing.multi_position_cap_mode,
-        MultiPositionCapMode::Aggregate
-    ) && ownership.is_some();
     let aggregate_cap = pairing
         .cap_per_period
-        .filter(|_| aggregate)
+        .filter(|_| use_aggregate_cap)
         .map(AuthoredDec::dec);
     finalize_earnings(&mut earnings, aggregate_cap, minor_units)?;
 
@@ -484,7 +479,7 @@ fn calculate_binary_cycle_step(
         .validate()
         .map_err(CalculationError::ConfigError)?;
     let minor_units = finalize::plan_minor_units(plan)?;
-    check_cap_whole(validated_config.cap_per_period, plan, minor_units)?;
+    check_cap(validated_config.cap_per_period, plan, minor_units)?;
 
     check_carried_legs(carry_forward)?;
     walk::validate_snapshots(
@@ -504,6 +499,13 @@ fn calculate_binary_cycle_step(
 
     // Steps are sorted by validate() above. Use the validated copy.
     let steps = &validated_config.steps;
+
+    // Aggregate mode skips the per-position cap, because capping first would
+    // change each position's share of the aggregate cap.
+    let use_aggregate_cap = matches!(
+        validated_config.multi_position_cap_mode,
+        MultiPositionCapMode::Aggregate
+    ) && ownership.is_some();
 
     // Phase 2: Calculate
     // Track post-cycle leg volumes for carry-forward computation.
@@ -580,15 +582,6 @@ fn calculate_binary_cycle_step(
             continue;
         }
 
-        // Apply per-position cap.
-        // In aggregate mode with an ownership map, skip per-position cap here.
-        // The aggregate post-processing enforces the cap across all of an
-        // owner's positions with pro-rata scaling.
-        let use_aggregate_cap = matches!(
-            validated_config.multi_position_cap_mode,
-            MultiPositionCapMode::Aggregate
-        ) && ownership.is_some();
-
         let (dollar_amount, capped) = if use_aggregate_cap {
             (total_earnings, false)
         } else {
@@ -612,13 +605,9 @@ fn calculate_binary_cycle_step(
     }
 
     // Phase 2b: finalize.
-    let aggregate = matches!(
-        validated_config.multi_position_cap_mode,
-        MultiPositionCapMode::Aggregate
-    ) && ownership.is_some();
     let aggregate_cap = validated_config
         .cap_per_period
-        .filter(|_| aggregate)
+        .filter(|_| use_aggregate_cap)
         .map(AuthoredDec::dec);
     finalize_earnings(&mut earnings, aggregate_cap, minor_units)?;
 
@@ -5179,6 +5168,86 @@ mod tests {
                 currency: "USD".to_string()
             }
         );
+    }
+
+    #[test]
+    fn a_volume_ratio_payout_rounds_from_its_thirteen_place_value() {
+        // Exact 0.004999999999975… is held at 13 places as 0.0050000000000,
+        // which then rounds up to a cent. Rounding the exact value gives 0.
+        assert_d!(
+            volume_ratio_payout(d!(0.10), None, d!(1), d!(20.0000000001)),
+            0.01
+        );
+    }
+
+    #[test]
+    fn a_negative_per_position_cap_is_refused() {
+        let tree = three_node_tree();
+        let structure = capped_structure(d!(-1));
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+        let err = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &HashMap::new(),
+            &[],
+            &HashMap::new(),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err, CalculationError::NegativeCap(d!(-1)));
+    }
+
+    #[test]
+    fn a_negative_aggregate_cap_is_refused() {
+        let tree = multi_position_tree();
+        let structure = BinaryStructureConfig {
+            name: "Test Binary".to_string(),
+            binary_commission: BinaryCommissionConfig {
+                volume_to_dollar_multiplier: None,
+                mode: BinaryCommissionMode::Pairing(PairingConfig {
+                    cap_per_period: Some(d!(-1)),
+                    multi_position_cap_mode: MultiPositionCapMode::Aggregate,
+                    ..test_pairing_config()
+                }),
+            },
+        };
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+        let ownership = HashMap::from([(test_uuid(2), test_uuid(100))]);
+        let err = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &HashMap::new(),
+            &[],
+            &HashMap::new(),
+            Some(&ownership),
+        )
+        .unwrap_err();
+        assert_eq!(err, CalculationError::NegativeCap(d!(-1)));
+    }
+
+    #[test]
+    fn an_unknown_plan_currency_is_refused_by_binary_cycle_step() {
+        let tree = three_node_tree();
+        let steps = vec![CycleStep {
+            threshold: d!(300.0),
+            amount: d!(25.0),
+        }];
+        let structure = test_cycle_step_structure(steps, VolumeAfterPayout::CarryForward);
+        let mut plan = test_plan_with_structure(default_eligibility(), structure.clone());
+        plan.volume.base_currency = "ZZZ".to_string();
+        let err = calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &HashMap::new(),
+            &[],
+            &HashMap::new(),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err, CalculationError::UnknownCurrency("ZZZ".to_string()));
     }
 
     #[test]

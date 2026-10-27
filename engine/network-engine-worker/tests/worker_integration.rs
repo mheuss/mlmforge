@@ -1068,6 +1068,20 @@ fn load_plan_rejects_unsupported_version() {
 }
 
 #[test]
+fn load_plan_refuses_a_currency_missing_from_the_minor_unit_table() {
+    let mut worker = common::spawn_worker();
+    let plan = TEST_PLAN_JSON.replace(r#""base_currency": "USD""#, r#""base_currency": "ZZZ""#);
+    let resp = send_load_plan(&mut worker, &plan);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PLAN") && resp.contains("ZZZ"),
+        "expected INVALID_PLAN naming ZZZ, got: {}",
+        resp
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
 fn load_plan_rejects_out_of_range_percent() {
     let mut worker = common::spawn_worker();
     // broad_commission_percent must be a fraction in [0, 1]; 1.5 is out of range.

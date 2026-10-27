@@ -28,6 +28,7 @@ pub mod stairstep;
 pub mod streamline;
 pub mod volume;
 
+mod minor_units;
 /// Engine-side plan validation (`CompensationPlan::validate`). Internal impl
 /// module — it attaches methods to the public config types, nothing to export.
 mod validate;

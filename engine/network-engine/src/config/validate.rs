@@ -114,6 +114,7 @@ impl CompensationPlan {
     pub fn validate(&mut self) -> Result<(), String> {
         self.volume.validate().map_err(|e| format!("volume: {e}"))?;
         self.caps.validate().map_err(|e| format!("caps: {e}"))?;
+        self.check_currency()?;
         self.check_rank_ladder_non_empty()?;
         self.check_rank_name_and_ordinal_floor()?;
         self.check_base_rank_requires_nothing()?;

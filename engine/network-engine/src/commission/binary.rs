@@ -188,13 +188,14 @@ fn apply_aggregate_cap(
     for group in earnings.chunk_by_mut(|a, b| a.earner_id == b.earner_id) {
         let raw: Vec<Dec> = group.iter().map(|e| e.dollar_amount).collect();
         let raw_total = Dec::sum(raw.iter().copied())?;
-        let rounded: Vec<Dec> = raw.iter().map(|a| a.round_minor(minor_units)).collect();
-        let rounded_total = Dec::sum(rounded.iter().copied())?;
-        if raw_total <= cap && rounded_total <= cap {
-            for (e, amount) in group.iter_mut().zip(rounded) {
-                e.dollar_amount = amount;
+        if raw_total <= cap {
+            let rounded: Vec<Dec> = raw.iter().map(|a| a.round_minor(minor_units)).collect();
+            if Dec::sum(rounded.iter().copied())? <= cap {
+                for (e, amount) in group.iter_mut().zip(rounded) {
+                    e.dollar_amount = amount;
+                }
+                continue;
             }
-            continue;
         }
         let shares = Dec::allocate_largest_remainder(&raw, cap, minor_units)?;
         for (e, amount) in group.iter_mut().zip(shares) {
@@ -4855,6 +4856,18 @@ mod tests {
             ];
             apply_aggregate_cap(&mut earnings, d!(1.00), 2).unwrap();
             assert_eq!(amounts(&earnings), vec![d!(0.34), d!(0.34), d!(0.32)]);
+            assert!(earnings.iter().all(|e| e.capped));
+        }
+
+        #[test]
+        fn a_raw_total_over_the_cap_is_allocated_even_when_its_rounded_sum_would_overflow() {
+            let mut earnings = vec![
+                earning(1, 2, d!(0.005)),
+                earning(1, 3, d!(0.995)),
+                earning(1, 4, d!(10000000000000000000000000000)),
+            ];
+            apply_aggregate_cap(&mut earnings, d!(1), 2).unwrap();
+            assert_eq!(amounts(&earnings), vec![d!(0), d!(0), d!(1)]);
             assert!(earnings.iter().all(|e| e.capped));
         }
 

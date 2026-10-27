@@ -505,6 +505,13 @@ impl Dec {
             .map(Dec)
             .map_err(|kind| self.error(NumericOp::FloorDiv, rhs, kind))
     }
+
+    /// The value rounded to `places` decimal places, ties away from zero.
+    pub fn round_minor(self, places: u32) -> Dec {
+        Dec(self
+            .0
+            .round_dp_with_strategy(places, RoundingStrategy::MidpointAwayFromZero))
+    }
 }
 
 impl AuthoredDec {
@@ -650,6 +657,38 @@ mod tests {
             digits
         };
         digits.abs() >= (bigdecimal::num_bigint::BigInt::from(1u8) << 96) || scale > 28
+    }
+
+    #[test]
+    fn round_minor_sends_ties_away_from_zero() {
+        assert_eq!(d("0.005").round_minor(2), d("0.01"));
+        assert_eq!(d("-0.005").round_minor(2), d("-0.01"));
+        assert_eq!(d("0.5").round_minor(0), d("1"));
+        assert_eq!(d("-2.5").round_minor(0), d("-3"));
+        assert_eq!(d("0.0005").round_minor(3), d("0.001"));
+    }
+
+    #[test]
+    fn round_minor_rounds_below_a_tie_toward_the_nearer_unit() {
+        assert_eq!(d("0.0049999").round_minor(2), d("0"));
+        assert_eq!(d("1.0044").round_minor(3), d("1.004"));
+    }
+
+    #[test]
+    fn round_minor_leaves_a_value_with_few_enough_places_alone() {
+        assert_eq!(d("2.1").round_minor(2), d("2.1"));
+        assert_eq!(
+            d("79228162514264337593543950335").round_minor(2),
+            d("79228162514264337593543950335")
+        );
+    }
+
+    #[test]
+    fn round_minor_at_the_edge_of_the_range_does_not_panic() {
+        assert_eq!(
+            d("7922816251426433759354395033.5").round_minor(0),
+            d("7922816251426433759354395034")
+        );
     }
 
     #[test]

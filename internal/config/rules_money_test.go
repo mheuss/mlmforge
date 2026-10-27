@@ -119,7 +119,7 @@ func TestRulesDoNotCheckMoneyInABlockTheEngineIgnores(t *testing.T) {
 	}{
 		{"pairing mode with a cycle_step block", &BinaryCommission{Mode: "pairing", Pairing: &PairingConfig{}, CycleStep: &CycleStepConfig{CapPerPeriod: &half, Steps: []CycleStep{{Amount: half}}}}},
 		{"cycle_step mode with a pairing block", &BinaryCommission{Mode: "cycle_step", Pairing: &PairingConfig{CapPerPeriod: &half}, CycleStep: &CycleStepConfig{Steps: []CycleStep{{Amount: dec.MustParse("100")}}}}},
-		{"multi_tier with a differential block", &StairstepCommission{Breakaway: &BreakawayConfig{Overrides: OverrideStrategy{Type: "multi_tier", Differential: &DifferentialConfig{MinOverride: MinOverride{Type: "currency", Value: half}}}}}},
+		{"multi_tier with a differential block", &StairstepCommission{Breakaway: &BreakawayConfig{Overrides: OverrideStrategy{Type: "multi_tier", OverrideCalculation: "differential", Differential: &DifferentialConfig{MinOverride: MinOverride{Type: "currency", Value: half}}}}}},
 		{"fixed_override with a differential block", &StairstepCommission{Breakaway: &BreakawayConfig{Overrides: OverrideStrategy{Type: "single_walk", OverrideCalculation: "fixed_override", Differential: &DifferentialConfig{MinOverride: MinOverride{Type: "currency", Value: half}}}}}},
 	}
 	for _, tc := range cases {

@@ -31,6 +31,7 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 
 	errs = append(errs, validateEnvelope(plan)...)
 	errs = append(errs, validateCurrency(plan)...)
+	errs = append(errs, validateMinorUnits(plan)...)
 	errs = append(errs, validateRankNames(plan)...)
 	errs = append(errs, validateStructureNames(plan)...)
 	errs = append(errs, validatePeriod(plan)...)

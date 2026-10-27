@@ -482,12 +482,12 @@ Before HEU-969, this was verified by deleting the sort and watching which tests 
 
 - `AuthoredDec` and `Dec` read JSON numbers only, and refuse a quoted number.
 - Adding, subtracting and multiplying give the exact result or a `NumericError`, never a rounded one.
-- Four arithmetic operations are inexact, each with one rule:
+- Six operations are inexact. E1 to E4 each have one rule:
   - E1 is `div_ratio`, the reported volume ratio. It follows rust_decimal 1.43's `checked_div`: half to even at the largest scale of 28 or below that fits 96 bits.
   - E2 is `mul_div_ratio`, the volume-ratio payout. It rounds once, half to even, at 13 places. When 13 places do not fit 96 bits, it uses the largest smaller scale that does.
   - E3 is `mul_div_trunc`. It truncates toward zero at a given scale.
   - E4 is `floor_div`, a cycle count. It rounds down to an integer.
-- Each earning's money is rounded to the plan currency's minor unit with `round_minor`, ties away from zero.
+- The other two round money. Each earning's money is rounded to the plan currency's minor unit with `round_minor`, ties away from zero.
 - An aggregate cap is split with `allocate_largest_remainder` in whole minor units, so the shares sum exactly to the cap.
 - An authored value must have an absolute value below 10^15, with at most 10 decimal places.
 - serde_json's `arbitrary_precision` is a normal dependency of both crates. A number on the wire never passes through `f64`.

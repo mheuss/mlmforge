@@ -1955,6 +1955,15 @@ mod tests {
     }
 
     #[test]
+    fn sum_exceeds_compares_against_a_bound_at_the_decimal_maximum() {
+        let max = Dec(Decimal::MAX);
+        let below = Dec(Decimal::MAX - Decimal::ONE);
+        let tiny = d("0.0000000000000000000000000001");
+        assert!(!Dec::sum_exceeds(&[below, tiny], max));
+        assert!(Dec::sum_exceeds(&[max, tiny], max));
+    }
+
+    #[test]
     fn sum_exceeds_counts_negative_values() {
         assert!(Dec::sum_exceeds(&[d("2"), d("-1")], d("0.5")));
         assert!(!Dec::sum_exceeds(&[d("2"), d("-1.5")], d("0.5")));

@@ -489,6 +489,7 @@ Before HEU-969, this was verified by deleting the sort and watching which tests 
   - E4 is `floor_div`, a cycle count. It rounds down to an integer.
 - The other two round money. Each earning's money is rounded to the plan currency's minor unit with `round_minor`, ties away from zero.
 - An aggregate cap is split with `allocate_largest_remainder` in whole minor units, so the shares sum exactly to the cap.
+- `sum_exceeds` compares a sum with a bound exactly, in wide integers. An aggregate cap uses it, so a group whose total does not fit a `Dec` is still settled.
 - An authored value must have an absolute value below 10^15, with at most 10 decimal places.
 - serde_json's `arbitrary_precision` is a normal dependency of both crates. A number on the wire never passes through `f64`.
 - Tests write decimal values with `d!()`, and compare against a literal with `assert_d!`.

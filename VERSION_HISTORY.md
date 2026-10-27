@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**Test count:** 1818 (Rust), 1680 (Go)
+**Test count:** 1831 (Rust), 1680 (Go)
 
 ### Added
 - Project research documentation (MLM fundamentals, compensation plans, glossary, competitive landscape, legal/regulatory)
@@ -111,6 +111,7 @@
 - A matrix add or place of a user in the holding tank answers `USER_IN_HOLDING_TANK` in place of `USER_ALREADY_EXISTS`. `tree reject-event` counts that code as evidence. It also counts replay refusing the stream's last `node_placed` with a refusal code. A tanked user's placement is now cleared whether reject-event or an earlier write delivered it first. Protocol 17. (HEU-930)
 - The tree event consumer refuses a `root_added`, `node_placed` or `node_removed` whose user, parent or sponsor ID is not a canonical lowercase UUID. It also refuses the nil UUID, except as a root's sponsor. It refuses before any store or engine call. Then `tree reject-event` can clear the event. A malformed ID used to stop the tree with a raw store or engine error that reject-event could not clear. Replay runs the same checks. (HEU-933)
 - The Go toolchain moves to go1.27.3 in `go.mod`, `mise.toml` and CI. govulncheck flags GO-2026-6809 in `crypto/x509` at go1.27.2. It failed the Go vulnerability check on main's CI run at `bd08108`. (HEU-973)
+- A binary aggregate cap no longer refuses with a `Precision` error when an owner's exact earnings total does not fit a 96-bit decimal. The total is compared with the cap, and split, in wide integers. Protocol 28. (HEU-997)
 
 ### Removed
 - None.

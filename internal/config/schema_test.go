@@ -422,10 +422,8 @@ func TestSchemaRejectsStreamlineLevelOverU8(t *testing.T) {
 		"dynamic_compression level 0 should fail the schema gate (1-based)")
 }
 
-// TestSchemaRejectsOverMaxBounds verifies the maximum bounds added in Task 10
-// reject over-max values at the schema gate, for tighten-list fields that
-// previously had no maximum: the three u32 board_cycling fields (ceiling
-// 4294967295) and the u16 grace count (ceiling 65535).
+// TestSchemaRejectsOverMaxBounds verifies a schema maximum refuses one past a
+// field's ceiling and accepts the ceiling itself.
 func TestSchemaRejectsOverMaxBounds(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)
@@ -440,6 +438,7 @@ func TestSchemaRejectsOverMaxBounds(t *testing.T) {
 		{"max_cascade_depth u32", "valid/board-plan.yaml", "max_cascade_depth: 10", "max_cascade_depth: 4294967296", "max_cascade_depth: 4294967295"},
 		{"stall_threshold_periods u32", "valid/board-plan.yaml", "stall_threshold_periods: 3", "stall_threshold_periods: 4294967296", "stall_threshold_periods: 4294967295"},
 		{"grace count u16", "valid/full-unilevel.yaml", "count: 2\n        unit: months", "count: 65536\n        unit: months", "count: 65535\n        unit: months"},
+		{"rank ordinal u16", "valid/full-unilevel.yaml", "ordinal: 4", "ordinal: 65536", "ordinal: 65535"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

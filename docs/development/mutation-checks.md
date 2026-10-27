@@ -32,6 +32,15 @@ under test could not resolve its own default paths. It reported every row as
 caught. It scored a perfect run. It was testing nothing. The failing case was
 the same one every time. It had nothing to do with any mutation.
 
+A scratch copy of a Cargo crate is a common way to meet this. If a directory
+above the copy holds a workspace manifest that does not list it, cargo refuses
+to build the copy until `[workspace]` is appended to its own `Cargo.toml`. The
+crate can also reach files outside its own directory, for
+instance a data file it pulls in with `include_str!`, and the copy has none of
+them until you bring them across. A copy that does not compile fails every row
+the same way. Build the untouched copy and pass its tests, with a count, before
+reading any mutation against it.
+
 ## The harness lies in four ways, and all four look like a clean pass
 
 Every one of these produces zero failing tests. So does a suite that genuinely
@@ -451,7 +460,8 @@ Mutate a copy of the engine, never the tracked `.rs` files. Editing the tracked
 source leaves `engine/target/` built from a mutant, and the next honest run uses
 it.
 
-1. Copy `engine/` without `target/` into a scratch directory.
+1. Copy `engine/` without `target/` into a scratch directory, along with any
+   file the crate reaches outside `engine/`, at the same path relative to it.
 2. Apply the mutation to the copy.
 3. Build the copy with its own `CARGO_TARGET_DIR`.
 4. Copy `internal/networkengine/transport_test.go` into the scratch directory.

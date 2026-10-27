@@ -121,7 +121,7 @@ What happens when someone leaves the matrix? The person above them now has an em
 
 **Promote earliest.** The longest-tenured child of the departing distributor moves up to fill the gap automatically. Their children stay with them. It is simple and requires no manual work. The tree heals itself.
 
-**Holding tank.** Orphaned nodes go to a holding area. An administrator manually decides where to re-place them in the matrix. This gives the company more control but requires ongoing attention.
+**Holding tank.** Orphaned nodes go to a holding area. An administrator manually decides where to re-place them in the matrix. This gives the company more control but requires ongoing attention. When a node and its downline go to the holding tank, a recruit of anyone in that group who sits outside it moves to the nearest remaining sponsor. That recruit keeps the new sponsor when its original sponsor is placed back. Place a sponsor back before the recruits it sponsored. A recruit placed first gets no sponsor, and placing the sponsor afterwards does not restore the link.
 
 **Most common:** Promote earliest.
 

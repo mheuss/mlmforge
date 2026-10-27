@@ -409,8 +409,9 @@ impl MatrixTree {
     /// fill the removed node's slot, then repositions remaining
     /// children under the promoted node.
     ///
-    /// HoldingTank: moves the removed node and its entire subtree
-    /// to the holding tank for manual re-placement.
+    /// HoldingTank: moves the removed node and its entire subtree to the
+    /// holding tank. A recruit placed outside the subtree moves to a surviving
+    /// sponsor and is listed in `responsored`.
     pub fn remove_node(
         &mut self,
         user_id: Uuid,
@@ -692,8 +693,9 @@ impl MatrixTree {
     /// parent and position.
     ///
     /// Validates the user id, position, parent existence, slot availability,
-    /// and that the user is in the holding tank. Restores the sponsor link if the
-    /// original sponsor still exists in the tree.
+    /// and that the user is in the holding tank. Restores the placed user's own
+    /// sponsor link if that sponsor is still in the tree. It does not change any
+    /// other node's sponsor.
     pub fn place_from_tank(
         &mut self,
         user_id: Uuid,
@@ -2719,6 +2721,44 @@ mod tests {
         assert_eq!(tree.validate_restored(), Ok(()));
         let sponsor = tree.get_sponsor(test_uuid(4)).unwrap().unwrap();
         assert_eq!(sponsor.user_id, test_uuid(1));
+    }
+
+    #[test]
+    fn place_from_tank_leaves_a_responsored_recruit_with_its_new_sponsor() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 1).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 2).unwrap();
+        // Sponsored by 2, placed under 3.
+        tree.add_node_at(test_uuid(4), test_uuid(2), test_uuid(3), 0, 3)
+            .unwrap();
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+        assert_eq!(
+            result.responsored,
+            vec![Responsored {
+                user_id: test_uuid(4),
+                new_sponsor_id: test_uuid(1),
+            }]
+        );
+
+        tree.place_from_tank(test_uuid(2), test_uuid(1), 0).unwrap();
+
+        let sponsor = tree.get_sponsor(test_uuid(4)).unwrap().unwrap();
+        assert_eq!(sponsor.user_id, test_uuid(1));
+        let recruits: Vec<Uuid> = tree
+            .get_sponsored(test_uuid(2))
+            .unwrap()
+            .iter()
+            .map(|n| n.user_id)
+            .collect();
+        assert!(
+            !recruits.contains(&test_uuid(4)),
+            "get_sponsored(2) returned {recruits:?}"
+        );
+        assert_eq!(tree.validate_restored(), Ok(()));
     }
 
     /// Root 1, with 2 under it and 3 under 2. Node 4 is sponsored by 2 but

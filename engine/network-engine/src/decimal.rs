@@ -420,6 +420,22 @@ impl Dec {
         values.into_iter().try_fold(Dec::ZERO, Dec::try_add)
     }
 
+    /// Whether the exact sum of `values` is greater than `bound`.
+    pub fn sum_exceeds(values: &[Dec], bound: Dec) -> bool {
+        let common = values
+            .iter()
+            .map(|v| v.0.scale())
+            .chain([bound.0.scale()])
+            .max()
+            .unwrap_or(0);
+        let at_common = |x: Dec| {
+            let (m, s) = wide(x.0);
+            m * pow10(common - s)
+        };
+        let total = values.iter().fold(I512::ZERO, |t, &v| t + at_common(v));
+        total > at_common(bound)
+    }
+
     /// E1: `checked_div`, the nearest-even value a
     /// 96-bit coefficient holds at scale 28 or below.
     pub fn div_ratio(self, rhs: impl Into<Dec>) -> Result<Dec, NumericError> {
@@ -1889,6 +1905,72 @@ mod tests {
                     }
                     prop_assert!(remainder(i) > remainder(j) || (remainder(i) == remainder(j) && i < j));
                 }
+            }
+        }
+    }
+
+    fn wide_span_share() -> impl Strategy<Value = Dec> {
+        prop_oneof![
+            (1i128..1_000_000_000_000).prop_map(|m| Dec(Decimal::from_i128_with_scale(m, 28))),
+            (1i128..10_000_000_000_000_000_000)
+                .prop_map(|m| Dec(Decimal::from_i128_with_scale(m, 18))),
+            (1i128..7_000_000_000).prop_map(|m| Dec(Decimal::from_i128_with_scale(
+                m * 1_000_000_000_000_000_000,
+                0
+            ))),
+            (0i128..1_000).prop_map(|k| Dec(Decimal::from_i128_with_scale(
+                79_228_162_514_264_337_593_543_950_335 - k,
+                0
+            ))),
+            allocation_share(),
+        ]
+    }
+
+    #[test]
+    fn sum_exceeds_compares_a_total_that_does_not_fit_a_dec() {
+        assert!(Dec::sum_exceeds(
+            &[d("0.005"), d("10000000000000000000000000000")],
+            d("1")
+        ));
+        assert!(!Dec::sum_exceeds(
+            &[
+                d("11.111110998888888900"),
+                d("0.0000000000111111109988888889")
+            ],
+            d("500")
+        ));
+    }
+
+    #[test]
+    fn sum_exceeds_is_false_when_the_total_equals_the_bound() {
+        assert!(!Dec::sum_exceeds(
+            &[d("0.67"), d("0.67"), d("0.66")],
+            d("2")
+        ));
+        assert!(Dec::sum_exceeds(
+            &[d("0.67"), d("0.67"), d("0.6600000000000000000000000001")],
+            d("2")
+        ));
+        assert!(!Dec::sum_exceeds(&[], d("0")));
+    }
+
+    #[test]
+    fn sum_exceeds_counts_negative_values() {
+        assert!(Dec::sum_exceeds(&[d("2"), d("-1")], d("0.5")));
+        assert!(!Dec::sum_exceeds(&[d("2"), d("-1.5")], d("0.5")));
+    }
+
+    proptest! {
+        #[test]
+        fn sum_exceeds_matches_an_exact_sum(
+            values in prop::collection::vec(wide_span_share(), 0..6),
+            bound_cents in 0i64..5_000_000,
+        ) {
+            let bound = Dec(Decimal::new(bound_cents, 2));
+            let exact: BigDecimal = values.iter().map(|v| big(*v)).sum();
+            prop_assert_eq!(Dec::sum_exceeds(&values, bound), exact > big(bound));
+            if let Ok(total) = Dec::sum(values.iter().copied()) {
+                prop_assert!(!Dec::sum_exceeds(&values, total));
             }
         }
     }

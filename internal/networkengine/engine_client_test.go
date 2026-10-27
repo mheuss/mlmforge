@@ -858,6 +858,19 @@ func TestNewCheckedClient_RefusesAVersion23Worker(t *testing.T) {
 	assert.True(t, mock.closed, "a rejected worker must be closed")
 }
 
+func TestNewCheckedClient_RefusesAVersion24Worker(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"protocol_version":24}`)}
+
+	client, err := newCheckedClient(context.Background(), mock)
+
+	var mismatch *ProtocolVersionMismatchError
+	require.ErrorAs(t, err, &mismatch)
+	assert.Nil(t, client)
+	assert.Equal(t, expectedProtocolVersion, mismatch.Expected)
+	assert.Equal(t, 24, mismatch.Reported)
+	assert.True(t, mock.closed, "a rejected worker must be closed")
+}
+
 // TestNewEngineClient_RejectsWorkerWithWrongVersion proves the PUBLIC
 // constructor performs the check.
 //

@@ -136,6 +136,10 @@ pub enum CalculationError {
     #[error("config error: {0}")]
     ConfigError(String),
 
+    /// A binary pairing percent lies outside [0, 1].
+    #[error("pairing percent {0} is outside [0, 1]")]
+    PairingPercentOutOfRange(AuthoredDec),
+
     /// The plan's base currency is not in the minor-unit table.
     #[error("plan base_currency {0:?} is not in the minor-unit table")]
     UnknownCurrency(String),

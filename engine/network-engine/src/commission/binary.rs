@@ -213,8 +213,8 @@ fn apply_aggregate_cap(
 ///
 /// # Errors
 ///
-/// Returns `CalculationError` if the cycle-step config is invalid, if a
-/// snapshot names a rank the plan does not define, if a snapshot's
+/// Returns `CalculationError` if the cycle-step config is invalid, if the
+/// pairing percent is outside [0, 1], if a snapshot names a rank the plan does not define, if a snapshot's
 /// personal_volume is negative, if the owner of any position in the tree has
 /// no snapshot, if a volume source is not found in the tree, if a volume source
 /// has an invalid cv_amount, if a carried leg volume is negative, or if an
@@ -230,13 +230,8 @@ pub fn calculate_binary_pairing(
 ) -> Result<BinaryCalculationResult, CalculationError> {
     let pairing = match &structure.binary_commission.mode {
         BinaryCommissionMode::Pairing(config) => {
-            let in_range = !config.percent.is_negative() && config.percent.dec() <= Dec::ONE;
-            debug_assert!(in_range, "pairing.percent out of range: {}", config.percent);
-            if !in_range {
-                tracing::warn!(
-                    percent = %config.percent,
-                    "pairing percent outside [0.0, 1.0]; commissions may be overstated"
-                );
+            if config.percent.is_negative() || config.percent.dec() > Dec::ONE {
+                return Err(CalculationError::PairingPercentOutOfRange(config.percent));
             }
             config
         }
@@ -254,7 +249,7 @@ pub fn calculate_binary_pairing(
         }
     };
 
-    // Below the match on purpose. The Pairing arm's percent assert and the
+    // Below the match on purpose. The Pairing arm's percent check and the
     // CycleStep arm's config validation each stay first on their own path,
     // and the CycleStep arm has already returned by here.
     check_carried_legs(carry_forward)?;
@@ -3621,12 +3616,11 @@ mod tests {
         tree
     }
 
-    #[test]
-    fn multi_position_aggregate_cap_scales_pro_rata() {
-        // pos_a (2) and pos_b (3) are both owned by owner_A (test_uuid(100)).
-        // Each position has balanced legs generating 3000 CV each side.
-        // Per-position earning: 3000 * 0.10 = 300. Owner total = 600.
-        // Aggregate cap = 500. Each should be scaled to 250.
+    /// Runs the two-position aggregate-cap fixture, owned by `test_uuid(100)`,
+    /// at the given pairing percent.
+    fn aggregate_pairing_with_percent(
+        percent: AuthoredDec,
+    ) -> Result<BinaryCalculationResult, CalculationError> {
         let tree = multi_position_tree();
 
         let structure = BinaryStructureConfig {
@@ -3634,6 +3628,7 @@ mod tests {
             binary_commission: BinaryCommissionConfig {
                 volume_to_dollar_multiplier: None,
                 mode: BinaryCommissionMode::Pairing(PairingConfig {
+                    percent,
                     cap_per_period: Some(d!(500.0)),
                     multi_position_cap_mode: MultiPositionCapMode::Aggregate,
                     ..test_pairing_config()
@@ -3677,7 +3672,7 @@ mod tests {
             },
         ];
 
-        let result = calculate_binary_pairing(
+        calculate_binary_pairing(
             &tree,
             &plan,
             &structure,
@@ -3686,7 +3681,38 @@ mod tests {
             &HashMap::new(),
             Some(&ownership),
         )
-        .unwrap();
+    }
+
+    #[test]
+    fn a_negative_pairing_percent_is_refused_under_an_aggregate_cap() {
+        assert_eq!(
+            aggregate_pairing_with_percent(d!(-0.10)).unwrap_err(),
+            CalculationError::PairingPercentOutOfRange(d!(-0.10))
+        );
+    }
+
+    #[test]
+    fn a_pairing_percent_above_one_is_refused() {
+        assert_eq!(
+            aggregate_pairing_with_percent(d!(1.01)).unwrap_err(),
+            CalculationError::PairingPercentOutOfRange(d!(1.01))
+        );
+    }
+
+    #[test]
+    fn pairing_percents_of_zero_and_one_are_accepted() {
+        assert!(aggregate_pairing_with_percent(d!(0)).is_ok());
+        assert!(aggregate_pairing_with_percent(d!(1)).is_ok());
+    }
+
+    #[test]
+    fn multi_position_aggregate_cap_scales_pro_rata() {
+        // pos_a (2) and pos_b (3) are both owned by owner_A (test_uuid(100)).
+        // Each position has balanced legs generating 3000 CV each side.
+        // Per-position earning: 3000 * 0.10 = 300. Owner total = 600.
+        // Aggregate cap = 500. Each should be scaled to 250.
+        let owner_a = test_uuid(100);
+        let result = aggregate_pairing_with_percent(d!(0.10)).unwrap();
 
         // Find earnings for the two positions owned by owner_a.
         let owner_earnings: Vec<_> = result

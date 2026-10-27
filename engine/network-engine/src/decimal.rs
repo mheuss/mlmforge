@@ -68,7 +68,7 @@ pub enum NumericErrorKind {
 
 /// An arithmetic operation that has no exact result the engine can hold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
-#[error("cannot {op} {lhs} {} {rhs}: {kind}", .op.joiner())]
+#[error("cannot {op} {lhs} {} {rhs}{}: {kind}", .op.joiner(), .op.after_rhs())]
 pub struct NumericError {
     pub op: NumericOp,
     pub lhs: Dec,
@@ -81,8 +81,16 @@ impl NumericOp {
     fn joiner(&self) -> String {
         match self {
             NumericOp::DivRatio | NumericOp::FloorDiv => "by".to_string(),
-            NumericOp::Allocate { scale } => format!("at scale {scale} across shares totalling"),
+            NumericOp::Allocate { scale } => format!("at scale {scale} across"),
             _ => "and".to_string(),
+        }
+    }
+
+    /// The words after the right operand in an error message.
+    fn after_rhs(&self) -> &'static str {
+        match self {
+            NumericOp::Allocate { .. } => " shares",
+            _ => "",
         }
     }
 }
@@ -540,34 +548,34 @@ impl Dec {
         cap: Dec,
         scale: u32,
     ) -> Result<Vec<Dec>, NumericError> {
-        let total = Dec::sum(shares.iter().copied())?;
-        let error = |kind| cap.error(NumericOp::Allocate { scale }, total, kind);
+        let count = Dec(Decimal::from(shares.len()));
+        let error = |kind| cap.error(NumericOp::Allocate { scale }, count, kind);
         if scale > MAX_SCALE {
             return Err(error(NumericErrorKind::Precision));
         }
         if cap.is_negative() || shares.iter().any(|s| s.is_negative()) {
             return Err(error(NumericErrorKind::Negative));
         }
-        if total.is_zero() {
-            return Err(error(NumericErrorKind::DivisionByZero));
-        }
         let common = shares
             .iter()
             .map(|s| s.0.scale())
-            .chain([cap.0.scale(), total.0.scale(), scale])
+            .chain([cap.0.scale(), scale])
             .max()
             .unwrap_or(scale);
         let at_common = |x: Dec| {
             let (m, s) = wide(x.0);
             m * pow10(common - s)
         };
+        let total_int = shares.iter().fold(I512::ZERO, |t, &s| t + at_common(s));
+        if total_int.is_zero() {
+            return Err(error(NumericErrorKind::DivisionByZero));
+        }
         let unit = pow10(common - scale);
         let cap_int = at_common(cap);
         if !(cap_int % unit).is_zero() {
             return Err(error(NumericErrorKind::NotWholeUnits));
         }
         let cap_units = cap_int / unit;
-        let total_int = at_common(total);
         let mut units = Vec::with_capacity(shares.len());
         let mut remainders = Vec::with_capacity(shares.len());
         for &share in shares {
@@ -1836,7 +1844,7 @@ mod tests {
         assert_eq!(err.kind, NumericErrorKind::NotWholeUnits);
         assert_eq!(
             err.to_string(),
-            "cannot allocate 2.005 at scale 2 across shares totalling 3: the value is not a whole number of units at that scale"
+            "cannot allocate 2.005 at scale 2 across 2 shares: the value is not a whole number of units at that scale"
         );
     }
 
@@ -1858,7 +1866,15 @@ mod tests {
         assert_eq!(err.kind, NumericErrorKind::Negative);
         assert_eq!(
             err.to_string(),
-            "cannot allocate -2 at scale 2 across shares totalling 3: a value is negative"
+            "cannot allocate -2 at scale 2 across 2 shares: a value is negative"
+        );
+    }
+
+    #[test]
+    fn allocation_splits_a_cap_across_shares_whose_total_does_not_fit_a_dec() {
+        assert_eq!(
+            alloc(&["0.005", "10000000000000000000000000000"], "1", 2).unwrap(),
+            vec![d("0"), d("1")]
         );
     }
 
@@ -1871,6 +1887,50 @@ mod tests {
         ]
     }
 
+    fn assert_matches_largest_remainder_oracle(
+        shares: &[Dec],
+        cap: Dec,
+    ) -> Result<(), proptest::test_runner::TestCaseError> {
+        let got = Dec::allocate_largest_remainder(shares, cap, 2).unwrap();
+        let total: BigDecimal = shares.iter().map(|s| big(*s)).sum();
+        let unit = BigDecimal::new(1.into(), 2);
+        let numerators: Vec<BigDecimal> = shares.iter().map(|s| big(*s) * big(cap)).collect();
+        let floors: Vec<BigDecimal> = numerators
+            .iter()
+            .map(|n| {
+                (n / &total / &unit).with_scale_round(0, bigdecimal::RoundingMode::Floor) * &unit
+            })
+            .collect();
+        prop_assert_eq!(got.iter().map(|g| big(*g)).sum::<BigDecimal>(), big(cap));
+        let mut bumped = Vec::new();
+        for (i, (g, f)) in got.iter().zip(&floors).enumerate() {
+            let g = big(*g);
+            prop_assert!(
+                g == *f || g == f + &unit,
+                "share {} is {} with floor {}",
+                i,
+                g,
+                f
+            );
+            if g != *f {
+                bumped.push(i);
+            }
+        }
+        // Every remainder shares the denominator `total`, so comparing numerators is exact.
+        let remainder = |i: usize| &numerators[i] - &floors[i] * &total;
+        for &i in &bumped {
+            for j in 0..shares.len() {
+                if bumped.contains(&j) {
+                    continue;
+                }
+                prop_assert!(
+                    remainder(i) > remainder(j) || (remainder(i) == remainder(j) && i < j)
+                );
+            }
+        }
+        Ok(())
+    }
+
     proptest! {
         #[test]
         fn allocation_matches_an_exact_largest_remainder_oracle(
@@ -1879,33 +1939,16 @@ mod tests {
         ) {
             let cap = Dec(Decimal::new(cap_cents, 2));
             prop_assume!(shares.iter().any(|s| !s.is_zero()));
-            let got = Dec::allocate_largest_remainder(&shares, cap, 2).unwrap();
-            let total: BigDecimal = shares.iter().map(|s| big(*s)).sum();
-            let unit = BigDecimal::new(1.into(), 2);
-            let numerators: Vec<BigDecimal> = shares.iter().map(|s| big(*s) * big(cap)).collect();
-            let floors: Vec<BigDecimal> = numerators
-                .iter()
-                .map(|n| (n / &total / &unit).with_scale_round(0, bigdecimal::RoundingMode::Floor) * &unit)
-                .collect();
-            prop_assert_eq!(got.iter().map(|g| big(*g)).sum::<BigDecimal>(), big(cap));
-            let mut bumped = Vec::new();
-            for (i, (g, f)) in got.iter().zip(&floors).enumerate() {
-                let g = big(*g);
-                prop_assert!(g == *f || g == f + &unit, "share {} is {} with floor {}", i, g, f);
-                if g != *f {
-                    bumped.push(i);
-                }
-            }
-            // Every remainder shares the denominator `total`, so comparing numerators is exact.
-            let remainder = |i: usize| &numerators[i] - &floors[i] * &total;
-            for &i in &bumped {
-                for j in 0..shares.len() {
-                    if bumped.contains(&j) {
-                        continue;
-                    }
-                    prop_assert!(remainder(i) > remainder(j) || (remainder(i) == remainder(j) && i < j));
-                }
-            }
+            assert_matches_largest_remainder_oracle(&shares, cap)?;
+        }
+
+        #[test]
+        fn allocation_matches_the_oracle_for_wide_span_shares(
+            shares in prop::collection::vec(wide_span_share(), 1..6),
+            cap_cents in 0i64..5_000_000,
+        ) {
+            prop_assume!(shares.iter().any(|s| !s.is_zero()));
+            assert_matches_largest_remainder_oracle(&shares, Dec(Decimal::new(cap_cents, 2)))?;
         }
     }
 

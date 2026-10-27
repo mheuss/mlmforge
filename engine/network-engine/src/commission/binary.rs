@@ -3734,8 +3734,7 @@ mod tests {
         assert!(aggregate_pairing_with_percent(d!(1)).is_ok());
     }
 
-    /// Runs the two-position aggregate-cap fixture with CV 100 under position 2
-    /// and CV 0.0000000001 under position 3.
+    /// Runs a two-position aggregate-cap pairing whose earnings span 28 decimal places.
     fn wide_span_aggregate_pairing(
         cap: AuthoredDec,
     ) -> Result<BinaryCalculationResult, CalculationError> {
@@ -4948,6 +4947,26 @@ mod tests {
             apply_aggregate_cap(&mut earnings, d!(1), 2).unwrap();
             assert_eq!(amounts(&earnings), vec![d!(0), d!(0), d!(1)]);
             assert!(earnings.iter().all(|e| e.capped));
+        }
+
+        #[test]
+        fn a_raw_total_over_the_cap_whose_rounding_fits_is_allocated() {
+            let mut earnings = vec![
+                earning(1, 2, d!(0.674)),
+                earning(1, 3, d!(0.674)),
+                earning(1, 4, d!(0.674)),
+            ];
+            apply_aggregate_cap(&mut earnings, d!(2.02), 2).unwrap();
+            assert_eq!(amounts(&earnings), vec![d!(0.68), d!(0.67), d!(0.67)]);
+            assert!(earnings.iter().all(|e| e.capped));
+        }
+
+        #[test]
+        fn a_zero_earning_under_a_zero_cap_is_rounded_not_capped() {
+            let mut earnings = vec![earning(1, 2, d!(0))];
+            apply_aggregate_cap(&mut earnings, d!(0), 2).unwrap();
+            assert_eq!(amounts(&earnings), vec![d!(0)]);
+            assert!(!earnings[0].capped);
         }
 
         #[test]

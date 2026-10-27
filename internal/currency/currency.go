@@ -1,4 +1,4 @@
-// Package currency holds the ISO 4217 minor units that plan money is rounded to.
+// Package currency holds the ISO 4217 minor unit of each currency code.
 package currency
 
 import (

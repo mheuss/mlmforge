@@ -893,6 +893,30 @@ fn load_plan_refuses_eleven_decimal_places_and_names_its_path() {
     worker.wait().unwrap();
 }
 
+#[test]
+fn load_plan_refuses_a_quoted_nan_rank_threshold_and_names_its_path() {
+    let mut worker = common::spawn_worker();
+    let plan = TEST_PLAN_JSON.replacen(
+        r#""structures": [],"#,
+        r#""structures": [{"structure": "Test", "personal_volume": 0.0, "group_volume": "NaN", "max_group_volume_per_leg": 0.0, "min_retail_volume": 0.0, "distributor_count": null}],"#,
+        1,
+    );
+    assert_ne!(
+        plan, TEST_PLAN_JSON,
+        "the structures replacement did not match"
+    );
+    let resp = send_load_plan(&mut worker, &plan);
+    assert_refused_at_path(
+        &resp,
+        "INVALID_PLAN",
+        "failed to deserialize plan: ",
+        "ranks[0].qualification.structures[0].group_volume",
+        "invalid type: string",
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 /// Sends `calculate_unilevel` with one volume entry whose `cv_amount` is `cv`.
 fn calculate_unilevel_with_cv(cv: &str) -> String {
     let mut worker = common::spawn_worker();

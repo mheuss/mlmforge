@@ -626,8 +626,6 @@ proptest! {
 
     /// SameRank: total payout is at most the sum of each earning's rounded
     /// maximum, and the rates paid are at most the rate sum times the rank count.
-    /// In SameRank mode, each rank level gets its own walk, so the upper bound
-    /// is rates_sum * CV * multiplier * number_of_rank_levels.
     #[test]
     fn same_rank_total_payout_bounded(
         (size, ranks, cv, max_gen) in same_rank_inputs()
@@ -647,7 +645,7 @@ proptest! {
             .generation_commission
             .volume_to_dollar_multiplier
             .unwrap_or(plan.volume.volume_to_dollar_multiplier);
-        let num_ranks = 3u32; // associate, silver, director
+        let num_ranks = 3u32;
         let rounded_bound = Dec::sum(result.iter().map(|e| {
             cv.dec()
                 .try_mul(multiplier)

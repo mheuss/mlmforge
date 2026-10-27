@@ -10,8 +10,7 @@ use thiserror::Error;
 
 const MAX_SCALE: u32 = 28;
 const ENVELOPE_MAX_SCALE: u32 = 10;
-/// The most decimal places E2 rounds a volume-ratio quotient to. It uses
-/// fewer when the coefficient would not fit 96 bits.
+/// The decimal-place limit for an inexact volume-ratio quotient.
 pub(crate) const PAYOUT_SCALE: u32 = 13;
 const ENVELOPE_LIMIT: Decimal = dec!(1_000_000_000_000_000);
 
@@ -79,11 +78,11 @@ pub struct NumericError {
 
 impl NumericOp {
     /// The word between the operands in an error message.
-    fn joiner(&self) -> &'static str {
+    fn joiner(&self) -> String {
         match self {
-            NumericOp::DivRatio | NumericOp::FloorDiv => "by",
-            NumericOp::Allocate { .. } => "across",
-            _ => "and",
+            NumericOp::DivRatio | NumericOp::FloorDiv => "by".to_string(),
+            NumericOp::Allocate { scale } => format!("at scale {scale} across shares totalling"),
+            _ => "and".to_string(),
         }
     }
 }
@@ -104,7 +103,7 @@ impl fmt::Display for NumericOp {
                 divisor,
             } => write!(f, "divide by {divisor} the product of {first}, {second},"),
             NumericOp::FloorDiv => f.write_str("floor-divide"),
-            NumericOp::Allocate { scale } => write!(f, "allocate at scale {scale}"),
+            NumericOp::Allocate { .. } => f.write_str("allocate"),
         }
     }
 }
@@ -117,9 +116,9 @@ impl fmt::Display for NumericErrorKind {
                 "the exact result needs more than 28 decimal places or 96 bits of digits"
             }
             NumericErrorKind::DivisionByZero => "the divisor is zero",
-            NumericErrorKind::Negative => "a share or the cap is negative",
+            NumericErrorKind::Negative => "a value is negative",
             NumericErrorKind::NotWholeUnits => {
-                "the cap is not a whole number of units at that scale"
+                "the value is not a whole number of units at that scale"
             }
         })
     }
@@ -1821,7 +1820,7 @@ mod tests {
         assert_eq!(err.kind, NumericErrorKind::NotWholeUnits);
         assert_eq!(
             err.to_string(),
-            "cannot allocate at scale 2 2.005 across 3: the cap is not a whole number of units at that scale"
+            "cannot allocate 2.005 at scale 2 across shares totalling 3: the value is not a whole number of units at that scale"
         );
     }
 
@@ -1839,9 +1838,11 @@ mod tests {
             alloc(&["1", "-0.5"], "2", 2).unwrap_err().kind,
             NumericErrorKind::Negative
         );
+        let err = alloc(&["1", "2"], "-2", 2).unwrap_err();
+        assert_eq!(err.kind, NumericErrorKind::Negative);
         assert_eq!(
-            alloc(&["1", "2"], "-2", 2).unwrap_err().kind,
-            NumericErrorKind::Negative
+            err.to_string(),
+            "cannot allocate -2 at scale 2 across shares totalling 3: a value is negative"
         );
     }
 

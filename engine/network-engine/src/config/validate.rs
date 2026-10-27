@@ -29,7 +29,7 @@
 //! its own `UNSUPPORTED_PLAN_VERSION` code, because a valid future-version plan
 //! is not a malformed one.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::binary::{BinaryCommissionConfig, BinaryCommissionMode, PairingConfig};
 use super::board_plan::BoardPlanConfig;
@@ -37,7 +37,7 @@ use super::commission::LevelCommissionConfig;
 use super::generation::GenerationCommissionConfig;
 use super::matrix::{MatrixStructureParams, SpilloverDirection};
 use super::payout::CapsConfig;
-use super::rank::{RankQualification, StructureQualification};
+use super::rank::{LegPredicate, RankQualification, StructureQualification};
 use super::stairstep::{BreakawayConfig, MinOverride, OverrideMode, OverrideStrategy};
 use super::streamline::StreamlineCommissionConfig;
 use super::volume::VolumeConfig;
@@ -118,6 +118,9 @@ impl CompensationPlan {
         self.check_whole_minor_units()?;
         self.check_rank_ladder_non_empty()?;
         self.check_rank_name_and_ordinal_floor()?;
+        self.check_rank_ordinals_ascending()?;
+        self.check_unique_rank_names()?;
+        self.check_rank_thresholds_non_negative()?;
         self.check_base_rank_requires_nothing()?;
         self.check_per_leg_caps()?;
         self.check_unique_structure_names()?;
@@ -152,6 +155,73 @@ impl CompensationPlan {
                     "ranks: rank at index {idx} ('{}') has ordinal 0; ordinals start at 1",
                     rank.name
                 ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Reject rank ordinals that repeat or do not ascend in list order.
+    fn check_rank_ordinals_ascending(&self) -> Result<(), String> {
+        let mut seen: HashMap<u16, &str> = HashMap::with_capacity(self.ranks.len());
+        let mut previous: Option<u16> = None;
+        for rank in &self.ranks {
+            if let Some(other) = seen.get(&rank.ordinal) {
+                return Err(format!(
+                    "ranks: rank '{}' has duplicate ordinal {} (same as '{other}')",
+                    rank.name, rank.ordinal
+                ));
+            }
+            if let Some(p) = previous {
+                if rank.ordinal <= p {
+                    return Err(format!(
+                        "ranks: rank '{}' ordinal {} is not ascending (previous was {p})",
+                        rank.name, rank.ordinal
+                    ));
+                }
+            }
+            seen.insert(rank.ordinal, &rank.name);
+            previous = Some(rank.ordinal);
+        }
+        Ok(())
+    }
+
+    /// Reject two ranks that share a name.
+    fn check_unique_rank_names(&self) -> Result<(), String> {
+        let mut seen = HashSet::with_capacity(self.ranks.len());
+        for rank in &self.ranks {
+            let name = rank.name.as_str();
+            if !seen.insert(name) {
+                return Err(format!("ranks: duplicate rank name '{name}'"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Reject a negative volume threshold on any rank.
+    fn check_rank_thresholds_non_negative(&self) -> Result<(), String> {
+        for rank in &self.ranks {
+            for sq in &rank.qualification.structures {
+                let at = format!("ranks: rank '{}' structure '{}'", rank.name, sq.structure);
+                check_non_negative(&format!("{at} personal_volume"), sq.personal_volume)?;
+                check_non_negative(&format!("{at} group_volume"), sq.group_volume)?;
+                check_non_negative(&format!("{at} min_retail_volume"), sq.min_retail_volume)?;
+                if let Some(dc) = &sq.distributor_count {
+                    check_non_negative(
+                        &format!("{at} distributor_count.min_leg_group_volume"),
+                        dc.min_leg_group_volume,
+                    )?;
+                }
+                for (k, lq) in sq.leg_quality.iter().enumerate() {
+                    if let LegPredicate::ContainsPersonalVolume {
+                        min_personal_volume,
+                    } = &lq.predicate
+                    {
+                        check_non_negative(
+                            &format!("{at} leg_quality[{k}].predicate.min_personal_volume"),
+                            *min_personal_volume,
+                        )?;
+                    }
+                }
             }
         }
         Ok(())
@@ -1118,6 +1188,62 @@ mod tests {
     }
 
     #[test]
+    fn plan_rejects_a_duplicate_rank_ordinal_naming_both_ranks() {
+        let mut plan = plan_with_two_ranks();
+        plan.ranks[0].ordinal = 2;
+        let err = plan.validate().unwrap_err();
+        assert_eq!(
+            err,
+            "ranks: rank 'gold' has duplicate ordinal 2 (same as 'associate')"
+        );
+    }
+
+    #[test]
+    fn plan_rejects_a_rank_ordinal_below_the_previous_naming_the_previous() {
+        let mut plan = plan_with_two_ranks();
+        plan.ranks[0].ordinal = 2;
+        plan.ranks[1].ordinal = 1;
+        let err = plan.validate().unwrap_err();
+        assert_eq!(
+            err,
+            "ranks: rank 'gold' ordinal 1 is not ascending (previous was 2)"
+        );
+    }
+
+    #[test]
+    fn plan_rejects_a_duplicate_rank_ordinal_that_is_not_adjacent() {
+        let mut plan = plan_with_two_ranks();
+        plan.ranks[1].ordinal = 3;
+        let mut bronze = plan.ranks[1].clone();
+        bronze.name = "bronze".to_string();
+        bronze.ordinal = 1;
+        plan.ranks.push(bronze);
+        let err = plan.validate().unwrap_err();
+        assert_eq!(
+            err,
+            "ranks: rank 'bronze' has duplicate ordinal 1 (same as 'associate')"
+        );
+    }
+
+    #[test]
+    fn plan_rejects_two_ranks_sharing_a_name() {
+        let mut plan = plan_with_two_ranks();
+        plan.ranks[1].name = "associate".to_string();
+        let err = plan.validate().unwrap_err();
+        assert_eq!(err, "ranks: duplicate rank name 'associate'");
+    }
+
+    #[test]
+    fn plan_accepts_a_strictly_ascending_ladder_with_gaps() {
+        let mut plan = plan_with_two_ranks();
+        let mut platinum = plan.ranks[1].clone();
+        platinum.name = "platinum".to_string();
+        platinum.ordinal = 7;
+        plan.ranks.push(platinum);
+        assert_eq!(plan.validate(), Ok(()));
+    }
+
+    #[test]
     fn plan_rejects_duplicate_structure_names() {
         // Structure lookup is by name and takes the first match, so two
         // structures sharing a name make the payout depend on plan ordering.
@@ -1262,7 +1388,7 @@ mod tests {
         let mut entry = zero_threshold("main");
         entry.personal_volume = d!(50.0);
         plan.ranks[1].qualification.structures = vec![entry];
-        let err = plan.validate().unwrap_err();
+        let err = plan.check_base_rank_requires_nothing().unwrap_err();
         assert!(
             err.contains("base rank 'associate'"),
             "unexpected error: {err}"
@@ -1277,12 +1403,12 @@ mod tests {
         let mut second_tied = plan_with_two_ranks();
         second_tied.ranks[1].ordinal = 1;
         second_tied.ranks[1].qualification.structures = vec![entry.clone()];
-        assert!(second_tied.validate().is_ok());
+        assert!(second_tied.check_base_rank_requires_nothing().is_ok());
 
         let mut first_tied = plan_with_two_ranks();
         first_tied.ranks[1].ordinal = 1;
         first_tied.ranks[0].qualification.structures = vec![entry];
-        let err = first_tied.validate().unwrap_err();
+        let err = first_tied.check_base_rank_requires_nothing().unwrap_err();
         assert!(
             err.contains("base rank 'associate'"),
             "unexpected error: {err}"
@@ -1309,7 +1435,7 @@ mod tests {
         let mut entry = zero_threshold("main");
         entry.personal_volume = d!(100.0);
         plan.ranks[0].qualification.structures = vec![entry];
-        assert!(plan.validate().is_ok());
+        assert!(plan.check_base_rank_requires_nothing().is_ok());
     }
 
     // --- per-leg cap ---
@@ -1401,6 +1527,105 @@ mod tests {
         assert!(
             err.contains("rank 'gold' structure 'main' sets both max_group_volume_per_leg and max_group_volume_per_leg_fraction"),
             "unexpected error: {err}"
+        );
+    }
+
+    // --- rank thresholds ---
+
+    /// Validates a two-rank plan whose upper rank carries `entry`.
+    fn validate_with_upper_rank_entry(
+        entry: crate::config::rank::StructureQualification,
+    ) -> Result<(), String> {
+        let mut plan = plan_with_two_ranks();
+        plan.ranks[1].qualification.structures = vec![entry];
+        plan.validate()
+    }
+
+    #[test]
+    fn plan_rejects_a_negative_threshold_on_a_later_entry_of_a_later_rank() {
+        let mut plan = plan_with_two_ranks();
+        let mut platinum = plan.ranks[1].clone();
+        platinum.name = "platinum".to_string();
+        platinum.ordinal = 3;
+        let mut second = zero_threshold("second");
+        second.group_volume = d!(-1.0);
+        platinum.qualification.structures = vec![zero_threshold("main"), second];
+        plan.ranks.push(platinum);
+        assert_eq!(
+            plan.validate().unwrap_err(),
+            "ranks: rank 'platinum' structure 'second' group_volume must be non-negative, got -1"
+        );
+    }
+
+    #[test]
+    fn plan_rejects_a_negative_personal_volume() {
+        let mut entry = zero_threshold("main");
+        entry.personal_volume = d!(-1.0);
+        assert_eq!(
+            validate_with_upper_rank_entry(entry).unwrap_err(),
+            "ranks: rank 'gold' structure 'main' personal_volume must be non-negative, got -1"
+        );
+    }
+
+    #[test]
+    fn plan_rejects_a_negative_group_volume() {
+        let mut entry = zero_threshold("main");
+        entry.group_volume = d!(-1.0);
+        assert_eq!(
+            validate_with_upper_rank_entry(entry).unwrap_err(),
+            "ranks: rank 'gold' structure 'main' group_volume must be non-negative, got -1"
+        );
+    }
+
+    #[test]
+    fn plan_rejects_a_negative_min_retail_volume() {
+        let mut entry = zero_threshold("main");
+        entry.min_retail_volume = d!(-1.0);
+        assert_eq!(
+            validate_with_upper_rank_entry(entry).unwrap_err(),
+            "ranks: rank 'gold' structure 'main' min_retail_volume must be non-negative, got -1"
+        );
+    }
+
+    #[test]
+    fn plan_rejects_a_negative_min_leg_group_volume() {
+        use crate::config::rank::{DistributorCountRequirement, SearchMode};
+        let mut entry = zero_threshold("main");
+        entry.distributor_count = Some(DistributorCountRequirement {
+            count: 1,
+            min_rank: "associate".to_string(),
+            search_mode: SearchMode::AnyLevel,
+            search_depth: None,
+            total_count: 0,
+            min_leg_group_volume: d!(-1.0),
+        });
+        assert_eq!(
+            validate_with_upper_rank_entry(entry).unwrap_err(),
+            "ranks: rank 'gold' structure 'main' distributor_count.min_leg_group_volume must be non-negative, got -1"
+        );
+    }
+
+    #[test]
+    fn plan_rejects_a_negative_leg_predicate_min_personal_volume() {
+        use crate::config::rank::{LegPredicate, LegQualityRequirement};
+        let mut entry = zero_threshold("main");
+        entry.leg_quality = vec![
+            LegQualityRequirement {
+                count: 1,
+                predicate: LegPredicate::ContainsRank {
+                    min_rank: "associate".to_string(),
+                },
+            },
+            LegQualityRequirement {
+                count: 1,
+                predicate: LegPredicate::ContainsPersonalVolume {
+                    min_personal_volume: d!(-1.0),
+                },
+            },
+        ];
+        assert_eq!(
+            validate_with_upper_rank_entry(entry).unwrap_err(),
+            "ranks: rank 'gold' structure 'main' leg_quality[1].predicate.min_personal_volume must be non-negative, got -1"
         );
     }
 }

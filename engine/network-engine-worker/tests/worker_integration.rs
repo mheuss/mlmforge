@@ -96,7 +96,7 @@ fn ping_returns_protocol_version() {
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(parsed["id"], "1");
-    assert_eq!(parsed["result"]["protocol_version"], 24);
+    assert_eq!(parsed["result"]["protocol_version"], 25);
 
     drop(child.stdin.take());
     child.wait().unwrap();
@@ -888,6 +888,30 @@ fn load_plan_refuses_eleven_decimal_places_and_names_its_path() {
         "failed to deserialize plan: ",
         "ranks[0].qualification.structures[0].personal_volume",
         "at most 10 decimal places",
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn load_plan_refuses_a_quoted_nan_rank_threshold_and_names_its_path() {
+    let mut worker = common::spawn_worker();
+    let plan = TEST_PLAN_JSON.replacen(
+        r#""structures": [],"#,
+        r#""structures": [{"structure": "Test", "personal_volume": 0.0, "group_volume": "NaN", "max_group_volume_per_leg": 0.0, "min_retail_volume": 0.0, "distributor_count": null}],"#,
+        1,
+    );
+    assert_ne!(
+        plan, TEST_PLAN_JSON,
+        "the structures replacement did not match"
+    );
+    let resp = send_load_plan(&mut worker, &plan);
+    assert_refused_at_path(
+        &resp,
+        "INVALID_PLAN",
+        "failed to deserialize plan: ",
+        "ranks[0].qualification.structures[0].group_volume",
+        "invalid type: string",
     );
     drop(worker.stdin.take());
     worker.wait().unwrap();
@@ -5666,37 +5690,20 @@ fn evaluate_ranks_gives_the_base_rank_to_a_distributor_only_in_a_base_only_struc
 }
 
 #[test]
-fn evaluate_ranks_finds_the_base_rank_by_ordinal_when_ranks_are_out_of_order() {
+fn load_plan_refuses_a_rank_ladder_out_of_order() {
     let mut plan: serde_json::Value = serde_json::from_str(&base_only_structure_plan()).unwrap();
     plan["ranks"].as_array_mut().unwrap().reverse();
     let mut child = common::spawn_worker();
     let resp = send_load_plan(&mut child, &plan.to_string());
-    assert!(resp.contains(r#""ok":true"#), "load_plan failed: {}", resp);
-    create_tree(&mut child, "Test");
-    let resp = common::send_receive(
-        &mut child,
-        &format!(
-            r#"{{"id":"root","op":"add_root","params":{{"structure":"Test","user_id":"{}","enrolled_at":100}}}}"#,
-            ROOT
-        ),
-    );
-    assert!(resp.contains(r#""ok":true"#), "add_root failed: {}", resp);
-
-    let resp = common::send_receive(
-        &mut child,
-        &format!(
-            r#"{{"id":"ev","op":"evaluate_ranks","params":{{"distributors":{{"{}":{{"personal_volume":60.0,"retail_volume":0.0,"status":"active","has_order_in_period":false,"active_products":[]}}}},"volume_sources":[]}}}}"#,
-            ROOT
-        ),
-    );
     drop(child.stdin.take());
     child.wait().unwrap();
 
     let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
-    assert_eq!(parsed["ok"].as_bool(), Some(true), "got: {}", parsed);
+    assert_eq!(parsed["ok"].as_bool(), Some(false), "got: {}", parsed);
+    assert_eq!(parsed["error"]["code"], "INVALID_PLAN", "got: {}", parsed);
     assert_eq!(
-        parsed["result"]["ranks"][ROOT],
-        serde_json::json!({"kind": "qualified", "rank": "silver", "ordinal": 2}),
+        parsed["error"]["message"],
+        "plan failed validation: ranks: rank 'associate' ordinal 1 is not ascending (previous was 2)",
         "got: {}",
         parsed
     );

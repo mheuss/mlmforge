@@ -545,3 +545,55 @@ func TestPipelineAcceptsAZeroFractionBesideAPositiveCap(t *testing.T) {
 	require.Empty(t, errs)
 	require.NotNil(t, jsonBytes)
 }
+
+func TestPipelineRefusesARankOrdinalAboveTheU16MaxAtTheSchema(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	doc := replaceInYAML(t, base, "ordinal: 2", "ordinal: 65536")
+
+	_, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	require.Len(t, errs, 1, "errors: %v", errs)
+	assert.Equal(t, "schema_violation", errs[0].Code)
+	assert.Equal(t, "/ranks/1/ordinal", errs[0].Path)
+	assert.Contains(t, errs[0].Message, "maximum")
+}
+
+func TestPipelineRefusesANegativeRankOrdinalAtTheSchema(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	doc := replaceInYAML(t, base, "ordinal: 2", "ordinal: -1")
+
+	_, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	require.Len(t, errs, 1, "errors: %v", errs)
+	assert.Equal(t, "schema_violation", errs[0].Code)
+	assert.Equal(t, "/ranks/1/ordinal", errs[0].Path)
+	assert.Contains(t, errs[0].Message, "minimum")
+}
+
+func TestPipelineRefusesANonFiniteRankThresholdWithoutPanicking(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	for _, value := range []string{".nan", ".inf", "-.inf"} {
+		t.Run(value, func(t *testing.T) {
+			doc := replaceInYAML(t, base, "group_volume: 500", "group_volume: "+value)
+
+			var errs []ValidationError
+			var loadErr error
+			require.NotPanics(t, func() {
+				_, errs, loadErr = p.LoadAndValidate(doc)
+			})
+
+			require.NoError(t, loadErr)
+			require.Len(t, errs, 1, "errors: %v", errs)
+			assert.Equal(t, "invalid_number", errs[0].Code)
+			assert.Equal(t, "/ranks/1/qualification/structures/0/group_volume", errs[0].Path)
+		})
+	}
+}

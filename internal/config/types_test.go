@@ -95,7 +95,7 @@ placement:
 	assert.Equal(t, "USD", plan.Volume.BaseCurrency)
 	assert.Len(t, plan.Ranks, 1)
 	assert.Equal(t, "Associate", plan.Ranks[0].Name)
-	assert.Equal(t, 1, plan.Ranks[0].Ordinal)
+	assert.Equal(t, uint16(1), plan.Ranks[0].Ordinal)
 	assert.Len(t, plan.Structures, 1)
 	assert.Equal(t, "Primary", plan.Structures[0].Name)
 	assert.Equal(t, "unilevel", plan.Structures[0].Type)

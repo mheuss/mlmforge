@@ -127,7 +127,7 @@ for &(rank_name, ordinal) in &unique_ranks {
 }
 ```
 
-**Notes:** The `breakaway_set` name is a semantic mismatch documented in design-rationale 024. If a third consumer appears (HEU-288 infinity commission mode), extract a shared interface with a cleaner name. The project's three-case abstraction threshold applies. Update: a third consumer arrived in HEU-428 — `walk_multi_tier_overrides` in `commission/stairstep.rs` uses `count_generations_upward` with `|_| true` for boundary detection. The abstraction trigger is technically met but the semantic-mismatch payoff is muted for this consumer (its boundary set IS the breakaway set). Defer the rename until HEU-288 or a future consumer makes the rename pay. The `(rank_name, ordinal)` dedup key relies on rank ordinals being unique across the rank ladder; HEU-440 tracks adding upstream validation.
+**Notes:** The `breakaway_set` name is a semantic mismatch documented in design-rationale 024. If a third consumer appears (HEU-288 infinity commission mode), extract a shared interface with a cleaner name. The project's three-case abstraction threshold applies. Update: a third consumer arrived in HEU-428 — `walk_multi_tier_overrides` in `commission/stairstep.rs` uses `count_generations_upward` with `|_| true` for boundary detection. The abstraction trigger is technically met but the semantic-mismatch payoff is muted for this consumer (its boundary set IS the breakaway set). Defer the rename until HEU-288 or a future consumer makes the rename pay. The `(rank_name, ordinal)` dedup key relies on rank ordinals being unique across the rank ladder. Go and the engine both refuse a plan whose rank ordinals repeat or do not ascend.
 
 ---
 
@@ -414,7 +414,9 @@ _ = driver.Backfill(ctx, from, to)
 **Usage:**
 ```bash
 # After adding a config field that mirrors a narrow Rust type:
-# 1. Add a manifest entry (or an allow_list entry with a reason).
+# 1. Add a manifest entry (or an allow_list entry with a reason). A struct the
+#    manifest has not named before also goes in configStructRegistry in
+#    width_contract_test.go.
 # 2. Regenerate the engine fixtures:
 REGEN_FIXTURES=1 go test ./internal/config/ -run TestGenerateConfigContractFixtures
 # 3. Run both halves of the contract (cargo must run from engine/ — no root Cargo.toml):

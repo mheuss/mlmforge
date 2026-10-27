@@ -51,7 +51,7 @@ type VolumeConfig struct {
 // RankDefinition represents a single rank in the compensation plan hierarchy.
 type RankDefinition struct {
 	Name                string            `yaml:"name" json:"name"`
-	Ordinal             int               `yaml:"ordinal" json:"ordinal"`
+	Ordinal             uint16            `yaml:"ordinal" json:"ordinal"`
 	Qualification       RankQualification `yaml:"qualification" json:"qualification"`
 	QualifiedStructures []string          `yaml:"qualified_structures" json:"qualified_structures,omitempty"`
 	DemotionPolicy      DemotionPolicy    `yaml:"demotion_policy" json:"demotion_policy"`

@@ -84,11 +84,14 @@
     { "go_struct": "HoldingTankConfig", "go_field": "ExpirationDays", "go_type": "uint8", "rust_type": "u8", "over_max": 256,
       "schema_pointer": "#/$defs/HoldingTankConfig/properties/expiration_days",
       "go_fixture": "full-unilevel", "go_pointer": "/placement/holding_tank/expiration_days",
-      "engine_fixture": "unilevel", "engine_pointer": "/placement/holding_tank/expiration_days" }
+      "engine_fixture": "unilevel", "engine_pointer": "/placement/holding_tank/expiration_days" },
+    { "go_struct": "RankDefinition", "go_field": "Ordinal", "go_type": "uint16", "rust_type": "u16", "over_max": 65536,
+      "schema_pointer": "#/$defs/RankDefinition/properties/ordinal",
+      "go_fixture": "full-unilevel", "go_pointer": "/ranks/1/ordinal",
+      "engine_fixture": "unilevel", "engine_pointer": "/ranks/1/ordinal" }
   ],
   "allow_list": [
     { "go_struct": "CompensationPlan", "go_field": "Version", "reason": "schema const 1; Rust u32; wide by design, not a narrow mirror" },
-    { "go_struct": "RankDefinition", "go_field": "Ordinal", "reason": "small ordering int; Rust u16; schema floors at 1 and sets no ceiling, so the u16 max is unguarded (HEU-753)" },
     { "go_struct": "VelocityQualification", "go_field": "TimeframeDays", "reason": "optional day count (*int); Rust i64; not a narrow byte-width mirror" }
   ]
 }

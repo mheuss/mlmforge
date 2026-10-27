@@ -586,6 +586,8 @@ quiet: the check appears to pass.
 
 The Go integration suite fails if the Rust worker binary is older than a `.rs` file the binary is built from (`staleWorkerBinary` in `transport_test.go`, HEU-615). A stale binary used to be picked up silently, so a green `go test ./...` could mean the Rust half of the seam was never rebuilt.
 
+Running `go test` while a `cargo build` or `cargo test` is rebuilding the worker trips this check across the whole suite. Each integration test fails with `worker binary <path> is older than <file>` or `worker at <path> is older than <file>`. Build first, then run the Go suite on its own.
+
 The walk skips two things it cannot be stale against.
 
 `engine/target/` holds sources cargo regenerates during the same build that produces the binary. Counting them would report the binary as stale against its own output.
@@ -1577,3 +1579,8 @@ The engine enables serde_json's `arbitrary_precision` feature, so it can read nu
 - serde_json re-spells `1e15` as `1e+15` before `AuthoredDec` sees the text. A refusal then quotes `1e+15`, which the caller never wrote (HEU-985).
 
 Assert the text you observe.
+
+## Two Plan Decode Errors That Mislead A Test
+
+- An error inside an internally tagged enum loses part of its path. A leg predicate's bad `min_personal_volume` reports `leg_quality[0].predicate` and does not name `min_personal_volume`.
+- A test that a bare `NaN` is refused cannot fail. JSON has no `NaN` literal, so serde_json rejects it as a syntax error. A quoted `"NaN"` is valid JSON, but it is refused as `invalid type: string` before any decimal text is parsed. That pins the rule that a threshold must be a JSON number. To test the decimal grammar itself, parse the text with `AuthoredDec::from_str`.

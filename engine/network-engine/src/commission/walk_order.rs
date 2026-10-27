@@ -119,7 +119,7 @@ fn kind_key(kind: WalkKind) -> u8 {
 
 /// `(ordinal, name)` for a walk's rank context, or `None` when it carries no
 /// rank. Sorting on the pair rather than the ordinal alone keeps the order
-/// stable when two ranks share an ordinal, which HEU-646 tracks as unvalidated.
+/// stable when two ranks share an ordinal.
 fn rank_key<'a>(walk: &'a Walk, rank_ordinals: &HashMap<&str, u16>) -> Option<(u16, &'a str)> {
     walk.rank.as_deref().map(|name| {
         let ordinal = rank_ordinals.get(name).copied().unwrap_or(0);

@@ -40,30 +40,6 @@ func TestRankOrdinalZeroRejected(t *testing.T) {
 	assert.Equal(t, SeverityError, errs[0].Severity)
 }
 
-func TestRankNegativeOrdinalRejected(t *testing.T) {
-	for _, ordinal := range []int{-1, -5} {
-		plan := minimalPlan()
-		plan.Ranks[0].Ordinal = ordinal
-
-		errs := validateBusinessRules(plan)
-		require.Len(t, errs, 1)
-		assert.Equal(t, "value_out_of_range", errs[0].Code)
-		assert.Contains(t, errs[0].Message, fmt.Sprintf("ordinal %d", ordinal))
-	}
-}
-
-func TestAscendingNegativeOrdinalsAreNotAnOrderingViolation(t *testing.T) {
-	plan := minimalPlan()
-	plan.Ranks[0].Ordinal = -5
-	plan.Ranks[1].Ordinal = -1
-
-	errs := validateBusinessRules(plan)
-	require.Len(t, errs, 2)
-	for _, e := range errs {
-		assert.Equal(t, "value_out_of_range", e.Code)
-	}
-}
-
 func TestRankOrdinalZeroAfterFirstFailsBothChecks(t *testing.T) {
 	plan := minimalPlan()
 	plan.Ranks[1].Ordinal = 0

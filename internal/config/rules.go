@@ -223,8 +223,8 @@ func validateRateKeyWidths(plan *CompensationPlan) []ValidationError {
 }
 
 // rankOrdinalMap returns a map from rank name to ordinal.
-func rankOrdinalMap(plan *CompensationPlan) map[string]int {
-	m := make(map[string]int, len(plan.Ranks))
+func rankOrdinalMap(plan *CompensationPlan) map[string]uint16 {
+	m := make(map[string]uint16, len(plan.Ranks))
 	for _, r := range plan.Ranks {
 		m[r.Name] = r.Ordinal
 	}
@@ -289,11 +289,11 @@ func validateRanks(plan *CompensationPlan, structs map[string]bool) []Validation
 	ordinals := rankOrdinalMap(plan)
 
 	// Ordinals must be strictly ascending with no duplicates.
-	seen := make(map[int]string, len(plan.Ranks))
-	prevOrdinal := 0
+	seen := make(map[uint16]string, len(plan.Ranks))
+	var prevOrdinal uint16
 	hasPrev := false
 	for i, r := range plan.Ranks {
-		if r.Ordinal < 1 {
+		if r.Ordinal == 0 {
 			errs = append(errs, ValidationError{
 				Path:     fmt.Sprintf("/ranks/%d/ordinal", i),
 				Code:     "value_out_of_range",

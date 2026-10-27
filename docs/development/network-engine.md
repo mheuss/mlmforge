@@ -1581,4 +1581,4 @@ Assert the text you observe.
 ## Two Plan Decode Errors That Mislead A Test
 
 - An error inside an internally tagged enum loses part of its path. A leg predicate's bad `min_personal_volume` reports `leg_quality[0].predicate` and does not name `min_personal_volume`.
-- A test that a bare `NaN` is refused cannot fail. JSON has no `NaN` literal, so serde_json rejects it as a syntax error. A quoted `"NaN"` reaches the decimal reader, so test that form.
+- A test that a bare `NaN` is refused cannot fail. JSON has no `NaN` literal, so serde_json rejects it as a syntax error. A quoted `"NaN"` is valid JSON, but it is refused as `invalid type: string` before any decimal text is parsed. That pins the rule that a threshold must be a JSON number. To test the decimal grammar itself, parse the text with `AuthoredDec::from_str`.

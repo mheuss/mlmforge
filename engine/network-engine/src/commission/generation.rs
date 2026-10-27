@@ -19,7 +19,7 @@ use super::types::{
     CalculationError, CommissionCalculationResult, CommissionEarning, DistributorSnapshot,
     PlanIdentity, StepOutcome, VolumeSource, Walk, WalkKind, WalkStep, WalkStop,
 };
-use super::{walk, walk_order};
+use super::{finalize, walk, walk_order};
 
 /// Returns the generation depth for an earner with the given rank.
 ///
@@ -278,6 +278,7 @@ pub fn calculate_generation(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
+    let minor_units = finalize::plan_minor_units(plan)?;
     walk::validate_snapshots(plan, snapshots, tree.user_ids())?;
     let gen_config = &structure.generation_commission;
     let rank_ordinals = walk::build_rank_ordinals(plan);
@@ -375,6 +376,7 @@ pub fn calculate_generation(
                         volume,
                         &rank_ordinals,
                         plan_identity,
+                        minor_units,
                     ));
                 }
             };
@@ -530,6 +532,7 @@ pub fn calculate_generation(
         volume,
         &rank_ordinals,
         plan_identity,
+        minor_units,
     ))
 }
 

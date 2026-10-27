@@ -9,7 +9,7 @@ use crate::tree::matrix::MatrixTree;
 use super::types::{
     CalculationError, CommissionCalculationResult, DistributorSnapshot, PlanIdentity, VolumeSource,
 };
-use super::{walk, walk_order};
+use super::{finalize, walk, walk_order};
 
 /// Calculate matrix level commissions for a set of volume events.
 ///
@@ -34,6 +34,7 @@ pub fn calculate_matrix(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
+    let minor_units = finalize::plan_minor_units(plan)?;
     // Guard: the tree must have the topology the plan structure declares.
     // Tree width/spillover are set at create_tree time from op params, not from
     // the config, so nothing else reconciles them. Paying against a mismatched
@@ -99,6 +100,7 @@ pub fn calculate_matrix(
         volume,
         &rank_ordinals,
         plan_identity,
+        minor_units,
     ))
 }
 

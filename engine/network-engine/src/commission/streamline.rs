@@ -13,7 +13,7 @@ use crate::streamline::StreamlineEngine;
 use super::types::{
     CalculationError, CommissionCalculationResult, DistributorSnapshot, PlanIdentity, VolumeSource,
 };
-use super::{walk, walk_order};
+use super::{finalize, walk, walk_order};
 
 /// Calculate streamline commissions across all active streams.
 ///
@@ -35,6 +35,7 @@ pub fn calculate_streamline(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
+    let minor_units = finalize::plan_minor_units(plan)?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
 
     // Place each threshold at its declared level rather than at its position.
@@ -207,6 +208,7 @@ pub fn calculate_streamline(
         volume,
         &rank_ordinals,
         plan_identity,
+        minor_units,
     ))
 }
 

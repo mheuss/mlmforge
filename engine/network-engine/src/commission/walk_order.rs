@@ -73,8 +73,8 @@ fn assign_indexes(
 }
 
 /// Assembles a calculator's result: orders the walks, remaps every earning's
-/// collector id to its final index, sorts the earnings, and attaches the plan
-/// identity.
+/// collector id to its final index, rounds each earning's money, sorts the
+/// earnings, and attaches the plan identity.
 ///
 /// All five calculators go through here so the ordering and the remap cannot
 /// drift between them. Doing it per-calculator is what would let one of them
@@ -85,6 +85,7 @@ pub(crate) fn assemble(
     volume: &[VolumeSource],
     rank_ordinals: &HashMap<&str, u16>,
     plan_identity: &PlanIdentity,
+    minor_units: u32,
 ) -> CommissionCalculationResult {
     let remap = assign_indexes(&mut walks, volume, rank_ordinals);
 
@@ -98,6 +99,7 @@ pub(crate) fn assemble(
         }
     }
 
+    super::finalize::round_earnings(&mut earnings, minor_units);
     // After the remap, so the walk tiebreaker sorts on final indexes.
     super::walk::sort_earnings(&mut earnings);
 

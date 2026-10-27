@@ -875,7 +875,7 @@ fn stairstep_walk_two_amounts_do_not_depend_on_snapshot_map_order() {
     }
     assert_eq!(
         seen,
-        BTreeSet::from([(d!(1.3), d!(0.026))]),
+        BTreeSet::from([(d!(1.3), d!(0.03))]),
         "distinct (cv_amount, dollar_amount) across runs: {seen:?}"
     );
 }

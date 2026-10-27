@@ -136,6 +136,10 @@ pub enum CalculationError {
     #[error("config error: {0}")]
     ConfigError(String),
 
+    /// The plan's base currency is not in the minor-unit table.
+    #[error("plan base_currency {0:?} is not in the minor-unit table")]
+    UnknownCurrency(String),
+
     /// An arithmetic step has no exact result the engine can hold.
     #[error(transparent)]
     Numeric(#[from] crate::decimal::NumericError),

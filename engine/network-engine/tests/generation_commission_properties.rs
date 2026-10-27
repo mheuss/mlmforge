@@ -452,12 +452,28 @@ proptest! {
             .generation_commission
             .volume_to_dollar_multiplier
             .unwrap_or(plan.volume.volume_to_dollar_multiplier);
-        let upper_bound = cv.dec().try_mul(multiplier).unwrap().try_mul(rate_sum).unwrap();
+        // Each earning is rounded on its own, so the money bound is the sum of
+        // each earning's rounded maximum, and the rate bound stays unrounded.
+        let rounded_bound = Dec::sum(result.iter().map(|e| {
+            cv.dec()
+                .try_mul(multiplier)
+                .unwrap()
+                .try_mul(e.rate.expect("a generation earning carries its rate"))
+                .unwrap()
+                .round_minor(2)
+        }))
+        .unwrap();
+        let rates_paid = Dec::sum(result.iter().map(|e| e.rate.unwrap())).unwrap();
 
         prop_assert!(
-            total_payout <= upper_bound,
-            "Total payout {} exceeds upper bound {}",
-            total_payout, upper_bound
+            total_payout <= rounded_bound,
+            "Total payout {} exceeds the sum of rounded earning maxima {}",
+            total_payout, rounded_bound
+        );
+        prop_assert!(
+            rates_paid <= rate_sum,
+            "Rates paid {} exceed the sum of generation rates {}",
+            rates_paid, rate_sum
         );
     }
 }
@@ -637,19 +653,29 @@ proptest! {
             .volume_to_dollar_multiplier
             .unwrap_or(plan.volume.volume_to_dollar_multiplier);
         let num_ranks = 3u32; // associate, silver, director
-        let upper_bound = cv
-            .dec()
-            .try_mul(multiplier)
-            .unwrap()
-            .try_mul(rate_sum)
-            .unwrap()
-            .try_mul(whole::<Dec>(num_ranks))
-            .unwrap();
+        // Each earning is rounded on its own, so the money bound is the sum of
+        // each earning's rounded maximum, and the rate bound stays unrounded.
+        let rounded_bound = Dec::sum(result.iter().map(|e| {
+            cv.dec()
+                .try_mul(multiplier)
+                .unwrap()
+                .try_mul(e.rate.expect("a generation earning carries its rate"))
+                .unwrap()
+                .round_minor(2)
+        }))
+        .unwrap();
+        let rates_paid = Dec::sum(result.iter().map(|e| e.rate.unwrap())).unwrap();
+        let rate_bound = rate_sum.try_mul(whole::<Dec>(num_ranks)).unwrap();
 
         prop_assert!(
-            total_payout <= upper_bound,
-            "SameRank: total payout {} exceeds upper bound {}",
-            total_payout, upper_bound
+            total_payout <= rounded_bound,
+            "SameRank: total payout {} exceeds the sum of rounded earning maxima {}",
+            total_payout, rounded_bound
+        );
+        prop_assert!(
+            rates_paid <= rate_bound,
+            "SameRank: rates paid {} exceed three times the sum of generation rates {}",
+            rates_paid, rate_bound
         );
     }
 }

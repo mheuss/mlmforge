@@ -566,4 +566,13 @@ mod tests {
                 .contains("does not match volume base_currency")
         );
     }
+
+    #[test]
+    fn validate_reports_the_currency_before_a_fractional_value() {
+        let mut plan = usd_plan();
+        plan.payout.currency = "EUR".to_string();
+        plan.payout.minimum_payout = d!(2.005);
+        let err = plan.validate().unwrap_err();
+        assert!(err.contains("does not match volume base_currency"), "{err}");
+    }
 }

@@ -98,6 +98,19 @@ func TestRulesRefuseMoneyThatIsNotWholeCents(t *testing.T) {
 	}
 }
 
+func TestRulesReportBadMapValuesInKeyOrder(t *testing.T) {
+	half := dec.MustParse("2.005")
+	for range 20 {
+		plan := minimalPlan()
+		plan.Bonuses.RankAdvancement = &RankAdvancementBonusConfig{Amounts: map[string]dec.Amount{"Silver": half, "Gold": half, "Bronze": half}}
+		errs := validateMinorUnits(plan)
+		require.Len(t, errs, 3)
+		assert.Equal(t, "/bonuses/rank_advancement/amounts/Bronze", errs[0].Path)
+		assert.Equal(t, "/bonuses/rank_advancement/amounts/Gold", errs[1].Path)
+		assert.Equal(t, "/bonuses/rank_advancement/amounts/Silver", errs[2].Path)
+	}
+}
+
 func TestRulesDoNotCheckMoneyInABlockTheEngineIgnores(t *testing.T) {
 	half := dec.MustParse("2.005")
 	cases := []struct {

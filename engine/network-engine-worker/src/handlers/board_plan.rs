@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use network_engine::board_plan::BoardPlanEngine;
-use network_engine::commission::calculate_board_commissions;
+use network_engine::commission::{CalculationError, calculate_board_commissions};
 use network_engine::config::board_plan::BoardPlanConfig;
 use network_engine::config::{BoardPlanStructureConfig, CompensationPlan, StructureConfig};
 use network_engine::serde_helpers::null_as_empty;
@@ -526,10 +526,7 @@ pub(crate) fn handle_board_calculate_commissions(
         return Response::error(
             request.id.clone(),
             "CALCULATION_ERROR",
-            format!(
-                "plan base_currency {:?} is not in the minor-unit table",
-                plan.volume.base_currency
-            ),
+            CalculationError::UnknownCurrency(plan.volume.base_currency.clone()).to_string(),
         );
     };
 
@@ -541,4 +538,54 @@ pub(crate) fn handle_board_calculate_commissions(
     );
 
     Response::success(request.id.clone(), &result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state_with_base_currency(code: &str) -> WorkerState {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../testdata/contracts/board_calculate_commissions.json"
+        ))
+        .unwrap();
+        let setup: serde_json::Value =
+            serde_json::from_str(fixture["setup_raw"][0].as_str().unwrap()).unwrap();
+        let mut plan = setup["params"].clone();
+        plan["volume"]["base_currency"] = code.into();
+        WorkerState {
+            plan: Some(serde_json::from_value(plan).unwrap()),
+            ..WorkerState::default()
+        }
+    }
+
+    fn calculate_request() -> Request {
+        serde_json::from_str(
+            r#"{"id":"bp-1","op":"board_calculate_commissions","params":{"structure":"BoardTest","cycle_events":[],"period_cycle_counts":{}}}"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn calculate_refuses_a_base_currency_missing_from_the_table() {
+        let resp = handle_board_calculate_commissions(
+            &state_with_base_currency("ZZZ"),
+            &calculate_request(),
+        );
+        let err = resp.error.expect("expected an error response");
+        assert_eq!(err.code, "CALCULATION_ERROR");
+        assert_eq!(
+            err.message,
+            r#"plan base_currency "ZZZ" is not in the minor-unit table"#
+        );
+    }
+
+    #[test]
+    fn calculate_accepts_a_base_currency_in_the_table() {
+        let resp = handle_board_calculate_commissions(
+            &state_with_base_currency("USD"),
+            &calculate_request(),
+        );
+        assert!(resp.ok);
+    }
 }

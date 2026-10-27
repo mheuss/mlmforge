@@ -66,7 +66,8 @@ CREATE TABLE commission_results (
     run_id        UUID        NOT NULL REFERENCES commission_runs(id),
     structure     TEXT        NOT NULL,
     earner_id     UUID        NOT NULL,
-    -- Unrounded. DEVELOPMENT.md puts rounding to cents at the payout layer.
+    -- One earning, rounded to a whole number of the plan currency's minor units.
+    -- A payout is the sum of these rows.
     -- NUMERIC rather than DOUBLE PRECISION so SUM is exact and independent of
     -- row order.
     dollar_amount NUMERIC     NOT NULL,

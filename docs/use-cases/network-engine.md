@@ -1297,7 +1297,7 @@ return store.ProjectRemoval(ctx, treeID, projection, eventID, eventVersion)
 
 **Problem:** Thresholds, caps and payouts must compare and add exactly. A float can miss. 0.29 x 100000 in `f64` is 28999.999999999996, not 29000.
 
-**Solution:** Rust holds volume and money as `Dec`, and plan values as `AuthoredDec`. The `try_*` methods are exact or return a `NumericError`. Inexact steps go through one of four named operations: `div_ratio`, `mul_div_ratio`, `mul_div_trunc` and `floor_div`. Go holds the same values as `dec.Amount`. Both sides write bare JSON numbers, and the engine writes them normalized.
+**Solution:** Rust holds volume and money as `Dec`, and plan values as `AuthoredDec`. The `try_*` methods are exact or return a `NumericError`. Inexact steps go through one of four named operations: `div_ratio`, `mul_div_ratio`, `mul_div_trunc` and `floor_div`. Money is rounded to the plan currency's minor unit with `round_minor`, and an aggregate cap is split in whole minor units with `allocate_largest_remainder`. Go holds the same values as `dec.Amount`. Both sides write bare JSON numbers, and the engine writes them normalized.
 
 **Usage:**
 ```rust

@@ -409,8 +409,9 @@ impl MatrixTree {
     /// fill the removed node's slot, then repositions remaining
     /// children under the promoted node.
     ///
-    /// HoldingTank: moves the removed node and its entire subtree
-    /// to the holding tank for manual re-placement.
+    /// HoldingTank: moves the removed node and its entire subtree to the
+    /// holding tank. A recruit placed outside the subtree moves to a surviving
+    /// sponsor and is listed in `responsored`.
     pub fn remove_node(
         &mut self,
         user_id: Uuid,
@@ -692,8 +693,9 @@ impl MatrixTree {
     /// parent and position.
     ///
     /// Validates the user id, position, parent existence, slot availability,
-    /// and that the user is in the holding tank. Restores the sponsor link if the
-    /// original sponsor still exists in the tree.
+    /// and that the user is in the holding tank. Restores the placed user's own
+    /// sponsor link if that sponsor is still in the tree. It does not change any
+    /// other node's sponsor.
     pub fn place_from_tank(
         &mut self,
         user_id: Uuid,

@@ -13,7 +13,7 @@ use crate::streamline::StreamlineEngine;
 use super::types::{
     CalculationError, CommissionCalculationResult, DistributorSnapshot, PlanIdentity, VolumeSource,
 };
-use super::{walk, walk_order};
+use super::{finalize, walk, walk_order};
 
 /// Calculate streamline commissions across all active streams.
 ///
@@ -35,6 +35,7 @@ pub fn calculate_streamline(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
+    let minor_units = finalize::plan_minor_units(plan)?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
 
     // Place each threshold at its declared level rather than at its position.
@@ -207,6 +208,7 @@ pub fn calculate_streamline(
         volume,
         &rank_ordinals,
         plan_identity,
+        minor_units,
     ))
 }
 
@@ -709,6 +711,28 @@ mod tests {
         .earnings;
         // Only 2 levels paid (depth cutoff), not 4.
         assert_eq!(earnings.len(), 2);
+    }
+
+    #[test]
+    fn calculate_streamline_refuses_an_unknown_plan_currency() {
+        let engine = make_engine(5);
+        let structure = make_structure(vec![level(1, "associate", d!(0.10))], 5);
+        let mut plan = test_helpers::build_test_plan(
+            test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Streamline(structure.clone()),
+            "test_streamline",
+        );
+        plan.volume.base_currency = "ZZZ".to_string();
+        let err = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &HashMap::new(),
+            &[],
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+        assert_eq!(err, CalculationError::UnknownCurrency("ZZZ".to_string()));
     }
 
     #[test]

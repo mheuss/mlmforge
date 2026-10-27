@@ -9,7 +9,7 @@ use crate::tree::unilevel::UnilevelTree;
 use super::types::{
     CalculationError, CommissionCalculationResult, DistributorSnapshot, PlanIdentity, VolumeSource,
 };
-use super::{walk, walk_order};
+use super::{finalize, walk, walk_order};
 
 /// Calculate unilevel commissions for a set of volume events.
 ///
@@ -31,6 +31,7 @@ pub fn calculate_unilevel(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
+    let minor_units = finalize::plan_minor_units(plan)?;
     let member_ids = tree.user_ids();
     walk::validate_snapshots(plan, snapshots, member_ids.iter().copied())?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
@@ -81,6 +82,7 @@ pub fn calculate_unilevel(
         volume,
         &rank_ordinals,
         plan_identity,
+        minor_units,
     ))
 }
 
@@ -101,6 +103,7 @@ mod tests {
     use crate::config::eligibility::{ActiveLegTier, CommissionEligibility};
     use crate::config::rank::{DemotionPolicy, RankDefinition, RankQualification};
     use crate::config::{CompensationPlan, StructureConfig, UnilevelStructureConfig};
+    use crate::decimal::Dec;
     use crate::tree::test_helpers::test_uuid;
     use std::collections::BTreeMap;
 
@@ -200,6 +203,53 @@ mod tests {
             },
         ];
         plan
+    }
+
+    fn one_level_earning(code: &str, cv: AuthoredDec) -> Dec {
+        let mut tree = UnilevelTree::new();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), test_uuid(1), 0)
+            .unwrap();
+        let structure = test_structure(test_rate_table());
+        let mut plan = test_plan(default_eligibility());
+        plan.volume.base_currency = code.to_string();
+        let associate = DistributorSnapshot {
+            rank: "associate".to_string(),
+            ..eligible_snapshot()
+        };
+        let mut snapshots = HashMap::new();
+        snapshots.insert(test_uuid(1), associate.clone());
+        snapshots.insert(test_uuid(2), associate);
+        let volume = vec![VolumeSource {
+            source_id: test_uuid(2),
+            cv_amount: cv,
+        }];
+        let result = calculate_unilevel(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap();
+        assert_eq!(result.earnings.len(), 1);
+        result.earnings[0].dollar_amount
+    }
+
+    #[test]
+    fn a_half_cent_usd_earning_rounds_up_to_a_cent() {
+        assert_d!(one_level_earning("USD", d!(0.25)), 0.01);
+    }
+
+    #[test]
+    fn a_half_yen_earning_rounds_up_to_a_yen() {
+        assert_d!(one_level_earning("JPY", d!(25)), 1);
+    }
+
+    #[test]
+    fn a_half_fils_kwd_earning_rounds_up_to_a_fils() {
+        assert_d!(one_level_earning("KWD", d!(0.025)), 0.001);
     }
 
     // --- is_eligible tests ---

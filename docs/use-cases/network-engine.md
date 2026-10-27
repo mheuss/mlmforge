@@ -1295,11 +1295,11 @@ return store.ProjectRemoval(ctx, treeID, projection, eventID, eventVersion)
 ### UC-NET-035: Exact decimal values for volume and money
 
 **Added:** Unreleased (HEU-969)
-**Files:** `engine/network-engine/src/decimal.rs`, `engine/network-engine/src/test_support.rs`, `internal/dec/dec.go`
+**Files:** `engine/network-engine/src/decimal.rs`, `engine/network-engine/src/commission/finalize.rs`, `engine/network-engine/src/test_support.rs`, `internal/dec/dec.go`, `internal/currency/minor_units.csv`
 
 **Problem:** Thresholds, caps and payouts must compare and add exactly. A float can miss. 0.29 x 100000 in `f64` is 28999.999999999996, not 29000.
 
-**Solution:** Rust holds volume and money as `Dec`, and plan values as `AuthoredDec`. The `try_*` methods are exact or return a `NumericError`. Inexact steps go through one of four named operations: `div_ratio`, `mul_div_ratio`, `mul_div_trunc` and `floor_div`. Go holds the same values as `dec.Amount`. Both sides write bare JSON numbers, and the engine writes them normalized.
+**Solution:** Rust holds volume and money as `Dec`, and plan values as `AuthoredDec`. The `try_*` methods are exact or return a `NumericError`. Six named operations are inexact. Four of them are `div_ratio`, `mul_div_ratio`, `mul_div_trunc` and `floor_div`. The other two round money to the plan currency's minor unit: `round_minor` rounds an earning, and `allocate_largest_remainder` splits an aggregate cap in whole minor units. Go holds the same values as `dec.Amount`. Both sides write bare JSON numbers, and the engine writes them normalized.
 
 **Usage:**
 ```rust
@@ -1313,4 +1313,4 @@ let paid = matched.mul_div_ratio(pairing.percent, multiplier, min_leg, max_leg)?
 **Notes:**
 - `Dec` has no arithmetic operators. Use the `try_*` methods so every overflow is handled.
 - In tests, build values with `d!` and compare them with `assert_d!`.
-- A `NumericError` names the operation and its inputs. Its kind is `Overflow`, `Precision` or `DivisionByZero`.
+- A `NumericError` names the operation and its inputs. Its kind is `Overflow`, `Precision`, `DivisionByZero`, `Negative` or `NotWholeUnits`.

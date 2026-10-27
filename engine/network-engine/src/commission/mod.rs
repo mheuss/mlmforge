@@ -2,6 +2,7 @@
 
 pub mod binary;
 pub mod board_plan;
+pub(crate) mod finalize;
 pub mod generation;
 pub mod matrix;
 pub mod stairstep;

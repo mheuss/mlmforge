@@ -331,7 +331,8 @@ proptest! {
                 .try_mul(multiplier)
                 .unwrap()
                 .try_mul(percent)
-                .unwrap();
+                .unwrap()
+                .round_minor(2);
             prop_assert!(
                 earning.dollar_amount == expected,
                 "level {}: dollar {} != cv {} * broad {} * mult {} * pct {} = {}",

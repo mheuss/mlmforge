@@ -191,7 +191,7 @@ proptest! {
             prop_assert_eq!(result.earnings.len(), 1);
             let earning = &result.earnings[0];
             let percent: Dec = d!(0.10);
-            let expected = matched.dec().try_mul(percent).unwrap(); // matched * percent * multiplier * ratio
+            let expected = matched.dec().try_mul(percent).unwrap().round_minor(2);
             prop_assert!(
                 earning.dollar_amount == expected,
                 "Dollar amount {} != expected {}",
@@ -1185,11 +1185,7 @@ fn aggregate_cap_pairing_left_1_right_3_does_not_depend_on_map_order() {
         &structure,
         d!(1.0),
         d!(3.0),
-        [
-            d!(0.0333333333333),
-            d!(0.0166666666666),
-            d!(0.0500000000001),
-        ],
+        [d!(0.03), d!(0.02), d!(0.05)],
     );
 }
 
@@ -1201,7 +1197,7 @@ fn aggregate_cap_pairing_left_0_7_right_1_1_does_not_depend_on_map_order() {
         &structure,
         d!(0.7),
         d!(1.1),
-        [d!(0.056875), d!(0.0284375), d!(0.0446875)],
+        [d!(0.06), d!(0.03), d!(0.04)],
     );
 }
 
@@ -1213,11 +1209,7 @@ fn aggregate_cap_pairing_left_1_3_right_2_9_does_not_depend_on_map_order() {
         &structure,
         d!(1.3),
         d!(2.9),
-        [
-            d!(0.1414705882352),
-            d!(0.0707352941176),
-            d!(0.1577941176472),
-        ],
+        [d!(0.14), d!(0.07), d!(0.16)],
     );
 }
 
@@ -1229,7 +1221,7 @@ fn aggregate_cap_pairing_left_3_right_7_does_not_depend_on_map_order() {
         &structure,
         d!(3.0),
         d!(7.0),
-        [d!(0.4125), d!(0.20625), d!(0.48125)],
+        [d!(0.41), d!(0.21), d!(0.48)],
     );
 }
 
@@ -1260,10 +1252,6 @@ fn aggregate_cap_cycle_step_does_not_depend_on_map_order() {
         &structure,
         d!(1.0),
         d!(3.0),
-        [
-            d!(0.0278571428571),
-            d!(0.0092857142857),
-            d!(0.0928571428572),
-        ],
+        [d!(0.03), d!(0.01), d!(0.09)],
     );
 }

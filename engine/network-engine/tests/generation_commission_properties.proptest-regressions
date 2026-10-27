@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 17fde4d11683f86726fd0d4561c56e3b5c5e5408294a9ce8f0b48db9736fb513 # shrinks to (size, directors, cv, max_gen) = (5, [0, 1], 9195.523138347264, 2)
+cc 56027100eea6b99ac5ee79d3607a91f368813de22ceacf2013e26beef6e90640 # shrinks to (size, ranks, cv, max_gen) = (4, [2, 1, 0, 0], AuthoredDec(124.15), 1)

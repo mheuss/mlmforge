@@ -19,7 +19,7 @@ use super::types::{
     CalculationError, CommissionCalculationResult, CommissionEarning, DistributorSnapshot,
     PlanIdentity, StepOutcome, VolumeSource, Walk, WalkKind, WalkStep, WalkStop,
 };
-use super::{walk, walk_order};
+use super::{finalize, walk, walk_order};
 
 /// Returns the generation depth for an earner with the given rank.
 ///
@@ -278,6 +278,7 @@ pub fn calculate_generation(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
+    let minor_units = finalize::plan_minor_units(plan)?;
     walk::validate_snapshots(plan, snapshots, tree.user_ids())?;
     let gen_config = &structure.generation_commission;
     let rank_ordinals = walk::build_rank_ordinals(plan);
@@ -375,6 +376,7 @@ pub fn calculate_generation(
                         volume,
                         &rank_ordinals,
                         plan_identity,
+                        minor_units,
                     ));
                 }
             };
@@ -530,6 +532,7 @@ pub fn calculate_generation(
         volume,
         &rank_ordinals,
         plan_identity,
+        minor_units,
     ))
 }
 
@@ -1087,6 +1090,24 @@ mod calculate_tests {
             status: "active".to_string(),
             has_order_in_period: true,
         }
+    }
+
+    #[test]
+    fn calculate_generation_refuses_an_unknown_plan_currency() {
+        let tree = build_chain(3);
+        let mut plan = two_rank_plan();
+        plan.volume.base_currency = "ZZZ".to_string();
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, d!(0.10))]));
+        let err = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &HashMap::new(),
+            &[],
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+        assert_eq!(err, CalculationError::UnknownCurrency("ZZZ".to_string()));
     }
 
     #[test]

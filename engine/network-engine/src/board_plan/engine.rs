@@ -3302,7 +3302,7 @@ mod tests {
 
         // Calculate commissions from the cycle events.
         let period_counts = HashMap::new();
-        let result = calculate_board_commissions(&all_cycle_events, &period_counts, &config);
+        let result = calculate_board_commissions(&all_cycle_events, &period_counts, &config, 2);
 
         // Each cycle event should produce an earning.
         assert_eq!(

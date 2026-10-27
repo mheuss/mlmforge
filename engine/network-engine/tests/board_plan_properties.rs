@@ -1,11 +1,13 @@
 mod common;
 
-use common::{cents, uuid_from_index};
+use common::uuid_from_index;
 use network_engine::board_plan::board::total_positions;
 use network_engine::board_plan::{BoardPlanEngine, BoardPlanError, CycleEvent};
 use network_engine::commission::calculate_board_commissions;
 use network_engine::config::board_plan::{BoardPlanConfig, ReEntryPosition};
 use network_engine::d;
+use network_engine::decimal::Dec;
+use network_engine::test_support::FromLiteral;
 use proptest::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU32;
@@ -252,7 +254,7 @@ proptest! {
 proptest! {
     /// A cycle is capped exactly when its number exceeds
     /// `max_cycles_per_period`. Capped cycles pay $0, uncapped cycles pay
-    /// `cycle_commission`.
+    /// `cycle_commission` rounded to the cent, ties away from zero.
     ///
     /// Drives the real calculator with synthetic cycle events for a single
     /// member, generating `max_cycles + extra` events (extra >= 1) so both
@@ -261,12 +263,12 @@ proptest! {
     /// is exercised on both sides of the cap, so the test keeps its teeth.
     #[test]
     fn cycle_commission_dollar_law(
-        cycle_commission in cents(100, 1_000_000),
+        mills in 10_000u64..100_000_000,
         max_cycles in 1u32..8,
         extra in 1u32..6,
     ) {
         let config = BoardPlanConfig {
-            cycle_commission,
+            cycle_commission: FromLiteral::from_literal(&format!("{}.{:03}", mills / 1000, mills % 1000)),
             max_cycles_per_period: max_cycles,
             ..prop_config()
         };
@@ -285,7 +287,7 @@ proptest! {
             })
             .collect();
 
-        let result = calculate_board_commissions(&events, &HashMap::new(), &config);
+        let result = calculate_board_commissions(&events, &HashMap::new(), &config, 2);
         prop_assert_eq!(result.earnings.len(), n_events as usize);
 
         for (i, earning) in result.earnings.iter().enumerate() {
@@ -315,9 +317,14 @@ proptest! {
                 max_cycles
             );
 
-            let expected = if should_cap { d!(0.0) } else { cycle_commission };
+            let paid = (mills + 5) / 10;
+            let expected: Dec = if should_cap {
+                d!(0.0)
+            } else {
+                FromLiteral::from_literal(&format!("{}.{:02}", paid / 100, paid % 100))
+            };
             prop_assert!(
-                earning.dollar_amount == expected.dec(),
+                earning.dollar_amount == expected,
                 "cycle {} (capped={}): dollar {} != expected {}",
                 earning.cycle_number,
                 earning.capped,

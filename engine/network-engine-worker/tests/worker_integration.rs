@@ -96,7 +96,7 @@ fn ping_returns_protocol_version() {
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(parsed["id"], "1");
-    assert_eq!(parsed["result"]["protocol_version"], 25);
+    assert_eq!(parsed["result"]["protocol_version"], 26);
 
     drop(child.stdin.take());
     child.wait().unwrap();
@@ -1092,6 +1092,60 @@ fn load_plan_rejects_unsupported_version() {
 }
 
 #[test]
+fn load_plan_refuses_a_currency_missing_from_the_minor_unit_table() {
+    let mut worker = common::spawn_worker();
+    let plan = TEST_PLAN_JSON.replace(r#""base_currency": "USD""#, r#""base_currency": "ZZZ""#);
+    let resp = send_load_plan(&mut worker, &plan);
+    assert!(
+        resp.contains(r#""ok":false"#) && resp.contains("INVALID_PLAN") && resp.contains("ZZZ"),
+        "expected INVALID_PLAN naming ZZZ, got: {}",
+        resp
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn load_plan_refuses_a_minimum_payout_with_a_half_cent_and_names_the_field() {
+    let mut worker = common::spawn_worker();
+    let plan = TEST_PLAN_JSON.replace(r#""minimum_amount": 50.0"#, r#""minimum_amount": 50.005"#);
+    let resp = send_load_plan(&mut worker, &plan);
+    assert!(
+        resp.contains("INVALID_PLAN") && resp.contains("payout: minimum_amount 50.005"),
+        "expected INVALID_PLAN naming payout: minimum_amount, got: {}",
+        resp
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn load_plan_accepts_a_percentage_sponsor_and_position_amount_of_one_and_a_half_percent() {
+    let mut worker = common::spawn_worker();
+    let with_sponsor = TEST_PLAN_JSON.replace(
+        r#""sponsor": null"#,
+        r#""sponsor": {"amount": 0.015, "amount_type": "percentage", "qualifying_products": []}"#,
+    );
+    assert_ne!(
+        with_sponsor, TEST_PLAN_JSON,
+        "the sponsor replacement did not match"
+    );
+    let plan = with_sponsor.replace(
+        r#""position": null"#,
+        r#""position": {"amount": 0.015, "amount_type": "percentage", "sponsored_only": false}"#,
+    );
+    assert_ne!(plan, with_sponsor, "the position replacement did not match");
+    let resp = send_load_plan(&mut worker, &plan);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "expected the plan to load, got: {}",
+        resp
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
 fn load_plan_rejects_out_of_range_percent() {
     let mut worker = common::spawn_worker();
     // broad_commission_percent must be a fraction in [0, 1]; 1.5 is out of range.
@@ -1237,6 +1291,41 @@ fn calculate_unilevel_three_node_chain() {
     let root_dollar = number_text(&root_earning["dollar_amount"]);
     assert_eq!(root_dollar, "2", "root dollar_amount");
 
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn calculate_unilevel_rounds_a_half_cent_earning_up_to_a_cent() {
+    let mut worker = common::spawn_worker();
+    load_test_plan(&mut worker);
+    build_three_node_chain(&mut worker);
+    let snap =
+        r#"{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}"#;
+    let params = format!(
+        r#"{{"structure":"Test","snapshots":{{"{root}":{snap},"{child}":{snap},"{gc}":{snap}}},"volume":[{{"source_id":"{gc}","cv_amount":0.25}}]}}"#,
+        root = ROOT,
+        child = CHILD,
+        gc = GRANDCHILD,
+        snap = snap,
+    );
+    let request = format!(
+        r#"{{"id":"round-1","op":"calculate_unilevel","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap(),
+        "calculate_unilevel failed: {}",
+        resp
+    );
+    let earnings = parsed["result"]["earnings"].as_array().unwrap();
+    assert_eq!(earnings.len(), 2, "{resp}");
+    for earning in earnings {
+        assert_eq!(number_text(&earning["dollar_amount"]), "0.01", "{resp}");
+        assert_eq!(number_text(&earning["cv_amount"]), "0.25", "{resp}");
+    }
     drop(worker.stdin.take());
     worker.wait().unwrap();
 }

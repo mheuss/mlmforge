@@ -58,7 +58,7 @@ mod tests {
     }
 
     #[test]
-    fn rounding_sends_each_earnings_ties_away_from_zero() {
+    fn rounding_sends_each_earning_tie_away_from_zero() {
         let earning = |amount| CommissionEarning {
             earner_id: uuid::Uuid::nil(),
             source_id: uuid::Uuid::nil(),

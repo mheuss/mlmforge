@@ -804,6 +804,24 @@ mod tests {
     }
 
     #[test]
+    fn calculate_matrix_refuses_an_unknown_plan_currency() {
+        let structure = test_matrix_structure(3, 9, 5);
+        let mut plan = test_plan(structure.clone());
+        plan.volume.base_currency = "ZZZ".to_string();
+        let tree = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
+        let err = calculate_matrix(
+            &tree,
+            &plan,
+            &structure,
+            &HashMap::new(),
+            &[],
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+        assert_eq!(err, CalculationError::UnknownCurrency("ZZZ".to_string()));
+    }
+
+    #[test]
     fn calculate_matrix_rejects_a_rank_not_in_the_ladder() {
         let structure = test_matrix_structure(3, 9, 5);
         let plan = test_plan(structure.clone());

@@ -714,6 +714,28 @@ mod tests {
     }
 
     #[test]
+    fn calculate_streamline_refuses_an_unknown_plan_currency() {
+        let engine = make_engine(5);
+        let structure = make_structure(vec![level(1, "associate", d!(0.10))], 5);
+        let mut plan = test_helpers::build_test_plan(
+            test_helpers::default_eligibility(),
+            crate::config::StructureConfig::Streamline(structure.clone()),
+            "test_streamline",
+        );
+        plan.volume.base_currency = "ZZZ".to_string();
+        let err = calculate_streamline(
+            &engine,
+            &plan,
+            &structure,
+            &HashMap::new(),
+            &[],
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+        assert_eq!(err, CalculationError::UnknownCurrency("ZZZ".to_string()));
+    }
+
+    #[test]
     fn calculate_streamline_rejects_a_rank_not_in_the_ladder() {
         let engine = make_engine(5);
         let structure = make_structure(

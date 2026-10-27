@@ -430,7 +430,8 @@ proptest! {
         );
     }
 
-    /// Total payout is bounded by sum of generation rates * total CV * multiplier.
+    /// Total payout is at most the sum of each earning's rounded maximum, and
+    /// the rates paid are at most the sum of the generation rates.
     #[test]
     fn total_payout_bounded(
         (size, directors, cv, max_gen) in generation_inputs()
@@ -445,8 +446,6 @@ proptest! {
 
         let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         let total_payout = Dec::sum(result.iter().map(|e| e.dollar_amount)).unwrap();
-
-        // Upper bound: cv * multiplier * sum(all gen rates)
         let rate_sum = Dec::sum(structure.generation_commission.rates.values().map(|r| r.dec())).unwrap();
         let multiplier = structure
             .generation_commission
@@ -461,7 +460,7 @@ proptest! {
                 .round_minor(2)
         }))
         .unwrap();
-        let rates_paid = Dec::sum(result.iter().map(|e| e.rate.unwrap())).unwrap();
+        let rates_paid = Dec::sum(result.iter().map(|e| e.rate.expect("a generation earning carries its rate"))).unwrap();
 
         prop_assert!(
             total_payout <= rounded_bound,
@@ -625,7 +624,8 @@ proptest! {
         }
     }
 
-    /// SameRank: total payout bounded by sum of rates * CV * multiplier * num_ranks.
+    /// SameRank: total payout is at most the sum of each earning's rounded
+    /// maximum, and the rates paid are at most the rate sum times the rank count.
     /// In SameRank mode, each rank level gets its own walk, so the upper bound
     /// is rates_sum * CV * multiplier * number_of_rank_levels.
     #[test]
@@ -642,9 +642,6 @@ proptest! {
 
         let result = calculate_generation(&tree, &plan, &structure, &snapshots, &volume, &network_engine::test_support::test_plan_identity()).unwrap().earnings;
         let total_payout = Dec::sum(result.iter().map(|e| e.dollar_amount)).unwrap();
-
-        // Upper bound: each of the 3 rank ordinals can produce up to
-        // (cv * multiplier * sum_of_rates) earnings independently.
         let rate_sum = Dec::sum(structure.generation_commission.rates.values().map(|r| r.dec())).unwrap();
         let multiplier = structure
             .generation_commission
@@ -660,7 +657,7 @@ proptest! {
                 .round_minor(2)
         }))
         .unwrap();
-        let rates_paid = Dec::sum(result.iter().map(|e| e.rate.unwrap())).unwrap();
+        let rates_paid = Dec::sum(result.iter().map(|e| e.rate.expect("a generation earning carries its rate"))).unwrap();
         let rate_bound = rate_sum.try_mul(whole::<Dec>(num_ranks)).unwrap();
 
         prop_assert!(

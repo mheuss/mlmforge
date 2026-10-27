@@ -1093,6 +1093,24 @@ mod calculate_tests {
     }
 
     #[test]
+    fn calculate_generation_refuses_an_unknown_plan_currency() {
+        let tree = build_chain(3);
+        let mut plan = two_rank_plan();
+        plan.volume.base_currency = "ZZZ".to_string();
+        let structure = threshold_structure("director", 3, BTreeMap::from([(1, d!(0.10))]));
+        let err = calculate_generation(
+            &tree,
+            &plan,
+            &structure,
+            &HashMap::new(),
+            &[],
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+        assert_eq!(err, CalculationError::UnknownCurrency("ZZZ".to_string()));
+    }
+
+    #[test]
     fn calculate_generation_rejects_a_rank_not_in_the_ladder() {
         let tree = build_chain(3);
         let plan = two_rank_plan();

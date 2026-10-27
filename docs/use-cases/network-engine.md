@@ -414,7 +414,9 @@ _ = driver.Backfill(ctx, from, to)
 **Usage:**
 ```bash
 # After adding a config field that mirrors a narrow Rust type:
-# 1. Add a manifest entry (or an allow_list entry with a reason).
+# 1. Add a manifest entry (or an allow_list entry with a reason). A struct the
+#    manifest has not named before also goes in configStructRegistry in
+#    width_contract_test.go.
 # 2. Regenerate the engine fixtures:
 REGEN_FIXTURES=1 go test ./internal/config/ -run TestGenerateConfigContractFixtures
 # 3. Run both halves of the contract (cargo must run from engine/ — no root Cargo.toml):

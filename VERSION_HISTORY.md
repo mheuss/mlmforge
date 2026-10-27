@@ -87,7 +87,7 @@
 - A volume-ratio payout rounds once, half to even, at 13 decimal places. An aggregate-cap share truncates at 13 places, and each earner's last share takes the remainder, so the shares sum exactly to the cap. (HEU-969, phase 1)
 - The plan hash changes for a plan value that f64 wrote in exponent form. `0.0000001` used to be written `1e-7`. (HEU-969, phase 1)
 - Each earning's money is rounded to the plan currency's ISO 4217 minor unit, ties away from zero. Volume and rates are not rounded. (HEU-969, phase 2)
-- A binary aggregate cap is split by largest remainder in whole minor units, so the shares sum exactly to the cap. (HEU-969, phase 2)
+- A binary aggregate cap is split by largest remainder in whole minor units, so the shares sum exactly to the cap. This replaces the phase 1 split at 13 places. (HEU-969, phase 2)
 - `load_plan` and Go validation refuse a base currency missing from the minor-unit table, and a plan money value that is not a whole number of minor units. (HEU-969, phase 2)
 - A library call to `calculate_binary_pairing` with a pairing percent outside [0, 1] returns an error. (HEU-982)
 

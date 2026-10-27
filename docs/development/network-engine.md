@@ -482,7 +482,7 @@ Before HEU-969, this was verified by deleting the sort and watching which tests 
 
 - `AuthoredDec` and `Dec` read JSON numbers only, and refuse a quoted number.
 - Adding, subtracting and multiplying give the exact result or a `NumericError`, never a rounded one.
-- Four operations are inexact, each with one rule:
+- Four arithmetic operations are inexact, each with one rule:
   - E1 is `div_ratio`, the reported volume ratio. It follows rust_decimal 1.43's `checked_div`: half to even at the largest scale of 28 or below that fits 96 bits.
   - E2 is `mul_div_ratio`, the volume-ratio payout. It rounds once, half to even, at 13 places. When 13 places do not fit 96 bits, it uses the largest smaller scale that does.
   - E3 is `mul_div_trunc`. It truncates toward zero at a given scale.

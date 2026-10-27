@@ -1539,6 +1539,22 @@ mod tests {
     }
 
     #[test]
+    fn plan_rejects_a_negative_threshold_on_a_later_entry_of_a_later_rank() {
+        let mut plan = plan_with_two_ranks();
+        let mut platinum = plan.ranks[1].clone();
+        platinum.name = "platinum".to_string();
+        platinum.ordinal = 3;
+        let mut second = zero_threshold("second");
+        second.group_volume = d!(-1.0);
+        platinum.qualification.structures = vec![zero_threshold("main"), second];
+        plan.ranks.push(platinum);
+        assert_eq!(
+            plan.validate().unwrap_err(),
+            "ranks: rank 'platinum' structure 'second' group_volume must be non-negative, got -1"
+        );
+    }
+
+    #[test]
     fn plan_rejects_a_negative_personal_volume() {
         let mut entry = zero_threshold("main");
         entry.personal_volume = d!(-1.0);

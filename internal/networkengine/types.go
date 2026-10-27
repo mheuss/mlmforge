@@ -113,7 +113,7 @@ type VolumeAttribution struct {
 type CommissionEarning struct {
 	ID           string
 	UserID       string
-	Amount       dec.Amount // In base currency, rounded to a whole number of its minor units. A payout is the sum of these.
+	Amount       dec.Amount // In base currency, rounded to a whole number of its minor units. A payout must be the sum of these.
 	BaseCurrency string
 	Reason       string // "direct", "override", "pool", "bonus"
 	SourceUserID string // Who generated this commission

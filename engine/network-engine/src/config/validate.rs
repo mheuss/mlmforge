@@ -1165,7 +1165,22 @@ mod tests {
     }
 
     #[test]
-    fn plan_accepts_an_ascending_ladder_with_unique_names() {
+    fn plan_rejects_a_duplicate_rank_ordinal_that_is_not_adjacent() {
+        let mut plan = plan_with_two_ranks();
+        plan.ranks[1].ordinal = 3;
+        let mut bronze = plan.ranks[1].clone();
+        bronze.name = "bronze".to_string();
+        bronze.ordinal = 1;
+        plan.ranks.push(bronze);
+        let err = plan.validate().unwrap_err();
+        assert_eq!(
+            err,
+            "ranks: rank 'bronze' has duplicate ordinal 1 (same as 'associate')"
+        );
+    }
+
+    #[test]
+    fn plan_accepts_a_strictly_ascending_ladder_with_gaps() {
         let mut plan = plan_with_two_ranks();
         let mut platinum = plan.ranks[1].clone();
         platinum.name = "platinum".to_string();

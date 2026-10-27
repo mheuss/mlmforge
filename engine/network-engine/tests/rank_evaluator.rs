@@ -173,6 +173,44 @@ fn evaluate_ranks_returns_per_distributor_rank() {
 }
 
 #[test]
+fn evaluate_ranks_finds_the_base_rank_by_ordinal_when_ranks_are_out_of_order() {
+    let tree = root_and_child();
+    let mut plan = linear_plan();
+    plan.ranks.reverse();
+
+    let mut nav: HashMap<String, &dyn TreeNavigator> = HashMap::new();
+    nav.insert("Test".to_string(), &tree);
+
+    let mut distributors = HashMap::new();
+    distributors.insert(uuid_from_index(1), primitives(d!(250.0)));
+    distributors.insert(uuid_from_index(2), primitives(d!(50.0)));
+
+    let inputs = EvaluationInputs {
+        distributors,
+        volume_sources: vec![],
+        history_window: Vec::new(),
+        history: HashMap::new(),
+    };
+
+    let result = evaluate_ranks(&plan, &nav, &inputs).unwrap();
+
+    assert_eq!(
+        result.ranks.get(&uuid_from_index(1)),
+        Some(&EvaluatedRank::Qualified {
+            rank: "silver".to_string(),
+            ordinal: 2
+        })
+    );
+    assert_eq!(
+        result.ranks.get(&uuid_from_index(2)),
+        Some(&EvaluatedRank::Qualified {
+            rank: "associate".to_string(),
+            ordinal: 1
+        })
+    );
+}
+
+#[test]
 fn evaluate_ranks_gives_the_base_rank_without_evaluating_its_qualification() {
     let mut tree = UnilevelTree::new();
     tree.add_root(uuid_from_index(1), 0).unwrap();

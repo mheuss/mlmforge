@@ -86,6 +86,7 @@
 - New refusals with exact decimals. The engine refuses a negative carried binary leg volume, and a sum or product it cannot hold exactly (`Overflow` or `Precision`). Go refuses a quoted number on the wire, and YAML number forms JSON does not have, such as hex, `1_000`, `+5`, `5.` and `.5`. (HEU-969, phase 1)
 - A volume-ratio payout rounds once, half to even, at 13 decimal places. An aggregate-cap share truncates at 13 places, and each earner's last share takes the remainder, so the shares sum exactly to the cap. (HEU-969, phase 1)
 - The plan hash changes for a plan value that f64 wrote in exponent form. `0.0000001` used to be written `1e-7`. (HEU-969, phase 1)
+- The engine's `load_plan` refuses a plan whose rank ordinals repeat or do not ascend, two ranks sharing a name, or a negative rank volume threshold. The thresholds are `personal_volume`, `group_volume`, `min_retail_volume`, `distributor_count.min_leg_group_volume` and a `contains_personal_volume` predicate's `min_personal_volume`. Go already refused the ordinal and name cases. It now refuses the negative thresholds for a caller that skips the schema. The schema caps a rank ordinal at 65535, the engine's limit. A plan that loaded under protocol 24 can fail under 25. Protocol 25. (HEU-646, HEU-752, HEU-753, HEU-974)
 
 ### Fixed
 - Production `unwrap()` in unilevel.rs replaced with `match` on `Option`

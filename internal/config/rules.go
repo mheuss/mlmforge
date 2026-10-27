@@ -34,6 +34,7 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 	errs = append(errs, validateStructureNames(plan)...)
 	errs = append(errs, validatePeriod(plan)...)
 	errs = append(errs, validateRanks(plan, structs)...)
+	errs = append(errs, validateRankThresholds(plan)...)
 	errs = append(errs, validateStructureRefs(plan, ranks)...)
 	errs = append(errs, validateBonuses(plan, ranks)...)
 	errs = append(errs, validateRateKeyWidths(plan)...)
@@ -222,8 +223,8 @@ func validateRateKeyWidths(plan *CompensationPlan) []ValidationError {
 }
 
 // rankOrdinalMap returns a map from rank name to ordinal.
-func rankOrdinalMap(plan *CompensationPlan) map[string]int {
-	m := make(map[string]int, len(plan.Ranks))
+func rankOrdinalMap(plan *CompensationPlan) map[string]uint16 {
+	m := make(map[string]uint16, len(plan.Ranks))
 	for _, r := range plan.Ranks {
 		m[r.Name] = r.Ordinal
 	}
@@ -288,11 +289,11 @@ func validateRanks(plan *CompensationPlan, structs map[string]bool) []Validation
 	ordinals := rankOrdinalMap(plan)
 
 	// Ordinals must be strictly ascending with no duplicates.
-	seen := make(map[int]string, len(plan.Ranks))
-	prevOrdinal := 0
+	seen := make(map[uint16]string, len(plan.Ranks))
+	var prevOrdinal uint16
 	hasPrev := false
 	for i, r := range plan.Ranks {
-		if r.Ordinal < 1 {
+		if r.Ordinal == 0 {
 			errs = append(errs, ValidationError{
 				Path:     fmt.Sprintf("/ranks/%d/ordinal", i),
 				Code:     "value_out_of_range",
@@ -531,6 +532,40 @@ func validateBaseRank(plan *CompensationPlan) []ValidationError {
 		}
 		if len(sq.LegQuality) > 0 {
 			refuse(at+"/leg_quality", fmt.Sprintf("sets leg_quality on structure %q", sq.Structure))
+		}
+	}
+	return errs
+}
+
+// validateRankThresholds checks that no rank volume threshold is negative.
+func validateRankThresholds(plan *CompensationPlan) []ValidationError {
+	var errs []ValidationError
+	for i, r := range plan.Ranks {
+		for j, sq := range r.Qualification.Structures {
+			at := fmt.Sprintf("/ranks/%d/qualification/structures/%d", i, j)
+			check := func(path, field string, v dec.Amount) {
+				if !v.IsNegative() {
+					return
+				}
+				errs = append(errs, ValidationError{
+					Path:     at + path,
+					Code:     "value_out_of_range",
+					Message:  fmt.Sprintf("rank %q structure %q %s must be non-negative, got %v", r.Name, sq.Structure, field, v),
+					Severity: SeverityError,
+				})
+			}
+			check("/personal_volume", "personal_volume", sq.PersonalVolume)
+			check("/group_volume", "group_volume", sq.GroupVolume)
+			check("/min_retail_volume", "min_retail_volume", sq.MinRetailVolume)
+			if sq.DistributorCount != nil {
+				check("/distributor_count/min_leg_group_volume", "distributor_count.min_leg_group_volume", sq.DistributorCount.MinLegGroupVolume)
+			}
+			for k, lq := range sq.LegQuality {
+				if lq.Predicate.Type == "contains_personal_volume" {
+					check(fmt.Sprintf("/leg_quality/%d/predicate/min_personal_volume", k),
+						fmt.Sprintf("leg_quality[%d].predicate.min_personal_volume", k), lq.Predicate.MinPersonalVolume)
+				}
+			}
 		}
 	}
 	return errs

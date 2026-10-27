@@ -282,6 +282,7 @@ func configStructRegistry() map[string]reflect.Type {
 		StreamConfig{},
 		GracePeriod{},
 		HoldingTankConfig{},
+		RankDefinition{},
 	}
 	registry := make(map[string]reflect.Type, len(structs))
 	for _, s := range structs {

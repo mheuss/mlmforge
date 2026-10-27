@@ -145,6 +145,7 @@
         "ordinal": {
           "type": "integer",
           "minimum": 1,
+          "maximum": 65535,
           "description": "Position in the rank hierarchy. 1 is the lowest rank."
         },
         "qualification": {

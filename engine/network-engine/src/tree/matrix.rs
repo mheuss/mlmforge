@@ -2724,7 +2724,7 @@ mod tests {
     }
 
     #[test]
-    fn place_from_tank_leaves_a_re_sponsored_recruit_with_its_new_sponsor() {
+    fn place_from_tank_leaves_a_responsored_recruit_with_its_new_sponsor() {
         let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
         tree.add_root(test_uuid(1), 0).unwrap();
         tree.add_node(test_uuid(2), test_uuid(1), 1).unwrap();
@@ -2748,8 +2748,16 @@ mod tests {
 
         let sponsor = tree.get_sponsor(test_uuid(4)).unwrap().unwrap();
         assert_eq!(sponsor.user_id, test_uuid(1));
-        let recruits = tree.get_sponsored(test_uuid(2)).unwrap();
-        assert!(!recruits.iter().any(|n| n.user_id == test_uuid(4)));
+        let recruits: Vec<Uuid> = tree
+            .get_sponsored(test_uuid(2))
+            .unwrap()
+            .iter()
+            .map(|n| n.user_id)
+            .collect();
+        assert!(
+            !recruits.contains(&test_uuid(4)),
+            "get_sponsored(2) returned {recruits:?}"
+        );
         assert_eq!(tree.validate_restored(), Ok(()));
     }
 

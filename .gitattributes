@@ -1,1 +1,2 @@
 *.md diff
+internal/currency/minor_units.csv -text

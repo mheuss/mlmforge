@@ -187,8 +187,9 @@ impl CompensationPlan {
     fn check_unique_rank_names(&self) -> Result<(), String> {
         let mut seen = HashSet::with_capacity(self.ranks.len());
         for rank in &self.ranks {
-            if !seen.insert(rank.name.as_str()) {
-                return Err(format!("ranks: duplicate rank name '{}'", rank.name));
+            let name = rank.name.as_str();
+            if !seen.insert(name) {
+                return Err(format!("ranks: duplicate rank name '{name}'"));
             }
         }
         Ok(())

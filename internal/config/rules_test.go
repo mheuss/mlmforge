@@ -2363,7 +2363,8 @@ func TestRankThresholdNegativeRejectedOnALaterEntryOfAMiddleRank(t *testing.T) {
 	gold.Name = "Gold"
 	gold.Ordinal = 3
 	plan.Ranks = append(plan.Ranks, gold)
-	second := StructureQualification{Structure: "Primary", GroupVolume: dec.MustParse("-1")}
+	plan.Structures = append(plan.Structures, StructureConfig{Name: "Secondary", Type: "unilevel"})
+	second := StructureQualification{Structure: "Secondary", GroupVolume: dec.MustParse("-1")}
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{plan.Ranks[1].Qualification.Structures[0], second}
 
 	errs := validateBusinessRules(plan)
@@ -2371,5 +2372,6 @@ func TestRankThresholdNegativeRejectedOnALaterEntryOfAMiddleRank(t *testing.T) {
 	require.Len(t, errs, 1, "errors: %v", errs)
 	assert.Equal(t, "value_out_of_range", errs[0].Code)
 	assert.Equal(t, "/ranks/1/qualification/structures/1/group_volume", errs[0].Path)
-	assert.Equal(t, `rank "Silver" structure "Primary" group_volume must be non-negative, got -1`, errs[0].Message)
+	assert.Equal(t, `rank "Silver" structure "Secondary" group_volume must be non-negative, got -1`, errs[0].Message)
+	assert.Equal(t, SeverityError, errs[0].Severity)
 }

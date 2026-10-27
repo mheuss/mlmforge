@@ -37,7 +37,7 @@ use super::commission::LevelCommissionConfig;
 use super::generation::GenerationCommissionConfig;
 use super::matrix::{MatrixStructureParams, SpilloverDirection};
 use super::payout::CapsConfig;
-use super::rank::{RankQualification, StructureQualification};
+use super::rank::{LegPredicate, RankQualification, StructureQualification};
 use super::stairstep::{BreakawayConfig, MinOverride, OverrideMode, OverrideStrategy};
 use super::streamline::StreamlineCommissionConfig;
 use super::volume::VolumeConfig;
@@ -118,6 +118,7 @@ impl CompensationPlan {
         self.check_rank_name_and_ordinal_floor()?;
         self.check_rank_ordinals_ascending()?;
         self.check_unique_rank_names()?;
+        self.check_rank_thresholds_non_negative()?;
         self.check_base_rank_requires_nothing()?;
         self.check_per_leg_caps()?;
         self.check_unique_structure_names()?;
@@ -188,6 +189,36 @@ impl CompensationPlan {
         for rank in &self.ranks {
             if !seen.insert(rank.name.as_str()) {
                 return Err(format!("ranks: duplicate rank name '{}'", rank.name));
+            }
+        }
+        Ok(())
+    }
+
+    /// Reject a negative volume threshold on any rank.
+    fn check_rank_thresholds_non_negative(&self) -> Result<(), String> {
+        for rank in &self.ranks {
+            for sq in &rank.qualification.structures {
+                let at = format!("ranks: rank '{}' structure '{}'", rank.name, sq.structure);
+                check_non_negative(&format!("{at} personal_volume"), sq.personal_volume)?;
+                check_non_negative(&format!("{at} group_volume"), sq.group_volume)?;
+                check_non_negative(&format!("{at} min_retail_volume"), sq.min_retail_volume)?;
+                if let Some(dc) = &sq.distributor_count {
+                    check_non_negative(
+                        &format!("{at} distributor_count.min_leg_group_volume"),
+                        dc.min_leg_group_volume,
+                    )?;
+                }
+                for (k, lq) in sq.leg_quality.iter().enumerate() {
+                    if let LegPredicate::ContainsPersonalVolume {
+                        min_personal_volume,
+                    } = &lq.predicate
+                    {
+                        check_non_negative(
+                            &format!("{at} leg_quality[{k}].predicate.min_personal_volume"),
+                            *min_personal_volume,
+                        )?;
+                    }
+                }
             }
         }
         Ok(())
@@ -1493,6 +1524,89 @@ mod tests {
         assert!(
             err.contains("rank 'gold' structure 'main' sets both max_group_volume_per_leg and max_group_volume_per_leg_fraction"),
             "unexpected error: {err}"
+        );
+    }
+
+    // --- rank thresholds ---
+
+    /// Validates a two-rank plan whose upper rank carries `entry`.
+    fn validate_with_upper_rank_entry(
+        entry: crate::config::rank::StructureQualification,
+    ) -> Result<(), String> {
+        let mut plan = plan_with_two_ranks();
+        plan.ranks[1].qualification.structures = vec![entry];
+        plan.validate()
+    }
+
+    #[test]
+    fn plan_rejects_a_negative_personal_volume() {
+        let mut entry = zero_threshold("main");
+        entry.personal_volume = d!(-1.0);
+        assert_eq!(
+            validate_with_upper_rank_entry(entry).unwrap_err(),
+            "ranks: rank 'gold' structure 'main' personal_volume must be non-negative, got -1"
+        );
+    }
+
+    #[test]
+    fn plan_rejects_a_negative_group_volume() {
+        let mut entry = zero_threshold("main");
+        entry.group_volume = d!(-1.0);
+        assert_eq!(
+            validate_with_upper_rank_entry(entry).unwrap_err(),
+            "ranks: rank 'gold' structure 'main' group_volume must be non-negative, got -1"
+        );
+    }
+
+    #[test]
+    fn plan_rejects_a_negative_min_retail_volume() {
+        let mut entry = zero_threshold("main");
+        entry.min_retail_volume = d!(-1.0);
+        assert_eq!(
+            validate_with_upper_rank_entry(entry).unwrap_err(),
+            "ranks: rank 'gold' structure 'main' min_retail_volume must be non-negative, got -1"
+        );
+    }
+
+    #[test]
+    fn plan_rejects_a_negative_min_leg_group_volume() {
+        use crate::config::rank::{DistributorCountRequirement, SearchMode};
+        let mut entry = zero_threshold("main");
+        entry.distributor_count = Some(DistributorCountRequirement {
+            count: 1,
+            min_rank: "associate".to_string(),
+            search_mode: SearchMode::AnyLevel,
+            search_depth: None,
+            total_count: 0,
+            min_leg_group_volume: d!(-1.0),
+        });
+        assert_eq!(
+            validate_with_upper_rank_entry(entry).unwrap_err(),
+            "ranks: rank 'gold' structure 'main' distributor_count.min_leg_group_volume must be non-negative, got -1"
+        );
+    }
+
+    #[test]
+    fn plan_rejects_a_negative_leg_predicate_min_personal_volume() {
+        use crate::config::rank::{LegPredicate, LegQualityRequirement};
+        let mut entry = zero_threshold("main");
+        entry.leg_quality = vec![
+            LegQualityRequirement {
+                count: 1,
+                predicate: LegPredicate::ContainsRank {
+                    min_rank: "associate".to_string(),
+                },
+            },
+            LegQualityRequirement {
+                count: 1,
+                predicate: LegPredicate::ContainsPersonalVolume {
+                    min_personal_volume: d!(-1.0),
+                },
+            },
+        ];
+        assert_eq!(
+            validate_with_upper_rank_entry(entry).unwrap_err(),
+            "ranks: rank 'gold' structure 'main' leg_quality[1].predicate.min_personal_volume must be non-negative, got -1"
         );
     }
 }

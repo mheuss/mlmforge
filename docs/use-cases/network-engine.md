@@ -1295,7 +1295,7 @@ return store.ProjectRemoval(ctx, treeID, projection, eventID, eventVersion)
 ### UC-NET-035: Exact decimal values for volume and money
 
 **Added:** Unreleased (HEU-969)
-**Files:** `engine/network-engine/src/decimal.rs`, `engine/network-engine/src/test_support.rs`, `internal/dec/dec.go`
+**Files:** `engine/network-engine/src/decimal.rs`, `engine/network-engine/src/commission/finalize.rs`, `engine/network-engine/src/test_support.rs`, `internal/dec/dec.go`, `internal/currency/minor_units.csv`
 
 **Problem:** Thresholds, caps and payouts must compare and add exactly. A float can miss. 0.29 x 100000 in `f64` is 28999.999999999996, not 29000.
 

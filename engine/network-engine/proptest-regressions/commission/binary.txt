@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc d8bdc32dfba7d707c3afdb52ba73c802af6eca332539d9c654267eaa7d670678 # shrinks to amounts = [(1, Dec(0.01)), (1, Dec(13244.65))], cap = Dec(0.01)
+cc 6bd8993743f97f57b5f2b1db1e3a785bd60d6405048185afefe880748c7f49a5 # shrinks to amounts = [(0, Dec(0))], cap = Dec(0)

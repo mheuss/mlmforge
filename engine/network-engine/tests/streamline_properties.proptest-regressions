@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 42c571fb8930fb12ef455320b520d361a86fa381809b1cfb5dd88ea9cd949948 # shrinks to chain_depth = 2, cv_amount = AuthoredDec(1.00), multiplier = AuthoredDec(0.10)

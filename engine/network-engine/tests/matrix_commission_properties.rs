@@ -97,7 +97,8 @@ proptest! {
             .try_mul(multiplier)
             .unwrap()
             .try_mul(rate)
-            .unwrap();
+            .unwrap()
+            .round_minor(2);
         prop_assert!(
             result[0].dollar_amount == expected,
             "Dollar amount {} != expected {}",

@@ -10,7 +10,7 @@ use thiserror::Error;
 
 const MAX_SCALE: u32 = 28;
 const ENVELOPE_MAX_SCALE: u32 = 10;
-/// Decimal places a payout is held to.
+/// The decimal-place limit for an inexact volume-ratio quotient.
 pub(crate) const PAYOUT_SCALE: u32 = 13;
 const ENVELOPE_LIMIT: Decimal = dec!(1_000_000_000_000_000);
 
@@ -51,6 +51,9 @@ pub enum NumericOp {
         divisor: Dec,
     },
     FloorDiv,
+    Allocate {
+        scale: u32,
+    },
 }
 
 /// What went wrong in an arithmetic operation.
@@ -59,6 +62,8 @@ pub enum NumericErrorKind {
     Overflow,
     Precision,
     DivisionByZero,
+    Negative,
+    NotWholeUnits,
 }
 
 /// An arithmetic operation that has no exact result the engine can hold.
@@ -73,10 +78,11 @@ pub struct NumericError {
 
 impl NumericOp {
     /// The word between the operands in an error message.
-    fn joiner(&self) -> &'static str {
+    fn joiner(&self) -> String {
         match self {
-            NumericOp::DivRatio | NumericOp::FloorDiv => "by",
-            _ => "and",
+            NumericOp::DivRatio | NumericOp::FloorDiv => "by".to_string(),
+            NumericOp::Allocate { scale } => format!("at scale {scale} across shares totalling"),
+            _ => "and".to_string(),
         }
     }
 }
@@ -97,6 +103,7 @@ impl fmt::Display for NumericOp {
                 divisor,
             } => write!(f, "divide by {divisor} the product of {first}, {second},"),
             NumericOp::FloorDiv => f.write_str("floor-divide"),
+            NumericOp::Allocate { .. } => f.write_str("allocate"),
         }
     }
 }
@@ -109,6 +116,10 @@ impl fmt::Display for NumericErrorKind {
                 "the exact result needs more than 28 decimal places or 96 bits of digits"
             }
             NumericErrorKind::DivisionByZero => "the divisor is zero",
+            NumericErrorKind::Negative => "a value is negative",
+            NumericErrorKind::NotWholeUnits => {
+                "the value is not a whole number of units at that scale"
+            }
         })
     }
 }
@@ -505,6 +516,71 @@ impl Dec {
             .map(Dec)
             .map_err(|kind| self.error(NumericOp::FloorDiv, rhs, kind))
     }
+
+    /// Splits `cap` across `shares` in proportion to them, in whole units of
+    /// 10^-`scale`, by largest remainder.
+    pub fn allocate_largest_remainder(
+        shares: &[Dec],
+        cap: Dec,
+        scale: u32,
+    ) -> Result<Vec<Dec>, NumericError> {
+        let total = Dec::sum(shares.iter().copied())?;
+        let error = |kind| cap.error(NumericOp::Allocate { scale }, total, kind);
+        if scale > MAX_SCALE {
+            return Err(error(NumericErrorKind::Precision));
+        }
+        if cap.is_negative() || shares.iter().any(|s| s.is_negative()) {
+            return Err(error(NumericErrorKind::Negative));
+        }
+        if total.is_zero() {
+            return Err(error(NumericErrorKind::DivisionByZero));
+        }
+        let common = shares
+            .iter()
+            .map(|s| s.0.scale())
+            .chain([cap.0.scale(), total.0.scale(), scale])
+            .max()
+            .unwrap_or(scale);
+        let at_common = |x: Dec| {
+            let (m, s) = wide(x.0);
+            m * pow10(common - s)
+        };
+        let unit = pow10(common - scale);
+        let cap_int = at_common(cap);
+        if !(cap_int % unit).is_zero() {
+            return Err(error(NumericErrorKind::NotWholeUnits));
+        }
+        let cap_units = cap_int / unit;
+        let total_int = at_common(total);
+        let mut units = Vec::with_capacity(shares.len());
+        let mut remainders = Vec::with_capacity(shares.len());
+        for &share in shares {
+            let numerator = at_common(share) * cap_units;
+            units.push(numerator / total_int);
+            remainders.push(numerator % total_int);
+        }
+        let mut leftover = units.iter().fold(cap_units, |left, u| left - *u);
+        let mut order: Vec<usize> = (0..shares.len()).collect();
+        order.sort_by(|&a, &b| remainders[b].cmp(&remainders[a]).then(a.cmp(&b)));
+        for i in order {
+            if leftover.is_zero() {
+                break;
+            }
+            units[i] += I512::ONE;
+            leftover -= I512::ONE;
+        }
+        units
+            .into_iter()
+            .map(|u| fit(u, scale).map(Dec).map_err(error))
+            .collect()
+    }
+
+    /// The value rounded to `places` decimal places, ties away from zero.
+    pub fn round_minor(self, places: u32) -> Dec {
+        Dec(self
+            .0
+            .round_dp_with_strategy(places, RoundingStrategy::MidpointAwayFromZero))
+    }
 }
 
 impl AuthoredDec {
@@ -650,6 +726,38 @@ mod tests {
             digits
         };
         digits.abs() >= (bigdecimal::num_bigint::BigInt::from(1u8) << 96) || scale > 28
+    }
+
+    #[test]
+    fn round_minor_sends_ties_away_from_zero() {
+        assert_eq!(d("0.005").round_minor(2), d("0.01"));
+        assert_eq!(d("-0.005").round_minor(2), d("-0.01"));
+        assert_eq!(d("0.5").round_minor(0), d("1"));
+        assert_eq!(d("-2.5").round_minor(0), d("-3"));
+        assert_eq!(d("0.0005").round_minor(3), d("0.001"));
+    }
+
+    #[test]
+    fn round_minor_rounds_below_a_tie_toward_the_nearer_unit() {
+        assert_eq!(d("0.0049999").round_minor(2), d("0"));
+        assert_eq!(d("1.0044").round_minor(3), d("1.004"));
+    }
+
+    #[test]
+    fn round_minor_leaves_a_value_with_few_enough_places_alone() {
+        assert_eq!(d("2.1").round_minor(2), d("2.1"));
+        assert_eq!(
+            d("79228162514264337593543950335").round_minor(2),
+            d("79228162514264337593543950335")
+        );
+    }
+
+    #[test]
+    fn round_minor_at_the_edge_of_the_range_does_not_panic() {
+        assert_eq!(
+            d("7922816251426433759354395033.5").round_minor(0),
+            d("7922816251426433759354395034")
+        );
     }
 
     #[test]
@@ -1653,5 +1761,135 @@ mod tests {
             serde_json::to_string(&carried).unwrap(),
             r#"{"left":123456789012345678.123456789,"right":null}"#
         );
+    }
+
+    fn alloc(shares: &[&str], cap: &str, scale: u32) -> Result<Vec<Dec>, NumericError> {
+        let shares: Vec<Dec> = shares.iter().map(|s| d(s)).collect();
+        Dec::allocate_largest_remainder(&shares, d(cap), scale)
+    }
+
+    #[test]
+    fn allocation_gives_leftover_units_to_earlier_shares_on_a_tie() {
+        assert_eq!(
+            alloc(&["1", "1", "1"], "2", 2).unwrap(),
+            vec![d("0.67"), d("0.67"), d("0.66")]
+        );
+        assert_eq!(
+            alloc(&["1", "1", "1"], "0.02", 2).unwrap(),
+            vec![d("0.01"), d("0.01"), d("0")]
+        );
+    }
+
+    #[test]
+    fn allocation_gives_leftover_units_to_the_largest_remainders() {
+        assert_eq!(
+            alloc(&["0.70", "0.20", "0.13"], "1.00", 2).unwrap(),
+            vec![d("0.68"), d("0.19"), d("0.13")]
+        );
+    }
+
+    #[test]
+    fn allocation_of_a_cap_at_the_envelope_edge_sums_exactly() {
+        let shares = alloc(
+            &[
+                "600000000000000",
+                "500000000000000.5",
+                "123456789012345.6666666666666",
+            ],
+            "999999999999999.99",
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            Dec::sum(shares.iter().copied()).unwrap(),
+            d("999999999999999.99")
+        );
+    }
+
+    #[test]
+    fn allocation_refuses_a_zero_total() {
+        assert_eq!(
+            alloc(&["0", "0"], "2", 2).unwrap_err().kind,
+            NumericErrorKind::DivisionByZero
+        );
+    }
+
+    #[test]
+    fn allocation_refuses_a_cap_that_is_not_whole_units() {
+        let err = alloc(&["1", "2"], "2.005", 2).unwrap_err();
+        assert_eq!(err.kind, NumericErrorKind::NotWholeUnits);
+        assert_eq!(
+            err.to_string(),
+            "cannot allocate 2.005 at scale 2 across shares totalling 3: the value is not a whole number of units at that scale"
+        );
+    }
+
+    #[test]
+    fn allocation_refuses_a_scale_beyond_28() {
+        assert_eq!(
+            alloc(&["1", "2"], "2", 29).unwrap_err().kind,
+            NumericErrorKind::Precision
+        );
+    }
+
+    #[test]
+    fn allocation_refuses_a_negative_share_or_cap() {
+        assert_eq!(
+            alloc(&["1", "-0.5"], "2", 2).unwrap_err().kind,
+            NumericErrorKind::Negative
+        );
+        let err = alloc(&["1", "2"], "-2", 2).unwrap_err();
+        assert_eq!(err.kind, NumericErrorKind::Negative);
+        assert_eq!(
+            err.to_string(),
+            "cannot allocate -2 at scale 2 across shares totalling 3: a value is negative"
+        );
+    }
+
+    fn allocation_share() -> impl Strategy<Value = Dec> {
+        prop_oneof![
+            (0i64..10_000_000).prop_map(|c| Dec(Decimal::new(c, 2))),
+            (0i64..10_000_000).prop_map(|c| Dec(Decimal::new(c, 2))
+                .mul_div_ratio(Dec::ONE, Dec::ONE, Dec::ONE, Dec(Decimal::from(3)))
+                .unwrap()),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn allocation_matches_an_exact_largest_remainder_oracle(
+            shares in prop::collection::vec(allocation_share(), 1..12),
+            cap_cents in 0i64..5_000_000,
+        ) {
+            let cap = Dec(Decimal::new(cap_cents, 2));
+            prop_assume!(shares.iter().any(|s| !s.is_zero()));
+            let got = Dec::allocate_largest_remainder(&shares, cap, 2).unwrap();
+            let total: BigDecimal = shares.iter().map(|s| big(*s)).sum();
+            let unit = BigDecimal::new(1.into(), 2);
+            let numerators: Vec<BigDecimal> = shares.iter().map(|s| big(*s) * big(cap)).collect();
+            let floors: Vec<BigDecimal> = numerators
+                .iter()
+                .map(|n| (n / &total / &unit).with_scale_round(0, bigdecimal::RoundingMode::Floor) * &unit)
+                .collect();
+            prop_assert_eq!(got.iter().map(|g| big(*g)).sum::<BigDecimal>(), big(cap));
+            let mut bumped = Vec::new();
+            for (i, (g, f)) in got.iter().zip(&floors).enumerate() {
+                let g = big(*g);
+                prop_assert!(g == *f || g == f + &unit, "share {} is {} with floor {}", i, g, f);
+                if g != *f {
+                    bumped.push(i);
+                }
+            }
+            // Every remainder shares the denominator `total`, so comparing numerators is exact.
+            let remainder = |i: usize| &numerators[i] - &floors[i] * &total;
+            for &i in &bumped {
+                for j in 0..shares.len() {
+                    if bumped.contains(&j) {
+                        continue;
+                    }
+                    prop_assert!(remainder(i) > remainder(j) || (remainder(i) == remainder(j) && i < j));
+                }
+            }
+        }
     }
 }

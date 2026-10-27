@@ -6,6 +6,7 @@
 pub mod board_plan;
 pub mod commission;
 pub mod config;
+pub mod currency;
 pub mod decimal;
 pub mod rank;
 pub mod serde_helpers;

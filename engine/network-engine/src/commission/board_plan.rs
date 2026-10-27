@@ -24,6 +24,7 @@ pub fn calculate_board_commissions(
     cycle_events: &[CycleEvent],
     period_cycle_counts: &HashMap<Uuid, u32>,
     config: &BoardPlanConfig,
+    minor_units: u32,
 ) -> BoardCommissionResult {
     let mut counts: BTreeMap<Uuid, u32> = period_cycle_counts
         .iter()
@@ -40,7 +41,7 @@ pub fn calculate_board_commissions(
         let dollar_amount = if capped {
             Dec::ZERO
         } else {
-            config.cycle_commission.dec()
+            config.cycle_commission.dec().round_minor(minor_units)
         };
 
         earnings.push(BoardCycleEarning {
@@ -90,6 +91,35 @@ mod tests {
         }
     }
 
+    fn one_cycle() -> CycleEvent {
+        CycleEvent {
+            board_id: test_uuid(9),
+            cycled_member: test_uuid(1),
+            new_boards: vec![],
+            re_entry_board: None,
+        }
+    }
+
+    #[test]
+    fn a_half_cent_cycle_commission_rounds_up() {
+        let config = BoardPlanConfig {
+            cycle_commission: d!(500.005),
+            ..test_config()
+        };
+        let result = calculate_board_commissions(&[one_cycle()], &HashMap::new(), &config, 2);
+        assert_d!(result.earnings[0].dollar_amount, 500.01);
+    }
+
+    #[test]
+    fn a_half_yen_cycle_commission_rounds_up() {
+        let config = BoardPlanConfig {
+            cycle_commission: d!(1500.5),
+            ..test_config()
+        };
+        let result = calculate_board_commissions(&[one_cycle()], &HashMap::new(), &config, 0);
+        assert_d!(result.earnings[0].dollar_amount, 1501);
+    }
+
     #[test]
     fn basic_cycle_earning() {
         let config = test_config();
@@ -97,7 +127,7 @@ mod tests {
         let events = vec![make_cycle_event(member)];
         let counts = HashMap::new();
 
-        let result = calculate_board_commissions(&events, &counts, &config);
+        let result = calculate_board_commissions(&events, &counts, &config, 2);
 
         assert_eq!(result.earnings.len(), 1);
         assert_eq!(result.earnings[0].earner_id, member);
@@ -114,7 +144,7 @@ mod tests {
         let events: Vec<CycleEvent> = (0..5).map(|_| make_cycle_event(member)).collect();
         let counts = HashMap::new();
 
-        let result = calculate_board_commissions(&events, &counts, &config);
+        let result = calculate_board_commissions(&events, &counts, &config, 2);
 
         assert_eq!(result.earnings.len(), 5);
 
@@ -145,7 +175,7 @@ mod tests {
         let mut counts = HashMap::new();
         counts.insert(member, 2);
 
-        let result = calculate_board_commissions(&events, &counts, &config);
+        let result = calculate_board_commissions(&events, &counts, &config, 2);
 
         assert_eq!(result.earnings.len(), 1);
         // This is cycle #3 (2 prior + 1 new), still within cap.
@@ -163,7 +193,7 @@ mod tests {
         let events = vec![make_cycle_event(alice), make_cycle_event(bob)];
         let counts = HashMap::new();
 
-        let result = calculate_board_commissions(&events, &counts, &config);
+        let result = calculate_board_commissions(&events, &counts, &config, 2);
 
         assert_eq!(result.earnings.len(), 2);
 
@@ -185,7 +215,7 @@ mod tests {
         let events: Vec<CycleEvent> = vec![];
         let counts = HashMap::new();
 
-        let result = calculate_board_commissions(&events, &counts, &config);
+        let result = calculate_board_commissions(&events, &counts, &config, 2);
 
         assert!(result.earnings.is_empty());
         assert!(result.updated_cycle_counts.is_empty());

@@ -18,7 +18,7 @@ use super::types::{
     CalculationError, CommissionCalculationResult, CommissionEarning, DistributorSnapshot,
     PlanIdentity, VolumeSource,
 };
-use super::{walk, walk_order};
+use super::{finalize, walk, walk_order};
 
 // ---------------------------------------------------------------------------
 // Prep phase internal types
@@ -677,6 +677,7 @@ pub fn calculate_stairstep(
     volume: &[VolumeSource],
     plan_identity: &PlanIdentity,
 ) -> Result<CommissionCalculationResult, CalculationError> {
+    let minor_units = finalize::plan_minor_units(plan)?;
     walk::validate_snapshots(plan, snapshots, tree.user_ids())?;
     let rank_ordinals = walk::build_rank_ordinals(plan);
     let prep_result = prep(tree, plan, structure, snapshots, &rank_ordinals)?;
@@ -758,6 +759,7 @@ pub fn calculate_stairstep(
         volume,
         &rank_ordinals,
         plan_identity,
+        minor_units,
     ))
 }
 
@@ -777,6 +779,24 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::commission::test_helpers::uuid_from_index as uuid;
+
+    #[test]
+    fn calculate_stairstep_refuses_an_unknown_plan_currency() {
+        let tree = build_chain(3);
+        let structure = test_stairstep_structure();
+        let mut plan = build_test_stairstep_plan(default_eligibility(), structure.clone());
+        plan.volume.base_currency = "ZZZ".to_string();
+        let err = calculate_stairstep(
+            &tree,
+            &plan,
+            &structure,
+            &HashMap::new(),
+            &[],
+            &crate::test_support::test_plan_identity(),
+        )
+        .unwrap_err();
+        assert_eq!(err, CalculationError::UnknownCurrency("ZZZ".to_string()));
+    }
 
     #[test]
     fn calculate_stairstep_rejects_a_rank_not_in_the_ladder() {

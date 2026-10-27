@@ -1825,6 +1825,14 @@ mod tests {
     }
 
     #[test]
+    fn allocation_refuses_a_scale_beyond_28() {
+        assert_eq!(
+            alloc(&["1", "2"], "2", 29).unwrap_err().kind,
+            NumericErrorKind::Precision
+        );
+    }
+
+    #[test]
     fn allocation_refuses_a_negative_share_or_cap() {
         assert_eq!(
             alloc(&["1", "-0.5"], "2", 2).unwrap_err().kind,

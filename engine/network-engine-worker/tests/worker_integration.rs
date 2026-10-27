@@ -1218,6 +1218,41 @@ fn calculate_unilevel_three_node_chain() {
 }
 
 #[test]
+fn calculate_unilevel_rounds_a_half_cent_earning_up_to_a_cent() {
+    let mut worker = common::spawn_worker();
+    load_test_plan(&mut worker);
+    build_three_node_chain(&mut worker);
+    let snap =
+        r#"{"rank":"member","personal_volume":100.0,"status":"active","has_order_in_period":true}"#;
+    let params = format!(
+        r#"{{"structure":"Test","snapshots":{{"{root}":{snap},"{child}":{snap},"{gc}":{snap}}},"volume":[{{"source_id":"{gc}","cv_amount":0.25}}]}}"#,
+        root = ROOT,
+        child = CHILD,
+        gc = GRANDCHILD,
+        snap = snap,
+    );
+    let request = format!(
+        r#"{{"id":"round-1","op":"calculate_unilevel","params":{}}}"#,
+        params
+    );
+    let resp = common::send_receive(&mut worker, &request);
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert!(
+        parsed["ok"].as_bool().unwrap(),
+        "calculate_unilevel failed: {}",
+        resp
+    );
+    let earnings = parsed["result"]["earnings"].as_array().unwrap();
+    assert_eq!(earnings.len(), 2, "{resp}");
+    for earning in earnings {
+        assert_eq!(number_text(&earning["dollar_amount"]), "0.01", "{resp}");
+        assert_eq!(number_text(&earning["cv_amount"]), "0.25", "{resp}");
+    }
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
 fn calculate_unilevel_without_plan_returns_no_plan() {
     let mut worker = common::spawn_worker();
 

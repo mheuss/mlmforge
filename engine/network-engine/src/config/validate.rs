@@ -117,6 +117,7 @@ impl CompensationPlan {
         self.check_rank_ladder_non_empty()?;
         self.check_rank_name_and_ordinal_floor()?;
         self.check_rank_ordinals_ascending()?;
+        self.check_unique_rank_names()?;
         self.check_base_rank_requires_nothing()?;
         self.check_per_leg_caps()?;
         self.check_unique_structure_names()?;
@@ -177,6 +178,17 @@ impl CompensationPlan {
             }
             seen.insert(rank.ordinal, &rank.name);
             previous = Some(rank.ordinal);
+        }
+        Ok(())
+    }
+
+    /// Reject two ranks that share a name.
+    fn check_unique_rank_names(&self) -> Result<(), String> {
+        let mut seen = HashSet::with_capacity(self.ranks.len());
+        for rank in &self.ranks {
+            if !seen.insert(rank.name.as_str()) {
+                return Err(format!("ranks: duplicate rank name '{}'", rank.name));
+            }
         }
         Ok(())
     }
@@ -1177,6 +1189,14 @@ mod tests {
             err,
             "ranks: rank 'bronze' has duplicate ordinal 1 (same as 'associate')"
         );
+    }
+
+    #[test]
+    fn plan_rejects_two_ranks_sharing_a_name() {
+        let mut plan = plan_with_two_ranks();
+        plan.ranks[1].name = "associate".to_string();
+        let err = plan.validate().unwrap_err();
+        assert_eq!(err, "ranks: duplicate rank name 'associate'");
     }
 
     #[test]

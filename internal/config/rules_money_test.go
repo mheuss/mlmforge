@@ -48,7 +48,7 @@ func TestRulesRefuseMoneyThatIsNotWholeCents(t *testing.T) {
 			p.Bonuses.BoardCycling = &BoardCyclingConfig{CycleCommission: v}
 		}},
 		{"currency min_override", "/structures/1/commission/breakaway/overrides/differential/min_override/value", func(p *CompensationPlan, v dec.Amount) {
-			p.Structures = append(p.Structures, StructureConfig{Name: "S", Type: "stairstep", resolvedCommission: &StairstepCommission{Breakaway: &BreakawayConfig{Overrides: OverrideStrategy{Differential: &DifferentialConfig{MinOverride: MinOverride{Type: "currency", Value: v}}}}}})
+			p.Structures = append(p.Structures, StructureConfig{Name: "S", Type: "stairstep", resolvedCommission: &StairstepCommission{Breakaway: &BreakawayConfig{Overrides: OverrideStrategy{Type: "single_walk", OverrideCalculation: "differential", Differential: &DifferentialConfig{MinOverride: MinOverride{Type: "currency", Value: v}}}}}})
 		}},
 		{"matrix_completion full_matrix", "/bonuses/matrix_completion/full_matrix", func(p *CompensationPlan, v dec.Amount) {
 			p.Bonuses.MatrixCompletion = &MatrixCompletionBonusConfig{FullMatrix: v}
@@ -98,6 +98,26 @@ func TestRulesRefuseMoneyThatIsNotWholeCents(t *testing.T) {
 	}
 }
 
+func TestRulesDoNotCheckMoneyInABlockTheEngineIgnores(t *testing.T) {
+	half := dec.MustParse("2.005")
+	cases := []struct {
+		name string
+		c    Commission
+	}{
+		{"pairing mode with a cycle_step block", &BinaryCommission{Mode: "pairing", Pairing: &PairingConfig{}, CycleStep: &CycleStepConfig{CapPerPeriod: &half, Steps: []CycleStep{{Amount: half}}}}},
+		{"cycle_step mode with a pairing block", &BinaryCommission{Mode: "cycle_step", Pairing: &PairingConfig{CapPerPeriod: &half}, CycleStep: &CycleStepConfig{Steps: []CycleStep{{Amount: dec.MustParse("100")}}}}},
+		{"multi_tier with a differential block", &StairstepCommission{Breakaway: &BreakawayConfig{Overrides: OverrideStrategy{Type: "multi_tier", Differential: &DifferentialConfig{MinOverride: MinOverride{Type: "currency", Value: half}}}}}},
+		{"fixed_override with a differential block", &StairstepCommission{Breakaway: &BreakawayConfig{Overrides: OverrideStrategy{Type: "single_walk", OverrideCalculation: "fixed_override", Differential: &DifferentialConfig{MinOverride: MinOverride{Type: "currency", Value: half}}}}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := minimalPlan()
+			plan.Structures = append(plan.Structures, StructureConfig{Name: "X", resolvedCommission: tc.c})
+			assert.Empty(t, validateMinorUnits(plan))
+		})
+	}
+}
+
 func TestRulesDoNotCheckAPercentageSponsorOrPositionAmount(t *testing.T) {
 	plan := minimalPlan()
 	plan.Bonuses.Sponsor = &SponsorBonusConfig{Amount: dec.MustParse("0.015"), AmountType: "percentage"}
@@ -107,7 +127,7 @@ func TestRulesDoNotCheckAPercentageSponsorOrPositionAmount(t *testing.T) {
 
 func TestRulesDoNotCheckARateMinOverride(t *testing.T) {
 	plan := minimalPlan()
-	plan.Structures = append(plan.Structures, StructureConfig{Name: "S", Type: "stairstep", resolvedCommission: &StairstepCommission{Breakaway: &BreakawayConfig{Overrides: OverrideStrategy{Differential: &DifferentialConfig{MinOverride: MinOverride{Type: "rate", Value: dec.MustParse("0.015")}}}}}})
+	plan.Structures = append(plan.Structures, StructureConfig{Name: "S", Type: "stairstep", resolvedCommission: &StairstepCommission{Breakaway: &BreakawayConfig{Overrides: OverrideStrategy{Type: "single_walk", OverrideCalculation: "differential", Differential: &DifferentialConfig{MinOverride: MinOverride{Type: "rate", Value: dec.MustParse("0.015")}}}}}})
 	assert.Empty(t, validateMinorUnits(plan))
 }
 

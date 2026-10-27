@@ -51,10 +51,10 @@ func validateMinorUnits(plan *CompensationPlan) []ValidationError {
 		at := fmt.Sprintf("/structures/%d/commission", i)
 		switch rc := s.resolvedCommission.(type) {
 		case *BinaryCommission:
-			if rc.Pairing != nil {
+			if rc.Mode == "pairing" && rc.Pairing != nil {
 				checkPtr(at+"/pairing/cap_per_period", rc.Pairing.CapPerPeriod)
 			}
-			if rc.CycleStep != nil {
+			if rc.Mode == "cycle_step" && rc.CycleStep != nil {
 				checkPtr(at+"/cycle_step/cap_per_period", rc.CycleStep.CapPerPeriod)
 				for k, step := range rc.CycleStep.Steps {
 					check(fmt.Sprintf("%s/cycle_step/steps/%d/amount", at, k), step.Amount)
@@ -63,7 +63,7 @@ func validateMinorUnits(plan *CompensationPlan) []ValidationError {
 		case *BoardPlanCommission:
 			check(at+"/board_cycling/cycle_commission", rc.BoardCycling.CycleCommission)
 		case *StairstepCommission:
-			if rc.Breakaway != nil {
+			if rc.Breakaway != nil && rc.Breakaway.Overrides.Type == overrideStrategySingleWalk && rc.Breakaway.Overrides.OverrideCalculation == "differential" {
 				if diff := rc.Breakaway.Overrides.Differential; diff != nil && diff.MinOverride.Type == "currency" {
 					check(at+"/breakaway/overrides/differential/min_override/value", diff.MinOverride.Value)
 				}

@@ -2721,6 +2721,36 @@ mod tests {
         assert_eq!(sponsor.user_id, test_uuid(1));
     }
 
+    #[test]
+    fn place_from_tank_leaves_a_re_sponsored_recruit_with_its_new_sponsor() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 1).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 2).unwrap();
+        // Sponsored by 2, placed under 3.
+        tree.add_node_at(test_uuid(4), test_uuid(2), test_uuid(3), 0, 3)
+            .unwrap();
+
+        let result = tree
+            .remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+        assert_eq!(
+            result.responsored,
+            vec![Responsored {
+                user_id: test_uuid(4),
+                new_sponsor_id: test_uuid(1),
+            }]
+        );
+
+        tree.place_from_tank(test_uuid(2), test_uuid(1), 0).unwrap();
+
+        let sponsor = tree.get_sponsor(test_uuid(4)).unwrap().unwrap();
+        assert_eq!(sponsor.user_id, test_uuid(1));
+        let recruits = tree.get_sponsored(test_uuid(2)).unwrap();
+        assert!(!recruits.iter().any(|n| n.user_id == test_uuid(4)));
+        assert_eq!(tree.validate_restored(), Ok(()));
+    }
+
     /// Root 1, with 2 under it and 3 under 2. Node 4 is sponsored by 2 but
     /// placed under 1, and node 5 is sponsored by 3 but placed under 4.
     fn tree_with_recruits_outside_a_subtree() -> MatrixTree {

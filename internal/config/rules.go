@@ -34,6 +34,7 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 	errs = append(errs, validateStructureNames(plan)...)
 	errs = append(errs, validatePeriod(plan)...)
 	errs = append(errs, validateRanks(plan, structs)...)
+	errs = append(errs, validateRankThresholds(plan)...)
 	errs = append(errs, validateStructureRefs(plan, ranks)...)
 	errs = append(errs, validateBonuses(plan, ranks)...)
 	errs = append(errs, validateRateKeyWidths(plan)...)
@@ -531,6 +532,40 @@ func validateBaseRank(plan *CompensationPlan) []ValidationError {
 		}
 		if len(sq.LegQuality) > 0 {
 			refuse(at+"/leg_quality", fmt.Sprintf("sets leg_quality on structure %q", sq.Structure))
+		}
+	}
+	return errs
+}
+
+// validateRankThresholds checks that no rank volume threshold is negative.
+func validateRankThresholds(plan *CompensationPlan) []ValidationError {
+	var errs []ValidationError
+	for i, r := range plan.Ranks {
+		for j, sq := range r.Qualification.Structures {
+			at := fmt.Sprintf("/ranks/%d/qualification/structures/%d", i, j)
+			check := func(path, field string, v dec.Amount) {
+				if !v.IsNegative() {
+					return
+				}
+				errs = append(errs, ValidationError{
+					Path:     at + path,
+					Code:     "value_out_of_range",
+					Message:  fmt.Sprintf("rank %q structure %q %s must be non-negative, got %v", r.Name, sq.Structure, field, v),
+					Severity: SeverityError,
+				})
+			}
+			check("/personal_volume", "personal_volume", sq.PersonalVolume)
+			check("/group_volume", "group_volume", sq.GroupVolume)
+			check("/min_retail_volume", "min_retail_volume", sq.MinRetailVolume)
+			if sq.DistributorCount != nil {
+				check("/distributor_count/min_leg_group_volume", "distributor_count.min_leg_group_volume", sq.DistributorCount.MinLegGroupVolume)
+			}
+			for k, lq := range sq.LegQuality {
+				if lq.Predicate.Type == "contains_personal_volume" {
+					check(fmt.Sprintf("/leg_quality/%d/predicate/min_personal_volume", k),
+						fmt.Sprintf("leg_quality[%d].predicate.min_personal_volume", k), lq.Predicate.MinPersonalVolume)
+				}
+			}
 		}
 	}
 	return errs

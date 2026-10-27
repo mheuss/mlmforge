@@ -2340,3 +2340,60 @@ func TestRulesShowTheWrittenValueAndTheLimitItBreaks(t *testing.T) {
 	require.Len(t, envelope, 1)
 	assert.Equal(t, "0.10000000000 has 11 decimal places, and an authored value may have at most 10", envelope[0].Message)
 }
+
+func TestRankThresholdNegativeRejected(t *testing.T) {
+	cases := []struct {
+		field  string
+		mutate func(sq *StructureQualification)
+		path   string
+	}{
+		{"personal_volume", func(sq *StructureQualification) { sq.PersonalVolume = dec.MustParse("-1") },
+			"/ranks/1/qualification/structures/0/personal_volume"},
+		{"group_volume", func(sq *StructureQualification) { sq.GroupVolume = dec.MustParse("-1") },
+			"/ranks/1/qualification/structures/0/group_volume"},
+		{"min_retail_volume", func(sq *StructureQualification) { sq.MinRetailVolume = dec.MustParse("-1") },
+			"/ranks/1/qualification/structures/0/min_retail_volume"},
+		{"distributor_count.min_leg_group_volume", func(sq *StructureQualification) {
+			sq.DistributorCount = &DistributorCountRequirement{
+				Count: 1, MinRank: "Associate", SearchMode: "any_level", MinLegGroupVolume: dec.MustParse("-1"),
+			}
+		}, "/ranks/1/qualification/structures/0/distributor_count/min_leg_group_volume"},
+		{"leg_quality[1].predicate.min_personal_volume", func(sq *StructureQualification) {
+			sq.LegQuality = []LegQualityRequirement{
+				{Count: 1, Predicate: LegPredicate{Type: "contains_rank", MinRank: "Associate"}},
+				{Count: 1, Predicate: LegPredicate{Type: "contains_personal_volume", MinPersonalVolume: dec.MustParse("-1")}},
+			}
+		}, "/ranks/1/qualification/structures/0/leg_quality/1/predicate/min_personal_volume"},
+	}
+	for _, c := range cases {
+		t.Run(c.field, func(t *testing.T) {
+			plan := minimalPlan()
+			c.mutate(&plan.Ranks[1].Qualification.Structures[0])
+
+			errs := validateBusinessRules(plan)
+
+			require.Len(t, errs, 1, "errors: %v", errs)
+			assert.Equal(t, "value_out_of_range", errs[0].Code)
+			assert.Equal(t, c.path, errs[0].Path)
+			assert.Equal(t, fmt.Sprintf("rank %q structure %q %s must be non-negative, got -1", "Silver", "Primary", c.field), errs[0].Message)
+			assert.Equal(t, SeverityError, errs[0].Severity)
+		})
+	}
+}
+
+func TestRankThresholdNegativeRejectedOnALaterEntryOfAMiddleRank(t *testing.T) {
+	plan := minimalPlan()
+	gold := plan.Ranks[1]
+	gold.Name = "Gold"
+	gold.Ordinal = 3
+	plan.Ranks = append(plan.Ranks, gold)
+	second := StructureQualification{Structure: "Primary", GroupVolume: dec.MustParse("-1")}
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{plan.Ranks[1].Qualification.Structures[0], second}
+
+	errs := validateBusinessRules(plan)
+
+	require.Len(t, errs, 1, "errors: %v", errs)
+	assert.Equal(t, "value_out_of_range", errs[0].Code)
+	assert.Equal(t, "/ranks/1/qualification/structures/1/group_volume", errs[0].Path)
+	assert.Equal(t, `rank "Silver" structure "Primary" group_volume must be non-negative, got -1`, errs[0].Message)
+}

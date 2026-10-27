@@ -96,7 +96,7 @@ fn ping_returns_protocol_version() {
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(parsed["id"], "1");
-    assert_eq!(parsed["result"]["protocol_version"], 25);
+    assert_eq!(parsed["result"]["protocol_version"], 26);
 
     drop(child.stdin.take());
     child.wait().unwrap();

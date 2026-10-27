@@ -1,4 +1,4 @@
-//! ISO 4217 minor units, read from the table Go also embeds.
+//! The ISO 4217 minor unit of each currency code in the minor-unit table.
 
 const TABLE: &str = include_str!("../../../internal/currency/minor_units.csv");
 

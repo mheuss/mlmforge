@@ -29,7 +29,7 @@
 //! its own `UNSUPPORTED_PLAN_VERSION` code, because a valid future-version plan
 //! is not a malformed one.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::binary::{BinaryCommissionConfig, BinaryCommissionMode, PairingConfig};
 use super::board_plan::BoardPlanConfig;
@@ -116,6 +116,7 @@ impl CompensationPlan {
         self.caps.validate().map_err(|e| format!("caps: {e}"))?;
         self.check_rank_ladder_non_empty()?;
         self.check_rank_name_and_ordinal_floor()?;
+        self.check_rank_ordinals_ascending()?;
         self.check_base_rank_requires_nothing()?;
         self.check_per_leg_caps()?;
         self.check_unique_structure_names()?;
@@ -151,6 +152,31 @@ impl CompensationPlan {
                     rank.name
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// Reject rank ordinals that repeat or do not ascend in list order.
+    fn check_rank_ordinals_ascending(&self) -> Result<(), String> {
+        let mut seen: HashMap<u16, &str> = HashMap::with_capacity(self.ranks.len());
+        let mut previous: Option<u16> = None;
+        for rank in &self.ranks {
+            if let Some(other) = seen.get(&rank.ordinal) {
+                return Err(format!(
+                    "ranks: rank '{}' has duplicate ordinal {} (same as '{other}')",
+                    rank.name, rank.ordinal
+                ));
+            }
+            if let Some(p) = previous {
+                if rank.ordinal <= p {
+                    return Err(format!(
+                        "ranks: rank '{}' ordinal {} is not ascending (previous was {p})",
+                        rank.name, rank.ordinal
+                    ));
+                }
+            }
+            seen.insert(rank.ordinal, &rank.name);
+            previous = Some(rank.ordinal);
         }
         Ok(())
     }
@@ -1116,6 +1142,39 @@ mod tests {
     }
 
     #[test]
+    fn plan_rejects_a_duplicate_rank_ordinal_naming_both_ranks() {
+        let mut plan = plan_with_two_ranks();
+        plan.ranks[0].ordinal = 2;
+        let err = plan.validate().unwrap_err();
+        assert_eq!(
+            err,
+            "ranks: rank 'gold' has duplicate ordinal 2 (same as 'associate')"
+        );
+    }
+
+    #[test]
+    fn plan_rejects_a_rank_ordinal_below_the_previous_naming_the_previous() {
+        let mut plan = plan_with_two_ranks();
+        plan.ranks[0].ordinal = 2;
+        plan.ranks[1].ordinal = 1;
+        let err = plan.validate().unwrap_err();
+        assert_eq!(
+            err,
+            "ranks: rank 'gold' ordinal 1 is not ascending (previous was 2)"
+        );
+    }
+
+    #[test]
+    fn plan_accepts_an_ascending_ladder_with_unique_names() {
+        let mut plan = plan_with_two_ranks();
+        let mut platinum = plan.ranks[1].clone();
+        platinum.name = "platinum".to_string();
+        platinum.ordinal = 7;
+        plan.ranks.push(platinum);
+        assert_eq!(plan.validate(), Ok(()));
+    }
+
+    #[test]
     fn plan_rejects_duplicate_structure_names() {
         // Structure lookup is by name and takes the first match, so two
         // structures sharing a name make the payout depend on plan ordering.
@@ -1260,7 +1319,7 @@ mod tests {
         let mut entry = zero_threshold("main");
         entry.personal_volume = d!(50.0);
         plan.ranks[1].qualification.structures = vec![entry];
-        let err = plan.validate().unwrap_err();
+        let err = plan.check_base_rank_requires_nothing().unwrap_err();
         assert!(
             err.contains("base rank 'associate'"),
             "unexpected error: {err}"
@@ -1275,12 +1334,12 @@ mod tests {
         let mut second_tied = plan_with_two_ranks();
         second_tied.ranks[1].ordinal = 1;
         second_tied.ranks[1].qualification.structures = vec![entry.clone()];
-        assert!(second_tied.validate().is_ok());
+        assert!(second_tied.check_base_rank_requires_nothing().is_ok());
 
         let mut first_tied = plan_with_two_ranks();
         first_tied.ranks[1].ordinal = 1;
         first_tied.ranks[0].qualification.structures = vec![entry];
-        let err = first_tied.validate().unwrap_err();
+        let err = first_tied.check_base_rank_requires_nothing().unwrap_err();
         assert!(
             err.contains("base rank 'associate'"),
             "unexpected error: {err}"
@@ -1307,7 +1366,7 @@ mod tests {
         let mut entry = zero_threshold("main");
         entry.personal_volume = d!(100.0);
         plan.ranks[0].qualification.structures = vec![entry];
-        assert!(plan.validate().is_ok());
+        assert!(plan.check_base_rank_requires_nothing().is_ok());
     }
 
     // --- per-leg cap ---

@@ -1082,6 +1082,42 @@ fn load_plan_refuses_a_currency_missing_from_the_minor_unit_table() {
 }
 
 #[test]
+fn load_plan_refuses_a_minimum_payout_of_half_a_cent_and_names_the_field() {
+    let mut worker = common::spawn_worker();
+    let plan = TEST_PLAN_JSON.replace(r#""minimum_amount": 50.0"#, r#""minimum_amount": 50.005"#);
+    let resp = send_load_plan(&mut worker, &plan);
+    assert!(
+        resp.contains("INVALID_PLAN") && resp.contains("payout: minimum_amount 50.005"),
+        "expected INVALID_PLAN naming payout: minimum_amount, got: {}",
+        resp
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn load_plan_accepts_a_percentage_sponsor_and_position_amount_of_one_and_a_half_percent() {
+    let mut worker = common::spawn_worker();
+    let plan = TEST_PLAN_JSON
+        .replace(
+            r#""sponsor": null"#,
+            r#""sponsor": {"amount": 0.015, "amount_type": "percentage", "qualifying_products": []}"#,
+        )
+        .replace(
+            r#""position": null"#,
+            r#""position": {"amount": 0.015, "amount_type": "percentage", "sponsored_only": false}"#,
+        );
+    let resp = send_load_plan(&mut worker, &plan);
+    assert!(
+        resp.contains(r#""ok":true"#),
+        "expected the plan to load, got: {}",
+        resp
+    );
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
 fn load_plan_rejects_out_of_range_percent() {
     let mut worker = common::spawn_worker();
     // broad_commission_percent must be a fraction in [0, 1]; 1.5 is out of range.

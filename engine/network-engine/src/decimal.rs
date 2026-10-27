@@ -10,7 +10,8 @@ use thiserror::Error;
 
 const MAX_SCALE: u32 = 28;
 const ENVELOPE_MAX_SCALE: u32 = 10;
-/// Decimal places a payout is held to.
+/// The most decimal places E2 rounds a volume-ratio quotient to. It uses
+/// fewer when the coefficient would not fit 96 bits.
 pub(crate) const PAYOUT_SCALE: u32 = 13;
 const ENVELOPE_LIMIT: Decimal = dec!(1_000_000_000_000_000);
 

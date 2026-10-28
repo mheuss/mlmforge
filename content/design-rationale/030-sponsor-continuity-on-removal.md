@@ -101,7 +101,7 @@ A sponsorless node whose recruits sit outside its subtree is refused by both pru
 
 A holding-tank round trip moves a recruit placed outside the subtree onto a surviving sponsor and does not move it back. The tank entry holds the returning node's own sponsor and nothing about who that node recruited, so re-placing it cannot restore the relationship.
 
-The `remove_node` response names the recruits a removal moved, so a caller can see the move happen. It has no way to learn that re-placing from the tank did not undo it. HEU-776 carries that.
+The `remove_node` response names the recruits a removal moved, so a caller can see the move happen. It has no way to learn that re-placing from the tank did not undo it. This is by design: a round trip does not give recruits back, so the removal response is the only record of the move.
 
 The engine has to answer before the store can be written. A removal whose reply is lost, or whose store write fails, leaves the engine and the store disagreeing. The next write or `tree load` redelivers the removal to an engine rebuilt from the stream. That engine still holds the user, so it computes the moved recruits again (HEU-777).
 

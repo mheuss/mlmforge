@@ -168,7 +168,7 @@ The guiding rule is *fail loud*: a malformed value should earn a clear, coded re
 
 ## Testing an optional `oneOf [$ref, null]` object
 
-An optional config object declared as `"oneOf": [{ "$ref": "#/$defs/X" }, { "type": "null" }]` — the shape used for `window` and `tenure` on `RankQualification` — emits TWO `schema_violation` leaves when a required sub-field is missing:
+An optional config object declared as `"oneOf": [{ "$ref": "#/$defs/X" }, { "type": "null" }]` — the shape used for `window` and `tenure` on `RankQualification`, and for `distributor_count` on `StructureQualification` — emits TWO `schema_violation` leaves when a required sub-field is missing:
 
 1. The missing-property error on the `$ref` branch.
 2. An "expected null, got object" error from the failed `null` branch.

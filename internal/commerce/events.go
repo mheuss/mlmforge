@@ -1,6 +1,10 @@
 package commerce
 
-import "time"
+import (
+	"time"
+
+	"github.com/mlmforge/mlmforge/internal/dec"
+)
 
 // --- Commerce Domain Events ---
 // Each carries enough data for consumers to react without calling back
@@ -13,7 +17,7 @@ type OrderCompleted struct {
 	MarketID    string
 	OrderType   string // "store", "signup"
 	Items       []OrderItem
-	Total       float64
+	Total       dec.Amount
 	Currency    string
 	CompletedAt time.Time
 }
@@ -22,16 +26,16 @@ type OrderCompleted struct {
 type OrderItem struct {
 	ProductID string
 	Quantity  int
-	Price     float64
+	Price     dec.Amount
 	Currency  string
-	CVPoints  float64
+	CVPoints  dec.Amount
 }
 
 // OrderRefunded is emitted when a voluntary refund is processed.
 type OrderRefunded struct {
 	OrderID      string
 	UserID       string
-	RefundAmount float64
+	RefundAmount dec.Amount
 	Currency     string
 	Items        []RefundItem
 	Reason       string
@@ -42,8 +46,8 @@ type OrderRefunded struct {
 type RefundItem struct {
 	ProductID string
 	Quantity  int
-	Amount    float64
-	CVPoints  float64
+	Amount    dec.Amount
+	CVPoints  dec.Amount
 }
 
 // OrderChargedBack is emitted when the customer's bank initiates a dispute.
@@ -51,7 +55,7 @@ type RefundItem struct {
 type OrderChargedBack struct {
 	OrderID          string
 	UserID           string
-	ChargebackAmount float64
+	ChargebackAmount dec.Amount
 	Currency         string
 	DisputeReason    string
 	GatewayDisputeID string
@@ -74,9 +78,9 @@ type AutoshipProcessed struct {
 	OrderID     string
 	UserID      string
 	Items       []AutoshipItem
-	Total       float64
+	Total       dec.Amount
 	Currency    string
-	CVPoints    float64
+	CVPoints    dec.Amount
 	ProcessedAt time.Time
 }
 
@@ -93,7 +97,7 @@ type AutoshipChargedBack struct {
 	AutoshipID       string
 	OrderID          string
 	UserID           string
-	ChargebackAmount float64
+	ChargebackAmount dec.Amount
 	Currency         string
 	DisputeReason    string
 	GatewayDisputeID string

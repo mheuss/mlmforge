@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// FindFloatIdents returns "file:line: Owner float64" for each float32 or
+// FindFloatIdents returns "file:line: Owner floatNN" for each float32 or
 // float64 identifier in the non-test Go files of dir, skipping owners named in
 // exceptions.
 func FindFloatIdents(dir string, exceptions map[string]bool) ([]string, error) {
@@ -50,7 +50,9 @@ func FindFloatIdents(dir string, exceptions map[string]bool) ([]string, error) {
 					case *ast.TypeSpec:
 						reportType(s, report)
 					case *ast.ValueSpec:
-						report(s.Names[0].Name, s)
+						for _, n := range s.Names {
+							report(n.Name, s)
+						}
 					}
 				}
 			}
@@ -94,6 +96,12 @@ func funcOwner(d *ast.FuncDecl) string {
 	t := d.Recv.List[0].Type
 	if star, ok := t.(*ast.StarExpr); ok {
 		t = star.X
+	}
+	switch g := t.(type) {
+	case *ast.IndexExpr:
+		t = g.X
+	case *ast.IndexListExpr:
+		t = g.X
 	}
 	if id, ok := t.(*ast.Ident); ok {
 		return id.Name + "." + d.Name.Name

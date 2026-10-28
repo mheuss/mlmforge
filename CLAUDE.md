@@ -9,40 +9,17 @@ processing any other skill, command, or request.
 
 ## Philosophy
 
-### Core Beliefs
-
-We build software through small, verified steps:
-
-- **Incremental progress over big bangs** — Small changes that compile and pass tests
-- **Learn before implementing** — Study existing code and plan before writing
-- **Clear intent over clever code** — Be boring and obvious
-- **Single responsibility** — Per function, per class, per module
-- **Avoid premature abstractions** — Don't generalize until you have three concrete cases
-- **Consistency over preference** — Match existing patterns even if you'd do it differently
-
 ### Working Principles
 
-- **Verify before claiming** — Run tests and confirm output before asserting success
 - **Minimize blast radius** — Make the smallest change that solves the problem
 - **Ask when uncertain** — Stop and ask rather than guessing or assuming
-- **Challenge, don't comply** — When the user suggests an approach, evaluate it critically. If you see problems, risks, or better alternatives, say so. Agreeing to avoid friction wastes time and produces worse outcomes.
 - **Finish what you start** — Complete the current task fully before moving to the next
 - **One problem at a time** — Don't solve multiple issues in a single change
 - **Leave the codebase better than you found it** — Within files you're already touching, fix cosmetic issues (typos, whitespace, formatting). Do not remove code or refactor working logic.
 
 ### Architecture & Code Style
 
-**Architecture:**
-- Composition over inheritance — use dependency injection
-- Interfaces over singletons — enable testing and flexibility
-- Explicit over implicit — clear data flow and dependencies
-- Fail fast — descriptive error messages with context
-- Handle errors at the appropriate level — never silently swallow exceptions
-
 **Code style:**
-- Match, don't invent — find similar code and follow its pattern exactly
-- Follow existing conventions — match the project's style, not your preferences
-- Use project tooling — the project's formatter, linter, and build system
 - No commented-out code — version control is the archive
 - No TODO comments without tracking — every TODO must be tracked in [Linear](https://linear.app/heuss-enterprises/team/HEU/active)
 
@@ -56,32 +33,7 @@ We build software through small, verified steps:
 - Technical terms are fine. Jargon without explanation is not.
 - Reference: [Laravel README](https://github.com/laravel/laravel) for tone and rhythm.
 
-**Go-specific:**
-- Follow Effective Go and Go Code Review Comments conventions
-- Use `gofmt` formatting (non-negotiable)
-- Prefer returning errors over panicking
-- Use context.Context for cancellation and timeouts
-- Keep interfaces small — one or two methods
-
-**Rust-specific:**
-- Follow Rust API Guidelines
-- Use `cargo fmt` formatting (non-negotiable)
-- Prefer `Result<T, E>` over panicking
-- Use `clippy` warnings as errors
-- Leverage the type system for correctness — encode invariants in types
-
 ### Testing
-
-**Test-Driven Development is mandatory:**
-1. **Red** — Write a failing test first
-2. **Green** — Write minimal code to pass
-3. **Refactor** — Improve while keeping tests green
-
-**Test quality:**
-- Test behavior, not implementation — verify what the code does, not how
-- One behavior per test — multiple assertions are fine if they all verify the same action. If a test fails, you should know which behavior broke without reading the test body.
-- Tests must be deterministic — no flakiness
-- Avoid over-mocking — mock external dependencies, not internal code
 
 **Integration tests verify wiring:** Unit tests prove functions work in isolation. Integration tests must prove functions are actually called in the correct sequence. For every function in a workflow, write an integration test that verifies the function's effect through externally observable side effects.
 
@@ -95,7 +47,7 @@ We build software through small, verified steps:
 - Use `--no-verify` to bypass commit hooks
 - Claim work is complete without running tests and verifying output
 - Push directly to main or force push to shared branches
-- Continue after 3 failed attempts — stop and reassess
+- Continue past the hard stop in `sop:using-sop` (same error after two tries). Stop and reassess.
 
 ### Who authorizes what
 
@@ -131,15 +83,20 @@ authorisation" is a trigger for what is written here. It is not the grant. A
 seat cannot verify that a message came from the hub. That is acceptable while
 one operator watches every session.
 
+### Messages to the hub
+
+- Put BLOCKING or FYI on the first line of every message to the hub.
+- After sending a BLOCKING message, stop, and say what you are stopped on.
+- Re-send a BLOCKING message after fifteen minutes of silence.
+- Before standing down, tell the hub what you hold that is in no ticket, no commit and no tracked file.
+- A deferral names its destination: a ticket, a file or a person.
+
 ### When Blocked
 
-When you hit a wall (3 failed attempts, unclear path forward, unexpected behavior):
+When you hit a wall (the `sop:using-sop` hard stop, an unclear path forward, or unexpected behavior):
 
 1. **Stop** — Do not attempt workarounds without input from the hub. With no hub running, get it from the developer
-2. **Notify** — Send the report below to the hub. With no hub running, and if `~/.claude/hooks/notify.sh` exists, fire a notification so the developer knows you need attention:
-   ```bash
-   echo '{"hook_event_name":"Notification","message":"Blocked — need your input","cwd":"'"$(pwd)"'"}' | ~/.claude/hooks/notify.sh
-   ```
+2. **Notify** — Send the report below to the hub. With no hub running, send it to the developer.
 3. **Report:**
    - What I was trying to do
    - What I tried
@@ -200,25 +157,12 @@ For Medium/Large tasks, check in with the hub after completing each plan step. W
 >
 > "Still on track?"
 
-When the check-in goes to the developer and `~/.claude/hooks/notify.sh` exists, fire a notification first so they know a response is needed:
-```bash
-echo '{"hook_event_name":"Notification","message":"Step complete — check-in ready","cwd":"'"$(pwd)"'"}' | ~/.claude/hooks/notify.sh
-```
-
 This is a lightweight direction check, not a formal review. Whoever you check in with can:
 - Confirm and continue
 - Redirect if the approach has drifted
 - Disable check-ins with "skip the check-ins" or similar instruction
 
 Trivial and Small tasks skip check-ins.
-
-### Step Reviews
-
-For Medium/Large tasks, invoke the code-reviewer agent after completing major implementation steps — not every small change, but logical chunks like "commission engine binary tree walker complete" or "Commerce context API endpoints implemented."
-
-Step reviews provide actual code analysis, not just self-reported summaries. They catch drift from the implementation plan while there's still time to course-correct.
-
-The final review in pre-commit still applies — step reviews are additive, not a replacement.
 
 ### Parallel Work
 
@@ -232,23 +176,9 @@ Parallel work is safe when **ALL** of the following are true:
 
 If any condition is false, work sequentially or coordinate carefully.
 
-### Update Tracking
-
-After planning, create Linear issues for any new tasks identified.
-
 ### Session Resumption
 
-At session start, scan `docs/plans/` for plans marked `**Status:** In Progress` (Markdown bold format). Skip `handoff-*.md`. Handoff notes describe status in prose and quote the marker, so scanning them produces false matches.
-
-```bash
-grep -rlE '\*\*Status:\*\* In Progress' docs/plans/ --exclude='handoff-*.md'
-```
-
-If found, prompt:
-
-> "Found in-progress work: `{filename}` ({progress summary}). Resume this work?"
-
-If yes, run `/sop:resume-plan`. This ensures work isn't forgotten across session boundaries.
+At session start, run `/sop:where-are-we` to find in-flight plans and handoffs.
 
 ---
 
@@ -357,49 +287,11 @@ without linting anything.
   - A **bare** identifier in a **branch name or PR title** links the issue.
   - A **closing magic word** next to the identifier is what Linear documents as
     moving the issue. Those words are `close`, `fix`, `resolve`, `complete`,
-    `implement`, their inflections, and `linear issue`. **What has been watched
-    happen in this repo is narrower than that:**
-    - **PR title and PR body have never been told apart here.** Every PR title
-      that carried a closing word beside an identifier also had one in its body.
-      No observation separates them.
-    - **A closing word in a PR body was last seen to move an issue on
-      2026-08-22**, twice, both within three seconds of the merge. Three later
-      PR bodies carried one, on 2026-08-25, 2026-09-05 and 2026-09-06. None
-      moved in that window.
-    - Two of those three did reach Done later. Neither is attributed, and the
-      reason differs. One moved 30 seconds after its merge, inside the 13-to-69
-      second window in which a seat was moving keyword-free tickets by hand
-      that night, and well outside the three seconds the 2026-08-22
-      transitions took. The other moved 20 minutes after its merge, which is
-      near neither. Nobody watched who moved either one.
-    - **Commit message:** Linear documents this as firing when the commit
-      reaches `main`, which does not require a PR merge. **It has not been
-      separately watched happen here.** Both recorded transitions carried a
-      closing word in the PR body. The one that also carried it in a commit
-      cannot tell the two apart, and a keyword in a commit alone has never
-      been seen to move anything.
-    - That documented case matters here because squash is disabled, so a
-      branch commit's message reaches `main` unchanged, carrying whatever it
-      says. Rebase-and-merge gives a commit a new identity but not a new
-      message, and the message is the part that gets read.
-    - **Pushing a branch has not been seen to move anything.** Tested once, on
-      2026-09-08: a Todo ticket, a branch named for it, one commit, pushed.
-      Read before, immediately after, and again about three minutes later. The
-      status stayed Todo, `startedAt` stayed null, the state history kept its
-      two entries and `updatedAt` did not move. One push on one ticket on one
-      day. It did not reproduce the claim. It does not show the behavior
-      cannot exist.
-    - **An unmoved `updatedAt` does not mean the issue was untouched.** Opening
-      the PR on that same ticket attached it within seconds, and `updatedAt`
-      stayed where it was. So the field does not track everything. Read the
-      field you actually care about rather than treating this one as a sentinel
-      for nothing having happened.
-    - That same branch name carried a magic word beside the identifier, and it
-      did not fire on the push either.
-    - **Never rely on a transition firing, and never rely on it not firing.**
-      Check every ticket the PR named after every merge. `main` requires a
-      pull request, checked 2026-09-08, so every commit reaches it through one
-      and there is no second path to watch.
+    `implement`, their inflections, and `linear issue`.
+  - **Never rely on a transition firing, and never rely on it not firing.**
+    Check every ticket the PR named after every merge. `main` requires a
+    pull request, checked 2026-09-08, so every commit reaches it through one
+    and there is no second path to watch.
   - **The parser does not read negations.** A sentence saying an issue is *not*
     being closed still contains the word `close` beside `HEU-NNN`, and closes it.
     Do not write a negated closing word next to an identifier. Reword it.

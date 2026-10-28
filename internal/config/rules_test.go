@@ -521,8 +521,9 @@ func TestDistributorCountMinRankMustExist(t *testing.T) {
 			PersonalVolume: dec.MustParse("100"),
 			GroupVolume:    dec.MustParse("3000"),
 			DistributorCount: &DistributorCountRequirement{
-				Count:   2,
-				MinRank: "Nonexistent",
+				Count:      2,
+				MinRank:    "Nonexistent",
+				SearchMode: "any_level",
 			},
 		},
 	}
@@ -542,8 +543,9 @@ func TestDistributorCountMinRankMustBeLowerOrdinal(t *testing.T) {
 			PersonalVolume: dec.MustParse("100"),
 			GroupVolume:    dec.MustParse("3000"),
 			DistributorCount: &DistributorCountRequirement{
-				Count:   2,
-				MinRank: "Silver",
+				Count:      2,
+				MinRank:    "Silver",
+				SearchMode: "any_level",
 			},
 		},
 	}
@@ -2058,33 +2060,34 @@ func TestBaseRankPerLegCapIsIgnored(t *testing.T) {
 func TestBaseRankRequirementRejected(t *testing.T) {
 	const at = "/ranks/0/qualification"
 	tests := []struct {
-		name    string
-		mutate  func(r *RankDefinition)
-		path    string
-		message string
+		name      string
+		mutate    func(r *RankDefinition)
+		path      string
+		message   string
+		extraCode string
 	}{
 		{"personal volume", func(r *RankDefinition) { r.Qualification.Structures[0].PersonalVolume = dec.MustParse("50") },
-			at + "/structures/0/personal_volume", `base rank "Associate" sets personal_volume 50 on structure "Primary"`},
+			at + "/structures/0/personal_volume", `base rank "Associate" sets personal_volume 50 on structure "Primary"`, ""},
 		{"group volume", func(r *RankDefinition) { r.Qualification.Structures[0].GroupVolume = dec.MustParse("1000") },
-			at + "/structures/0/group_volume", `base rank "Associate" sets group_volume 1000 on structure "Primary"`},
+			at + "/structures/0/group_volume", `base rank "Associate" sets group_volume 1000 on structure "Primary"`, ""},
 		{"retail volume", func(r *RankDefinition) { r.Qualification.Structures[0].MinRetailVolume = dec.MustParse("10") },
-			at + "/structures/0/min_retail_volume", `base rank "Associate" sets min_retail_volume 10 on structure "Primary"`},
-		{"distributor count", func(r *RankDefinition) {
-			r.Qualification.Structures[0].DistributorCount = &DistributorCountRequirement{Count: 1, SearchMode: "any_level", TotalCount: 1}
-		}, at + "/structures/0/distributor_count", `base rank "Associate" sets distributor_count on structure "Primary"`},
+			at + "/structures/0/min_retail_volume", `base rank "Associate" sets min_retail_volume 10 on structure "Primary"`, ""},
+		{"distributor count, also refused by min_rank ordering", func(r *RankDefinition) {
+			r.Qualification.Structures[0].DistributorCount = &DistributorCountRequirement{Count: 1, MinRank: "Associate", SearchMode: "any_level", TotalCount: 1}
+		}, at + "/structures/0/distributor_count", `base rank "Associate" sets distributor_count on structure "Primary"`, "ordering_violation"},
 		{"leg quality", func(r *RankDefinition) {
 			r.Qualification.Structures[0].LegQuality = []LegQualityRequirement{
 				{Count: 1, Predicate: LegPredicate{Type: "contains_personal_volume", MinPersonalVolume: dec.MustParse("100")}},
 			}
-		}, at + "/structures/0/leg_quality", `base rank "Associate" sets leg_quality on structure "Primary"`},
+		}, at + "/structures/0/leg_quality", `base rank "Associate" sets leg_quality on structure "Primary"`, ""},
 		{"required products", func(r *RankDefinition) { r.Qualification.RequiredProducts = []string{"starter-kit"} },
-			at + "/required_products", `base rank "Associate" requires products [starter-kit]`},
+			at + "/required_products", `base rank "Associate" requires products [starter-kit]`, ""},
 		{"window", func(r *RankDefinition) {
 			r.Qualification.Window = &RankQualificationWindow{ThresholdRank: "Associate", QualifyingPeriods: 1, WindowPeriods: 1}
-		}, at + "/window", `base rank "Associate" has a window`},
+		}, at + "/window", `base rank "Associate" has a window`, ""},
 		{"tenure", func(r *RankDefinition) {
 			r.Qualification.Tenure = &TenureRequirement{ThresholdRank: "Associate", Periods: 1}
-		}, at + "/tenure", `base rank "Associate" has a tenure requirement`},
+		}, at + "/tenure", `base rank "Associate" has a tenure requirement`, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2093,11 +2096,26 @@ func TestBaseRankRequirementRejected(t *testing.T) {
 
 			errs := validateBusinessRules(plan)
 
-			require.Len(t, errs, 1, "errors: %v", errs)
-			assert.Equal(t, "base_rank_has_requirements", errs[0].Code)
-			assert.Equal(t, tt.path, errs[0].Path)
-			assert.Contains(t, errs[0].Message, tt.message)
-			assert.Equal(t, SeverityError, errs[0].Severity)
+			want := 1
+			if tt.extraCode != "" {
+				want = 2
+			}
+			require.Len(t, errs, want, "errors: %v", errs)
+			var base *ValidationError
+			var codes []string
+			for i := range errs {
+				codes = append(codes, errs[i].Code)
+				if errs[i].Code == "base_rank_has_requirements" {
+					base = &errs[i]
+				}
+			}
+			require.NotNil(t, base, "errors: %v", errs)
+			assert.Equal(t, tt.path, base.Path)
+			assert.Contains(t, base.Message, tt.message)
+			assert.Equal(t, SeverityError, base.Severity)
+			if tt.extraCode != "" {
+				assert.Contains(t, codes, tt.extraCode)
+			}
 		})
 	}
 }
@@ -2374,4 +2392,49 @@ func TestRankThresholdNegativeRejectedOnALaterEntryOfAMiddleRank(t *testing.T) {
 	assert.Equal(t, "/ranks/1/qualification/structures/1/group_volume", errs[0].Path)
 	assert.Equal(t, `rank "Silver" structure "Secondary" group_volume must be non-negative, got -1`, errs[0].Message)
 	assert.Equal(t, SeverityError, errs[0].Severity)
+}
+
+func TestDistributorCountRequiresMinRankAndSearchMode(t *testing.T) {
+	const at = "/ranks/1/qualification/structures/0/distributor_count"
+	const minRankMsg = `rank "Silver" structure "Primary" distributor_count.min_rank is required`
+	const searchModeMsg = `rank "Silver" structure "Primary" distributor_count.search_mode is required`
+	cases := []struct {
+		name     string
+		block    DistributorCountRequirement
+		paths    []string
+		messages []string
+	}{
+		{"empty block", DistributorCountRequirement{},
+			[]string{at + "/min_rank", at + "/search_mode"}, []string{minRankMsg, searchModeMsg}},
+		{"missing min_rank", DistributorCountRequirement{SearchMode: "any_level"},
+			[]string{at + "/min_rank"}, []string{minRankMsg}},
+		{"missing search_mode", DistributorCountRequirement{MinRank: "Associate"},
+			[]string{at + "/search_mode"}, []string{searchModeMsg}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			plan := minimalPlan()
+			block := c.block
+			plan.Ranks[1].Qualification.Structures[0].DistributorCount = &block
+
+			errs := validateBusinessRules(plan)
+
+			require.Len(t, errs, len(c.paths), "errors: %v", errs)
+			for i, path := range c.paths {
+				assert.Equal(t, "missing_required_field", errs[i].Code)
+				assert.Equal(t, path, errs[i].Path)
+				assert.Equal(t, c.messages[i], errs[i].Message)
+				assert.Equal(t, SeverityError, errs[i].Severity)
+			}
+		})
+	}
+}
+
+func TestDistributorCountWithMinRankAndSearchModeIsAccepted(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Qualification.Structures[0].DistributorCount = &DistributorCountRequirement{
+		Count: 1, MinRank: "Associate", SearchMode: "any_level", TotalCount: 1,
+	}
+
+	assert.Empty(t, validateBusinessRules(plan))
 }

@@ -76,7 +76,9 @@ func TestFindFloatIdents_NamesEachFloatOutsideTestsAndExceptions(t *testing.T) {
 		"\n"+
 		"var Allowed, Count = float64(1), 1\n"+
 		"\n"+
-		"var R, S = split(float64(2))\n")
+		"var R, S = split(float64(2))\n"+
+		"\n"+
+		"var Rate any = float64(3)\n")
 	write("types_test.go", "package p\n\nvar f float64\n")
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "dir.go"), 0o755))
 	write("notes.txt", "float64\n")
@@ -100,6 +102,7 @@ func TestFindFloatIdents_NamesEachFloatOutsideTestsAndExceptions(t *testing.T) {
 		"extra.go:40: Num float64",
 		"extra.go:45: R float64",
 		"extra.go:45: S float64",
+		"extra.go:47: Rate float64",
 		"types.go:4: Order.Total float64",
 		"types.go:9: Calc.Scale float32",
 		"types.go:12: half float64",

@@ -693,7 +693,8 @@ impl MatrixTree {
     /// parent and position.
     ///
     /// Validates the user id, position, parent existence, slot availability,
-    /// and that the user is in the holding tank. Restores the placed user's own
+    /// and that the user is in the holding tank. It refuses a user whose stored
+    /// sponsor is still in the holding tank. Restores the placed user's own
     /// sponsor link if that sponsor is still in the tree. It does not change any
     /// other node's sponsor.
     pub fn place_from_tank(
@@ -730,6 +731,14 @@ impl MatrixTree {
             .iter()
             .position(|entry| entry.user_id == user_id)
             .ok_or(TreeError::UserNotInHoldingTank(user_id))?;
+        if let Some(sponsor_id) = self.holding_tank[tank_pos].sponsor_user_id {
+            if self.holding_tank.iter().any(|e| e.user_id == sponsor_id) {
+                return Err(TreeError::SponsorInHoldingTank {
+                    user_id,
+                    sponsor_id,
+                });
+            }
+        }
         let entry = self.holding_tank.remove(tank_pos);
 
         // Resolve sponsor: restore if the sponsor still exists in the tree.
@@ -2560,6 +2569,78 @@ mod tests {
 
         let result = tree.place_from_tank(test_uuid(2), test_uuid(99), 0);
         assert!(matches!(result, Err(TreeError::UserNotFound(_))));
+    }
+
+    /// Nodes 2 and 4 in the holding tank, with 4 sponsored by 2, and node 3
+    /// still under the root.
+    fn tanked_sponsor_and_recruit() -> MatrixTree {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node(test_uuid(2), test_uuid(1), 1).unwrap();
+        tree.add_node(test_uuid(3), test_uuid(1), 2).unwrap();
+        tree.add_node(test_uuid(4), test_uuid(2), 3).unwrap();
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+        tree
+    }
+
+    #[test]
+    fn place_from_tank_refuses_a_recruit_whose_sponsor_is_in_the_tank() {
+        let mut tree = tanked_sponsor_and_recruit();
+        let before = serialized(&tree);
+
+        let result = tree.place_from_tank(test_uuid(4), test_uuid(3), 0);
+
+        assert_eq!(
+            result,
+            Err(TreeError::SponsorInHoldingTank {
+                user_id: test_uuid(4),
+                sponsor_id: test_uuid(2),
+            })
+        );
+        assert_eq!(serialized(&tree), before);
+        let tank: Vec<Uuid> = tree
+            .get_holding_tank(None)
+            .iter()
+            .map(|e| e.user_id)
+            .collect();
+        assert_eq!(tank, vec![test_uuid(4), test_uuid(2)]);
+    }
+
+    #[test]
+    fn place_from_tank_restores_a_recruit_placed_after_its_sponsor() {
+        let mut tree = tanked_sponsor_and_recruit();
+
+        tree.place_from_tank(test_uuid(2), test_uuid(1), 0).unwrap();
+        tree.place_from_tank(test_uuid(4), test_uuid(3), 0).unwrap();
+
+        let sponsor = tree.get_sponsor(test_uuid(4)).unwrap().unwrap();
+        assert_eq!(sponsor.user_id, test_uuid(2));
+        let recruits: Vec<Uuid> = tree
+            .get_sponsored(test_uuid(2))
+            .unwrap()
+            .iter()
+            .map(|n| n.user_id)
+            .collect();
+        assert_eq!(recruits, vec![test_uuid(4)]);
+        assert_eq!(tree.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn place_from_tank_reports_an_occupied_slot_before_a_tanked_sponsor() {
+        let mut tree = tanked_sponsor_and_recruit();
+        let before = serialized(&tree);
+
+        let result = tree.place_from_tank(test_uuid(4), test_uuid(1), 1);
+
+        assert_eq!(
+            result,
+            Err(TreeError::PositionOccupied {
+                user_id: test_uuid(1),
+                position: 1,
+            })
+        );
+        assert_eq!(serialized(&tree), before);
     }
 
     // --- get_holding_tank filter tests ---

@@ -1562,7 +1562,7 @@ Each step is one set-based statement, to keep a large removal inside the store's
 
 The store does not show the holding tank. The engine rebuilt by replay or from a snapshot does.
 
-The engine refuses to place a user who is in the holding tank. `add_root`, `add_node`, `add_node_at` and a `check_mutation` for `add_root` or `add_node_at` answer `USER_IN_HOLDING_TANK` (HEU-930). `place_from_tank` is the only way out of the tank, and the event path has no event for it.
+The engine refuses to place a user who is in the holding tank. `add_root`, `add_node`, `add_node_at` and a `check_mutation` for `add_root` or `add_node_at` answer `USER_IN_HOLDING_TANK` (HEU-930). `place_from_tank` is the only way out of the tank, and the event path has no event for it. `place_from_tank` answers `SPONSOR_IN_HOLDING_TANK` for a user whose stored sponsor is still in the tank, until that sponsor is placed. A tank restored from a snapshot whose entries sponsor themselves or each other can never be drained this way (HEU-1008). `get_holding_tank` lists a removed subtree's descendants before the removed node. A caller that places entries in that order is refused with `SPONSOR_IN_HOLDING_TANK` for any entry whose stored sponsor is still in the tank. Place each sponsor before the users it sponsors.
 
 ## Rounding A Rounded Quotient Can Invent A Tie
 

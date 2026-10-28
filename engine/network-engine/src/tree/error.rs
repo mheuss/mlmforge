@@ -52,6 +52,9 @@ pub enum TreeError {
     #[error("user {0} is in the holding tank")]
     UserInHoldingTank(Uuid),
 
+    #[error("cannot place user {user_id}: its sponsor {sponsor_id} is in the holding tank")]
+    SponsorInHoldingTank { user_id: Uuid, sponsor_id: Uuid },
+
     #[error("spillover direction not supported")]
     UnsupportedSpillover,
 

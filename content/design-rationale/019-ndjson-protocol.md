@@ -64,7 +64,7 @@ The Rust `Request` struct deserializes `params` as `Box<serde_json::value::RawVa
 
 ### Error Code Taxonomy
 
-The worker returns an error code in the `error.code` field. There are 48 of
+The worker returns an error code in the `error.code` field. There are 49 of
 them, grouped below by the area that raises them. Codes are shared across areas
 where the condition is the same, so each one is listed once.
 
@@ -87,6 +87,7 @@ which maps every `TreeError` variant, plus a few handler-level checks.
 | `SPONSOR_NOT_FOUND` | Named sponsor does not exist. Also raised by board and streamline placement |
 | `USER_NOT_IN_HOLDING_TANK` | `place_from_tank` named a user who is not in the tank |
 | `USER_IN_HOLDING_TANK` | A matrix add or place named a user who is in the holding tank (HEU-930) |
+| `SPONSOR_IN_HOLDING_TANK` | `place_from_tank` named a user whose stored sponsor is still in the holding tank (HEU-998) |
 | `UNSUPPORTED_SPILLOVER` | The requested spillover strategy is not implemented for this tree type |
 | `SUBTREE_FULL` | Spillover found no open slot in the target subtree |
 | `SPONSORLESS_WITH_RECRUITS` | Cannot remove a node whose recruits outlive it when no sponsor of its own does. See [030](030-sponsor-continuity-on-removal.md) |

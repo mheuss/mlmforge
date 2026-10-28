@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -596,4 +597,43 @@ func TestPipelineRefusesANonFiniteRankThresholdWithoutPanicking(t *testing.T) {
 			assert.Equal(t, "/ranks/1/qualification/structures/0/group_volume", errs[0].Path)
 		})
 	}
+}
+
+func TestPipelineRefusesAnEmptyDistributorCountAtTheSchema(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	block := "distributor_count:\n            count: 2\n            min_rank: Builder\n            search_mode: first_levels\n            search_depth: 3\n            total_count: 4\n            min_leg_group_volume: 300\n"
+	doc := replaceInYAML(t, base, block, "distributor_count: {}\n")
+
+	jsonBytes, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	assert.Nil(t, jsonBytes)
+	require.NotEmpty(t, errs)
+	naming := 0
+	for _, e := range errs {
+		assert.Equal(t, "schema_violation", e.Code, "errors: %v", errs)
+		assert.Equal(t, "/ranks/2/qualification/structures/0/distributor_count", e.Path, "errors: %v", errs)
+		if strings.Contains(e.Message, "min_rank") && strings.Contains(e.Message, "search_mode") {
+			naming++
+		}
+	}
+	assert.Equal(t, 1, naming, "errors: %v", errs)
+}
+
+func TestPipelineRefusesAnEmptyDistributorCountMinRankInTheRules(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	doc := replaceInYAML(t, base, "min_rank: Builder\n", "min_rank: \"\"\n")
+
+	jsonBytes, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	assert.Nil(t, jsonBytes)
+	require.Len(t, errs, 1, "errors: %v", errs)
+	assert.Equal(t, "missing_required_field", errs[0].Code)
+	assert.Equal(t, "/ranks/2/qualification/structures/0/distributor_count/min_rank", errs[0].Path)
+	assert.Equal(t, SeverityError, errs[0].Severity)
 }

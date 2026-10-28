@@ -1,11 +1,15 @@
 package financial
 
-import "time"
+import (
+	"time"
+
+	"github.com/mlmforge/mlmforge/internal/dec"
+)
 
 // ChargeRequest describes a payment to process.
 type ChargeRequest struct {
 	UserID          string
-	Amount          float64
+	Amount          dec.Amount
 	Currency        string // Market's local currency
 	PaymentMethodID string // References wallet
 	OrderID         string // For correlation
@@ -23,7 +27,7 @@ type ChargeResult struct {
 // RefundRequest describes a refund to process.
 type RefundRequest struct {
 	TransactionID string // Original charge
-	Amount        float64
+	Amount        dec.Amount
 	Reason        string
 }
 
@@ -67,7 +71,7 @@ type Invoice struct {
 	UserID      string
 	OrderID     string // Optional — empty for standalone invoices
 	InvoiceType string // "order", "fee", "administrative", "adjustment"
-	Amount      float64
+	Amount      dec.Amount
 	Currency    string // In the order's market currency
 	Status      string // "pending", "paid", "void"
 	LineItems   []InvoiceLineItem
@@ -80,8 +84,8 @@ type Invoice struct {
 type InvoiceLineItem struct {
 	Description string
 	Quantity    int
-	UnitPrice   float64
-	Total       float64
+	UnitPrice   dec.Amount
+	Total       dec.Amount
 }
 
 // InvoiceFilter supports filtering invoices.

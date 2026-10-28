@@ -1,6 +1,10 @@
 package commerce
 
-import "time"
+import (
+	"time"
+
+	"github.com/mlmforge/mlmforge/internal/dec"
+)
 
 // Product represents a market-specific product with local pricing and
 // pre-assigned currency-neutral CV points.
@@ -10,10 +14,10 @@ type Product struct {
 	MarketID          string
 	CategoryID        string
 	ProductClassID    string // Drives volume routing rules in Network Engine
-	RetailPrice       float64
-	DistributorPrice  float64
-	Currency          string  // Market's local currency
-	CVPoints          float64 // Currency-neutral, pre-assigned
+	RetailPrice       dec.Amount
+	DistributorPrice  dec.Amount
+	Currency          string     // Market's local currency
+	CVPoints          dec.Amount // Currency-neutral, pre-assigned
 	QuantityAvailable int
 	IsActive          bool
 }

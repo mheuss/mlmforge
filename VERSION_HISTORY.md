@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**Test count:** 1832 (Rust), 1686 (Go)
+**Test count:** 1832 (Rust), 1692 (Go)
 
 ### Added
 - Project research documentation (MLM fundamentals, compensation plans, glossary, competitive landscape, legal/regulatory)
@@ -92,6 +92,7 @@
 - `load_plan` and Go validation refuse a base currency missing from the minor-unit table, and a plan money value that is not a whole number of minor units. (HEU-969, phase 2)
 - A library call to `calculate_binary_pairing` with a pairing percent outside [0, 1] returns an error. (HEU-982)
 - Go refuses a rank's `distributor_count` block that leaves out `min_rank` or `search_mode`. The schema requires both keys. The public loader refuses `distributor_count: {}` and produces no engine JSON. `validateBusinessRules` refuses an empty `min_rank` or `search_mode` with `missing_required_field`. The error names the rank and structure. This covers callers that skip the schema. It also covers an explicit `min_rank: ""`, which the schema accepts. The engine used to refuse an empty `search_mode` at load. It failed on an empty `min_rank` at rank evaluation. (HEU-992)
+- The commerce and financial packages hold money and CV points as `dec.Amount`, not `float64`. A guard test in each package fails on any `float32` or `float64` identifier in its non-test files. It does not see a float that has no `float32` or `float64` identifier. JSON `null` in one of these fields now fails to decode. (HEU-981)
 
 ### Fixed
 - Production `unwrap()` in unilevel.rs replaced with `match` on `Option`

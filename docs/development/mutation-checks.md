@@ -409,6 +409,14 @@ When you add a key:
 - Mutate the earlier key away and watch that case fail on the twin that
   decides it.
 
+## Deleting a tie-break from a stable sort proves nothing
+
+Rust's `sort_by` and `sort_by_key` are stable. A comparator that ends
+`.then(a.cmp(&b))` on indices that start in ascending order gives the same
+order without that clause. Deleting it is an equivalent mutation. Every
+test passes. To check that a test pins the tie-break, reverse it to
+`.then(b.cmp(&a))` and watch that test fail. Came up in HEU-997.
+
 ## Prove a chain check on its own with `%.0w`
 
 A test that checks both an error's text and its chain usually fails on the text first. Revert a fix and the text leaks, so the chain check never gets to fail on its own. The suite goes red, and nothing has shown the chain check can catch anything.

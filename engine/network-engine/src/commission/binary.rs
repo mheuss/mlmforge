@@ -187,10 +187,9 @@ fn apply_aggregate_cap(
     });
     for group in earnings.chunk_by_mut(|a, b| a.earner_id == b.earner_id) {
         let raw: Vec<Dec> = group.iter().map(|e| e.dollar_amount).collect();
-        let raw_total = Dec::sum(raw.iter().copied())?;
-        if raw_total <= cap {
+        if !Dec::sum_exceeds(&raw, cap) {
             let rounded: Vec<Dec> = raw.iter().map(|a| a.round_minor(minor_units)).collect();
-            if Dec::sum(rounded.iter().copied())? <= cap {
+            if !Dec::sum_exceeds(&rounded, cap) {
                 for (e, amount) in group.iter_mut().zip(rounded) {
                     e.dollar_amount = amount;
                 }
@@ -3735,6 +3734,86 @@ mod tests {
         assert!(aggregate_pairing_with_percent(d!(1)).is_ok());
     }
 
+    /// Runs the two-position aggregate-cap fixture with CV 100 under position 2
+    /// and CV 0.0000000001 under position 3.
+    fn wide_span_aggregate_pairing(
+        cap: AuthoredDec,
+    ) -> Result<BinaryCalculationResult, CalculationError> {
+        let tree = multi_position_tree();
+        let structure = BinaryStructureConfig {
+            name: "Test Binary".to_string(),
+            binary_commission: BinaryCommissionConfig {
+                volume_to_dollar_multiplier: Some(d!(0.33333333)),
+                mode: BinaryCommissionMode::Pairing(PairingConfig {
+                    percent: d!(0.3333333333),
+                    cap_per_period: Some(cap),
+                    multi_position_cap_mode: MultiPositionCapMode::Aggregate,
+                    ..test_pairing_config()
+                }),
+            },
+        };
+        let plan = test_plan_with_structure(default_eligibility(), structure.clone());
+        let owner_a = test_uuid(100);
+        let mut ownership = HashMap::new();
+        ownership.insert(test_uuid(2), owner_a);
+        ownership.insert(test_uuid(3), owner_a);
+        let mut snapshots = HashMap::new();
+        for id in [100, 1, 4, 5, 6, 7] {
+            snapshots.insert(test_uuid(id), eligible_snapshot());
+        }
+        let volume = vec![
+            VolumeSource {
+                source_id: test_uuid(4),
+                cv_amount: d!(100),
+            },
+            VolumeSource {
+                source_id: test_uuid(5),
+                cv_amount: d!(100),
+            },
+            VolumeSource {
+                source_id: test_uuid(6),
+                cv_amount: d!(0.0000000001),
+            },
+            VolumeSource {
+                source_id: test_uuid(7),
+                cv_amount: d!(0.0000000001),
+            },
+        ];
+        calculate_binary_pairing(
+            &tree,
+            &plan,
+            &structure,
+            &snapshots,
+            &volume,
+            &HashMap::new(),
+            Some(&ownership),
+        )
+    }
+
+    /// The earning for `position`, as its dollar amount and capped flag.
+    fn position_payout(result: &BinaryCalculationResult, position: u8) -> (Dec, bool) {
+        let e = result
+            .earnings
+            .iter()
+            .find(|e| e.position_id == test_uuid(position))
+            .unwrap();
+        (e.dollar_amount, e.capped)
+    }
+
+    #[test]
+    fn an_aggregate_cap_over_wide_span_earnings_is_allocated() {
+        let result = wide_span_aggregate_pairing(d!(5)).unwrap();
+        assert_eq!(position_payout(&result, 2), (d!(5), true));
+        assert_eq!(position_payout(&result, 3), (d!(0), true));
+    }
+
+    #[test]
+    fn wide_span_earnings_under_an_aggregate_cap_are_only_rounded() {
+        let result = wide_span_aggregate_pairing(d!(500)).unwrap();
+        assert_eq!(position_payout(&result, 2), (d!(11.11), false));
+        assert_eq!(position_payout(&result, 3), (d!(0), false));
+    }
+
     #[test]
     fn multi_position_aggregate_cap_scales_pro_rata() {
         // pos_a (2) and pos_b (3) are both owned by owner_A (test_uuid(100)).
@@ -4868,6 +4947,37 @@ mod tests {
             ];
             apply_aggregate_cap(&mut earnings, d!(1), 2).unwrap();
             assert_eq!(amounts(&earnings), vec![d!(0), d!(0), d!(1)]);
+            assert!(earnings.iter().all(|e| e.capped));
+        }
+
+        #[test]
+        fn a_raw_total_over_the_cap_whose_rounding_fits_is_allocated() {
+            let mut earnings = vec![
+                earning(1, 2, d!(0.674)),
+                earning(1, 3, d!(0.674)),
+                earning(1, 4, d!(0.674)),
+            ];
+            apply_aggregate_cap(&mut earnings, d!(2.02), 2).unwrap();
+            assert_eq!(amounts(&earnings), vec![d!(0.68), d!(0.67), d!(0.67)]);
+            assert!(earnings.iter().all(|e| e.capped));
+        }
+
+        #[test]
+        fn a_zero_earning_under_a_zero_cap_is_rounded_not_capped() {
+            let mut earnings = vec![earning(1, 2, d!(0))];
+            apply_aggregate_cap(&mut earnings, d!(0), 2).unwrap();
+            assert_eq!(amounts(&earnings), vec![d!(0)]);
+            assert!(!earnings[0].capped);
+        }
+
+        #[test]
+        fn a_group_whose_raw_total_does_not_fit_a_dec_is_allocated() {
+            let mut earnings = vec![
+                earning(1, 2, d!(0.005)),
+                earning(1, 3, d!(10000000000000000000000000000)),
+            ];
+            apply_aggregate_cap(&mut earnings, d!(1), 2).unwrap();
+            assert_eq!(amounts(&earnings), vec![d!(0), d!(1)]);
             assert!(earnings.iter().all(|e| e.capped));
         }
 

@@ -283,7 +283,7 @@ A refusal fails at runtime, not in a test. A fall-through does not fail at all.
 
 Proptest writes a `.proptest-regressions` seed file next to a test the first time a case fails. The project checks the legitimate ones in (see `binary_commission_properties.proptest-regressions`) so saved edge cases re-run for everyone.
 
-Two gotchas show up when hardening these tests. A vacuity check deliberately breaks an assertion to confirm it fails, then reverts. That leaves a stray regression file for the artificial failure. Delete it before committing. Scope the delete to the exact file. A `rm tests/*.proptest-regressions` glob also wipes the checked-in ones. Separately, the `FileFailurePersistence::SourceParallel set, but failed to find lib.rs or main.rs` line during integration-test runs is benign. Proptest just cannot locate the crate root from the test binary.
+Two gotchas show up when hardening these tests. A vacuity check deliberately breaks an assertion to confirm it fails, then reverts. That leaves a stray regression file for the artificial failure. Delete it before committing. Scope the delete to the exact file. A `rm tests/*.proptest-regressions` glob also wipes the checked-in ones. Separately, the `FileFailurePersistence::SourceParallel set, but failed to find lib.rs or main.rs` line during integration-test runs is benign. Proptest just cannot locate the crate root from the test binary. A saved seed replays proptest's random stream, not the shrunk input. The `# shrinks to` text after it is a comment. Describe a seed by the test it fails, never by its shrunk case. Came up in HEU-997.
 
 ### A property net can go quiet without failing
 
@@ -489,6 +489,7 @@ Before HEU-969, this was verified by deleting the sort and watching which tests 
   - E4 is `floor_div`, a cycle count. It rounds down to an integer.
 - The other two round money. Each earning's money is rounded to the plan currency's minor unit with `round_minor`, ties away from zero.
 - An aggregate cap is split with `allocate_largest_remainder` in whole minor units, so the shares sum exactly to the cap.
+- `sum_exceeds` compares a sum with a bound exactly, in wide integers. An aggregate cap uses it, so a group whose total does not fit a `Dec` is still settled.
 - An authored value must have an absolute value below 10^15, with at most 10 decimal places.
 - serde_json's `arbitrary_precision` is a normal dependency of both crates. A number on the wire never passes through `f64`.
 - Tests write decimal values with `d!()`, and compare against a literal with `assert_d!`.

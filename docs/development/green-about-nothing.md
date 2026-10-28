@@ -83,6 +83,12 @@ HEU-802, 2026-10-17.
   scanned elsewhere. When the resolution wrote lines of its own, those lines
   are not scanned.
 
+## A missing socket is not a missing Docker
+
+HEU-981, 2026-10-28.
+
+- **Setting `DOCKER_HOST` to a missing socket does not make Docker unavailable to testcontainers-go.** It still resolved `unix:///var/run/docker.sock`, and the Postgres tests ran. To prove a package's tests pass without Docker, hide the socket: `bwrap --dev-bind / / --tmpfs /run -- env -u DOCKER_HOST go test ...`. The container tests then skip with "Postgres container not available". Came up in HEU-981.
+
 ## Naming the trap does not disarm it
 
 The third instance above was written by the person who had named it. Having

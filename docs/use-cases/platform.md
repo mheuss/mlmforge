@@ -5,6 +5,7 @@ Use-cases for the Platform bounded context.
 ## Table of Contents
 
 - [UC-PLATFORM-001: Withhold a refused database connection string](#uc-platform-001-withhold-a-refused-database-connection-string)
+- [UC-PLATFORM-002: Guard a package against float types](#uc-platform-002-guard-a-package-against-float-types)
 
 ---
 
@@ -47,3 +48,26 @@ for _, tc := range testutil.ConnStringCases() {
 ```
 
 **Notes:** Run the password-window and chain checks before the full-text check, so a mutation shows each one failing on its own. What each driver does with a refused string, and which test pins it, is in `docs/development/connection-strings.md`. Before `mlmforge migrate` or `mlmforge tree` opens a driver, `resolveDBURL` runs `PreDriverError`. A call site that does not go through `resolveDBURL` is not covered. `PreDriverError` refuses a `postgres://` or `postgresql://` scheme that is not all lowercase. It also refuses a raw `@` after the host part. A raw `/`, `?` or `#` in a password puts the userinfo's closing `@` there. It also refuses a non-URL string whose first keyword key no parameter name can hold, outside a `_pq_.` protocol option. It refuses any query key or `&` after `password`. It refuses a raw `+` in a query password.
+
+---
+
+### UC-PLATFORM-002: Guard a package against float types
+
+**Added:** Unreleased (HEU-981)
+**Files:** `internal/testutil/floatidents.go` (`FindFloatIdents`), `internal/commerce/float_guard_test.go` (`TestNoFloatInCommerce`), `internal/financial/float_guard_test.go` (`TestNoFloatInFinancial`), `internal/networkengine/float_guard_test.go` (`TestNoFloatOnTheDecimalBoundary`)
+
+**Problem:** A `float64` money or volume field rounds values that must stay exact, and the next author copies it.
+
+**Solution:** Two guards exist, and they make different trade-offs. `FindFloatIdents` parses every non-test Go file in one directory and reports each `float32` or `float64` identifier with its owner. It sees nothing that has no float identifier, such as `NullFloat64` or an untyped literal. `TestNoFloatOnTheDecimalBoundary` scans a listed set of files with a regex. It catches `NullFloat64`, `NewFromFloat` and `ParseFloat`, but only in the files it lists. HEU-1006 asks whether to converge them.
+
+**Usage:**
+```go
+func TestNoFloatInOrders(t *testing.T) {
+	found, err := testutil.FindFloatIdents(".", nil)
+
+	require.NoError(t, err)
+	assert.Empty(t, found, "float32 or float64 in the non-test Go files of this package")
+}
+```
+
+**Notes:** An owner is `Type.Field` for a struct field, `Type.Method` for a method, and the function name for a plain function. A legitimate float is excused by naming its owner in the exception set, for example `map[string]bool{"Rate.Ratio": true}`. See the guard limit noted on HEU-531.

@@ -732,7 +732,11 @@ impl MatrixTree {
             .position(|entry| entry.user_id == user_id)
             .ok_or(TreeError::UserNotInHoldingTank(user_id))?;
         if let Some(sponsor_id) = self.holding_tank[tank_pos].sponsor_user_id {
-            if self.holding_tank.iter().any(|e| e.user_id == sponsor_id) {
+            if self
+                .holding_tank
+                .iter()
+                .any(|entry| entry.user_id == sponsor_id)
+            {
                 return Err(TreeError::SponsorInHoldingTank {
                     user_id,
                     sponsor_id,

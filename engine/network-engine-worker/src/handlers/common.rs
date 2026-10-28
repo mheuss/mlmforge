@@ -542,12 +542,12 @@ mod tests {
 
         assert_eq!(error.code, "SPONSOR_IN_HOLDING_TANK");
         assert!(
-            error.message.contains(&user.to_string()),
+            error.message.contains(&format!("user {user}")),
             "{}",
             error.message
         );
         assert!(
-            error.message.contains(&sponsor.to_string()),
+            error.message.contains(&format!("sponsor {sponsor}")),
             "{}",
             error.message
         );

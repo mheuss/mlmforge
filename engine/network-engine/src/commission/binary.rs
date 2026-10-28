@@ -3734,7 +3734,8 @@ mod tests {
         assert!(aggregate_pairing_with_percent(d!(1)).is_ok());
     }
 
-    /// Runs a two-position aggregate-cap pairing whose earnings span 28 decimal places.
+    /// Runs the two-position aggregate-cap fixture with CV 100 under position 2
+    /// and CV 0.0000000001 under position 3.
     fn wide_span_aggregate_pairing(
         cap: AuthoredDec,
     ) -> Result<BinaryCalculationResult, CalculationError> {

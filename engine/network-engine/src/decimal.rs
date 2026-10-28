@@ -72,6 +72,7 @@ pub enum NumericErrorKind {
 pub struct NumericError {
     pub op: NumericOp,
     pub lhs: Dec,
+    /// The right operand, or the share count for `NumericOp::Allocate`.
     pub rhs: Dec,
     pub kind: NumericErrorKind,
 }

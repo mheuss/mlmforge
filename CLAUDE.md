@@ -96,7 +96,7 @@ one operator watches every session.
 A wall is the `sop:using-sop` hard stop, an unclear path forward, or unexpected behavior. When you hit one:
 
 1. **Stop** — Do not attempt workarounds without input from the hub. With no hub running, get it from the developer
-2. **Notify** — Send the report below to the hub. With no hub running, send it to the developer.
+2. **Notify** — Send the report below to the hub, with BLOCKING on its first line. With no hub running, send it to the developer.
 3. **Report:**
    - What I was trying to do
    - What I tried

@@ -47,7 +47,7 @@ processing any other skill, command, or request.
 - Use `--no-verify` to bypass commit hooks
 - Claim work is complete without running tests and verifying output
 - Push directly to main or force push to shared branches
-- Continue past the hard stop in `sop:using-sop` (same error after two tries). Stop and reassess.
+- Continue past the hard stop in `sop:using-sop`. That stop is the same error after two tries. Stop and reassess.
 
 ### Who authorizes what
 
@@ -93,7 +93,7 @@ one operator watches every session.
 
 ### When Blocked
 
-When you hit a wall (the `sop:using-sop` hard stop, an unclear path forward, or unexpected behavior):
+A wall is the `sop:using-sop` hard stop, an unclear path forward, or unexpected behavior. When you hit one:
 
 1. **Stop** — Do not attempt workarounds without input from the hub. With no hub running, get it from the developer
 2. **Notify** — Send the report below to the hub. With no hub running, send it to the developer.

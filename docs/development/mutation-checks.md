@@ -413,7 +413,7 @@ When you add a key:
 
 Rust's `sort_by` and `sort_by_key` are stable. A comparator that ends
 `.then(a.cmp(&b))` on indices that start in ascending order gives the same
-order without that clause. Deleting it is an equivalent mutation, and every
+order without that clause. Deleting it is an equivalent mutation. Every
 test passes. To check that a test pins the tie-break, reverse it to
 `.then(b.cmp(&a))` and watch that test fail. Came up in HEU-997.
 

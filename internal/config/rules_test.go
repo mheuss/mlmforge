@@ -2396,14 +2396,20 @@ func TestRankThresholdNegativeRejectedOnALaterEntryOfAMiddleRank(t *testing.T) {
 
 func TestDistributorCountRequiresMinRankAndSearchMode(t *testing.T) {
 	const at = "/ranks/1/qualification/structures/0/distributor_count"
+	const minRankMsg = `rank "Silver" structure "Primary" distributor_count.min_rank is required`
+	const searchModeMsg = `rank "Silver" structure "Primary" distributor_count.search_mode is required`
 	cases := []struct {
-		name  string
-		block DistributorCountRequirement
-		paths []string
+		name     string
+		block    DistributorCountRequirement
+		paths    []string
+		messages []string
 	}{
-		{"empty block", DistributorCountRequirement{}, []string{at + "/min_rank", at + "/search_mode"}},
-		{"missing min_rank", DistributorCountRequirement{SearchMode: "any_level"}, []string{at + "/min_rank"}},
-		{"missing search_mode", DistributorCountRequirement{MinRank: "Associate"}, []string{at + "/search_mode"}},
+		{"empty block", DistributorCountRequirement{},
+			[]string{at + "/min_rank", at + "/search_mode"}, []string{minRankMsg, searchModeMsg}},
+		{"missing min_rank", DistributorCountRequirement{SearchMode: "any_level"},
+			[]string{at + "/min_rank"}, []string{minRankMsg}},
+		{"missing search_mode", DistributorCountRequirement{MinRank: "Associate"},
+			[]string{at + "/search_mode"}, []string{searchModeMsg}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -2417,6 +2423,7 @@ func TestDistributorCountRequiresMinRankAndSearchMode(t *testing.T) {
 			for i, path := range c.paths {
 				assert.Equal(t, "missing_required_field", errs[i].Code)
 				assert.Equal(t, path, errs[i].Path)
+				assert.Equal(t, c.messages[i], errs[i].Message)
 				assert.Equal(t, SeverityError, errs[i].Severity)
 			}
 		})

@@ -615,6 +615,7 @@ func TestPipelineRefusesAnEmptyDistributorCountAtTheSchema(t *testing.T) {
 	for _, e := range errs {
 		assert.Equal(t, "schema_violation", e.Code, "errors: %v", errs)
 		assert.Equal(t, "/ranks/2/qualification/structures/0/distributor_count", e.Path, "errors: %v", errs)
+		assert.Equal(t, SeverityError, e.Severity, "errors: %v", errs)
 		if strings.Contains(e.Message, "min_rank") && strings.Contains(e.Message, "search_mode") {
 			naming++
 		}
@@ -635,5 +636,6 @@ func TestPipelineRefusesAnEmptyDistributorCountMinRankInTheRules(t *testing.T) {
 	require.Len(t, errs, 1, "errors: %v", errs)
 	assert.Equal(t, "missing_required_field", errs[0].Code)
 	assert.Equal(t, "/ranks/2/qualification/structures/0/distributor_count/min_rank", errs[0].Path)
+	assert.Equal(t, `rank "Leader" structure "Primary" distributor_count.min_rank is required`, errs[0].Message)
 	assert.Equal(t, SeverityError, errs[0].Severity)
 }

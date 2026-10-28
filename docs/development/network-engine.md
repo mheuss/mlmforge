@@ -1562,7 +1562,7 @@ Each step is one set-based statement, to keep a large removal inside the store's
 
 The store does not show the holding tank. The engine rebuilt by replay or from a snapshot does.
 
-The engine refuses to place a user who is in the holding tank. `add_root`, `add_node`, `add_node_at` and a `check_mutation` for `add_root` or `add_node_at` answer `USER_IN_HOLDING_TANK` (HEU-930). `place_from_tank` is the only way out of the tank, and the event path has no event for it.
+The engine refuses to place a user who is in the holding tank. `add_root`, `add_node`, `add_node_at` and a `check_mutation` for `add_root` or `add_node_at` answer `USER_IN_HOLDING_TANK` (HEU-930). `place_from_tank` is the only way out of the tank, and the event path has no event for it. A recruit whose stored sponsor is still in the tank is refused until that sponsor is placed (HEU-998).
 
 ## Rounding A Rounded Quotient Can Invent A Tie
 

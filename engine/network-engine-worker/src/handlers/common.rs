@@ -90,6 +90,7 @@ pub(crate) fn tree_error_to_response(request_id: &str, e: TreeError) -> Response
         TreeError::UserNotFound(_) => "USER_NOT_FOUND",
         TreeError::UserAlreadyExists(_) => "USER_ALREADY_EXISTS",
         TreeError::UserInHoldingTank(_) => "USER_IN_HOLDING_TANK",
+        TreeError::SponsorInHoldingTank { .. } => "SPONSOR_IN_HOLDING_TANK",
         TreeError::RootAlreadyExists => "ROOT_ALREADY_EXISTS",
         TreeError::HasChildren(_, _) => "HAS_CHILDREN",
         TreeError::InvalidWidth(_) => "INVALID_WIDTH",
@@ -525,6 +526,31 @@ mod tests {
 
         assert_eq!(error.code, "USER_IN_HOLDING_TANK");
         assert!(error.message.contains("holding tank"), "{}", error.message);
+    }
+
+    #[test]
+    fn a_recruit_with_a_tanked_sponsor_maps_to_its_own_code_naming_both() {
+        let user = Uuid::from_u128(4);
+        let sponsor = Uuid::from_u128(2);
+        let e = TreeError::SponsorInHoldingTank {
+            user_id: user,
+            sponsor_id: sponsor,
+        };
+
+        let response = tree_error_to_response("req-1", e);
+        let error = response.error.as_ref().unwrap();
+
+        assert_eq!(error.code, "SPONSOR_IN_HOLDING_TANK");
+        assert!(
+            error.message.contains(&user.to_string()),
+            "{}",
+            error.message
+        );
+        assert!(
+            error.message.contains(&sponsor.to_string()),
+            "{}",
+            error.message
+        );
     }
 
     #[test]

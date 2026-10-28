@@ -639,3 +639,27 @@ func TestPipelineRefusesAnEmptyDistributorCountMinRankInTheRules(t *testing.T) {
 	assert.Equal(t, `rank "Leader" structure "Primary" distributor_count.min_rank is required`, errs[0].Message)
 	assert.Equal(t, SeverityError, errs[0].Severity)
 }
+
+func TestPipelineAcceptsADistributorCountWithOnlyMinRankAndSearchMode(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	base := readFixture(t, "valid/full-unilevel.yaml")
+	block := "distributor_count:\n            count: 2\n            min_rank: Builder\n            search_mode: first_levels\n            search_depth: 3\n            total_count: 4\n            min_leg_group_volume: 300\n"
+	doc := replaceInYAML(t, base, block, "distributor_count:\n            min_rank: Builder\n            search_mode: any_level\n")
+
+	jsonBytes, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	require.Empty(t, errs)
+	require.NotNil(t, jsonBytes)
+	var plan map[string]any
+	require.NoError(t, json.Unmarshal(jsonBytes, &plan))
+	ranks := plan["ranks"].([]any)
+	structures := ranks[2].(map[string]any)["qualification"].(map[string]any)["structures"].([]any)
+	dc := structures[0].(map[string]any)["distributor_count"].(map[string]any)
+	for _, key := range []string{"count", "total_count", "min_leg_group_volume"} {
+		v, ok := dc[key]
+		require.True(t, ok, "distributor_count lacks %q: %v", key, dc)
+		assert.Equal(t, float64(0), v, "distributor_count.%s", key)
+	}
+}

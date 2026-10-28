@@ -166,9 +166,11 @@ Guard both. Examples on this seam:
 
 The guiding rule is *fail loud*: a malformed value should earn a clear, coded rejection, not a silent default. `StreamConfig.AdditionalPerRank` is the deliberate counter-example to the general "use `omitempty` + `serde(default)`" map rule — its Rust mirror `additional_streams` intentionally has NO `serde(default)`, so the Go field keeps NO `omitempty` and the schema *requires* it. A missing value then earns a loud Rust rejection instead of a silent empty default. `TestAdditionalPerRank_EmptyStaysPresent` pins this against a future `omitempty` "fix" (HEU-513 Task 8A).
 
+A schema `required` list checks only that a key is present. A `"type": "string"` field still accepts `""`. A required string the engine cannot run empty needs `minLength: 1` in the schema or a Go rule. Came up in HEU-992.
+
 ## Testing an optional `oneOf [$ref, null]` object
 
-An optional config object declared as `"oneOf": [{ "$ref": "#/$defs/X" }, { "type": "null" }]` — the shape used for `window` and `tenure` on `RankQualification` — emits TWO `schema_violation` leaves when a required sub-field is missing:
+An optional config object declared as `"oneOf": [{ "$ref": "#/$defs/X" }, { "type": "null" }]` has the shape used for `window` and `tenure` on `RankQualification`, and for `distributor_count` on `StructureQualification`. It emits TWO `schema_violation` leaves when a required sub-field is missing:
 
 1. The missing-property error on the `$ref` branch.
 2. An "expected null, got object" error from the failed `null` branch.

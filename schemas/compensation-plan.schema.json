@@ -280,6 +280,7 @@
     "DistributorCountRequirement": {
       "type": "object",
       "description": "Requirements for counting qualifying distributors in legs.",
+      "required": ["min_rank", "search_mode"],
       "properties": {
         "count": {
           "type": "integer",

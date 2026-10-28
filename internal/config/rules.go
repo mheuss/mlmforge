@@ -37,6 +37,7 @@ func validateBusinessRules(plan *CompensationPlan) []ValidationError {
 	errs = append(errs, validatePeriod(plan)...)
 	errs = append(errs, validateRanks(plan, structs)...)
 	errs = append(errs, validateRankThresholds(plan)...)
+	errs = append(errs, validateDistributorCountFields(plan)...)
 	errs = append(errs, validateStructureRefs(plan, ranks)...)
 	errs = append(errs, validateBonuses(plan, ranks)...)
 	errs = append(errs, validateRateKeyWidths(plan)...)
@@ -567,6 +568,37 @@ func validateRankThresholds(plan *CompensationPlan) []ValidationError {
 					check(fmt.Sprintf("/leg_quality/%d/predicate/min_personal_volume", k),
 						fmt.Sprintf("leg_quality[%d].predicate.min_personal_volume", k), lq.Predicate.MinPersonalVolume)
 				}
+			}
+		}
+	}
+	return errs
+}
+
+// validateDistributorCountFields checks that a distributor_count block names a min_rank and a search_mode.
+func validateDistributorCountFields(plan *CompensationPlan) []ValidationError {
+	var errs []ValidationError
+	for i, r := range plan.Ranks {
+		for j, sq := range r.Qualification.Structures {
+			dc := sq.DistributorCount
+			if dc == nil {
+				continue
+			}
+			for _, f := range []struct {
+				name  string
+				value string
+			}{
+				{"min_rank", dc.MinRank},
+				{"search_mode", dc.SearchMode},
+			} {
+				if f.value != "" {
+					continue
+				}
+				errs = append(errs, ValidationError{
+					Path:     fmt.Sprintf("/ranks/%d/qualification/structures/%d/distributor_count/%s", i, j, f.name),
+					Code:     "missing_required_field",
+					Message:  fmt.Sprintf("rank %q structure %q distributor_count.%s is required", r.Name, sq.Structure, f.name),
+					Severity: SeverityError,
+				})
 			}
 		}
 	}

@@ -64,6 +64,14 @@ func TestFindFloatIdents_NamesEachFloatOutsideTestsAndExceptions(t *testing.T) {
 		"\n"+
 		"type Remote struct {\n"+
 		"\tother.Gen[float64]\n"+
+		"}\n"+
+		"\n"+
+		"type Two struct {\n"+
+		"\tPair[int, float32]\n"+
+		"}\n"+
+		"\n"+
+		"type Num interface {\n"+
+		"\t~float64 | int\n"+
 		"}\n")
 	write("types_test.go", "package p\n\nvar f float64\n")
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "dir.go"), 0o755))
@@ -84,6 +92,8 @@ func TestFindFloatIdents_NamesEachFloatOutsideTestsAndExceptions(t *testing.T) {
 		"extra.go:24: Ptr.float64 float64",
 		"extra.go:28: Holder.Box float64",
 		"extra.go:32: Remote.Gen float64",
+		"extra.go:36: Two.Pair float32",
+		"extra.go:40: Num float64",
 		"types.go:4: Order.Total float64",
 		"types.go:9: Calc.Scale float32",
 		"types.go:12: half float64",

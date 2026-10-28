@@ -79,7 +79,11 @@ func reportType(s *ast.TypeSpec, report func(string, ast.Node)) {
 	}
 	for _, m := range members.List {
 		if len(m.Names) == 0 {
-			report(s.Name.Name+"."+embeddedName(m.Type), m.Type)
+			owner := s.Name.Name
+			if name := embeddedName(m.Type); name != "" {
+				owner += "." + name
+			}
+			report(owner, m.Type)
 			continue
 		}
 		for _, n := range m.Names {

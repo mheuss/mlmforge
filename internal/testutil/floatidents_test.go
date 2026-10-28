@@ -72,12 +72,16 @@ func TestFindFloatIdents_NamesEachFloatOutsideTestsAndExceptions(t *testing.T) {
 		"\n"+
 		"type Num interface {\n"+
 		"\t~float64 | int\n"+
-		"}\n")
+		"}\n"+
+		"\n"+
+		"var Allowed, Count = float64(1), 1\n"+
+		"\n"+
+		"var R, S = split(float64(2))\n")
 	write("types_test.go", "package p\n\nvar f float64\n")
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "dir.go"), 0o755))
 	write("notes.txt", "float64\n")
 
-	found, err := FindFloatIdents(dir, map[string]bool{"Mix.Ratio": true, "Low": true})
+	found, err := FindFloatIdents(dir, map[string]bool{"Mix.Ratio": true, "Low": true, "Allowed": true})
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{
@@ -94,6 +98,8 @@ func TestFindFloatIdents_NamesEachFloatOutsideTestsAndExceptions(t *testing.T) {
 		"extra.go:32: Remote.Gen float64",
 		"extra.go:36: Two.Pair float32",
 		"extra.go:40: Num float64",
+		"extra.go:45: R float64",
+		"extra.go:45: S float64",
 		"types.go:4: Order.Total float64",
 		"types.go:9: Calc.Scale float32",
 		"types.go:12: half float64",

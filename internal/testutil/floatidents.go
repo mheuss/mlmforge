@@ -50,8 +50,17 @@ func FindFloatIdents(dir string, exceptions map[string]bool) ([]string, error) {
 					case *ast.TypeSpec:
 						reportType(s, report)
 					case *ast.ValueSpec:
-						for _, n := range s.Names {
-							report(n.Name, s)
+						for i, n := range s.Names {
+							if s.Type != nil {
+								report(n.Name, s.Type)
+							}
+							if len(s.Values) == len(s.Names) {
+								report(n.Name, s.Values[i])
+								continue
+							}
+							for _, v := range s.Values {
+								report(n.Name, v)
+							}
 						}
 					}
 				}

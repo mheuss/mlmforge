@@ -33,8 +33,8 @@ func FindFloatIdents(dir string, exceptions map[string]bool) ([]string, error) {
 			if exceptions[owner] {
 				return
 			}
-			ast.Inspect(n, func(n ast.Node) bool {
-				if id, ok := n.(*ast.Ident); ok && (id.Name == "float32" || id.Name == "float64") {
+			ast.Inspect(n, func(node ast.Node) bool {
+				if id, ok := node.(*ast.Ident); ok && (id.Name == "float32" || id.Name == "float64") {
 					found = append(found, fmt.Sprintf("%s:%d: %s %s", name, fset.Position(id.Pos()).Line, owner, id.Name))
 				}
 				return true
@@ -79,13 +79,33 @@ func reportType(s *ast.TypeSpec, report func(string, ast.Node)) {
 	}
 	for _, m := range members.List {
 		if len(m.Names) == 0 {
-			report(s.Name.Name, m.Type)
+			report(s.Name.Name+"."+embeddedName(m.Type), m.Type)
 			continue
 		}
 		for _, n := range m.Names {
 			report(s.Name.Name+"."+n.Name, m.Type)
 		}
 	}
+}
+
+// embeddedName returns the field name Go gives an embedded field of type t.
+func embeddedName(t ast.Expr) string {
+	if star, ok := t.(*ast.StarExpr); ok {
+		t = star.X
+	}
+	switch g := t.(type) {
+	case *ast.IndexExpr:
+		t = g.X
+	case *ast.IndexListExpr:
+		t = g.X
+	}
+	switch n := t.(type) {
+	case *ast.Ident:
+		return n.Name
+	case *ast.SelectorExpr:
+		return n.Sel.Name
+	}
+	return ""
 }
 
 // funcOwner names a function, or a method as Type.Method.

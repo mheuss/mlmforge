@@ -30,6 +30,7 @@ func TestOrderItemCVPointsRoundTripThroughJSON(t *testing.T) {
 	var out OrderItem
 	require.NoError(t, json.Unmarshal(data, &out))
 
+	assert.True(t, out.Price.Equal(dec.MustParse("19.99").Decimal), "decoded Price is %s", out.Price)
 	assert.True(t, out.CVPoints.Equal(dec.MustParse("10.10").Decimal), "decoded CVPoints is %s", out.CVPoints)
 }
 

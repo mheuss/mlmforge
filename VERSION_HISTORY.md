@@ -91,7 +91,7 @@
 - A binary aggregate cap is split by largest remainder in whole minor units, so the shares sum exactly to the cap. This replaces the phase 1 split at 13 places. (HEU-969, phase 2)
 - `load_plan` and Go validation refuse a base currency missing from the minor-unit table, and a plan money value that is not a whole number of minor units. (HEU-969, phase 2)
 - A library call to `calculate_binary_pairing` with a pairing percent outside [0, 1] returns an error. (HEU-982)
-- Go refuses a rank's `distributor_count` block that leaves out `min_rank` or `search_mode`. The schema requires both keys, so the public loader refuses `distributor_count: {}` and produces no engine JSON. `validateBusinessRules` refuses an empty `min_rank` or `search_mode` with `missing_required_field`, naming the rank and structure. That covers callers that skip the schema, and an explicit `min_rank: ""`, which the schema accepts. The engine used to refuse an empty `search_mode` at load, and failed on an empty `min_rank` at rank evaluation. (HEU-992)
+- Go refuses a rank's `distributor_count` block that leaves out `min_rank` or `search_mode`. The schema requires both keys. The public loader refuses `distributor_count: {}` and produces no engine JSON. `validateBusinessRules` refuses an empty `min_rank` or `search_mode` with `missing_required_field`. The error names the rank and structure. This covers callers that skip the schema. It also covers an explicit `min_rank: ""`, which the schema accepts. The engine used to refuse an empty `search_mode` at load. It failed on an empty `min_rank` at rank evaluation. (HEU-992)
 
 ### Fixed
 - Production `unwrap()` in unilevel.rs replaced with `match` on `Option`

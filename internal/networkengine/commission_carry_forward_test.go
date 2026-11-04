@@ -139,3 +139,124 @@ func TestCarryForwardFromReportsTheFirstBadKeyInSortedOrder(t *testing.T) {
 		}
 	}
 }
+
+// assertSameCarryForward compares carry-forward content, treating nil and
+// empty inner maps as equal and amounts as exact decimals.
+func assertSameCarryForward(t *testing.T, got, want map[string]map[string]LegVolumesDTO) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %d structures, want %d: %v", len(got), len(want), got)
+	}
+	for name, wantLegs := range want {
+		gotLegs, ok := got[name]
+		if !ok {
+			t.Fatalf("structure %q missing", name)
+		}
+		if len(gotLegs) != len(wantLegs) {
+			t.Fatalf("structure %q holds %d keys, want %d", name, len(gotLegs), len(wantLegs))
+		}
+		for key, w := range wantLegs {
+			g, ok := gotLegs[key]
+			if !ok {
+				t.Fatalf("structure %q key %s missing", name, key)
+			}
+			if !g.Left.Equal(w.Left.Decimal) || !g.Right.Equal(w.Right.Decimal) {
+				t.Fatalf("structure %q key %s = left %s right %s, want left %s right %s",
+					name, key, g.Left, g.Right, w.Left, w.Right)
+			}
+		}
+	}
+}
+
+func TestParseCarryForwardReadsTheGoldenEnvelope(t *testing.T) {
+	got, err := ParseCarryForward(json.RawMessage(goldenCarryForward(t)))
+	if err != nil {
+		t.Fatalf("ParseCarryForward: %v", err)
+	}
+	assertSameCarryForward(t, got, carryForwardFixtureInput())
+	if got["idle-binary"] == nil {
+		t.Fatal("idle-binary parsed to a nil map, want a non-nil empty map")
+	}
+}
+
+func TestParseCarryForwardWithNoInputReturnsNil(t *testing.T) {
+	for _, raw := range []json.RawMessage{nil, {}} {
+		got, err := ParseCarryForward(raw)
+		if err != nil {
+			t.Fatalf("ParseCarryForward(%q): %v", raw, err)
+		}
+		if got != nil {
+			t.Fatalf("ParseCarryForward(%q) = %v, want nil", raw, got)
+		}
+	}
+}
+
+func TestParseCarryForwardRefusesMalformedEnvelopes(t *testing.T) {
+	const key = "11111111-1111-1111-1111-111111111111"
+	const leg = `{"left":1,"right":2}`
+	entry := func(body string) string {
+		return `{"v":1,"structures":{"primary":` + body + `}}`
+	}
+	withLeg := func(legJSON string) string {
+		return entry(`{"kind":"binary_legs","carry":{"` + key + `":` + legJSON + `}}`)
+	}
+	cases := []struct{ name, raw string }{
+		{"JSON null", `null`},
+		{"JSON null with whitespace", ` null `},
+		{"an array", `[]`},
+		{"a number", `1`},
+		{"trailing data", `{"v":1,"structures":{}} {}`},
+		{"v missing", `{"structures":{}}`},
+		{"v null", `{"v":null,"structures":{}}`},
+		{"v 0", `{"v":0,"structures":{}}`},
+		{"v 2", `{"v":2,"structures":{}}`},
+		{"v a string", `{"v":"1","structures":{}}`},
+		{"structures missing", `{"v":1}`},
+		{"structures null", `{"v":1,"structures":null}`},
+		{"unknown envelope field", `{"v":1,"structures":{},"extra":1}`},
+		{"entry null", entry(`null`)},
+		{"kind missing", entry(`{"carry":{}}`)},
+		{"kind null", entry(`{"kind":null,"carry":{}}`)},
+		{"kind board_cycles", entry(`{"kind":"board_cycles","counts":{}}`)},
+		{"kind unknown", entry(`{"kind":"matrix_legs","carry":{}}`)},
+		{"carry missing", entry(`{"kind":"binary_legs"}`)},
+		{"carry null", entry(`{"kind":"binary_legs","carry":null}`)},
+		{"unknown entry field", entry(`{"kind":"binary_legs","carry":{},"extra":1}`)},
+		{"leg null", withLeg(`null`)},
+		{"leg empty", withLeg(`{}`)},
+		{"left missing", withLeg(`{"right":2}`)},
+		{"right missing", withLeg(`{"left":1}`)},
+		{"left null", withLeg(`{"left":null,"right":2}`)},
+		{"right null", withLeg(`{"left":1,"right":null}`)},
+		{"left a string", withLeg(`{"left":"1","right":2}`)},
+		{"unknown leg field", withLeg(`{"left":1,"right":2,"extra":1}`)},
+		{"empty structure name", `{"v":1,"structures":{"":{"kind":"binary_legs","carry":{}}}}`},
+		{"NUL in structure name", `{"v":1,"structures":{"a\u0000b":{"kind":"binary_legs","carry":{}}}}`},
+		{"invalid UTF-8 in structure name", "{\"v\":1,\"structures\":{\"bad\xff\":{\"kind\":\"binary_legs\",\"carry\":{}}}}"},
+		{"non-canonical key", entry(`{"kind":"binary_legs","carry":{"AAAAAAAA-1111-1111-1111-111111111111":` + leg + `}}`)},
+		{"non-UUID key", entry(`{"kind":"binary_legs","carry":{"nope":` + leg + `}}`)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseCarryForward(json.RawMessage(tc.raw))
+			if err == nil {
+				t.Fatalf("ParseCarryForward(%s) = %v, want an error", tc.raw, got)
+			}
+		})
+	}
+}
+
+func TestParseCarryForwardReportsTheFirstBadKeyInSortedOrder(t *testing.T) {
+	raw := json.RawMessage(`{"v":1,"structures":{` +
+		`"b":{"kind":"binary_legs","carry":{"zzz":{"left":1,"right":1}}},` +
+		`"a":{"kind":"binary_legs","carry":{"yyy":{"left":1,"right":1},"bbb":{"left":1,"right":1}}}}}`)
+	for range 20 {
+		_, err := ParseCarryForward(raw)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if !strings.Contains(err.Error(), `structure "a"`) || !strings.Contains(err.Error(), `"bbb"`) {
+			t.Fatalf("err = %v, want it to name structure a and key bbb", err)
+		}
+	}
+}

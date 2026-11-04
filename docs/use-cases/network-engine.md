@@ -978,7 +978,7 @@ if r.Responsored == nil {
 }
 ```
 
-A plain slice cannot express the difference. `encoding/json` leaves it nil for a missing key and for `[]` alike, so the response that forgot the field and the response that had nothing to report arrive identical.
+`encoding/json` leaves a plain slice nil for a missing key or `null`, and decodes `[]` as a non-nil empty slice. So a plain slice can tell the two apart, but only for a caller that checks `== nil`. A caller that checks `len` reads silence as an empty answer. The pointer puts the difference in the type.
 
 **When to use this pattern:** any added response field where ignoring it leaves two systems holding the same fact. Apply it at every decode site for that field, not just the one the feature goes through. `remove_node` has two, and a rule enforced at one of them is not enforced.
 

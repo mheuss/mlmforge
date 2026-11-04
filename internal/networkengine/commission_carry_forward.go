@@ -87,6 +87,10 @@ func checkCarryStructureName(name string) error {
 	if strings.ContainsRune(name, 0) {
 		return fmt.Errorf("carry_forward: structure %q contains a NUL byte", name)
 	}
+	// encoding/json decodes a lone surrogate escape to U+FFFD with no error.
+	if strings.ContainsRune(name, utf8.RuneError) {
+		return fmt.Errorf("carry_forward: structure %q contains U+FFFD", name)
+	}
 	return nil
 }
 
@@ -98,6 +102,9 @@ func checkCarryKey(structure, key string) error {
 	}
 	if id.String() != key {
 		return fmt.Errorf("carry_forward: structure %q: key %q is not canonical, want %q", structure, key, id.String())
+	}
+	if id == uuid.Nil {
+		return fmt.Errorf("carry_forward: structure %q: key %q is the nil UUID", structure, key)
 	}
 	return nil
 }
@@ -217,14 +224,41 @@ func parseLegVolumes(what string, raw json.RawMessage) (LegVolumesDTO, error) {
 }
 
 // decodeCarryObject decodes exactly one non-null JSON object into its raw
-// members.
+// members, refusing a repeated member name.
 func decodeCarryObject(raw json.RawMessage, what string) (map[string]json.RawMessage, error) {
 	if isJSONNull(raw) {
 		return nil, fmt.Errorf("carry_forward: %s is null, want an object", what)
 	}
 	d := json.NewDecoder(bytes.NewReader(raw))
-	var obj map[string]json.RawMessage
-	if err := d.Decode(&obj); err != nil {
+	open, err := d.Token()
+	if err != nil {
+		return nil, fmt.Errorf("carry_forward: %s is not a JSON object: %w", what, err)
+	}
+	if open != json.Delim('{') {
+		return nil, fmt.Errorf("carry_forward: %s is not a JSON object", what)
+	}
+	// Walked member by member because decoding into a map keeps the last of
+	// two repeated names and reports no error.
+	obj := make(map[string]json.RawMessage)
+	for d.More() {
+		tok, err := d.Token()
+		if err != nil {
+			return nil, fmt.Errorf("carry_forward: %s is not a JSON object: %w", what, err)
+		}
+		name, ok := tok.(string)
+		if !ok {
+			return nil, fmt.Errorf("carry_forward: %s is not a JSON object", what)
+		}
+		if _, dup := obj[name]; dup {
+			return nil, fmt.Errorf("carry_forward: %s repeats member %q", what, name)
+		}
+		var val json.RawMessage
+		if err := d.Decode(&val); err != nil {
+			return nil, fmt.Errorf("carry_forward: %s member %q: %w", what, name, err)
+		}
+		obj[name] = val
+	}
+	if _, err := d.Token(); err != nil {
 		return nil, fmt.Errorf("carry_forward: %s is not a JSON object: %w", what, err)
 	}
 	if _, err := d.Token(); !errors.Is(err, io.EOF) {

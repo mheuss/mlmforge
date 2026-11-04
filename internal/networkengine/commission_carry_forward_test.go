@@ -102,7 +102,7 @@ func TestLegVolumesCarryMirrorsTheWireType(t *testing.T) {
 }
 
 func TestCarryForwardFromRefusesABadStructureName(t *testing.T) {
-	for _, name := range []string{"", "bad\xff", "nul\x00byte"} {
+	for _, name := range []string{"", "bad\xff", "nul\x00byte", "bad�"} {
 		if _, err := CarryForwardFrom(map[string]map[string]LegVolumesDTO{name: nil}); err == nil {
 			t.Errorf("structure %q: expected an error", name)
 		}
@@ -116,6 +116,7 @@ func TestCarryForwardFromRefusesANonCanonicalKey(t *testing.T) {
 		"urn:uuid:11111111-1111-1111-1111-111111111111",
 		"11111111111111111111111111111111",
 		"not-a-uuid",
+		"00000000-0000-0000-0000-000000000000",
 	} {
 		in := map[string]map[string]LegVolumesDTO{"primary": {key: {}}}
 		if _, err := CarryForwardFrom(in); err == nil {
@@ -235,6 +236,14 @@ func TestParseCarryForwardRefusesMalformedEnvelopes(t *testing.T) {
 		{"invalid UTF-8 in structure name", "{\"v\":1,\"structures\":{\"bad\xff\":{\"kind\":\"binary_legs\",\"carry\":{}}}}"},
 		{"non-canonical key", entry(`{"kind":"binary_legs","carry":{"AAAAAAAA-1111-1111-1111-111111111111":` + leg + `}}`)},
 		{"non-UUID key", entry(`{"kind":"binary_legs","carry":{"nope":` + leg + `}}`)},
+		{"lone surrogate in structure name", `{"v":1,"structures":{"a\ud800":{"kind":"binary_legs","carry":{}}}}`},
+		{"lone surrogate in key", entry(`{"kind":"binary_legs","carry":{"\ud800":` + leg + `}}`)},
+		{"nil UUID key", entry(`{"kind":"binary_legs","carry":{"00000000-0000-0000-0000-000000000000":` + leg + `}}`)},
+		{"duplicate envelope field", `{"v":1,"structures":{"primary":{"kind":"binary_legs","carry":{}}},"structures":{}}`},
+		{"duplicate structure name", `{"v":1,"structures":{"a":{"kind":"binary_legs","carry":{}},"a":{"kind":"binary_legs","carry":{}}}}`},
+		{"duplicate entry field", entry(`{"kind":"binary_legs","carry":{},"carry":{}}`)},
+		{"duplicate carry key", entry(`{"kind":"binary_legs","carry":{"` + key + `":` + leg + `,"` + key + `":` + leg + `}}`)},
+		{"duplicate leg field", withLeg(`{"left":9,"left":1,"right":1}`)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

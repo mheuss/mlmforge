@@ -45,9 +45,6 @@ const detailVersion = 3
 // reader has to sniff key sets, which is exactly the guessing the version key
 // exists to prevent.
 //
-// This matches carry_forward, the sibling persisted format in this ticket,
-// which tags its entries "binary_legs" and "board_cycles".
-//
 // These strings are persisted. Changing one orphans every row that carries
 // the old value.
 const (

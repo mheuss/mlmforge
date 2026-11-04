@@ -206,6 +206,9 @@ pub enum SnapshotConsistencyError {
     #[error("holding tank entry {position} names the nil UUID")]
     HoldingTankUserNil { position: usize },
 
+    #[error("the holding tank's sponsor chain from {start} reaches {revisited} twice")]
+    HoldingTankSponsorChainRevisits { start: Uuid, revisited: Uuid },
+
     #[error("board {board_id} holds {found} positions; the engine's board size is {expected}")]
     BoardPositionCountMismatch {
         board_id: Uuid,

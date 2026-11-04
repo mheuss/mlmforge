@@ -1,0 +1,56 @@
+{
+    "description": "restore_snapshot rejects a matrix snapshot whose holding tank entries sponsor each other, with INCONSISTENT_SNAPSHOT. Cross-language lock for HEU-1008. Before it, this payload restored and place_from_tank then refused both entries with SPONSOR_IN_HOLDING_TANK forever. A self-sponsored entry reports through the same variant and is pinned by a unit test. The payload spells out the Arena, slot and tank shapes by hand. A new required field on Arena, Node, MatrixTree or HoldingTankEntry turns this into a deserialization failure rather than the rejection it tests.",
+    "request": {
+        "id": "rs-matrix-tank-sponsor-cycle",
+        "op": "restore_snapshot",
+        "params": {
+            "structure": "RestoredMatrix",
+            "tree_type": "matrix",
+            "data": {
+                "arena": {
+                    "nodes": [
+                        {
+                            "user_id": "11111111-1111-1111-1111-111111111111",
+                            "parent": null,
+                            "children": [],
+                            "sponsor": null,
+                            "sponsored": [],
+                            "depth": 0,
+                            "enrolled_at": 100
+                        }
+                    ],
+                    "index": {
+                        "11111111-1111-1111-1111-111111111111": 0
+                    },
+                    "free_list": [],
+                    "root": 0
+                },
+                "width": 2,
+                "spillover": "breadth_first",
+                "slots": {
+                    "0": [null, null]
+                },
+                "holding_tank": [
+                    {
+                        "user_id": "33333333-3333-3333-3333-333333333333",
+                        "sponsor_user_id": "44444444-4444-4444-4444-444444444444",
+                        "enrolled_at": 200
+                    },
+                    {
+                        "user_id": "44444444-4444-4444-4444-444444444444",
+                        "sponsor_user_id": "33333333-3333-3333-3333-333333333333",
+                        "enrolled_at": 300
+                    }
+                ]
+            }
+        }
+    },
+    "expected_response": {
+        "id": "rs-matrix-tank-sponsor-cycle",
+        "ok": false,
+        "error": {
+            "code": "INCONSISTENT_SNAPSHOT",
+            "message_contains": "sponsor chain from 33333333-3333-3333-3333-333333333333 reaches 33333333-3333-3333-3333-333333333333 twice"
+        }
+    }
+}

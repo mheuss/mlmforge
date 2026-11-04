@@ -1699,6 +1699,53 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_accepts_a_nil_tank_sponsor_until_heu_1009_decides() {
+        let (mut tree, _) = matrix_pair();
+        tree.holding_tank.push(HoldingTankEntry {
+            user_id: test_uuid(9),
+            sponsor_user_id: Some(Uuid::nil()),
+            enrolled_at: 0,
+        });
+
+        assert_eq!(tree.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_accepts_the_tank_after_nested_removals_and_placements() {
+        let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        tree.add_root(test_uuid(1), 0).unwrap();
+        tree.add_node_at(test_uuid(2), test_uuid(1), test_uuid(1), 0, 10)
+            .unwrap();
+        tree.add_node_at(test_uuid(3), test_uuid(2), test_uuid(2), 0, 20)
+            .unwrap();
+        tree.add_node_at(test_uuid(4), test_uuid(3), test_uuid(3), 0, 30)
+            .unwrap();
+        tree.add_node_at(test_uuid(5), test_uuid(2), test_uuid(2), 1, 40)
+            .unwrap();
+        tree.add_node_at(test_uuid(6), test_uuid(1), test_uuid(1), 1, 50)
+            .unwrap();
+
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+        assert_eq!(tree.validate_restored(), Ok(()), "after the first removal");
+        tree.place_from_tank(test_uuid(2), test_uuid(6), 0).unwrap();
+        assert_eq!(tree.validate_restored(), Ok(()), "after placing 2");
+        tree.place_from_tank(test_uuid(3), test_uuid(2), 0).unwrap();
+        assert_eq!(tree.validate_restored(), Ok(()), "after placing 3");
+        tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
+            .unwrap();
+        assert_eq!(tree.validate_restored(), Ok(()), "after the second removal");
+
+        let restored: MatrixTree =
+            serde_json::from_str(&serde_json::to_string(&tree).unwrap()).unwrap();
+        assert_eq!(
+            restored.validate_restored(),
+            Ok(()),
+            "after a serde round trip"
+        );
+    }
+
+    #[test]
     fn validate_restored_accepts_a_holding_tank_of_distinct_users() {
         let (mut tree, _) = matrix_pair();
         for n in [9u8, 10] {

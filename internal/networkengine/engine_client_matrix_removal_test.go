@@ -86,6 +86,30 @@ func TestEngineClient_RemoveMatrixNode_RefusesAnIncompleteRelocation(t *testing.
 	}
 }
 
+func TestEngineClient_RemoveMatrixNode_RefusesAnIncompleteResponsored(t *testing.T) {
+	const moved = "00000000-0000-0000-0000-000000000003"
+	cases := []struct{ name, entry, want string }{
+		{"no user_id", `{"new_sponsor_id":"00000000-0000-0000-0000-000000000001"}`,
+			`remove_node: responsored entry 0 has no "user_id"`},
+		{"null user_id", `{"user_id":null,"new_sponsor_id":"00000000-0000-0000-0000-000000000001"}`,
+			`remove_node: responsored entry 0 has no "user_id"`},
+		{"no new_sponsor_id", `{"user_id":"` + moved + `"}`,
+			`remove_node: responsored entry for ` + moved + ` has no "new_sponsor_id"`},
+		{"null new_sponsor_id", `{"user_id":"` + moved + `","new_sponsor_id":null}`,
+			`remove_node: responsored entry for ` + moved + ` has no "new_sponsor_id"`},
+		{"null entry", `null`,
+			`remove_node: responsored entry 0 has no "user_id"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := removeMatrixNodeWith(t, `{"removed":"x","promoted":null,"repositioned":[],"moved_to_tank":[],
+				"relocated":[],"responsored":[`+tc.entry+`]}`, PruningPromoteEarliest)
+
+			require.EqualError(t, err, tc.want)
+		})
+	}
+}
+
 func TestEngineClient_RemoveMatrixNode_RefusesAnIncompleteHoldingTank(t *testing.T) {
 	cases := []struct{ name, tank, want string }{
 		{"an empty tank", `[]`,

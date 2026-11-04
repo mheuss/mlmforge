@@ -522,8 +522,12 @@ func (w matrixRemovalWire) result(userID string, mode PruningMode) (*MatrixRemov
 		relocated = append(relocated, Relocation{UserID: *r.UserID, ParentID: *r.ParentID,
 			Position: *r.Position, Depth: *r.Depth})
 	}
+	responsored, err := responsoredFrom(*w.Responsored)
+	if err != nil {
+		return nil, err
+	}
 	return &MatrixRemovalResult{Removed: w.Removed, Promoted: w.Promoted, Repositioned: w.Repositioned,
-		MovedToTank: tank, Relocated: relocated, Responsored: *w.Responsored}, nil
+		MovedToTank: tank, Relocated: relocated, Responsored: responsored}, nil
 }
 
 // --- Mutation checks ---

@@ -212,12 +212,12 @@ type MatrixRemovalResult struct {
 // matrixRemovalWire is the matrix remove_node response as decoded. A nil
 // pointer is an absent or null key.
 type matrixRemovalWire struct {
-	Removed      string            `json:"removed"`
-	Promoted     *string           `json:"promoted"`
-	Repositioned []string          `json:"repositioned"`
-	MovedToTank  *[]string         `json:"moved_to_tank"`
-	Relocated    *[]relocationWire `json:"relocated"`
-	Responsored  *[]Responsored    `json:"responsored"`
+	Removed      string             `json:"removed"`
+	Promoted     *string            `json:"promoted"`
+	Repositioned []string           `json:"repositioned"`
+	MovedToTank  *[]string          `json:"moved_to_tank"`
+	Relocated    *[]relocationWire  `json:"relocated"`
+	Responsored  *[]responsoredWire `json:"responsored"`
 }
 
 // relocationWire is one relocation as decoded. A nil member is an absent or

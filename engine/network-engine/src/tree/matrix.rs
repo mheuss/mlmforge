@@ -1723,8 +1723,21 @@ mod tests {
         tree.add_node_at(test_uuid(6), test_uuid(1), test_uuid(1), 1, 50)
             .unwrap();
 
+        let pairs = |tree: &MatrixTree| -> Vec<(Uuid, Option<Uuid>)> {
+            tree.holding_tank
+                .iter()
+                .map(|entry| (entry.user_id, entry.sponsor_user_id))
+                .collect()
+        };
+        let pair = |user: u8, sponsor: u8| (test_uuid(user), Some(test_uuid(sponsor)));
+
         tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
             .unwrap();
+        assert_eq!(
+            pairs(&tree),
+            vec![pair(3, 2), pair(5, 2), pair(4, 3), pair(2, 1)],
+            "the first removal should tank a chain three entries deep"
+        );
         assert_eq!(tree.validate_restored(), Ok(()), "after the first removal");
         tree.place_from_tank(test_uuid(2), test_uuid(6), 0).unwrap();
         assert_eq!(tree.validate_restored(), Ok(()), "after placing 2");
@@ -1732,6 +1745,11 @@ mod tests {
         assert_eq!(tree.validate_restored(), Ok(()), "after placing 3");
         tree.remove_node(test_uuid(2), PruningMode::HoldingTank)
             .unwrap();
+        assert_eq!(
+            pairs(&tree),
+            vec![pair(5, 2), pair(4, 3), pair(3, 2), pair(2, 1)],
+            "the second removal should tank a chain listed out of sponsor order"
+        );
         assert_eq!(tree.validate_restored(), Ok(()), "after the second removal");
 
         let restored: MatrixTree =

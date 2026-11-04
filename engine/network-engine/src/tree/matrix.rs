@@ -1678,8 +1678,6 @@ mod tests {
 
     #[test]
     fn validate_restored_names_the_same_tank_cycle_every_run() {
-        // The constructor is inside the loop. One tree repeats its own map
-        // order, so looping over a single instance proves nothing.
         for _ in 0..64 {
             let (mut tree, _) = matrix_pair();
             tree.holding_tank.push(tank_entry(11, Some(12)));

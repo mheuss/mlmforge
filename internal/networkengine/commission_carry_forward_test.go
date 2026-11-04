@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/mlmforge/mlmforge/internal/dec"
+	"github.com/shopspring/decimal"
 )
 
 // goldenCarryForward reads the stored-envelope fixture, trimmed so an editor's
@@ -116,11 +118,36 @@ func TestCarryForwardFromRefusesANonCanonicalKey(t *testing.T) {
 		"urn:uuid:11111111-1111-1111-1111-111111111111",
 		"11111111111111111111111111111111",
 		"not-a-uuid",
-		"00000000-0000-0000-0000-000000000000",
 	} {
 		in := map[string]map[string]LegVolumesDTO{"primary": {key: {}}}
 		if _, err := CarryForwardFrom(in); err == nil {
 			t.Errorf("key %q: expected an error", key)
+		}
+	}
+}
+
+func TestCarryForwardFromRefusesTheNilUUID(t *testing.T) {
+	in := map[string]map[string]LegVolumesDTO{"primary": {uuid.Nil.String(): {}}}
+	if _, err := CarryForwardFrom(in); err == nil {
+		t.Fatal("expected an error for the nil UUID key")
+	}
+}
+
+func TestCarryForwardFromRefusesAnAmountTheReaderCannotParse(t *testing.T) {
+	const key = "11111111-1111-1111-1111-111111111111"
+	tooLong := dec.Amount{Decimal: decimal.New(1, 64)}
+	for name, leg := range map[string]LegVolumesDTO{
+		"left":  {Left: tooLong, Right: dec.MustParse("1")},
+		"right": {Left: dec.MustParse("1"), Right: tooLong},
+	} {
+		in := map[string]map[string]LegVolumesDTO{"primary": {key: leg}}
+		_, err := CarryForwardFrom(in)
+		if err == nil {
+			t.Errorf("%s: expected an error for a 65-byte amount", name)
+			continue
+		}
+		if !strings.Contains(err.Error(), `"primary"`) || !strings.Contains(err.Error(), key) {
+			t.Errorf("%s: err = %v, want it to name structure primary and key %s", name, err, key)
 		}
 	}
 }

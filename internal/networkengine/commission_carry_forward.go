@@ -63,7 +63,14 @@ func CarryForwardFrom(binary map[string]map[string]LegVolumesDTO) (json.RawMessa
 			if err := checkCarryKey(name, key); err != nil {
 				return nil, err
 			}
-			carry[key] = legVolumesCarry{Left: legs[key].Left, Right: legs[key].Right}
+			leg := legs[key]
+			if err := checkCarryAmount(name, key, "left", leg.Left); err != nil {
+				return nil, err
+			}
+			if err := checkCarryAmount(name, key, "right", leg.Right); err != nil {
+				return nil, err
+			}
+			carry[key] = legVolumesCarry(leg)
 		}
 		env.Structures[name] = binaryLegsCarry{Kind: kindBinaryLegs, Carry: carry}
 	}
@@ -94,7 +101,15 @@ func checkCarryStructureName(name string) error {
 	return nil
 }
 
-// checkCarryKey refuses a carry key that is not a canonical UUID.
+// checkCarryAmount refuses an amount whose canonical text does not parse back.
+func checkCarryAmount(structure, key, side string, a dec.Amount) error {
+	if _, err := dec.Parse(a.String()); err != nil {
+		return fmt.Errorf("carry_forward: structure %q: key %q %s: %w", structure, key, side, err)
+	}
+	return nil
+}
+
+// checkCarryKey refuses a carry key that is not a canonical, non-nil UUID.
 func checkCarryKey(structure, key string) error {
 	id, err := uuid.Parse(key)
 	if err != nil {

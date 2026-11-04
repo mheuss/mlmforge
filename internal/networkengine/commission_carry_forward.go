@@ -2,8 +2,14 @@ package networkengine
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"maps"
+	"slices"
+	"strings"
+	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/mlmforge/mlmforge/internal/dec"
 )
 
@@ -45,10 +51,17 @@ func CarryForwardFrom(binary map[string]map[string]LegVolumesDTO) (json.RawMessa
 		V:          carryForwardVersion,
 		Structures: make(map[string]binaryLegsCarry, len(binary)),
 	}
-	for name, legs := range binary {
+	for _, name := range slices.Sorted(maps.Keys(binary)) {
+		if err := checkCarryStructureName(name); err != nil {
+			return nil, err
+		}
+		legs := binary[name]
 		carry := make(map[string]legVolumesCarry, len(legs))
-		for key, leg := range legs {
-			carry[key] = legVolumesCarry{Left: leg.Left, Right: leg.Right}
+		for _, key := range slices.Sorted(maps.Keys(legs)) {
+			if err := checkCarryKey(name, key); err != nil {
+				return nil, err
+			}
+			carry[key] = legVolumesCarry{Left: legs[key].Left, Right: legs[key].Right}
 		}
 		env.Structures[name] = binaryLegsCarry{Kind: kindBinaryLegs, Carry: carry}
 	}
@@ -57,4 +70,32 @@ func CarryForwardFrom(binary map[string]map[string]LegVolumesDTO) (json.RawMessa
 		return nil, fmt.Errorf("carry_forward: marshal: %w", err)
 	}
 	return out, nil
+}
+
+// checkCarryStructureName refuses a structure name the envelope cannot carry
+// intact.
+func checkCarryStructureName(name string) error {
+	if name == "" {
+		return errors.New("carry_forward: structure name must be non-empty")
+	}
+	// json.Marshal rewrites invalid UTF-8, and jsonb refuses a \u0000 escape.
+	if !utf8.ValidString(name) {
+		return fmt.Errorf("carry_forward: structure %q is not valid UTF-8", name)
+	}
+	if strings.ContainsRune(name, 0) {
+		return fmt.Errorf("carry_forward: structure %q contains a NUL byte", name)
+	}
+	return nil
+}
+
+// checkCarryKey refuses a carry key that is not a canonical UUID.
+func checkCarryKey(structure, key string) error {
+	id, err := uuid.Parse(key)
+	if err != nil {
+		return fmt.Errorf("carry_forward: structure %q: key %q is not a UUID: %w", structure, key, err)
+	}
+	if id.String() != key {
+		return fmt.Errorf("carry_forward: structure %q: key %q is not canonical, want %q", structure, key, id.String())
+	}
+	return nil
 }

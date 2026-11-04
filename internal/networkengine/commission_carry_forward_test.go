@@ -100,3 +100,42 @@ func TestLegVolumesCarryMirrorsTheWireType(t *testing.T) {
 		t.Fatalf("legVolumesCarry json tags %v, want %v", got, want)
 	}
 }
+
+func TestCarryForwardFromRefusesABadStructureName(t *testing.T) {
+	for _, name := range []string{"", "bad\xff", "nul\x00byte"} {
+		if _, err := CarryForwardFrom(map[string]map[string]LegVolumesDTO{name: nil}); err == nil {
+			t.Errorf("structure %q: expected an error", name)
+		}
+	}
+}
+
+func TestCarryForwardFromRefusesANonCanonicalKey(t *testing.T) {
+	for _, key := range []string{
+		"AAAAAAAA-1111-1111-1111-111111111111",
+		"{11111111-1111-1111-1111-111111111111}",
+		"urn:uuid:11111111-1111-1111-1111-111111111111",
+		"11111111111111111111111111111111",
+		"not-a-uuid",
+	} {
+		in := map[string]map[string]LegVolumesDTO{"primary": {key: {}}}
+		if _, err := CarryForwardFrom(in); err == nil {
+			t.Errorf("key %q: expected an error", key)
+		}
+	}
+}
+
+func TestCarryForwardFromReportsTheFirstBadKeyInSortedOrder(t *testing.T) {
+	in := map[string]map[string]LegVolumesDTO{
+		"b-structure": {"zzz": {}, "mmm": {}},
+		"a-structure": {"yyy": {}, "bbb": {}},
+	}
+	for range 20 {
+		_, err := CarryForwardFrom(in)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if !strings.Contains(err.Error(), `"a-structure"`) || !strings.Contains(err.Error(), `"bbb"`) {
+			t.Fatalf("err = %v, want it to name structure a-structure and key bbb", err)
+		}
+	}
+}

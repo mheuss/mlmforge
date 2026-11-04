@@ -1507,14 +1507,14 @@ A bump is a claim that the wire means something new. If the new field decodes to
 a usable zero value when it is missing, nothing enforces the claim, and a worker
 that dropped the field looks like a worker with nothing to say.
 
-`encoding/json` leaves a plain slice nil for a missing key or `null`, and decodes
+`encoding/json` leaves a plain slice nil for a missing key or `null`. It decodes
 `[]` as a non-nil empty slice. So a plain slice can tell the two apart, but only
 for a caller that checks `== nil`. A caller that checks `len` reads silence as an
-empty answer. The pointer puts the difference in the type. Those are different
-claims. An empty list says the worker looked and found
-nothing, which a caller can act on. A missing key says nothing at all. Decode
-such a field into a `*[]T` and reject nil, so silence fails loudly instead of
-becoming the one answer that requires no work.
+empty answer. A missing key and an empty list are different claims. An empty
+list says the worker looked and found nothing, which a caller can act on. A
+missing key says nothing at all. Decode such a field into a `*[]T` and reject
+nil, so silence fails loudly instead of becoming the one answer that requires no
+work.
 
 This is the same technique the `ping` handshake uses on `protocol_version`, and
 it is worth reaching for on any field whose presence is the point.

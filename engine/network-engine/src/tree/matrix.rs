@@ -135,8 +135,8 @@ impl MatrixTree {
                 });
             }
         }
-        // Runs after the walk above, so a user who is both placed and repeated
-        // is reported as placed, which is the more specific fault.
+        // Runs after the placed check above, so a user who is both placed and
+        // repeated is reported as placed, which is the more specific fault.
         //
         // Returns on the first repeat rather than holding the lowest. This
         // order is part of the payload, so the same input names the same
@@ -1690,8 +1690,7 @@ mod tests {
                 Err(SnapshotConsistencyError::HoldingTankSponsorChainRevisits {
                     start: test_uuid(11),
                     revisited: test_uuid(11),
-                }),
-                "the first-listed cycle should win regardless of hash order"
+                })
             );
         }
     }

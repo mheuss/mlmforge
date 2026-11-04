@@ -78,15 +78,17 @@ func TestCarryForwardFixtureCarriesVersionAndKind(t *testing.T) {
 	if err := json.Unmarshal([]byte(goldenCarryForward(t)), &parsed); err != nil {
 		t.Fatalf("fixture is not readable JSON: %v", err)
 	}
-	if parsed.V != carryForwardVersion {
-		t.Fatalf("v = %d, want %d", parsed.V, carryForwardVersion)
+	// Literals, not the constants: a constant changed alongside a regenerated
+	// golden would otherwise move both sides together.
+	if parsed.V != 1 {
+		t.Fatalf("v = %d, want 1", parsed.V)
 	}
 	if len(parsed.Structures) == 0 {
 		t.Fatal("fixture holds no structures")
 	}
 	for name, entry := range parsed.Structures {
-		if entry.Kind != kindBinaryLegs {
-			t.Errorf("structure %q kind = %q, want %q", name, entry.Kind, kindBinaryLegs)
+		if entry.Kind != "binary_legs" {
+			t.Errorf("structure %q kind = %q, want %q", name, entry.Kind, "binary_legs")
 		}
 	}
 }

@@ -108,22 +108,23 @@ not worth reimplementing jsonb's parser for — document them instead.
 
 `utf8.Valid` does not catch the unpaired surrogate. The escape `\ud800` is six
 ASCII bytes, so the raw input is valid UTF-8. Go then decodes it to U+FFFD with
-no error. To refuse it, check the decoded string for U+FFFD. Observed in
-HEU-594, where a structure name `"a\ud800"` decoded to `"a�"` and passed a
-`utf8.ValidString` check.
+no error. Observed in HEU-594, where a structure name `"a\ud800"` decoded to
+`"a�"` and passed a `utf8.ValidString` check. HEU-594's reader refuses it
+by checking the decoded name for U+FFFD, which also refuses a U+FFFD the input
+spelled out directly.
 
 Go's decoder also keeps the last of two repeated member names and reports no
 error. Decoding `{"left":9,"left":1,"right":1}` into a map gave `left` 1.
 Observed in Go's decoder only, in HEU-594. What jsonb does with the same input
-was not tested. To refuse a repeated name, walk the object with `Token()` and
-check each name before decoding its value.
+was not tested. HEU-594's reader refuses a repeated name by walking the object
+with `Token()` and checking each name before decoding its value.
 
 A value Go writes is not always a value Go can read back. `dec.Parse` refuses
 canonical text over 64 bytes, and `dec.Amount.UnmarshalJSON` goes through it.
 An amount built by arithmetic has no such cap, so it marshals fine. Observed in
 HEU-594: `decimal.New(1, 64)` marshalled to 65 bytes, and reading it back failed
-with `decimal text is 65 bytes long; the limit is 64`. A stored format that is
-read back through `UnmarshalJSON` has to run the same `dec.Parse` on write.
+with `decimal text is 65 bytes long; the limit is 64`. HEU-594's builder now
+runs the same `dec.Parse` on each amount before it writes.
 
 ## `json.Decoder.More()` is not a trailing-data check
 

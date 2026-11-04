@@ -244,15 +244,18 @@ func TestEngineClient_RemoveNode_RefusesAnIncompleteResponsored(t *testing.T) {
 			`remove_node: responsored entry for ` + moved + ` has no "new_sponsor_id"`},
 		{"null entry", `null`,
 			`remove_node: responsored entry 0 has no "user_id"`},
+		{"bad second entry", `{"user_id":"` + moved + `","new_sponsor_id":"00000000-0000-0000-0000-000000000001"},{"new_sponsor_id":"00000000-0000-0000-0000-000000000001"}`,
+			`remove_node: responsored entry 1 has no "user_id"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			mock := &mockTransport{response: json.RawMessage(`{"removed":true,"responsored":[` + tc.entry + `]}`)}
 
-			_, err := newEngineClientWithTransport(mock).RemoveNode(context.Background(), "Test",
+			got, err := newEngineClientWithTransport(mock).RemoveNode(context.Background(), "Test",
 				"00000000-0000-0000-0000-000000000009")
 
 			require.EqualError(t, err, tc.want)
+			assert.Nil(t, got)
 		})
 	}
 }

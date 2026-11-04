@@ -81,7 +81,7 @@ impl MatrixTree {
     /// Prove a restored tree's stored values are in range and live, that each
     /// live non-root node is a child in exactly one child slot, that each
     /// parent's slots match its children, and that the holding tank names no
-    /// placed or repeated user.
+    /// nil, placed or repeated user.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         // A restore does not run the constructor, so the range it enforces has
         // to be re-established here. A width below 2 is not inert: placement
@@ -120,6 +120,11 @@ impl MatrixTree {
         }
         if let Some((_, err)) = fault {
             return Err(err);
+        }
+        for (position, entry) in self.holding_tank.iter().enumerate() {
+            if entry.user_id.is_nil() {
+                return Err(SnapshotConsistencyError::HoldingTankUserNil { position });
+            }
         }
         for entry in &self.holding_tank {
             if let Some(idx) = self.arena.index.get(&entry.user_id) {
@@ -1050,6 +1055,14 @@ mod tests {
         (tree, child)
     }
 
+    fn tank_entry(user: u8, sponsor: Option<u8>) -> HoldingTankEntry {
+        HoldingTankEntry {
+            user_id: test_uuid(user),
+            sponsor_user_id: sponsor.map(test_uuid),
+            enrolled_at: 0,
+        }
+    }
+
     #[test]
     fn validate_restored_accepts_a_healthy_tree() {
         let (tree, _) = matrix_pair();
@@ -1483,6 +1496,39 @@ mod tests {
             Err(SnapshotConsistencyError::HoldingTankUserRepeated {
                 user_id: test_uuid(9),
             })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_nil_holding_tank_entry() {
+        let (mut tree, _) = matrix_pair();
+        tree.holding_tank.push(tank_entry(9, None));
+        tree.holding_tank.push(HoldingTankEntry {
+            user_id: Uuid::nil(),
+            sponsor_user_id: None,
+            enrolled_at: 0,
+        });
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::HoldingTankUserNil { position: 1 })
+        );
+    }
+
+    #[test]
+    fn validate_restored_reports_a_nil_tank_entry_before_a_repeat() {
+        let (mut tree, _) = matrix_pair();
+        for _ in 0..2 {
+            tree.holding_tank.push(HoldingTankEntry {
+                user_id: Uuid::nil(),
+                sponsor_user_id: None,
+                enrolled_at: 0,
+            });
+        }
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::HoldingTankUserNil { position: 0 })
         );
     }
 
@@ -2352,7 +2398,7 @@ mod tests {
     }
 
     #[test]
-    fn place_from_tank_refuses_a_nil_user_id_from_a_restored_tank() {
+    fn place_from_tank_refuses_a_nil_user_id_in_a_tank_that_skipped_restore() {
         let mut crafted = MatrixTree::new(3, SpilloverDirection::BreadthFirst).unwrap();
         crafted.add_root(test_uuid(1), 1000).unwrap();
         crafted.holding_tank.push(HoldingTankEntry {
@@ -2362,7 +2408,10 @@ mod tests {
         });
         let json = serde_json::to_string(&crafted).unwrap();
         let mut tree: MatrixTree = serde_json::from_str(&json).unwrap();
-        assert_eq!(tree.validate_restored(), Ok(()));
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::HoldingTankUserNil { position: 0 })
+        );
 
         assert_eq!(
             tree.place_from_tank(Uuid::nil(), test_uuid(1), 0),

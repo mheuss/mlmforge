@@ -953,7 +953,7 @@ The engine is not the only holder of these edges. `tree_nodes.sponsor_id` holds 
 ### UC-NET-024: Adding a response field a caller must not ignore
 
 **Added:** Unreleased (HEU-766)
-**Files:** `engine/network-engine-worker/src/protocol.rs` (`PROTOCOL_VERSION`), `engine/network-engine-worker/src/handlers/tree.rs` (`responsored_json`), `internal/networkengine/wire_types.go` (`RemovalResult`, `MatrixRemovalResult`, `Responsored`, `responsoredWire`, `BoardAddMemberResultDTO`, `BoardRemoveMemberResultDTO`, `CompressionResultDTO`, `DissolutionResultDTO`), `internal/networkengine/engine_client.go` (`expectedProtocolVersion`, `RemoveNode`, `RemoveMatrixNode`, `BoardAddMember`, `BoardRemoveMember`, `BoardCompressInactive`, `BoardDissolve`)
+**Files:** `engine/network-engine-worker/src/protocol.rs` (`PROTOCOL_VERSION`), `engine/network-engine-worker/src/handlers/tree.rs` (`responsored_json`), `internal/networkengine/wire_types.go` (`RemovalResult`, `MatrixRemovalResult`, `Responsored`, `responsoredWire`, `BoardAddMemberResultDTO`, `BoardRemoveMemberResultDTO`, `CompressionResultDTO`, `DissolutionResultDTO`), `internal/networkengine/engine_client.go` (`expectedProtocolVersion`, `RemoveNode`, `RemoveMatrixNode`, `responsoredFrom`, `BoardAddMember`, `BoardRemoveMember`, `BoardCompressInactive`, `BoardDissolve`)
 
 **Problem:** Adding a field to a response is normally free. A client that ignores it is still correct, so the protocol version does not have to move.
 
@@ -978,7 +978,7 @@ if r.Responsored == nil {
 }
 ```
 
-A plain `[]Responsored` cannot express the difference. `encoding/json` leaves it nil for a missing key and for `[]` alike, so the response that forgot the field and the response that had nothing to report arrive identical.
+A plain slice cannot express the difference. `encoding/json` leaves it nil for a missing key and for `[]` alike, so the response that forgot the field and the response that had nothing to report arrive identical.
 
 **When to use this pattern:** any added response field where ignoring it leaves two systems holding the same fact. Apply it at every decode site for that field, not just the one the feature goes through. `remove_node` has two, and a rule enforced at one of them is not enforced.
 

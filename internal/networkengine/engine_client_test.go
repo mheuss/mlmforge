@@ -1251,6 +1251,15 @@ func TestEngineClient_BinaryGetPosition(t *testing.T) {
 
 // --- Commission calculation tests (mock) ---
 
+// assertAmountEqual checks that got equals the decimal value want names, with
+// no tolerance.
+func assertAmountEqual(t *testing.T, want string, got dec.Amount) {
+	t.Helper()
+	if !dec.MustParse(want).Equal(got.Decimal) {
+		assert.Fail(t, fmt.Sprintf("amount = %s, want %s", got.String(), want))
+	}
+}
+
 func TestEngineClient_CalculateUnilevel_MockParams(t *testing.T) {
 	mock := &mockTransport{
 		response: json.RawMessage(`{"earnings":[{"earner_id":"00000000-0000-0000-0000-000000000001","source_id":"00000000-0000-0000-0000-000000000002","level":1,"rate":0.05,"cv_amount":100.0,"dollar_amount":2.0}],"walks":[],"plan":{"name":"Test","version":2,"hash":"sha256:0000000000000000000000000000000000000000000000000000000000000000"}}`),
@@ -1282,9 +1291,9 @@ func TestEngineClient_CalculateUnilevel_MockParams(t *testing.T) {
 	assert.Equal(t, "00000000-0000-0000-0000-000000000002", earnings[0].SourceID)
 	assert.Equal(t, uint8(1), earnings[0].Level)
 	require.NotNil(t, earnings[0].Rate, "a rate-produced earning carries a rate")
-	assert.InDelta(t, 0.05, earnings[0].Rate.InexactFloat64(), 1e-9)
-	assert.InDelta(t, 100.0, earnings[0].CVAmount.InexactFloat64(), 1e-9)
-	assert.InDelta(t, 2.0, earnings[0].DollarAmount.InexactFloat64(), 1e-9)
+	assertAmountEqual(t, "0.05", *earnings[0].Rate)
+	assertAmountEqual(t, "100.0", earnings[0].CVAmount)
+	assertAmountEqual(t, "2.0", earnings[0].DollarAmount)
 }
 
 func TestEngineClient_CalculateUnilevel_EmptyEarnings(t *testing.T) {
@@ -1338,9 +1347,9 @@ func TestEngineClient_CalculateGeneration_MockParams(t *testing.T) {
 	assert.Equal(t, "00000000-0000-0000-0000-000000000002", earnings[0].SourceID)
 	assert.Equal(t, uint8(1), earnings[0].Level)
 	require.NotNil(t, earnings[0].Rate, "a rate-produced earning carries a rate")
-	assert.InDelta(t, 0.10, earnings[0].Rate.InexactFloat64(), 1e-9)
-	assert.InDelta(t, 100.0, earnings[0].CVAmount.InexactFloat64(), 1e-9)
-	assert.InDelta(t, 10.0, earnings[0].DollarAmount.InexactFloat64(), 1e-9)
+	assertAmountEqual(t, "0.10", *earnings[0].Rate)
+	assertAmountEqual(t, "100.0", earnings[0].CVAmount)
+	assertAmountEqual(t, "10.0", earnings[0].DollarAmount)
 }
 
 func TestEngineClient_CalculateGeneration_EmptyEarnings(t *testing.T) {
@@ -1392,7 +1401,7 @@ func TestEngineClient_CalculateMatrix_MockParams(t *testing.T) {
 	assert.Equal(t, "calculate_matrix", mock.lastOp)
 	assert.JSONEq(t, `{"structure":"Test","snapshots":{"00000000-0000-0000-0000-000000000001":{"rank":"member","personal_volume":100,"status":"active","has_order_in_period":true}},"volume":[{"source_id":"00000000-0000-0000-0000-000000000002","cv_amount":100}]}`, string(mock.lastParams))
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", earnings[0].EarnerID)
-	assert.InDelta(t, 2.0, earnings[0].DollarAmount.InexactFloat64(), 1e-9)
+	assertAmountEqual(t, "2.0", earnings[0].DollarAmount)
 }
 
 func TestEngineClient_CalculateMatrix_EmptyEarnings(t *testing.T) {
@@ -1442,7 +1451,7 @@ func TestEngineClient_CalculateStairstep_MockParams(t *testing.T) {
 	assert.Equal(t, "calculate_stairstep", mock.lastOp)
 	assert.JSONEq(t, `{"structure":"Test","snapshots":{"00000000-0000-0000-0000-000000000001":{"rank":"member","personal_volume":100,"status":"active","has_order_in_period":true}},"volume":[{"source_id":"00000000-0000-0000-0000-000000000003","cv_amount":100}]}`, string(mock.lastParams))
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", earnings[0].EarnerID)
-	assert.InDelta(t, 2.0, earnings[0].DollarAmount.InexactFloat64(), 1e-9)
+	assertAmountEqual(t, "2.0", earnings[0].DollarAmount)
 }
 
 func TestEngineClient_CalculateStairstep_EmptyEarnings(t *testing.T) {
@@ -1678,17 +1687,17 @@ func TestEngineClient_CalculateUnilevel(t *testing.T) {
 	assert.Equal(t, leafID, midEarning.SourceID)
 	assert.Equal(t, uint8(1), midEarning.Level)
 	require.NotNil(t, midEarning.Rate, "a rate-produced earning carries a rate")
-	assert.InDelta(t, 0.05, midEarning.Rate.InexactFloat64(), 1e-9)
-	assert.InDelta(t, 100.0, midEarning.CVAmount.InexactFloat64(), 1e-9)
-	assert.InDelta(t, 2.0, midEarning.DollarAmount.InexactFloat64(), 1e-9)
+	assertAmountEqual(t, "0.05", *midEarning.Rate)
+	assertAmountEqual(t, "100.0", midEarning.CVAmount)
+	assertAmountEqual(t, "2.0", midEarning.DollarAmount)
 
 	require.NotNil(t, rootEarning, "root should have an earning")
 	assert.Equal(t, leafID, rootEarning.SourceID)
 	assert.Equal(t, uint8(2), rootEarning.Level)
 	require.NotNil(t, rootEarning.Rate, "a rate-produced earning carries a rate")
-	assert.InDelta(t, 0.05, rootEarning.Rate.InexactFloat64(), 1e-9)
-	assert.InDelta(t, 100.0, rootEarning.CVAmount.InexactFloat64(), 1e-9)
-	assert.InDelta(t, 2.0, rootEarning.DollarAmount.InexactFloat64(), 1e-9)
+	assertAmountEqual(t, "0.05", *rootEarning.Rate)
+	assertAmountEqual(t, "100.0", rootEarning.CVAmount)
+	assertAmountEqual(t, "2.0", rootEarning.DollarAmount)
 }
 
 func TestEngineClient_CalculateUnilevel_EmptyVolume(t *testing.T) {
@@ -1784,9 +1793,9 @@ func TestEngineClient_CalculateStreamline(t *testing.T) {
 	assert.Equal(t, member2, earning.SourceID)
 	assert.Equal(t, uint8(1), earning.Level)
 	require.NotNil(t, earning.Rate, "a rate-produced earning carries a rate")
-	assert.InDelta(t, 0.10, earning.Rate.InexactFloat64(), 1e-9)
-	assert.InDelta(t, 100.0, earning.CVAmount.InexactFloat64(), 1e-9)
-	assert.InDelta(t, 10.0, earning.DollarAmount.InexactFloat64(), 1e-9)
+	assertAmountEqual(t, "0.10", *earning.Rate)
+	assertAmountEqual(t, "100.0", earning.CVAmount)
+	assertAmountEqual(t, "10.0", earning.DollarAmount)
 }
 
 // --- Streamline commission calculation test (mock) ---
@@ -1920,18 +1929,18 @@ func TestEngineClient_CalculateBinaryPairing_MockParams(t *testing.T) {
 	assert.Equal(t, "calculate_binary_pairing", mock.lastOp)
 	require.Len(t, result.Earnings, 1)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.Earnings[0].EarnerID)
-	assert.InDelta(t, 500.0, result.Earnings[0].LeftVolume.InexactFloat64(), 1e-9)
-	assert.InDelta(t, 500.0, result.Earnings[0].RightVolume.InexactFloat64(), 1e-9)
-	assert.InDelta(t, 500.0, result.Earnings[0].MatchedVolume.InexactFloat64(), 1e-9)
-	assert.InDelta(t, 1.0, result.Earnings[0].Ratio.InexactFloat64(), 1e-9)
-	assert.InDelta(t, 0.10, result.Earnings[0].Percent.InexactFloat64(), 1e-9)
-	assert.InDelta(t, 50.0, result.Earnings[0].DollarAmount.InexactFloat64(), 1e-9)
+	assertAmountEqual(t, "500.0", result.Earnings[0].LeftVolume)
+	assertAmountEqual(t, "500.0", result.Earnings[0].RightVolume)
+	assertAmountEqual(t, "500.0", result.Earnings[0].MatchedVolume)
+	assertAmountEqual(t, "1.0", result.Earnings[0].Ratio)
+	assertAmountEqual(t, "0.10", result.Earnings[0].Percent)
+	assertAmountEqual(t, "50.0", result.Earnings[0].DollarAmount)
 	assert.False(t, result.Earnings[0].Capped)
 
 	require.Contains(t, result.CarryForward, "00000000-0000-0000-0000-000000000001")
 	cf := result.CarryForward["00000000-0000-0000-0000-000000000001"]
-	assert.InDelta(t, 0.0, cf.Left.InexactFloat64(), 1e-9)
-	assert.InDelta(t, 0.0, cf.Right.InexactFloat64(), 1e-9)
+	assertAmountEqual(t, "0.0", cf.Left)
+	assertAmountEqual(t, "0.0", cf.Right)
 
 	// Verify carry_forward was sent in params.
 	assert.Contains(t, string(mock.lastParams), "carry_forward")
@@ -2606,7 +2615,7 @@ func TestEngineClient_CalculateBoardCommissions_MockParams(t *testing.T) {
 	require.Len(t, result.Earnings, 1)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", result.Earnings[0].EarnerID)
 	assert.Equal(t, "board-001", result.Earnings[0].BoardID)
-	assert.InDelta(t, 25.50, result.Earnings[0].DollarAmount.InexactFloat64(), 1e-9)
+	assertAmountEqual(t, "25.50", result.Earnings[0].DollarAmount)
 	assert.Equal(t, uint32(2), result.Earnings[0].CycleNumber)
 	assert.False(t, result.Earnings[0].Capped)
 

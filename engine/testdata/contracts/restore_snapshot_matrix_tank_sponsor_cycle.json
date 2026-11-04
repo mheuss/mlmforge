@@ -1,5 +1,5 @@
 {
-    "description": "restore_snapshot rejects a matrix snapshot whose holding tank entries sponsor each other, with INCONSISTENT_SNAPSHOT. Cross-language lock for HEU-1008. Before it, this payload restored and place_from_tank then refused both entries with SPONSOR_IN_HOLDING_TANK forever. The payload spells out the Arena, slot and tank shapes by hand. A new required field on Arena, Node, MatrixTree or HoldingTankEntry turns this into a deserialization failure rather than the rejection it tests.",
+    "description": "restore_snapshot rejects a matrix snapshot whose holding tank entries sponsor each other, with INCONSISTENT_SNAPSHOT. Cross-language lock for HEU-1008.",
     "request": {
         "id": "rs-matrix-tank-sponsor-cycle",
         "op": "restore_snapshot",

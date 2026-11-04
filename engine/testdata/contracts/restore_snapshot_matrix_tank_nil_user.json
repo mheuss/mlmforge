@@ -1,5 +1,5 @@
 {
-    "description": "restore_snapshot rejects a matrix snapshot whose holding tank holds the nil UUID, with INCONSISTENT_SNAPSHOT. Cross-language lock for HEU-951. Before it, this payload restored and place_from_tank then refused the entry with NIL_USER_ID forever. The payload spells out the Arena, slot and tank shapes by hand. A new required field on Arena, Node, MatrixTree or HoldingTankEntry turns this into a deserialization failure rather than the rejection it tests.",
+    "description": "restore_snapshot rejects a matrix snapshot whose holding tank holds the nil UUID, with INCONSISTENT_SNAPSHOT. Cross-language lock for HEU-951.",
     "request": {
         "id": "rs-matrix-tank-nil-user",
         "op": "restore_snapshot",

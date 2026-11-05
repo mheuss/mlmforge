@@ -212,12 +212,12 @@ type MatrixRemovalResult struct {
 // matrixRemovalWire is the matrix remove_node response as decoded. A nil
 // pointer is an absent or null key.
 type matrixRemovalWire struct {
-	Removed      string            `json:"removed"`
-	Promoted     *string           `json:"promoted"`
-	Repositioned []string          `json:"repositioned"`
-	MovedToTank  *[]string         `json:"moved_to_tank"`
-	Relocated    *[]relocationWire `json:"relocated"`
-	Responsored  *[]Responsored    `json:"responsored"`
+	Removed      string             `json:"removed"`
+	Promoted     *string            `json:"promoted"`
+	Repositioned []string           `json:"repositioned"`
+	MovedToTank  *[]string          `json:"moved_to_tank"`
+	Relocated    *[]relocationWire  `json:"relocated"`
+	Responsored  *[]responsoredWire `json:"responsored"`
 }
 
 // relocationWire is one relocation as decoded. A nil member is an absent or
@@ -235,6 +235,13 @@ type Responsored struct {
 	NewSponsorID string `json:"new_sponsor_id"`
 }
 
+// responsoredWire is one re-sponsored recruit as decoded. A nil member is an
+// absent or null key.
+type responsoredWire struct {
+	UserID       *string `json:"user_id"`
+	NewSponsorID *string `json:"new_sponsor_id"`
+}
+
 // RemovalResult is the wire format for unilevel and binary node removal.
 //
 // It omits `removed`, which the unilevel and binary arms send as a bool and
@@ -242,7 +249,7 @@ type Responsored struct {
 // reject one of the two, and nothing reads it.
 type RemovalResult struct {
 	// A pointer, so an absent key is distinguishable from an empty list.
-	Responsored *[]Responsored `json:"responsored"`
+	Responsored *[]responsoredWire `json:"responsored"`
 }
 
 // HoldingTankEntryDTO is the wire format for a matrix holding tank entry.

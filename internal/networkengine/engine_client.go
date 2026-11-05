@@ -400,7 +400,22 @@ func (c *EngineClient) RemoveNode(ctx context.Context, structure, userID string)
 	if r.Responsored == nil {
 		return nil, fmt.Errorf("remove_node: response has no \"responsored\" key")
 	}
-	return *r.Responsored, nil
+	return responsoredFrom(*r.Responsored)
+}
+
+// responsoredFrom checks each decoded re-sponsor entry and returns the entries.
+func responsoredFrom(entries []responsoredWire) ([]Responsored, error) {
+	out := make([]Responsored, 0, len(entries))
+	for i, e := range entries {
+		if e.UserID == nil {
+			return nil, fmt.Errorf("remove_node: responsored entry %d has no \"user_id\"", i)
+		}
+		if e.NewSponsorID == nil {
+			return nil, fmt.Errorf("remove_node: responsored entry for %s has no \"new_sponsor_id\"", *e.UserID)
+		}
+		out = append(out, Responsored{UserID: *e.UserID, NewSponsorID: *e.NewSponsorID})
+	}
+	return out, nil
 }
 
 // AddMatrixNode adds a node to a matrix tree using automatic spillover placement.
@@ -507,8 +522,12 @@ func (w matrixRemovalWire) result(userID string, mode PruningMode) (*MatrixRemov
 		relocated = append(relocated, Relocation{UserID: *r.UserID, ParentID: *r.ParentID,
 			Position: *r.Position, Depth: *r.Depth})
 	}
+	responsored, err := responsoredFrom(*w.Responsored)
+	if err != nil {
+		return nil, err
+	}
 	return &MatrixRemovalResult{Removed: w.Removed, Promoted: w.Promoted, Repositioned: w.Repositioned,
-		MovedToTank: tank, Relocated: relocated, Responsored: *w.Responsored}, nil
+		MovedToTank: tank, Relocated: relocated, Responsored: responsored}, nil
 }
 
 // --- Mutation checks ---

@@ -166,7 +166,7 @@ Guard both. Examples on this seam:
 
 The guiding rule is *fail loud*: a malformed value should earn a clear, coded rejection, not a silent default. `StreamConfig.AdditionalPerRank` is the deliberate counter-example to the general "use `omitempty` + `serde(default)`" map rule — its Rust mirror `additional_streams` intentionally has NO `serde(default)`, so the Go field keeps NO `omitempty` and the schema *requires* it. A missing value then earns a loud Rust rejection instead of a silent empty default. `TestAdditionalPerRank_EmptyStaysPresent` pins this against a future `omitempty` "fix" (HEU-513 Task 8A).
 
-A schema `required` list checks only that a key is present. A `"type": "string"` field still accepts `""`. A required string the engine cannot run empty needs `minLength: 1` in the schema or a Go rule. Came up in HEU-992.
+A schema `required` list checks only that a key is present. A `"type": "string"` field still accepts `""`. Every required name-like string, such as a rank, structure, pool or payment method name, carries `minLength: 1` in the schema. An empty value is then always a `schema_violation`, wherever in the plan it appears. Give a new one the same constraint. Strings already held by an `enum`, a `pattern` or a `format` do not need it. Came up in HEU-992 and was ruled in HEU-1001.
 
 ## Testing an optional `oneOf [$ref, null]` object
 

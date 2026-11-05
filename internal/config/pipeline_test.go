@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestPipelineAllValidFixtures(t *testing.T) {
@@ -623,7 +625,7 @@ func TestPipelineRefusesAnEmptyDistributorCountAtTheSchema(t *testing.T) {
 	assert.Equal(t, 1, naming, "errors: %v", errs)
 }
 
-func TestPipelineRefusesAnEmptyDistributorCountMinRankInTheRules(t *testing.T) {
+func TestPipelineRefusesAnEmptyDistributorCountMinRankAtTheSchema(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)
 	base := readFixture(t, "valid/full-unilevel.yaml")
@@ -633,11 +635,103 @@ func TestPipelineRefusesAnEmptyDistributorCountMinRankInTheRules(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Nil(t, jsonBytes)
-	require.Len(t, errs, 1, "errors: %v", errs)
-	assert.Equal(t, "missing_required_field", errs[0].Code)
-	assert.Equal(t, "/ranks/2/qualification/structures/0/distributor_count/min_rank", errs[0].Path)
-	assert.Equal(t, `rank "Leader" structure "Primary" distributor_count.min_rank is required`, errs[0].Message)
-	assert.Equal(t, SeverityError, errs[0].Severity)
+	require.NotEmpty(t, errs)
+	atField := 0
+	for _, e := range errs {
+		assert.Equal(t, "schema_violation", e.Code, "errors: %v", errs)
+		assert.Equal(t, SeverityError, e.Severity, "errors: %v", errs)
+		if e.Path == "/ranks/2/qualification/structures/0/distributor_count/min_rank" {
+			atField++
+		}
+	}
+	assert.Equal(t, 1, atField, "errors: %v", errs)
+}
+
+func TestPipelineRefusesAnEmptyRequiredNameAtTheSchema(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	tests := []struct {
+		field   string
+		fixture string
+		pointer string
+	}{
+		{"StructureQualification.structure", "valid/full-unilevel.yaml", "/ranks/0/qualification/structures/0/structure"},
+		{"RankQualificationWindow.threshold_rank", "valid/windowed-rank-plan.yaml", "/ranks/1/qualification/window/threshold_rank"},
+		{"TenureRequirement.threshold_rank", "valid/tenure-rank-plan.yaml", "/ranks/1/qualification/tenure/threshold_rank"},
+		{"BreakawayConfig.threshold_rank", "valid/stairstep-plan.yaml", "/structures/0/commission/breakaway/threshold_rank"},
+		{"BreakawayGenerationConfig.boundary_rank", "valid/stairstep-plan.yaml", "/structures/0/commission/breakaway/overrides/generation/boundary_rank"},
+		{"GenerationCommissionConfig.boundary_rank", "valid/generation-plan.yaml", "/structures/0/commission/generation/boundary_rank"},
+		{"StreamlineLevel.min_rank", "valid/streamline-plan.yaml", "/structures/1/commission/dynamic_compression/1/min_rank"},
+		{"LifestyleTier.min_rank", "valid/full-unilevel.yaml", "/bonuses/lifestyle/tiers/0/min_rank"},
+		{"PoolBonusConfig.name", "valid/full-unilevel.yaml", "/bonuses/pool/0/name"},
+		{"PoolQualification.min_rank in rank_based mode", "valid/full-unilevel.yaml", "/bonuses/pool/0/qualification/min_rank"},
+		{"PoolQualification.min_rank in combined mode", "valid/full-unilevel.yaml", "/bonuses/pool/2/qualification/min_rank"},
+		{"PaymentMethod.type", "valid/full-unilevel.yaml", "/payout/methods/0/type"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.field, func(t *testing.T) {
+			var plan any
+			require.NoError(t, yaml.Unmarshal(readFixture(t, tt.fixture), &plan))
+
+			pristine, err := json.Marshal(plan)
+			require.NoError(t, err)
+			_, errs, err := p.LoadAndValidate(pristine)
+			require.NoError(t, err)
+			require.Empty(t, errs, "fixture %s must validate before the field is emptied", tt.fixture)
+
+			setStringAtPointer(t, plan, tt.pointer, "")
+			doc, err := json.Marshal(plan)
+			require.NoError(t, err)
+
+			jsonBytes, errs, err := p.LoadAndValidate(doc)
+
+			require.NoError(t, err)
+			assert.Nil(t, jsonBytes)
+			require.NotEmpty(t, errs)
+			atField := 0
+			for _, e := range errs {
+				assert.Equal(t, "schema_violation", e.Code, "errors: %v", errs)
+				if e.Path == tt.pointer {
+					atField++
+				}
+			}
+			assert.Equal(t, 1, atField, "want one error at %s, errors: %v", tt.pointer, errs)
+		})
+	}
+}
+
+// setStringAtPointer replaces the string at an RFC 6901 pointer in a decoded
+// YAML document. It fails the test when the pointer does not resolve to a
+// string, so a stale pointer cannot leave the document unchanged.
+func setStringAtPointer(t *testing.T, doc any, pointer, value string) {
+	t.Helper()
+	tokens := strings.Split(strings.TrimPrefix(pointer, "/"), "/")
+	node := doc
+	for i, tok := range tokens {
+		last := i == len(tokens)-1
+		switch n := node.(type) {
+		case map[string]any:
+			child, ok := n[tok]
+			require.True(t, ok, "pointer %s: no key %q", pointer, tok)
+			if last {
+				_, isString := child.(string)
+				require.True(t, isString, "pointer %s targets %v, not a string", pointer, child)
+				n[tok] = value
+				return
+			}
+			node = child
+		case []any:
+			idx, err := strconv.Atoi(tok)
+			require.NoError(t, err, "pointer %s: %q is not an index", pointer, tok)
+			require.Less(t, idx, len(n), "pointer %s: index %d out of range", pointer, idx)
+			require.False(t, last, "pointer %s ends at an array element", pointer)
+			node = n[idx]
+		default:
+			t.Fatalf("pointer %s: cannot descend into %T at %q", pointer, node, tok)
+		}
+	}
 }
 
 func TestPipelineAcceptsADistributorCountWithOnlyMinRankAndSearchMode(t *testing.T) {

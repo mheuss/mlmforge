@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -672,18 +671,13 @@ func TestPipelineRefusesAnEmptyRequiredNameAtTheSchema(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.field, func(t *testing.T) {
-			var plan any
-			require.NoError(t, yaml.Unmarshal(readFixture(t, tt.fixture), &plan))
-
-			pristine, err := json.Marshal(plan)
-			require.NoError(t, err)
-			_, errs, err := p.LoadAndValidate(pristine)
+			base := readFixture(t, tt.fixture)
+			_, errs, err := p.LoadAndValidate(base)
 			require.NoError(t, err)
 			require.Empty(t, errs, "fixture %s must validate before the field is emptied", tt.fixture)
+			requireStringAtPointer(t, base, tt.pointer)
 
-			setStringAtPointer(t, plan, tt.pointer, "")
-			doc, err := json.Marshal(plan)
-			require.NoError(t, err)
+			doc := setJSONPointer(t, base, tt.pointer, "")
 
 			jsonBytes, errs, err := p.LoadAndValidate(doc)
 
@@ -702,35 +696,17 @@ func TestPipelineRefusesAnEmptyRequiredNameAtTheSchema(t *testing.T) {
 	}
 }
 
-// setStringAtPointer replaces the string at an RFC 6901 pointer in a decoded
-// YAML document.
-func setStringAtPointer(t *testing.T, doc any, pointer, value string) {
+// requireStringAtPointer fails the test unless the YAML document holds a
+// string at the JSON pointer.
+func requireStringAtPointer(t *testing.T, yamlBytes []byte, pointer string) {
 	t.Helper()
-	tokens := strings.Split(strings.TrimPrefix(pointer, "/"), "/")
-	node := doc
-	for i, tok := range tokens {
-		last := i == len(tokens)-1
-		switch n := node.(type) {
-		case map[string]any:
-			child, ok := n[tok]
-			require.True(t, ok, "pointer %s: no key %q", pointer, tok)
-			if last {
-				_, isString := child.(string)
-				require.True(t, isString, "pointer %s targets %v, not a string", pointer, child)
-				n[tok] = value
-				return
-			}
-			node = child
-		case []any:
-			idx, err := strconv.Atoi(tok)
-			require.NoError(t, err, "pointer %s: %q is not an index", pointer, tok)
-			require.Less(t, idx, len(n), "pointer %s: index %d out of range", pointer, idx)
-			require.False(t, last, "pointer %s ends at an array element", pointer)
-			node = n[idx]
-		default:
-			t.Fatalf("pointer %s: cannot descend into %T at %q", pointer, node, tok)
-		}
+	var node any
+	require.NoError(t, yaml.Unmarshal(yamlBytes, &node))
+	for _, tok := range strings.Split(strings.TrimPrefix(pointer, "/"), "/") {
+		node = pointerChild(t, node, tok, pointer)
 	}
+	_, isString := node.(string)
+	require.True(t, isString, "pointer %s targets %v, not a string", pointer, node)
 }
 
 func TestPipelineAcceptsADistributorCountWithOnlyMinRankAndSearchMode(t *testing.T) {

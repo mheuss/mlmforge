@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**Test count:** 1848 (Rust), 1713 (Go)
+**Test count:** 1848 (Rust), 1714 (Go)
 
 ### Added
 - Project research documentation (MLM fundamentals, compensation plans, glossary, competitive landscape, legal/regulatory)
@@ -96,6 +96,7 @@
 - `place_from_tank` refuses a user whose stored sponsor is still in the matrix holding tank. It answers `SPONSOR_IN_HOLDING_TANK`, names the sponsor, and changes nothing. It used to place the user with no sponsor. Placing the sponsor afterwards did not restore the link. A user whose sponsor has left the tree is still placed with no sponsor. A `place_from_tank` that succeeded under protocol 28 can fail under protocol 29. Protocol 29. (HEU-998)
 - `restore_snapshot` refuses a matrix holding tank that holds the nil UUID, or whose sponsor links loop back through the tank. It answers `INCONSISTENT_SNAPSHOT`. A self-sponsored entry, two entries that sponsor each other, and an entry whose sponsor chain runs into such a loop are all refused. Such a tank used to restore. `place_from_tank` then refused the affected entries forever. A tank entry whose sponsor is the nil UUID is still accepted (HEU-1009). A `restore_snapshot` that succeeded under protocol 29 can fail under protocol 30. Protocol 30. (HEU-1008, HEU-951)
 - The plan schema refuses an empty required name with `schema_violation`. That covers a rank named by a distributor count, window, tenure, breakaway, breakaway generation override, lifestyle tier or pool, and a structure qualification, pool name or payment method type. A generation commission's `boundary_rank` is covered only in `threshold_rank` mode. An empty `distributor_count.min_rank` used to get `missing_required_field` from Go. Most of the others loaded with `""`. A plan that loaded with an empty name now fails to load. That includes an empty breakaway `threshold_rank` or breakaway generation `boundary_rank`, which used to drop that commission path with only a log line. An empty streamline level `min_rank` still loads, because it means the level has no rank gate. So does an empty `boundary_rank` in `same_rank` mode. (HEU-1001)
+- The plan schema refuses an empty item in a list of names with `schema_violation`. That covers `eligible_statuses`, `required_products`, `qualifying_products`, `qualified_structures`, `matched_commission_types` and the holding tank's `applicable_structures`. An empty item in the first three used to load. `eligible_statuses: [""]` then paid commission only to a distributor with an empty status. `required_products: [""]` above the base rank let only a distributor holding an active product named `""` reach that rank. The other three got `undefined_reference` from Go. (HEU-1012)
 
 ### Fixed
 - Production `unwrap()` in unilevel.rs replaced with `match` on `Option`

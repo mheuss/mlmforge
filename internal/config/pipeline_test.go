@@ -670,31 +670,62 @@ func TestPipelineRefusesAnEmptyRequiredNameAtTheSchema(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.field, func(t *testing.T) {
-			base := readFixture(t, tt.fixture)
-			original := requireStringAtPointer(t, base, tt.pointer)
-
-			baseline := setJSONPointer(t, base, tt.pointer, original)
-			_, errs, err := p.LoadAndValidate(baseline)
-			require.NoError(t, err)
-			require.Empty(t, errs, "fixture %s, written back unchanged through the YAML round trip, must validate before the field is emptied", tt.fixture)
-
-			doc := setJSONPointer(t, base, tt.pointer, "")
-
-			jsonBytes, errs, err := p.LoadAndValidate(doc)
-
-			require.NoError(t, err)
-			assert.Nil(t, jsonBytes)
-			require.NotEmpty(t, errs)
-			atField := 0
-			for _, e := range errs {
-				assert.Equal(t, "schema_violation", e.Code, "errors: %v", errs)
-				if e.Path == tt.pointer {
-					atField++
-				}
-			}
-			assert.Equal(t, 1, atField, "want one error at %s, errors: %v", tt.pointer, errs)
+			requireEmptyRefusedAtSchema(t, p, tt.fixture, tt.pointer)
 		})
 	}
+}
+
+func TestPipelineRefusesAnEmptyArrayItemAtTheSchema(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	tests := []struct {
+		field   string
+		fixture string
+		pointer string
+	}{
+		{"RankDefinition.qualified_structures", "valid/full-unilevel.yaml", "/ranks/1/qualified_structures/0"},
+		{"RankQualification.required_products", "valid/full-unilevel.yaml", "/ranks/2/qualification/required_products/0"},
+		{"CommissionEligibility.eligible_statuses", "valid/binary-cycle-step-plan.yaml", "/commission_eligibility/eligible_statuses/0"},
+		{"MatchingBonusConfig.matched_commission_types", "valid/full-unilevel.yaml", "/bonuses/matching/matched_commission_types/0"},
+		{"SponsorBonusConfig.qualifying_products", "valid/full-unilevel.yaml", "/bonuses/sponsor/qualifying_products/0"},
+		{"HoldingTankConfig.applicable_structures", "valid/full-unilevel.yaml", "/placement/holding_tank/applicable_structures/0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.field, func(t *testing.T) {
+			requireEmptyRefusedAtSchema(t, p, tt.fixture, tt.pointer)
+		})
+	}
+}
+
+// requireEmptyRefusedAtSchema empties the string at the pointer in a valid
+// fixture and requires the pipeline to refuse it at the schema.
+func requireEmptyRefusedAtSchema(t *testing.T, p *Pipeline, fixture, pointer string) {
+	t.Helper()
+	base := readFixture(t, fixture)
+	original := requireStringAtPointer(t, base, pointer)
+
+	baseline := setJSONPointer(t, base, pointer, original)
+	_, errs, err := p.LoadAndValidate(baseline)
+	require.NoError(t, err)
+	require.Empty(t, errs, "fixture %s, written back unchanged through the YAML round trip, must validate before the field is emptied", fixture)
+
+	doc := setJSONPointer(t, base, pointer, "")
+
+	jsonBytes, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	assert.Nil(t, jsonBytes)
+	require.NotEmpty(t, errs)
+	atField := 0
+	for _, e := range errs {
+		assert.Equal(t, "schema_violation", e.Code, "errors: %v", errs)
+		if e.Path == pointer {
+			atField++
+		}
+	}
+	assert.Equal(t, 1, atField, "want one error at %s, errors: %v", pointer, errs)
 }
 
 func TestPipelineAcceptsAnEmptyNameWhereEmptyIsAValue(t *testing.T) {

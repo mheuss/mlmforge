@@ -155,7 +155,8 @@
         "qualified_structures": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "description": "Which structures this rank qualifies for. Empty means all."
         },
@@ -194,7 +195,8 @@
         "required_products": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "description": "Product IDs that must be on autoship."
         },
@@ -489,7 +491,8 @@
         "eligible_statuses": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "minItems": 1,
           "description": "Account statuses that are eligible for commissions."
@@ -1793,7 +1796,8 @@
         "matched_commission_types": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "description": "Which commission types are matched."
         }
@@ -1817,7 +1821,8 @@
         "qualifying_products": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "description": "Product IDs that trigger the sponsor bonus."
         }
@@ -2557,7 +2562,8 @@
         "applicable_structures": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           },
           "description": "Which structures use the holding tank."
         }

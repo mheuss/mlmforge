@@ -229,6 +229,7 @@
       "properties": {
         "structure": {
           "type": "string",
+          "minLength": 1,
           "description": "Name of the structure this qualification applies to."
         },
         "personal_volume": {
@@ -290,6 +291,7 @@
         },
         "min_rank": {
           "type": "string",
+          "minLength": 1,
           "description": "Minimum rank for a distributor to count."
         },
         "search_mode": {
@@ -405,6 +407,7 @@
       "properties": {
         "threshold_rank": {
           "type": "string",
+          "minLength": 1,
           "description": "The rank the distributor must have achieved in each qualifying period."
         },
         "qualifying_periods": {
@@ -428,6 +431,7 @@
       "properties": {
         "threshold_rank": {
           "type": "string",
+          "minLength": 1,
           "description": "The rank the distributor must have achieved in each of the consecutive periods."
         },
         "periods": {
@@ -1227,6 +1231,7 @@
       "properties": {
         "threshold_rank": {
           "type": "string",
+          "minLength": 1,
           "description": "Rank at which a distributor breaks away from their upline group."
         },
         "group_volume_excludes_breakaway": {
@@ -1447,6 +1452,7 @@
         },
         "boundary_rank": {
           "type": "string",
+          "minLength": 1,
           "description": "Rank that defines generation boundaries."
         }
       }
@@ -1497,7 +1503,7 @@
         },
         "boundary_rank": {
           "type": "string",
-          "description": "Rank used for boundary calculation."
+          "description": "Rank used for boundary calculation. Must be non-empty when boundary_mode is threshold_rank. Not used when boundary_mode is same_rank."
         },
         "empty_generation_consumes_number": {
           "type": "boolean",
@@ -1521,7 +1527,27 @@
           "default": true,
           "description": "Whether ineligible boundary-rank distributors still create generation boundaries. Defaults to true."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "boundary_mode": {
+                "const": "threshold_rank"
+              }
+            },
+            "required": ["boundary_mode"]
+          },
+          "then": {
+            "properties": {
+              "boundary_rank": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "StreamlineLevel": {
       "type": "object",
@@ -1530,7 +1556,7 @@
       "properties": {
         "min_rank": {
           "type": "string",
-          "description": "Minimum rank to earn at this level."
+          "description": "Minimum rank to earn at this level. An empty string means the level has no rank gate."
         },
         "percent": {
           "type": "number",
@@ -1988,6 +2014,7 @@
       "properties": {
         "min_rank": {
           "type": "string",
+          "minLength": 1,
           "description": "Minimum rank to qualify for this tier."
         },
         "amount": {
@@ -2016,6 +2043,7 @@
       "properties": {
         "name": {
           "type": "string",
+          "minLength": 1,
           "description": "Display name for this pool."
         },
         "source_percent": {
@@ -2085,7 +2113,8 @@
             "required": ["min_rank"],
             "properties": {
               "min_rank": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               }
             }
           }
@@ -2121,7 +2150,8 @@
             "required": ["min_rank", "velocity"],
             "properties": {
               "min_rank": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               },
               "velocity": {
                 "$ref": "#/$defs/VelocityQualification"
@@ -2387,6 +2417,7 @@
       "properties": {
         "type": {
           "type": "string",
+          "minLength": 1,
           "description": "Payment method identifier (e.g., direct_deposit, check, ewallet)."
         },
         "fee": {

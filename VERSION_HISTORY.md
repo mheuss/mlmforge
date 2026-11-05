@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**Test count:** 1848 (Rust), 1711 (Go)
+**Test count:** 1848 (Rust), 1713 (Go)
 
 ### Added
 - Project research documentation (MLM fundamentals, compensation plans, glossary, competitive landscape, legal/regulatory)
@@ -91,10 +91,11 @@
 - A binary aggregate cap is split by largest remainder in whole minor units, so the shares sum exactly to the cap. This replaces the phase 1 split at 13 places. (HEU-969, phase 2)
 - `load_plan` and Go validation refuse a base currency missing from the minor-unit table, and a plan money value that is not a whole number of minor units. (HEU-969, phase 2)
 - A library call to `calculate_binary_pairing` with a pairing percent outside [0, 1] returns an error. (HEU-982)
-- Go refuses a rank's `distributor_count` block that leaves out `min_rank` or `search_mode`. The schema requires both keys. The public loader refuses `distributor_count: {}` and produces no engine JSON. `validateBusinessRules` refuses an empty `min_rank` or `search_mode` with `missing_required_field`. The error names the rank and structure. This covers callers that skip the schema. It also covers an explicit `min_rank: ""`, which the schema accepts. The engine used to refuse an empty `search_mode` at load. It failed on an empty `min_rank` at rank evaluation. (HEU-992)
+- Go refuses a rank's `distributor_count` block that leaves out `min_rank` or `search_mode`. The schema requires both keys. The public loader refuses `distributor_count: {}` and produces no engine JSON. `validateBusinessRules` refuses an empty `min_rank` or `search_mode` with `missing_required_field`. The error names the rank and structure. This covers callers that skip the schema. The engine used to refuse an empty `search_mode` at load. It failed on an empty `min_rank` at rank evaluation. (HEU-992)
 - The commerce and financial packages hold money and CV points as `dec.Amount`, not `float64`. A guard test in each package fails on any `float32` or `float64` identifier in its non-test files. It does not see a float that has no `float32` or `float64` identifier. JSON `null` in one of these fields now fails to decode. (HEU-981)
 - `place_from_tank` refuses a user whose stored sponsor is still in the matrix holding tank. It answers `SPONSOR_IN_HOLDING_TANK`, names the sponsor, and changes nothing. It used to place the user with no sponsor. Placing the sponsor afterwards did not restore the link. A user whose sponsor has left the tree is still placed with no sponsor. A `place_from_tank` that succeeded under protocol 28 can fail under protocol 29. Protocol 29. (HEU-998)
 - `restore_snapshot` refuses a matrix holding tank that holds the nil UUID, or whose sponsor links loop back through the tank. It answers `INCONSISTENT_SNAPSHOT`. A self-sponsored entry, two entries that sponsor each other, and an entry whose sponsor chain runs into such a loop are all refused. Such a tank used to restore. `place_from_tank` then refused the affected entries forever. A tank entry whose sponsor is the nil UUID is still accepted (HEU-1009). A `restore_snapshot` that succeeded under protocol 29 can fail under protocol 30. Protocol 30. (HEU-1008, HEU-951)
+- The plan schema refuses an empty required name with `schema_violation`. That covers a rank named by a distributor count, window, tenure, breakaway, breakaway generation override, lifestyle tier or pool, and a structure qualification, pool name or payment method type. A generation commission's `boundary_rank` is covered only in `threshold_rank` mode. An empty `distributor_count.min_rank` used to get `missing_required_field` from Go. Most of the others loaded with `""`. A plan that loaded with an empty name now fails to load. That includes an empty breakaway `threshold_rank` or breakaway generation `boundary_rank`, which used to drop that commission path with only a log line. An empty streamline level `min_rank` still loads, because it means the level has no rank gate. So does an empty `boundary_rank` in `same_rank` mode. (HEU-1001)
 
 ### Fixed
 - Production `unwrap()` in unilevel.rs replaced with `match` on `Option`
@@ -117,6 +118,7 @@
 - The Go toolchain moves to go1.27.3 in `go.mod`, `mise.toml` and CI. govulncheck flags GO-2026-6809 in `crypto/x509` at go1.27.2. It failed the Go vulnerability check on main's CI run at `bd08108`. (HEU-973)
 - A binary aggregate cap no longer refuses with a `Precision` error when an owner's exact earnings total does not fit a 96-bit decimal. The total is compared with the cap in wide integers, and the cap is split the same way. Protocol 28. (HEU-997)
 - The Go client refuses a `remove_node` response whose `responsored` entry has a missing or null `user_id` or `new_sponsor_id`. The error names the field. The member used to decode as an empty id and reach the store's re-sponsor write. Both `RemoveNode` and `RemoveMatrixNode` decode it this way. No protocol number moves. (HEU-926)
+- The Rust width contract test checks why each over-max value was refused. It asserts serde's range message for that exact value and the type it overflows. It used to pass on any refusal, including one about a different field. (HEU-993)
 
 ### Removed
 - None.

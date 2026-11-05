@@ -594,9 +594,10 @@ the same over-wide integer gets two different refusals:
 | `serde_json::from_value` | `invalid number` |
 
 The `from_value` message names neither the value nor the type. The exception is
-a field inside an adjacently tagged enum, such as a structure config. Serde
-buffers that content. The buffered path gives the full message under either
-call.
+a field inside an adjacently tagged enum, such as a structure config, when its
+content arrives before its tag. Serde buffers that content. The buffered path
+gives the full message under either call. With the tag first, nothing is
+buffered.
 
 A test that asserts on a deserialize error message should parse from text. That
 is also how the worker reads a request.

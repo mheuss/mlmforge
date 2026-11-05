@@ -660,8 +660,7 @@ func TestPipelineRefusesAnEmptyRequiredNameAtTheSchema(t *testing.T) {
 		{"TenureRequirement.threshold_rank", "valid/tenure-rank-plan.yaml", "/ranks/1/qualification/tenure/threshold_rank"},
 		{"BreakawayConfig.threshold_rank", "valid/stairstep-plan.yaml", "/structures/0/commission/breakaway/threshold_rank"},
 		{"BreakawayGenerationConfig.boundary_rank", "valid/stairstep-plan.yaml", "/structures/0/commission/breakaway/overrides/generation/boundary_rank"},
-		{"GenerationCommissionConfig.boundary_rank", "valid/generation-plan.yaml", "/structures/0/commission/generation/boundary_rank"},
-		{"StreamlineLevel.min_rank", "valid/streamline-plan.yaml", "/structures/1/commission/dynamic_compression/1/min_rank"},
+		{"GenerationCommissionConfig.boundary_rank in threshold_rank mode", "valid/generation-plan.yaml", "/structures/0/commission/generation/boundary_rank"},
 		{"LifestyleTier.min_rank", "valid/full-unilevel.yaml", "/bonuses/lifestyle/tiers/0/min_rank"},
 		{"PoolBonusConfig.name", "valid/full-unilevel.yaml", "/bonuses/pool/0/name"},
 		{"PoolQualification.min_rank in rank_based mode", "valid/full-unilevel.yaml", "/bonuses/pool/0/qualification/min_rank"},
@@ -694,6 +693,50 @@ func TestPipelineRefusesAnEmptyRequiredNameAtTheSchema(t *testing.T) {
 				}
 			}
 			assert.Equal(t, 1, atField, "want one error at %s, errors: %v", tt.pointer, errs)
+		})
+	}
+}
+
+func TestPipelineAcceptsAnEmptyNameWhereEmptyIsAValue(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+
+	type edit struct{ pointer, value string }
+	tests := []struct {
+		name    string
+		fixture string
+		edits   []edit
+	}{
+		{
+			"GenerationCommissionConfig.boundary_rank in same_rank mode",
+			"valid/generation-plan.yaml",
+			[]edit{
+				{"/structures/0/commission/generation/boundary_mode", "same_rank"},
+				{"/structures/0/commission/generation/boundary_rank", ""},
+			},
+		},
+		{
+			"StreamlineLevel.min_rank on an ungated level",
+			"valid/streamline-plan.yaml",
+			[]edit{
+				{"/structures/1/commission/dynamic_compression/1/min_rank", ""},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc := readFixture(t, tt.fixture)
+			for _, e := range tt.edits {
+				requireStringAtPointer(t, doc, e.pointer)
+				doc = setJSONPointer(t, doc, e.pointer, e.value)
+			}
+
+			jsonBytes, errs, err := p.LoadAndValidate(doc)
+
+			require.NoError(t, err)
+			assert.Empty(t, errs)
+			assert.NotNil(t, jsonBytes)
 		})
 	}
 }

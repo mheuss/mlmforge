@@ -1503,8 +1503,7 @@
         },
         "boundary_rank": {
           "type": "string",
-          "minLength": 1,
-          "description": "Rank used for boundary calculation."
+          "description": "Rank used for boundary calculation. Must be non-empty when boundary_mode is threshold_rank. Not used when boundary_mode is same_rank."
         },
         "empty_generation_consumes_number": {
           "type": "boolean",
@@ -1528,7 +1527,27 @@
           "default": true,
           "description": "Whether ineligible boundary-rank distributors still create generation boundaries. Defaults to true."
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "boundary_mode": {
+                "const": "threshold_rank"
+              }
+            },
+            "required": ["boundary_mode"]
+          },
+          "then": {
+            "properties": {
+              "boundary_rank": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "StreamlineLevel": {
       "type": "object",
@@ -1537,8 +1556,7 @@
       "properties": {
         "min_rank": {
           "type": "string",
-          "minLength": 1,
-          "description": "Minimum rank to earn at this level."
+          "description": "Minimum rank to earn at this level. An empty string means the level has no rank gate."
         },
         "percent": {
           "type": "number",

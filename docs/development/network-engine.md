@@ -583,6 +583,24 @@ between the builds. Otherwise the second build reuses the first artifact, the
 outputs are trivially identical, and the comparison proves nothing. This one is
 quiet: the check appears to pass.
 
+## An Over-Wide Integer From A `Value` Is A Bare "invalid number" (HEU-993)
+
+The engine builds `serde_json` with `arbitrary_precision`. Under that feature,
+the same over-wide integer gets two different refusals:
+
+| Parsed with | Refusal for 256 in a `u8` field |
+|---|---|
+| `serde_json::from_str` | ``invalid value: integer `256`, expected u8`` |
+| `serde_json::from_value` | `invalid number` |
+
+The `from_value` message names neither the value nor the type. The exception is
+a field inside an adjacently tagged enum, such as a structure config. Serde
+buffers that content. The buffered path gives the full message under either
+call.
+
+A test that asserts on a deserialize error message should parse from text. That
+is also how the worker reads a request.
+
 ## Worker Binary Freshness
 
 The Go integration suite fails if the Rust worker binary is older than a `.rs` file the binary is built from (`staleWorkerBinary` in `transport_test.go`, HEU-615). A stale binary used to be picked up silently, so a green `go test ./...` could mean the Rust half of the seam was never rebuilt.

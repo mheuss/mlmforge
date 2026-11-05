@@ -672,10 +672,12 @@ func TestPipelineRefusesAnEmptyRequiredNameAtTheSchema(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.field, func(t *testing.T) {
 			base := readFixture(t, tt.fixture)
-			_, errs, err := p.LoadAndValidate(base)
+			original := requireStringAtPointer(t, base, tt.pointer)
+
+			baseline := setJSONPointer(t, base, tt.pointer, original)
+			_, errs, err := p.LoadAndValidate(baseline)
 			require.NoError(t, err)
 			require.Empty(t, errs, "fixture %s must validate before the field is emptied", tt.fixture)
-			requireStringAtPointer(t, base, tt.pointer)
 
 			doc := setJSONPointer(t, base, tt.pointer, "")
 
@@ -696,17 +698,18 @@ func TestPipelineRefusesAnEmptyRequiredNameAtTheSchema(t *testing.T) {
 	}
 }
 
-// requireStringAtPointer fails the test unless the YAML document holds a
-// string at the JSON pointer.
-func requireStringAtPointer(t *testing.T, yamlBytes []byte, pointer string) {
+// requireStringAtPointer returns the string the YAML document holds at the
+// JSON pointer, and fails the test when it holds anything else.
+func requireStringAtPointer(t *testing.T, yamlBytes []byte, pointer string) string {
 	t.Helper()
 	var node any
 	require.NoError(t, yaml.Unmarshal(yamlBytes, &node))
 	for _, tok := range strings.Split(strings.TrimPrefix(pointer, "/"), "/") {
 		node = pointerChild(t, node, tok, pointer)
 	}
-	_, isString := node.(string)
+	s, isString := node.(string)
 	require.True(t, isString, "pointer %s targets %v, not a string", pointer, node)
+	return s
 }
 
 func TestPipelineAcceptsADistributorCountWithOnlyMinRankAndSearchMode(t *testing.T) {

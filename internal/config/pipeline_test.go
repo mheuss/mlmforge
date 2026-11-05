@@ -703,8 +703,7 @@ func TestPipelineRefusesAnEmptyRequiredNameAtTheSchema(t *testing.T) {
 }
 
 // setStringAtPointer replaces the string at an RFC 6901 pointer in a decoded
-// YAML document. It fails the test when the pointer does not resolve to a
-// string, so a stale pointer cannot leave the document unchanged.
+// YAML document.
 func setStringAtPointer(t *testing.T, doc any, pointer, value string) {
 	t.Helper()
 	tokens := strings.Split(strings.TrimPrefix(pointer, "/"), "/")

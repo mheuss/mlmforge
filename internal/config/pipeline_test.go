@@ -677,7 +677,7 @@ func TestPipelineRefusesAnEmptyRequiredNameAtTheSchema(t *testing.T) {
 			baseline := setJSONPointer(t, base, tt.pointer, original)
 			_, errs, err := p.LoadAndValidate(baseline)
 			require.NoError(t, err)
-			require.Empty(t, errs, "fixture %s must validate before the field is emptied", tt.fixture)
+			require.Empty(t, errs, "fixture %s, written back unchanged through the YAML round trip, must validate before the field is emptied", tt.fixture)
 
 			doc := setJSONPointer(t, base, tt.pointer, "")
 

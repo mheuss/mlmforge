@@ -93,18 +93,40 @@ fn rust_config_rejects_over_max_widths() {
         // Pristine-first: the unmutated fixture must deserialize, or the rejection
         // below could be true for an unrelated reason (a silent vacuous pass).
         assert!(
-            serde_json::from_value::<CompensationPlan>(pristine.clone()).is_ok(),
+            serde_json::from_str::<CompensationPlan>(&pristine.to_string()).is_ok(),
             "{label}: fixture {} must deserialize before mutation",
             f.engine_fixture
         );
 
         let mut doc = pristine;
         set_over_max(&mut doc, &f.engine_pointer, f.over_max);
+        // Parsed from text: parsing the Value refuses without naming the value or type.
+        let err = match serde_json::from_str::<CompensationPlan>(&doc.to_string()) {
+            Ok(_) => panic!(
+                "{label}: engine payload must reject {} at {} — is the Rust type too wide?",
+                f.over_max, f.engine_pointer
+            ),
+            Err(e) => e.to_string(),
+        };
+        let ty = unsigned_type_for(f.over_max, &label);
+        let prefix = format!("invalid value: integer `{}`, expected ", f.over_max);
+        let expected = err.strip_prefix(&prefix).unwrap_or("");
+        let names_type = expected.starts_with(&format!("{ty} "))
+            || expected.starts_with(&format!("a nonzero {ty} "));
         assert!(
-            serde_json::from_value::<CompensationPlan>(doc).is_err(),
-            "{label}: engine payload must reject {} at {} — is the Rust type too wide?",
-            f.over_max,
-            f.engine_pointer
+            names_type,
+            "{label}: refusal at {} is not the {ty} width failure for {}: got {err:?}",
+            f.engine_pointer, f.over_max
         );
+    }
+}
+
+/// The unsigned type whose maximum `over_max` exceeds by one.
+fn unsigned_type_for(over_max: i64, label: &str) -> &'static str {
+    match over_max {
+        256 => "u8",
+        65_536 => "u16",
+        4_294_967_296 => "u32",
+        other => panic!("{label}: over_max {other} is not one past a u8, u16 or u32 maximum"),
     }
 }

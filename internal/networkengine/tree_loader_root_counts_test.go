@@ -13,13 +13,13 @@ import (
 func TestLoadTree_RootStageReportsTheNonRootCount(t *testing.T) {
 	root := func(userID string) networkengine.TreeNodeRow {
 		return networkengine.TreeNodeRow{
-			ID: userID, TreeID: "t", UserID: userID, Depth: 0,
+			ID: userID, TreeID: extTree, UserID: userID, Depth: 0,
 			EnrolledAt: time.Unix(1, 0),
 		}
 	}
 	child := func(userID, parentID string, enrolled int64) networkengine.TreeNodeRow {
 		return networkengine.TreeNodeRow{
-			ID: userID, TreeID: "t", UserID: userID, Depth: 1,
+			ID: userID, TreeID: extTree, UserID: userID, Depth: 1,
 			ParentID: &parentID, SponsorID: &parentID,
 			EnrolledAt: time.Unix(enrolled, 0),
 		}
@@ -27,13 +27,13 @@ func TestLoadTree_RootStageReportsTheNonRootCount(t *testing.T) {
 
 	store := networkengine.NewMemoryTreeStore()
 	for i, r := range []networkengine.TreeNodeRow{
-		root("u0"), child("u1", "u0", 2), child("u2", "u0", 3),
+		root(extUser0), child(extUser1, extUser0, 2), child(extUser2, extUser0, 3),
 	} {
 		require.NoError(t, store.ProjectInsert(t.Context(), r, int64(i+1)))
 	}
 
 	_, err := networkengine.NewTreeLoader(store, failingMutator{failOn: "AddRoot"}).
-		LoadTree(t.Context(), "t", "unilevel")
+		LoadTree(t.Context(), extTree, "unilevel")
 
 	var incomplete *networkengine.TreeLoadIncompleteError
 	require.ErrorAs(t, err, &incomplete)

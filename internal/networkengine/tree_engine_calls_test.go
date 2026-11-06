@@ -138,16 +138,16 @@ func TestTreeConsumer_ARemovalStillLandsTheRecruitsTheEngineMoved(t *testing.T) 
 	transport.response = json.RawMessage(`{"removed":true,"responsored":[{"user_id":"` + userRecruit + `","new_sponsor_id":"` + userRoot + `"}]}`)
 	consumer := NewTreeEventConsumer(store, newEngineClientWithTransport(transport))
 	ctx := context.Background()
-	require.NoError(t, store.insertNode(ctx, makeNode("tree1", userRoot, 0, nil, ptr(userRoot), nil)))
-	require.NoError(t, store.insertNode(ctx, makeNode("tree1", userLeaf, 1, ptr(userRoot), ptr(userRoot), nil)))
-	require.NoError(t, store.insertNode(ctx, makeNode("tree1", userRecruit, 1, ptr(userRoot), ptr(userLeaf), nil)))
+	require.NoError(t, store.insertNode(ctx, makeNode(consumerTree, userRoot, 0, nil, ptr(userRoot), nil)))
+	require.NoError(t, store.insertNode(ctx, makeNode(consumerTree, userLeaf, 1, ptr(userRoot), ptr(userRoot), nil)))
+	require.NoError(t, store.insertNode(ctx, makeNode(consumerTree, userRecruit, 1, ptr(userRoot), ptr(userLeaf), nil)))
 
 	err := deliver(ctx, consumer, makeEvent(EventTypeNodeRemoved, NodeRemovedPayload{
-		TreeID: "tree1", UserID: userLeaf, RemovedAt: time.Now(),
+		TreeID: consumerTree, UserID: userLeaf, RemovedAt: time.Now(),
 	}))
 
 	require.NoError(t, err)
-	recruit, err := store.GetNode(ctx, "tree1", userRecruit)
+	recruit, err := store.GetNode(ctx, consumerTree, userRecruit)
 	require.NoError(t, err)
 	require.NotNil(t, recruit)
 	require.NotNil(t, recruit.SponsorID)

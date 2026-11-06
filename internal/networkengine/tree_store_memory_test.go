@@ -3,6 +3,8 @@ package networkengine
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -206,15 +208,30 @@ func TestMemoryTreeStore_Suite(t *testing.T) {
 		}
 		require.Failf(t, "no row", "no row with id %s", nodeID)
 	}, func(t *testing.T, s TreeStore, nodeID string, at time.Time) {
+		setMemoryRemovedAt(t, s.(*MemoryTreeStore), nodeID, at)
+	}, func(t *testing.T, s TreeStore, nodeID, eventID string) {
 		nodes := s.(*MemoryTreeStore).nodes
 		for i := range nodes {
 			if nodes[i].ID == uuidKey(nodeID) {
-				nodes[i].RemovedAt = &at
+				stamp := uuidKey(eventID)
+				nodes[i].RemovedByEventID = &stamp
 				return
 			}
 		}
 		require.Failf(t, "no row", "no row with id %s", nodeID)
 	})
+}
+
+// setMemoryRemovedAt overwrites the removal time of the row with nodeID.
+func setMemoryRemovedAt(t *testing.T, s *MemoryTreeStore, nodeID string, at time.Time) {
+	t.Helper()
+	for i := range s.nodes {
+		if s.nodes[i].ID == uuidKey(nodeID) {
+			s.nodes[i].RemovedAt = &at
+			return
+		}
+	}
+	require.Failf(t, "no row", "no row with id %s", nodeID)
 }
 
 func TestMemoryTreeStore_RefusesARelocationIntoASlotAnotherRelocationVacates(t *testing.T) {
@@ -325,4 +342,63 @@ func TestMemoryTreeStore_RelocationIntoAVacatedSlotWhateverTheCase(t *testing.T)
 			{UserID: b, ParentID: root, Position: 0, Depth: 1}}}, testNodeUUID(9), 5)
 
 	require.ErrorIs(t, err, ErrSlotConflict)
+}
+
+func TestMemoryTreeStore_ARefusedWriteLeavesTheStoreAsItWas(t *testing.T) {
+	tree, root, child, recruit := testTreeUUID(1), testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	bad, _ := badIDWrites(tree, root, child, recruit)
+	for _, w := range bad {
+		t.Run(w.name, func(t *testing.T) {
+			s := NewMemoryTreeStore()
+			seedBadIDTree(t, s, tree, root, child, recruit)
+			nodes, projected := slices.Clone(s.nodes), maps.Clone(s.projected)
+
+			err := w.write(context.Background(), s)
+
+			require.ErrorContains(t, err, "is not a UUID; nothing was written")
+			assert.Equal(t, nodes, s.nodes)
+			assert.Equal(t, projected, s.projected)
+		})
+	}
+}
+
+func TestMemoryTreeStore_ProjectInsertNamesTheRefusedID(t *testing.T) {
+	tree, root, child, recruit := testTreeUUID(1), testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	s := NewMemoryTreeStore()
+	seedBadIDTree(t, s, tree, root, child, recruit)
+
+	err := s.ProjectInsert(context.Background(),
+		makeUUIDNode(testNodeUUID(4), tree, "u-4", 2, ptr(child), ptr(child), intPtr(0)), 4)
+
+	require.EqualError(t, err, `project insert in tree `+tree+`: user_id "u-4" is not a UUID; nothing was written`)
+}
+
+func TestMemoryTreeStore_ProjectRemovalNamesTheRefusedID(t *testing.T) {
+	tree, root, child, recruit := testTreeUUID(1), testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	s := NewMemoryTreeStore()
+	seedBadIDTree(t, s, tree, root, child, recruit)
+
+	err := s.ProjectRemoval(context.Background(), tree, RemovalProjection{Users: []string{child}}, "evt-1", 4)
+
+	require.EqualError(t, err, `project removal in tree `+tree+`: removal_event_id "evt-1" is not a UUID; nothing was written`)
+}
+
+func TestMemoryTreeStore_ProjectRejectionNamesTheRefusedID(t *testing.T) {
+	tree, root, child, recruit := testTreeUUID(1), testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	s := NewMemoryTreeStore()
+	seedBadIDTree(t, s, tree, root, child, recruit)
+
+	err := s.ProjectRejection(context.Background(), tree, "rej-1", 4)
+
+	require.EqualError(t, err, `project rejection in tree `+tree+`: rejected_event_id "rej-1" is not a UUID; nothing was written`)
+}
+
+func TestMemoryTreeStore_UndoRootProjectionNamesTheRefusedID(t *testing.T) {
+	tree, root, child, recruit := testTreeUUID(1), testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	s := NewMemoryTreeStore()
+	seedBadIDTree(t, s, tree, root, child, recruit)
+
+	err := s.UndoRootProjection(context.Background(), tree, "u-1", 3)
+
+	require.EqualError(t, err, `undo root projection in tree `+tree+`: user_id "u-1" is not a UUID; nothing was written`)
 }

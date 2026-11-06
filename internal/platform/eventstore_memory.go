@@ -3,14 +3,11 @@ package platform
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // ErrEmptyAppend is returned when Append is called with an empty events slice.
@@ -104,7 +101,7 @@ func (m *MemoryEventStore) Append(_ context.Context, stream string, expectedVers
 	ids := make([]string, len(events))
 	batch := make(map[string]int, len(events))
 	for i, ne := range events {
-		id, ok := canonicalEventID(ne.ID)
+		id, ok := CanonicalUUID(ne.ID)
 		if !ok {
 			return fmt.Errorf("eventstore: event at index %d has ID %q, which does not parse as a UUID", i, ne.ID)
 		}
@@ -218,30 +215,4 @@ func cloneEventBytes(events []Event) {
 func categoryOf(stream string) string {
 	cat, _, _ := strings.Cut(stream, "-")
 	return cat
-}
-
-// canonicalEventID returns the lowercase hyphenated form of an event ID, or
-// false when the ID is not a UUID.
-func canonicalEventID(id string) (string, bool) {
-	rest, braced := strings.CutPrefix(id, "{")
-	var u uuid.UUID
-	for i := range u {
-		if len(rest) < 2 {
-			return "", false
-		}
-		if _, err := hex.Decode(u[i:i+1], []byte(rest[:2])); err != nil {
-			return "", false
-		}
-		rest = rest[2:]
-		if i%2 == 1 && i < len(u)-1 {
-			rest, _ = strings.CutPrefix(rest, "-")
-		}
-	}
-	if braced {
-		var closed bool
-		if rest, closed = strings.CutPrefix(rest, "}"); !closed {
-			return "", false
-		}
-	}
-	return u.String(), rest == ""
 }

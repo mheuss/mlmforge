@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/mlmforge/mlmforge/internal/platform"
 )
 
 // Compile-time check.
@@ -33,9 +33,10 @@ func (s *MemoryTreeStore) insertNode(ctx context.Context, node TreeNodeRow) erro
 
 // insertNodeAt stores one row, stamped with now.
 func (s *MemoryTreeStore) insertNodeAt(node TreeNodeRow, now time.Time) error {
+	node.RemovedAt, node.RemovedByEventID = nil, nil
 	node.TreeID, node.UserID = uuidKey(node.TreeID), uuidKey(node.UserID)
 	node.ParentID, node.SponsorID = uuidKeyPtr(node.ParentID), uuidKeyPtr(node.SponsorID)
-	node.ID, node.RemovedByEventID = uuidKey(node.ID), uuidKeyPtr(node.RemovedByEventID)
+	node.ID = uuidKey(node.ID)
 	// Primary-key mirror: the row id is the event ID, so a duplicate id is
 	// rejected whatever its tree or removed state. Checked in its own pass
 	// before the partial-index mirrors below, so a caller can tell an id
@@ -48,32 +49,30 @@ func (s *MemoryTreeStore) insertNodeAt(node TreeNodeRow, now time.Time) error {
 	}
 	// Enforce same uniqueness as the Postgres partial unique indexes
 	// (only active nodes are constrained).
-	if node.RemovedAt == nil {
-		for _, n := range s.nodes {
-			if n.RemovedAt != nil || n.TreeID != node.TreeID {
-				continue
-			}
-			if n.UserID == node.UserID {
-				return fmt.Errorf("%w: tree=%s user=%s", ErrActiveUserConflict, node.TreeID, node.UserID)
-			}
-			// One active depth-0 row per tree. Kept after the user check:
-			// a row breaking both rules must report the same sentinel the
-			// database would, and that order is not ours to set (HEU-794).
-			if node.Depth == 0 && n.Depth == 0 {
-				return fmt.Errorf("%w: tree=%s rooted by %s",
-					ErrRootConflict, node.TreeID, n.UserID)
-			}
-			// Mirror idx_tree_nodes_tree_parent_position_active (migration
-			// 000004): one active claim per (tree, parent, position). Rows
-			// without a position are outside the index (WHERE position IS
-			// NOT NULL). Rows without a parent are indexed but never
-			// conflict, because unique indexes treat NULLs as distinct.
-			if node.ParentID != nil && node.Position != nil &&
-				n.ParentID != nil && n.Position != nil &&
-				*n.ParentID == *node.ParentID && *n.Position == *node.Position {
-				return fmt.Errorf("%w: tree=%s parent=%s position=%d (held by %s)",
-					ErrSlotConflict, node.TreeID, *node.ParentID, *node.Position, n.UserID)
-			}
+	for _, n := range s.nodes {
+		if n.RemovedAt != nil || n.TreeID != node.TreeID {
+			continue
+		}
+		if n.UserID == node.UserID {
+			return fmt.Errorf("%w: tree=%s user=%s", ErrActiveUserConflict, node.TreeID, node.UserID)
+		}
+		// One active depth-0 row per tree. Kept after the user check:
+		// a row breaking both rules must report the same sentinel the
+		// database would, and that order is not ours to set (HEU-794).
+		if node.Depth == 0 && n.Depth == 0 {
+			return fmt.Errorf("%w: tree=%s rooted by %s",
+				ErrRootConflict, node.TreeID, n.UserID)
+		}
+		// Mirror idx_tree_nodes_tree_parent_position_active (migration
+		// 000004): one active claim per (tree, parent, position). Rows
+		// without a position are outside the index (WHERE position IS
+		// NOT NULL). Rows without a parent are indexed but never
+		// conflict, because unique indexes treat NULLs as distinct.
+		if node.ParentID != nil && node.Position != nil &&
+			n.ParentID != nil && n.Position != nil &&
+			*n.ParentID == *node.ParentID && *n.Position == *node.Position {
+			return fmt.Errorf("%w: tree=%s parent=%s position=%d (held by %s)",
+				ErrSlotConflict, node.TreeID, *node.ParentID, *node.Position, n.UserID)
 		}
 	}
 	node.CreatedAt = now
@@ -162,10 +161,15 @@ func (s *MemoryTreeStore) GetNodeByRemovalEvent(ctx context.Context, treeID, rem
 	return best, nil
 }
 
-// ranksAhead reports whether tombstone a comes before tombstone b: removed
-// later, or removed at the same instant with the higher id.
+// ranksAhead reports whether row a comes before row b: a row with no removal
+// time first, then the later removal, then the higher id.
 func ranksAhead(a, b TreeNodeRow) bool {
-	if !a.RemovedAt.Equal(*b.RemovedAt) {
+	switch {
+	case a.RemovedAt == nil && b.RemovedAt != nil:
+		return true
+	case a.RemovedAt != nil && b.RemovedAt == nil:
+		return false
+	case a.RemovedAt != nil && !a.RemovedAt.Equal(*b.RemovedAt):
 		return a.RemovedAt.After(*b.RemovedAt)
 	}
 	// Lowercased so the order does not depend on the id's letter case.
@@ -244,14 +248,20 @@ func (s *MemoryTreeStore) ProjectedRows(ctx context.Context, treeID string) (int
 
 func (s *MemoryTreeStore) ProjectInsert(ctx context.Context, node TreeNodeRow, eventVersion int64) error {
 	given := node.TreeID
-	node.TreeID = uuidKey(node.TreeID)
 	if err := checkEventVersion(given, eventVersion); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := refuseNonUUID("project insert", given, idField{"tree_id", given}); err != nil {
+		return err
+	}
+	node.TreeID = uuidKey(node.TreeID)
 	if err := s.refuseBelow(node.TreeID, given, eventVersion); err != nil {
+		return err
+	}
+	if err := refuseNonUUID("project insert", given, insertIDFields(node)...); err != nil {
 		return err
 	}
 	if err := s.insertNode(ctx, node); err != nil {
@@ -269,7 +279,6 @@ func (s *MemoryTreeStore) ProjectRemoval(
 	eventVersion int64,
 ) error {
 	given := treeID
-	treeID, removalEventID = uuidKey(treeID), uuidKey(removalEventID)
 	if len(r.Users) == 0 {
 		return fmt.Errorf("project removal in tree %s: the removal names no users", given)
 	}
@@ -279,10 +288,17 @@ func (s *MemoryTreeStore) ProjectRemoval(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := refuseNonUUID("project removal", given, idField{"tree_id", given}); err != nil {
+		return err
+	}
+	treeID = uuidKey(treeID)
 	if err := s.refuseBelow(treeID, given, eventVersion); err != nil {
 		return err
 	}
-	staged, err := s.stageRemoval(treeID, given, r, removalEventID)
+	if err := refuseNonUUID("project removal", given, removalIDFields(r, removalEventID)...); err != nil {
+		return err
+	}
+	staged, err := s.stageRemoval(treeID, given, r, uuidKey(removalEventID))
 	if err != nil {
 		return err
 	}
@@ -388,11 +404,10 @@ func checkRelocationTargets(rows []TreeNodeRow, treeID string, relocated []Reloc
 // uuidKey returns id in canonical form, so two spellings of one uuid compare equal. An id
 // that does not parse is returned unchanged.
 func uuidKey(id string) string {
-	u, err := uuid.Parse(id)
-	if err != nil {
-		return id
+	if key, ok := platform.CanonicalUUID(id); ok {
+		return key
 	}
-	return u.String()
+	return id
 }
 
 // uuidKeyPtr returns a new pointer to uuidKey of *id, or nil for nil.
@@ -402,6 +417,51 @@ func uuidKeyPtr(id *string) *string {
 	}
 	key := uuidKey(*id)
 	return &key
+}
+
+// idField is one id to check before a write, with the name a refusal reports.
+type idField struct {
+	name  string
+	value string
+}
+
+// refuseNonUUID returns an error for the first field Postgres's uuid input
+// would refuse.
+func refuseNonUUID(op, treeID string, fields ...idField) error {
+	for _, f := range fields {
+		if _, ok := platform.CanonicalUUID(f.value); !ok {
+			return fmt.Errorf("%s in tree %s: %s %q is not a UUID; nothing was written", op, treeID, f.name, f.value)
+		}
+	}
+	return nil
+}
+
+// insertIDFields lists node's ids to check before an insert, other than the
+// tree id.
+func insertIDFields(node TreeNodeRow) []idField {
+	fields := []idField{{"id", node.ID}, {"user_id", node.UserID}}
+	if node.ParentID != nil {
+		fields = append(fields, idField{"parent_id", *node.ParentID})
+	}
+	if node.SponsorID != nil {
+		fields = append(fields, idField{"sponsor_id", *node.SponsorID})
+	}
+	return fields
+}
+
+// removalIDFields lists a removal's ids to check, other than the tree id.
+func removalIDFields(r RemovalProjection, removalEventID string) []idField {
+	fields := []idField{{"removal_event_id", removalEventID}}
+	for _, u := range r.Users {
+		fields = append(fields, idField{"removed user_id", u})
+	}
+	for _, m := range r.Responsored {
+		fields = append(fields, idField{"re-sponsored user_id", m.UserID}, idField{"new_sponsor_id", m.NewSponsorID})
+	}
+	for _, m := range r.Relocated {
+		fields = append(fields, idField{"relocated user_id", m.UserID}, idField{"relocated parent_id", m.ParentID})
+	}
+	return fields
 }
 
 // checkActiveSlots reports two active rows of treeID that claim one slot.
@@ -427,16 +487,23 @@ func checkActiveSlots(rows []TreeNodeRow, treeID string) error {
 
 func (s *MemoryTreeStore) ProjectRejection(ctx context.Context, treeID, rejectedEventID string, eventVersion int64) error {
 	given := treeID
-	treeID, rejectedEventID = uuidKey(treeID), uuidKey(rejectedEventID)
 	if err := checkEventVersion(given, eventVersion); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := refuseNonUUID("project rejection", given, idField{"tree_id", given}); err != nil {
+		return err
+	}
+	treeID = uuidKey(treeID)
 	if err := s.refuseBelow(treeID, given, eventVersion); err != nil {
 		return err
 	}
+	if err := refuseNonUUID("project rejection", given, idField{"rejected_event_id", rejectedEventID}); err != nil {
+		return err
+	}
+	rejectedEventID = uuidKey(rejectedEventID)
 	now := time.Now()
 	for i := range s.nodes {
 		if s.nodes[i].TreeID == treeID && s.nodes[i].ID == rejectedEventID && s.nodes[i].RemovedAt == nil {
@@ -450,13 +517,16 @@ func (s *MemoryTreeStore) ProjectRejection(ctx context.Context, treeID, rejected
 
 func (s *MemoryTreeStore) UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error {
 	givenTree, givenUser := treeID, userID
-	treeID, userID = uuidKey(treeID), uuidKey(userID)
 	if err := checkEventVersion(givenTree, eventVersion); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := refuseNonUUID("undo root projection", givenTree, idField{"tree_id", givenTree}); err != nil {
+		return err
+	}
+	treeID = uuidKey(treeID)
 	projected, found := s.projected[treeID]
 	if !found {
 		return fmt.Errorf("tree %s has no projection row; the root row for %s at version %d was not deleted",
@@ -466,6 +536,10 @@ func (s *MemoryTreeStore) UndoRootProjection(ctx context.Context, treeID, userID
 		return fmt.Errorf("tree %s has projected version %d, not %d; the root row for %s was not deleted",
 			givenTree, projected, eventVersion, givenUser)
 	}
+	if err := refuseNonUUID("undo root projection", givenTree, idField{"user_id", givenUser}); err != nil {
+		return err
+	}
+	userID = uuidKey(userID)
 	row, err := s.GetNode(ctx, treeID, userID)
 	if err != nil {
 		return err

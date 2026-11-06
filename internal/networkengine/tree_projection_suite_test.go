@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,91 @@ func readProjectionState(t *testing.T, s TreeStore, tree string, users ...string
 		rows[u] = row
 	}
 	return projectionState{version: version, found: found, rows: rows}
+}
+
+// notAUUID is an id that Postgres's uuid input refuses.
+const notAUUID = "not-a-uuid"
+
+// badIDWrite is one write carrying a single id Postgres's uuid input refuses.
+type badIDWrite struct {
+	name  string
+	write func(ctx context.Context, s TreeStore) error
+}
+
+// seedBadIDTree writes a root and two rows under it, at versions 1 to 3.
+func seedBadIDTree(t *testing.T, s TreeStore, tree, root, child, recruit string) {
+	t.Helper()
+	ctx := context.Background()
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0)), 2))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(3), tree, recruit, 1, ptr(root), ptr(child), intPtr(1)), 3))
+}
+
+// badIDWrites returns writes that each carry one id Postgres's uuid input
+// refuses, with every other value valid. controls holds one unedited write of
+// each kind.
+func badIDWrites(tree, root, child, recruit string) (bad, controls []badIDWrite) {
+	insert := func(field string, edit func(*TreeNodeRow)) badIDWrite {
+		return badIDWrite{"insert " + field, func(ctx context.Context, s TreeStore) error {
+			row := makeUUIDNode(testNodeUUID(4), tree, testUserUUID(4), 2, ptr(child), ptr(child), intPtr(0))
+			edit(&row)
+			return s.ProjectInsert(ctx, row, 4)
+		}}
+	}
+	remove := func(name, treeID string, r RemovalProjection, event string) badIDWrite {
+		return badIDWrite{"removal " + name, func(ctx context.Context, s TreeStore) error {
+			return s.ProjectRemoval(ctx, treeID, r, event, 4)
+		}}
+	}
+	onlyChild := RemovalProjection{Users: []string{child}}
+	urn := "urn:uuid:" + testUserUUID(4)
+	wrapped := "x" + testUserUUID(4) + "x"
+	controls = []badIDWrite{
+		insert("with every id valid", func(*TreeNodeRow) {}),
+		remove("with every id valid", tree, RemovalProjection{Users: []string{child},
+			Responsored: []Responsored{{UserID: recruit, NewSponsorID: root}},
+			Relocated:   []Relocation{{UserID: recruit, ParentID: root, Position: 5, Depth: 1}}}, testNodeUUID(9)),
+		{"rejection with every id valid", func(ctx context.Context, s TreeStore) error {
+			return s.ProjectRejection(ctx, tree, testNodeUUID(2), 4)
+		}},
+		{"undo root with every id valid", func(ctx context.Context, s TreeStore) error {
+			return s.UndoRootProjection(ctx, tree, root, 3)
+		}},
+	}
+	return []badIDWrite{
+		insert("tree_id", func(r *TreeNodeRow) { r.TreeID = notAUUID }),
+		insert("id", func(r *TreeNodeRow) { r.ID = notAUUID }),
+		insert("user_id", func(r *TreeNodeRow) { r.UserID = notAUUID }),
+		insert("parent_id", func(r *TreeNodeRow) { r.ParentID = ptr(notAUUID) }),
+		insert("sponsor_id", func(r *TreeNodeRow) { r.SponsorID = ptr(notAUUID) }),
+		insert("tree_id with a urn:uuid: prefix", func(r *TreeNodeRow) { r.TreeID = urn }),
+		insert("tree_id wrapped in non-braces", func(r *TreeNodeRow) { r.TreeID = wrapped }),
+		insert("user_id with a urn:uuid: prefix", func(r *TreeNodeRow) { r.UserID = urn }),
+		insert("user_id wrapped in non-braces", func(r *TreeNodeRow) { r.UserID = wrapped }),
+		remove("tree_id", notAUUID, onlyChild, testNodeUUID(9)),
+		remove("removal_event_id", tree, onlyChild, notAUUID),
+		remove("removed user_id", tree, RemovalProjection{Users: []string{child, notAUUID}}, testNodeUUID(9)),
+		remove("re-sponsored user_id", tree, RemovalProjection{Users: []string{child},
+			Responsored: []Responsored{{UserID: notAUUID, NewSponsorID: root}}}, testNodeUUID(9)),
+		remove("new_sponsor_id", tree, RemovalProjection{Users: []string{child},
+			Responsored: []Responsored{{UserID: recruit, NewSponsorID: notAUUID}}}, testNodeUUID(9)),
+		remove("relocated user_id", tree, RemovalProjection{Users: []string{child},
+			Relocated: []Relocation{{UserID: notAUUID, ParentID: root, Position: 5, Depth: 1}}}, testNodeUUID(9)),
+		remove("relocated parent_id", tree, RemovalProjection{Users: []string{child},
+			Relocated: []Relocation{{UserID: recruit, ParentID: notAUUID, Position: 5, Depth: 1}}}, testNodeUUID(9)),
+		{"rejection tree_id", func(ctx context.Context, s TreeStore) error {
+			return s.ProjectRejection(ctx, notAUUID, testNodeUUID(2), 4)
+		}},
+		{"rejection rejected_event_id", func(ctx context.Context, s TreeStore) error {
+			return s.ProjectRejection(ctx, tree, notAUUID, 4)
+		}},
+		{"undo root tree_id", func(ctx context.Context, s TreeStore) error {
+			return s.UndoRootProjection(ctx, notAUUID, root, 3)
+		}},
+		{"undo root user_id", func(ctx context.Context, s TreeStore) error {
+			return s.UndoRootProjection(ctx, tree, notAUUID, 3)
+		}},
+	}, controls
 }
 
 // runTreeProjectionSuite checks the projected-version behavior of a TreeStore.
@@ -723,6 +809,10 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		{"a relocation targets an occupied slot", RemovalProjection{Users: []string{child},
 			Relocated: []Relocation{{UserID: grand, ParentID: root, Position: 1, Depth: 1}}}, ErrSlotConflict},
 		{"a removed user has no active row", RemovalProjection{Users: []string{child, testUserUUID(7)}}, nil},
+		{"a re-sponsored user is the removed user", RemovalProjection{Users: []string{child},
+			Responsored: []Responsored{{UserID: child, NewSponsorID: root}}}, nil},
+		{"a relocated user is the removed user", RemovalProjection{Users: []string{child},
+			Relocated: []Relocation{{UserID: child, ParentID: root, Position: 5, Depth: 1}}}, nil},
 		{"two relocations swap their slots", RemovalProjection{Users: []string{grand},
 			Relocated: []Relocation{
 				{UserID: child, ParentID: root, Position: 1, Depth: 1},
@@ -924,6 +1014,86 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		assert.NotNil(t, got.rows[child].RemovedAt, "the rejection under tree %s left the row active", upper)
 		require.NotNil(t, got.rows[root])
 		assert.NotNil(t, got.rows[root].RemovedAt, "the undo under tree %s left the root active", upper)
+	})
+
+	activeIDs := func(t *testing.T, s TreeStore) []string {
+		t.Helper()
+		rows, err := s.GetByTree(context.Background(), tree)
+		require.NoError(t, err)
+		ids := make([]string, 0, len(rows))
+		for _, r := range rows {
+			ids = append(ids, r.ID)
+		}
+		slices.Sort(ids)
+		return ids
+	}
+
+	bad, controls := badIDWrites(tree, root, child, recruit)
+	for _, w := range controls {
+		t.Run("the control "+w.name+" is accepted and writes", func(t *testing.T) {
+			s := newStore(t)
+			ctx := context.Background()
+			seedBadIDTree(t, s, tree, root, child, recruit)
+			before := readProjectionState(t, s, tree, root, child, recruit)
+			beforeIDs := activeIDs(t, s)
+
+			require.NoError(t, w.write(ctx, s))
+			assert.NotEqual(t, before, readProjectionState(t, s, tree, root, child, recruit),
+				"projection state of tree %s after an accepted write", tree)
+			assert.NotEqual(t, beforeIDs, activeIDs(t, s), "active rows in tree %s after an accepted write", tree)
+		})
+	}
+
+	for _, w := range bad {
+		t.Run("a write with a non-UUID "+w.name+" is refused and writes nothing", func(t *testing.T) {
+			s := newStore(t)
+			ctx := context.Background()
+			seedBadIDTree(t, s, tree, root, child, recruit)
+			before := readProjectionState(t, s, tree, root, child, recruit)
+			beforeIDs := activeIDs(t, s)
+
+			require.Error(t, w.write(ctx, s))
+			assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit))
+			assert.Equal(t, beforeIDs, activeIDs(t, s), "active rows in tree %s", tree)
+		})
+	}
+
+	t.Run("an insert below version 1 with a non-UUID tree id reports the version", func(t *testing.T) {
+		s := newStore(t)
+		err := s.ProjectInsert(context.Background(), makeUUIDNode(testNodeUUID(1), notAUUID, root, 0, nil, ptr(root), nil), 0)
+		require.EqualError(t, err, "tree "+notAUUID+" was given event version 0, below 1; nothing was written")
+	})
+
+	t.Run("a removal with a non-UUID removal event id leaves the user active and unstamped", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		seedBadIDTree(t, s, tree, root, child, recruit)
+
+		require.Error(t, s.ProjectRemoval(ctx, tree, onlyChild, notAUUID, 4))
+
+		got, err := s.GetNodeIncludingRemoved(ctx, tree, child)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Nil(t, got.RemovedAt, "the refused removal tombstoned the user")
+		assert.Nil(t, got.RemovedByEventID, "the refused removal stamped the user")
+	})
+
+	t.Run("a removal below version 1 with a non-UUID tree id reports the version", func(t *testing.T) {
+		s := newStore(t)
+		err := s.ProjectRemoval(context.Background(), notAUUID, onlyChild, testNodeUUID(9), 0)
+		require.EqualError(t, err, "tree "+notAUUID+" was given event version 0, below 1; nothing was written")
+	})
+
+	t.Run("a rejection below version 1 with a non-UUID tree id reports the version", func(t *testing.T) {
+		s := newStore(t)
+		err := s.ProjectRejection(context.Background(), notAUUID, testNodeUUID(1), 0)
+		require.EqualError(t, err, "tree "+notAUUID+" was given event version 0, below 1; nothing was written")
+	})
+
+	t.Run("an undo below version 1 with a non-UUID tree id reports the version", func(t *testing.T) {
+		s := newStore(t)
+		err := s.UndoRootProjection(context.Background(), notAUUID, root, 0)
+		require.EqualError(t, err, "tree "+notAUUID+" was given event version 0, below 1; nothing was written")
 	})
 }
 

@@ -120,7 +120,7 @@ func TestCarryForwardFromRefusesABadStructureName(t *testing.T) {
 		{"", "structure name must be non-empty"},
 		{"bad\xff", `structure "bad\xff" is not valid UTF-8`},
 		{"nul\x00byte", `structure "nul\x00byte" contains a NUL byte`},
-		{"bad�", "structure \"bad�\" contains U+FFFD"},
+		{"bad\uFFFD", "structure \"bad\uFFFD\" contains U+FFFD"},
 	} {
 		_, err := CarryForwardFrom(map[string]map[string]LegVolumesDTO{tc.name: nil})
 		assertRefusalNames(t, err, tc.want)
@@ -282,8 +282,8 @@ func TestParseCarryForwardRefusesMalformedEnvelopes(t *testing.T) {
 		{"invalid UTF-8 in structure name", "{\"v\":1,\"structures\":{\"bad\xff\":{\"kind\":\"binary_legs\",\"carry\":{}}}}", "envelope is not valid UTF-8"},
 		{"non-canonical key", entry(`{"kind":"binary_legs","carry":{"AAAAAAAA-1111-1111-1111-111111111111":` + leg + `}}`), `key "AAAAAAAA-1111-1111-1111-111111111111" is not canonical`},
 		{"non-UUID key", entry(`{"kind":"binary_legs","carry":{"nope":` + leg + `}}`), `key "nope" is not a UUID`},
-		{"lone surrogate in structure name", `{"v":1,"structures":{"a\ud800":{"kind":"binary_legs","carry":{}}}}`, "structure \"a�\" contains U+FFFD"},
-		{"lone surrogate in key", entry(`{"kind":"binary_legs","carry":{"\ud800":` + leg + `}}`), "key \"�\" is not a UUID"},
+		{"lone surrogate in structure name", `{"v":1,"structures":{"a\ud800":{"kind":"binary_legs","carry":{}}}}`, "structure \"a\uFFFD\" contains U+FFFD"},
+		{"lone surrogate in key", entry(`{"kind":"binary_legs","carry":{"\ud800":` + leg + `}}`), "key \"\uFFFD\" is not a UUID"},
 		{"nil UUID key", entry(`{"kind":"binary_legs","carry":{"00000000-0000-0000-0000-000000000000":` + leg + `}}`), `key "00000000-0000-0000-0000-000000000000" is the nil UUID`},
 		{"duplicate envelope field", `{"v":1,"structures":{"primary":{"kind":"binary_legs","carry":{}}},"structures":{}}`, `envelope repeats member "structures"`},
 		{"duplicate structure name", `{"v":1,"structures":{"a":{"kind":"binary_legs","carry":{}},"a":{"kind":"binary_legs","carry":{}}}}`, `structures repeats member "a"`},

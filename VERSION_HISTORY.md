@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**Test count:** 1860 (Rust), 1721 (Go)
+**Test count:** 1860 (Rust), 1729 (Go)
 
 ### Added
 - Project research documentation (MLM fundamentals, compensation plans, glossary, competitive landscape, legal/regulatory)
@@ -98,6 +98,7 @@
 - `restore_snapshot` refuses a unilevel, binary, matrix or streamline snapshot whose root has a sponsor. It also refuses a matrix holding tank entry whose sponsor is the nil UUID. Both answer `INCONSISTENT_SNAPSHOT`. The live engine never builds either shape. A tank entry whose sponsor is absent is still accepted. Before this, a nil sponsor placed the same way as an absent one. So the tank refusal keeps the nil UUID out of the wire output and tank listings. It does not correct a placement. Board plan is unaffected. A board's top seat legitimately has a sponsor. A snapshot refused under protocol 30 is still refused. Its message can change. A `restore_snapshot` that succeeded under protocol 30 can fail under protocol 31. Protocol 31. (HEU-916, HEU-1009)
 - The plan schema refuses an empty required name with `schema_violation`. That covers a rank named by a distributor count, window, tenure, breakaway, breakaway generation override, lifestyle tier or pool, and a structure qualification, pool name or payment method type. A generation commission's `boundary_rank` is covered only in `threshold_rank` mode. An empty `distributor_count.min_rank` used to get `missing_required_field` from Go. Most of the others loaded with `""`. A plan that loaded with an empty name now fails to load. That includes an empty breakaway `threshold_rank` or breakaway generation `boundary_rank`, which used to drop that commission path with only a log line. An empty streamline level `min_rank` still loads, because it means the level has no rank gate. So does an empty `boundary_rank` in `same_rank` mode. (HEU-1001)
 - The plan schema refuses an empty item in a list of names with `schema_violation`. That covers `eligible_statuses`, `required_products`, `qualifying_products`, `qualified_structures`, `matched_commission_types` and the holding tank's `applicable_structures`. An empty item in the first three used to load. `eligible_statuses: [""]` then paid commission only to a distributor with an empty status. `required_products: [""]` above the base rank let only a distributor holding an active product named `""` reach that rank. The other three got `undefined_reference` from Go. (HEU-1012)
+- A plan refuses a `distributor_count` whose `search_mode` is `first_levels` and whose `search_depth` is absent, null or 0. The schema refuses absent and null. It already refused 0. Go's `missing_search_depth` is now an error too. The refusal does not depend on the schema alone. A plan with the depth absent or null used to load with a warning. The engine then read the missing depth as unlimited. `first_levels` counted the whole downline like `any_level`. An `any_level` requirement still loads with no depth. The engine does not read the schema. No protocol number moves. (HEU-451)
 
 ### Fixed
 - Production `unwrap()` in unilevel.rs replaced with `match` on `Option`

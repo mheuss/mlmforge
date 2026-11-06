@@ -221,6 +221,62 @@ func TestSchemaRejectsSearchDepthExceedsMax(t *testing.T) {
 	}
 }
 
+const firstLevelsBlock = "search_mode: first_levels\n            search_depth: 3\n"
+const anyLevelBlock = "search_mode: any_level\n            search_depth: 5\n"
+
+func TestSchemaRejectsFirstLevelsWithoutSearchDepth(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	plan := replaceInYAML(t, readFixture(t, "valid/full-unilevel.yaml"),
+		firstLevelsBlock, "search_mode: first_levels\n")
+
+	errs := p.validateSchema(plan)
+
+	assertSearchDepthRefused(t, errs)
+}
+
+// assertSearchDepthRefused fails unless errs refuses the search_depth of the
+// distributor_count at the path below.
+func assertSearchDepthRefused(t *testing.T, errs []ValidationError) {
+	t.Helper()
+	const at = "/ranks/2/qualification/structures/0/distributor_count"
+	for _, e := range errs {
+		absent := e.Path == at && strings.Contains(e.Message, "search_depth")
+		null := e.Path == at+"/search_depth"
+		if absent || null {
+			return
+		}
+	}
+	t.Fatalf("expected a search_depth error on the first_levels distributor_count, got: %v", errs)
+}
+
+func TestSchemaRejectsFirstLevelsWithNullSearchDepth(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	plan := replaceInYAML(t, readFixture(t, "valid/full-unilevel.yaml"),
+		firstLevelsBlock, "search_mode: first_levels\n            search_depth: null\n")
+
+	assertSearchDepthRefused(t, p.validateSchema(plan))
+}
+
+func TestSchemaAcceptsAnyLevelWithoutSearchDepth(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	plan := replaceInYAML(t, readFixture(t, "valid/full-unilevel.yaml"),
+		anyLevelBlock, "search_mode: any_level\n")
+
+	assert.Empty(t, p.validateSchema(plan))
+}
+
+func TestSchemaAcceptsAnyLevelWithNullSearchDepth(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	plan := replaceInYAML(t, readFixture(t, "valid/full-unilevel.yaml"),
+		anyLevelBlock, "search_mode: any_level\n            search_depth: null\n")
+
+	assert.Empty(t, p.validateSchema(plan))
+}
+
 func TestSchemaRejectsPercentageOutOfRange(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)

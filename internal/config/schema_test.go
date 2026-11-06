@@ -221,6 +221,55 @@ func TestSchemaRejectsSearchDepthExceedsMax(t *testing.T) {
 	}
 }
 
+const firstLevelsBlock = "search_mode: first_levels\n            search_depth: 3\n"
+const anyLevelBlock = "search_mode: any_level\n            search_depth: 5\n"
+
+func TestSchemaRejectsFirstLevelsWithoutSearchDepth(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	plan := replaceInYAML(t, readFixture(t, "valid/full-unilevel.yaml"),
+		firstLevelsBlock, "search_mode: first_levels\n")
+
+	errs := p.validateSchema(plan)
+
+	require.NotEmpty(t, errs, "first_levels with no search_depth should produce errors")
+	for _, e := range errs {
+		assert.Equal(t, SeverityError, e.Severity)
+	}
+}
+
+func TestSchemaRejectsFirstLevelsWithNullSearchDepth(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	plan := replaceInYAML(t, readFixture(t, "valid/full-unilevel.yaml"),
+		firstLevelsBlock, "search_mode: first_levels\n            search_depth: null\n")
+
+	errs := p.validateSchema(plan)
+
+	require.NotEmpty(t, errs, "first_levels with search_depth null should produce errors")
+	for _, e := range errs {
+		assert.Equal(t, SeverityError, e.Severity)
+	}
+}
+
+func TestSchemaAcceptsAnyLevelWithoutSearchDepth(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	plan := replaceInYAML(t, readFixture(t, "valid/full-unilevel.yaml"),
+		anyLevelBlock, "search_mode: any_level\n")
+
+	assert.Empty(t, p.validateSchema(plan))
+}
+
+func TestSchemaAcceptsAnyLevelWithNullSearchDepth(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	plan := replaceInYAML(t, readFixture(t, "valid/full-unilevel.yaml"),
+		anyLevelBlock, "search_mode: any_level\n            search_depth: null\n")
+
+	assert.Empty(t, p.validateSchema(plan))
+}
+
 func TestSchemaRejectsPercentageOutOfRange(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)

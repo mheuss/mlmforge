@@ -414,9 +414,10 @@ not braces. Postgres refuses both with SQLSTATE 22P02.
 
 Use `platform.CanonicalUUID` instead. It accepts the spellings Postgres's uuid
 input accepts and returns the canonical form. The memory event store and the
-memory tree store both call it (HEU-944). The memory tree store's four write
-methods refuse an id it rejects, as Postgres does. Its reads pass a rejected id
-through unchanged (HEU-1018).
+memory tree store both call it (HEU-944). The memory tree store's
+`ProjectInsert`, `ProjectRemoval`, `ProjectRejection` and `UndoRootProjection`
+refuse an id it rejects, as Postgres does. Its reads pass a rejected id through
+unchanged (HEU-1018).
 
 ## The test database collates in byte order
 

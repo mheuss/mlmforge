@@ -2361,8 +2361,8 @@ func seedRootRow(t *testing.T, store *MemoryTreeStore, id, userID string, remove
 		Depth:      0,
 		EnrolledAt: posEnrolled,
 	}))
-	// The row above is active, so seed a tombstone before any active row for
-	// the same user, or the insert refuses it.
+	// The row above is active, so seed a tombstone before any active root or
+	// any active row for the same user, or the insert refuses it.
 	if removedAt != nil {
 		setMemoryRemovedAt(t, store, id, *removedAt)
 	}

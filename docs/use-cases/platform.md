@@ -6,6 +6,7 @@ Use-cases for the Platform bounded context.
 
 - [UC-PLATFORM-001: Withhold a refused database connection string](#uc-platform-001-withhold-a-refused-database-connection-string)
 - [UC-PLATFORM-002: Guard a package against float types](#uc-platform-002-guard-a-package-against-float-types)
+- [UC-PLATFORM-003: Read a UUID the way Postgres does](#uc-platform-003-read-a-uuid-the-way-postgres-does)
 
 ---
 
@@ -71,3 +72,25 @@ func TestNoFloatInOrders(t *testing.T) {
 ```
 
 **Notes:** An owner is `Type.Field` for a struct field, `Type.Method` for a method, and the function name for a plain function. A legitimate float is excused by naming its owner in the exception set, for example `map[string]bool{"Rate.Ratio": true}`. See the guard limit noted on HEU-531.
+
+### UC-PLATFORM-003: Read a UUID the way Postgres does
+
+**Added:** Unreleased (HEU-944)
+**Files:** `internal/platform/uuid.go` (`CanonicalUUID`)
+
+**Problem:** A memory twin that parses ids with `uuid.Parse` matches spellings Postgres refuses, and misses spellings Postgres accepts.
+
+**Solution:** `CanonicalUUID` returns the lowercase hyphenated form of a string Postgres's uuid input accepts. It reports false for anything Postgres would refuse. It accepts braces around the id and a hyphen after any group of four hex digits. It refuses a `urn:uuid:` prefix and a value wrapped in characters that are not braces.
+
+**Usage:**
+```go
+key, ok := platform.CanonicalUUID(id)
+if !ok {
+    return fmt.Errorf("save widget: id %q is not a UUID; nothing was written", id)
+}
+store[key] = widget
+```
+
+**Notes:** The memory event store and the memory tree store both use it. The memory tree store refuses an id it rejects on its four write methods and passes it through unchanged on reads. HEU-1018 asks whether reads should refuse too. HEU-1019 covers the tree consumer's gate, which does not check `tree_id`.
+
+---

@@ -101,3 +101,32 @@ shared suites for cases like this one and add the new methods.
 
 A double is code under test. Mutate the thing it is meant to detect and confirm
 a test goes red. See [mutation-checks.md](mutation-checks.md).
+
+## A fixture that writes through the double changes when the double does
+
+Change what a double's insert keeps, and every test fixture that builds state
+through that insert changes too. Nothing fails. The fixture builds a different
+row.
+
+HEU-945 made the memory tree store drop a caller's `RemovedAt` on insert, as
+Postgres does. Five consumer tests built tombstones by passing
+`RemovedAt` to that insert. After the change they would have got active rows.
+Their seed helpers now insert the row, then set its removal time.
+
+Before you change what a double's write keeps or checks, find the fixtures that
+write through it. The next section is one way to find them.
+
+## Measure a new refusal with a probe that refuses nothing
+
+Before you make a double refuse an input, count who sends it. Copy the tree to
+a scratch directory, make the double log each call it would refuse along with
+the test name, and let every call through. Then run the suite.
+
+A probe that refuses undercounts. Each test stops at its first refused call, so
+the sites behind it never run.
+
+Measured for HEU-844 on 2026-11-06. A probe that refused every non-UUID id
+logged 178 refused calls, all on the insert path, before the tests stopped. A
+probe that logged and refused nothing found 101 calls through the four write
+methods: 80 inserts, 13 removals and 8 root undos. The refusing probe logged no
+removal or undo calls at all.

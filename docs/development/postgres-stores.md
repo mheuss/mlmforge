@@ -58,6 +58,20 @@ Some existing pairs are not under the rule yet. The tree lockers have no shared
 body. HEU-939 adds one. The event store shares bodies for some behaviours and
 tests the rest per twin. HEU-941 moves the rest into shared bodies.
 
+### A table of refused writes needs a control for each kind of write
+
+A shared case that asserts only "this write fails" passes on Postgres whatever
+the reason. Postgres refuses for its own reasons too. A broken seed, a slot
+clash, or a row the template no longer fits all make every refusal row pass,
+and nothing says so.
+
+Give the table one control per kind of write. A control is the same write with
+nothing edited. Assert that both twins accept it and that it changes state. If
+the control fails, the refusal rows are not testing what they name.
+
+HEU-844 found this in review. Its refusal table for the memory tree store had
+no controls until then.
+
 ## pgx sends only a nil slice as SQL NULL
 
 An empty non-nil `[]byte` or `json.RawMessage` is sent as an empty payload, and

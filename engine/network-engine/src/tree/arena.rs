@@ -23,7 +23,7 @@ pub(crate) struct Arena {
 
 #[cfg(test)]
 thread_local! {
-    pub(crate) static SPONSOR_WALK_VISITS: std::cell::Cell<usize> =
+    static SPONSOR_WALK_VISITS: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
 }
 
@@ -1957,8 +1957,7 @@ mod tests {
 
     #[test]
     fn sponsor_walk_visits_each_node_once_on_a_long_chain() {
-        // Slot 0 is the root. Reversing the slot order lets a quadratic walk
-        // pass this test.
+        // Each node's sponsor sits one slot below it.
         const CHAIN: u16 = 1000;
         let mut arena = live_arena();
         for k in 1..CHAIN {

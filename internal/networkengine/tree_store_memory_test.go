@@ -402,3 +402,43 @@ func TestMemoryTreeStore_UndoRootProjectionNamesTheRefusedID(t *testing.T) {
 
 	require.EqualError(t, err, `undo root projection in tree `+tree+`: user_id "u-1" is not a UUID; nothing was written`)
 }
+
+func TestMemoryTreeStore_AppendUncheckedKeepsEnrolledAtToTheMicrosecond(t *testing.T) {
+	s := NewMemoryTreeStore()
+	tree, user := testTreeUUID(1), testUserUUID(1)
+	micro := time.Date(2026, 5, 17, 13, 45, 6, 7_000, time.UTC)
+	node := makeUUIDNode(testNodeUUID(1), tree, user, 0, nil, nil, nil)
+	node.EnrolledAt = micro.Add(999)
+
+	require.NoError(t, s.appendUnchecked(node))
+
+	got, err := s.GetNode(context.Background(), tree, user)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.True(t, micro.Equal(got.EnrolledAt), "EnrolledAt is %v, want %v", got.EnrolledAt, micro)
+}
+
+func TestMemoryTreeStore_ProjectInsertNamesTheOutOfRangeValue(t *testing.T) {
+	s := NewMemoryTreeStore()
+	tree, root := testTreeUUID(1), testUserUUID(1)
+	require.NoError(t, s.ProjectInsert(context.Background(), makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil), 1))
+
+	err := s.ProjectInsert(context.Background(),
+		makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 1, ptr(root), ptr(root), intPtr(1<<31)), 2)
+
+	require.EqualError(t, err,
+		`project insert in tree `+tree+`: position 2147483648 is outside the int4 range; nothing was written`)
+}
+
+func TestMemoryTreeStore_ProjectRemovalNamesTheOutOfRangeValue(t *testing.T) {
+	s := NewMemoryTreeStore()
+	tree := testTreeUUID(1)
+	root, child, recruit := testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	seedBadIDTree(t, s, tree, root, child, recruit)
+
+	err := s.ProjectRemoval(context.Background(), tree, RemovalProjection{Users: []string{child},
+		Relocated: []Relocation{{UserID: recruit, ParentID: root, Position: 5, Depth: -1 << 32}}}, testNodeUUID(9), 4)
+
+	require.EqualError(t, err,
+		`project removal in tree `+tree+`: relocated depth -4294967296 is outside the int4 range; nothing was written`)
+}

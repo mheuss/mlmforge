@@ -447,7 +447,7 @@ A filter selects on the *test function's* name, and a suite's tests are not all 
 
 `message_contains` matches a substring. It cannot anchor the end of the message.
 
-So a new error message that starts with an older message's whole text makes the older fixture match both. HEU-1009 added `HoldingTankSponsorNil`, "holding tank entry {position} names the nil UUID as its sponsor". `HoldingTankUserNil` reads "holding tank entry {position} names the nil UUID". The nil-user fixture's `message_contains` now matches both refusals.
+So a new error message that starts with an older message's whole text makes the older fixture match both. HEU-1009 added `HoldingTankSponsorNil`. Its message reads "holding tank entry {position} names the nil UUID as its sponsor". `HoldingTankUserNil` reads "holding tank entry {position} names the nil UUID". The nil-user fixture's `message_contains` now matches both refusals.
 
 That fixture still passes for the right reason today. Its entry has no sponsor, and the nil-user loop runs before the nil-sponsor loop. The fixture alone no longer tells the two refusals apart.
 

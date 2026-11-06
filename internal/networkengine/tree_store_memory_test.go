@@ -209,6 +209,16 @@ func TestMemoryTreeStore_Suite(t *testing.T) {
 		require.Failf(t, "no row", "no row with id %s", nodeID)
 	}, func(t *testing.T, s TreeStore, nodeID string, at time.Time) {
 		setMemoryRemovedAt(t, s.(*MemoryTreeStore), nodeID, at)
+	}, func(t *testing.T, s TreeStore, nodeID, eventID string) {
+		nodes := s.(*MemoryTreeStore).nodes
+		for i := range nodes {
+			if nodes[i].ID == uuidKey(nodeID) {
+				stamp := uuidKey(eventID)
+				nodes[i].RemovedByEventID = &stamp
+				return
+			}
+		}
+		require.Failf(t, "no row", "no row with id %s", nodeID)
 	})
 }
 

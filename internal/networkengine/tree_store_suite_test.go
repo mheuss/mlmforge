@@ -40,13 +40,15 @@ func hyphenEveryFour(id string) string {
 //
 // stampOf reads one row's removal stamp by the row's ID, whether or not the
 // row is active. setUpdatedAt and setRemovedAt overwrite one row's update time
-// and removal time by the row's ID.
+// and removal time by the row's ID. setRemovalStamp overwrites one row's
+// removal stamp by the row's ID.
 func runTreeStoreSuite(
 	t *testing.T,
 	newStore func(t *testing.T) TreeStore,
 	stampOf func(t *testing.T, s TreeStore, nodeID string) *string,
 	setUpdatedAt func(t *testing.T, s TreeStore, nodeID string, at time.Time),
 	setRemovedAt func(t *testing.T, s TreeStore, nodeID string, at time.Time),
+	setRemovalStamp func(t *testing.T, s TreeStore, nodeID, eventID string),
 ) {
 	t.Helper()
 
@@ -1292,7 +1294,7 @@ func runTreeStoreSuite(
 
 		got, err := s.GetNode(ctx, tree, root)
 		require.NoError(t, err)
-		require.NotNil(t, got, "the insert landed as a tombstone")
+		require.NotNil(t, got, "GetNode found no active row for the inserted user")
 		assert.Nil(t, got.RemovedAt)
 		assert.Nil(t, got.RemovedByEventID)
 	})
@@ -1311,5 +1313,71 @@ func runTreeStoreSuite(
 		err := s.ProjectInsert(ctx, again, 3)
 
 		assert.ErrorIs(t, err, ErrActiveUserConflict)
+	})
+
+	t.Run("GetNodeByRemovalEvent puts a stamped row with no removed_at ahead of a later tombstone", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		tree, root, active, removed := testTreeUUID(1), testUserUUID(1), testUserUUID(2), testUserUUID(3)
+		event := testNodeUUID(9)
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(2), tree, active, 1, ptr(root), ptr(root), intPtr(0))))
+		setRemovalStamp(t, s, testNodeUUID(2), event)
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(3), tree, removed, 1, ptr(root), ptr(root), intPtr(1))))
+		require.NoError(t, stampRemoval(ctx, s, tree, removed, event, 1))
+
+		got, err := s.GetNodeByRemovalEvent(ctx, tree, event)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, testNodeUUID(2), got.ID, "the stamped row with no removed_at")
+	})
+
+	t.Run("GetNodeByRemovalEvent puts a stamped row with no removed_at ahead of an earlier tombstone", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		tree, root, active, removed := testTreeUUID(1), testUserUUID(1), testUserUUID(2), testUserUUID(3)
+		event := testNodeUUID(9)
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(3), tree, removed, 1, ptr(root), ptr(root), intPtr(1))))
+		require.NoError(t, stampRemoval(ctx, s, tree, removed, event, 1))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(2), tree, active, 1, ptr(root), ptr(root), intPtr(0))))
+		setRemovalStamp(t, s, testNodeUUID(2), event)
+
+		got, err := s.GetNodeByRemovalEvent(ctx, tree, event)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, testNodeUUID(2), got.ID, "the stamped row with no removed_at")
+	})
+
+	t.Run("GetNodeByRemovalEvent breaks a tie between stamped rows with no removed_at by the highest id", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		tree, root := testTreeUUID(1), testUserUUID(1)
+		eventA, eventB := testNodeUUID(8), testNodeUUID(9)
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		// eventA stamps its higher id second and eventB stamps its higher id
+		// first, so neither a first-found nor a last-found rule returns both.
+		for i, p := range []struct{ id, event string }{
+			{testNodeUUID(2), eventA}, {testNodeUUID(3), eventA},
+			{testNodeUUID(5), eventB}, {testNodeUUID(4), eventB},
+		} {
+			require.NoError(t, insertRow(ctx, s,
+				makeUUIDNode(p.id, tree, testUserUUID(10+i), 1, ptr(root), ptr(root), intPtr(i))))
+			setRemovalStamp(t, s, p.id, p.event)
+		}
+
+		gotA, err := s.GetNodeByRemovalEvent(ctx, tree, eventA)
+		require.NoError(t, err)
+		require.NotNil(t, gotA)
+		assert.Equal(t, testNodeUUID(3), gotA.ID, "row read back for eventA")
+
+		gotB, err := s.GetNodeByRemovalEvent(ctx, tree, eventB)
+		require.NoError(t, err)
+		require.NotNil(t, gotB)
+		assert.Equal(t, testNodeUUID(5), gotB.ID, "row read back for eventB")
 	})
 }

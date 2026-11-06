@@ -161,10 +161,15 @@ func (s *MemoryTreeStore) GetNodeByRemovalEvent(ctx context.Context, treeID, rem
 	return best, nil
 }
 
-// ranksAhead reports whether tombstone a comes before tombstone b: removed
-// later, or removed at the same instant with the higher id.
+// ranksAhead reports whether row a comes before row b: a row with no removal
+// time first, then the later removal, then the higher id.
 func ranksAhead(a, b TreeNodeRow) bool {
-	if !a.RemovedAt.Equal(*b.RemovedAt) {
+	switch {
+	case a.RemovedAt == nil && b.RemovedAt != nil:
+		return true
+	case a.RemovedAt != nil && b.RemovedAt == nil:
+		return false
+	case a.RemovedAt != nil && !a.RemovedAt.Equal(*b.RemovedAt):
 		return a.RemovedAt.After(*b.RemovedAt)
 	}
 	// Lowercased so the order does not depend on the id's letter case.

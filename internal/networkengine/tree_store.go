@@ -49,7 +49,8 @@ type TreeStore interface {
 	// GetNodeByRemovalEvent returns the row that the given removal event
 	// tombstoned, or nil when that event has stamped no row in this tree.
 	// When the event stamped more than one row, the latest removed_at wins,
-	// and on equal removed_at the highest id wins. The id order is defined only
+	// and on equal removed_at the highest id wins. A stamped row with no
+	// removed_at sorts ahead of every tombstone. The id order is defined only
 	// for canonical hyphenated UUIDs.
 	GetNodeByRemovalEvent(ctx context.Context, treeID, removalEventID string) (*TreeNodeRow, error)
 

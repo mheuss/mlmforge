@@ -232,10 +232,22 @@ func TestSchemaRejectsFirstLevelsWithoutSearchDepth(t *testing.T) {
 
 	errs := p.validateSchema(plan)
 
-	require.NotEmpty(t, errs, "first_levels with no search_depth should produce errors")
+	assertSearchDepthRefused(t, errs)
+}
+
+// assertSearchDepthRefused fails unless errs refuses the search_depth of the
+// distributor_count at the path below.
+func assertSearchDepthRefused(t *testing.T, errs []ValidationError) {
+	t.Helper()
+	const at = "/ranks/2/qualification/structures/0/distributor_count"
 	for _, e := range errs {
-		assert.Equal(t, SeverityError, e.Severity)
+		absent := e.Path == at && strings.Contains(e.Message, "search_depth")
+		null := e.Path == at+"/search_depth"
+		if absent || null {
+			return
+		}
 	}
+	t.Fatalf("expected a search_depth error on the first_levels distributor_count, got: %v", errs)
 }
 
 func TestSchemaRejectsFirstLevelsWithNullSearchDepth(t *testing.T) {
@@ -244,12 +256,7 @@ func TestSchemaRejectsFirstLevelsWithNullSearchDepth(t *testing.T) {
 	plan := replaceInYAML(t, readFixture(t, "valid/full-unilevel.yaml"),
 		firstLevelsBlock, "search_mode: first_levels\n            search_depth: null\n")
 
-	errs := p.validateSchema(plan)
-
-	require.NotEmpty(t, errs, "first_levels with search_depth null should produce errors")
-	for _, e := range errs {
-		assert.Equal(t, SeverityError, e.Severity)
-	}
+	assertSearchDepthRefused(t, p.validateSchema(plan))
 }
 
 func TestSchemaAcceptsAnyLevelWithoutSearchDepth(t *testing.T) {

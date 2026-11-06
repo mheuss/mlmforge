@@ -1368,6 +1368,7 @@ func TestValidation_SearchModeFirstLevelsWithoutDepthIsAnError(t *testing.T) {
 			found = true
 			assert.Equal(t, SeverityError, e.Severity)
 			assert.Equal(t, "/ranks/1/qualification/structures/0/distributor_count/search_depth", e.Path)
+			assert.Contains(t, e.Message, "search_depth is not set")
 			break
 		}
 	}
@@ -1397,6 +1398,8 @@ func TestValidation_SearchModeFirstLevelsWithZeroDepthIsAnError(t *testing.T) {
 		if e.Code == "missing_search_depth" {
 			found = true
 			assert.Equal(t, SeverityError, e.Severity)
+			assert.Contains(t, e.Message, "search_depth is 0")
+			assert.NotContains(t, e.Message, "not set")
 			break
 		}
 	}

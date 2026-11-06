@@ -327,6 +327,7 @@
         }
       },
       "if": {
+        "required": ["search_mode"],
         "properties": {
           "search_mode": {
             "const": "first_levels"

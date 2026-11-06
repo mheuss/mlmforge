@@ -1332,7 +1332,7 @@ so do sponsor and sponsored edges. Exactly one live node has no parent, and it
 is the root. The root has no sponsor (HEU-916). Every sponsor chain ends. Binary
 and matrix also prove each parent's occupied slots, in slot order, equal its
 `children`. HEU-732, HEU-712, HEU-744 and HEU-734 added these. Board plan keeps
-its sponsors in `sponsor_map`, not in an arena, so the root check does not reach
+its sponsors in `sponsor_map`, not in an arena. The root check does not reach
 it. A board's top seat legitimately has a sponsor.
 
 The matrix holding tank refuses an entry whose sponsor is the nil UUID

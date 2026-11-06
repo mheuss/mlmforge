@@ -1467,8 +1467,8 @@ mod tests {
 
     #[test]
     fn validate_restored_rejects_a_root_sponsored_by_its_own_child() {
-        // The child has no sponsor, so every sponsor chain ends.
         let mut arena = arena_with_a_child(1);
+        assert_eq!(arena.nodes[1].sponsor, None);
         arena.nodes[0].sponsor = Some(NodeIndex(1));
         arena.nodes[1].sponsored = vec![NodeIndex(0)];
 

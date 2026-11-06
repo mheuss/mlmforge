@@ -1770,6 +1770,25 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_rejects_a_root_whose_parent_is_its_own_child() {
+        let mut arena = arena_with_a_child(1);
+        let child = NodeIndex(1);
+        arena.nodes[0].parent = Some(child);
+        arena.nodes[child.0].children.push(NodeIndex(0));
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::NodeDepthMismatch {
+                slot: 0,
+                user_id: test_uuid(1),
+                depth: 0,
+                parent_slot: 1,
+                parent_depth: 1,
+            })
+        );
+    }
+
+    #[test]
     fn validate_restored_accepts_an_arena_of_tombstones_with_no_root() {
         let mut arena = live_arena();
         arena.index.clear();

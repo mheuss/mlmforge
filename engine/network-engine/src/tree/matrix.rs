@@ -1736,6 +1736,24 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_names_the_first_nil_tank_sponsor_in_tank_order() {
+        let (mut tree, _) = matrix_pair();
+        tree.holding_tank.push(tank_entry(9, None));
+        for user in [10u8, 11] {
+            tree.holding_tank.push(HoldingTankEntry {
+                user_id: test_uuid(user),
+                sponsor_user_id: Some(Uuid::nil()),
+                enrolled_at: 0,
+            });
+        }
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::HoldingTankSponsorNil { position: 1 })
+        );
+    }
+
+    #[test]
     fn validate_restored_reports_a_nil_tank_user_before_a_nil_sponsor() {
         let (mut tree, _) = matrix_pair();
         tree.holding_tank.push(HoldingTankEntry {

@@ -245,6 +245,8 @@ func TestParseCarryForwardRefusesMalformedEnvelopes(t *testing.T) {
 		{"a number", `1`, "envelope is not a JSON object"},
 		{"whitespace only", `   `, "envelope is not a JSON object"},
 		{"whitespace only with a newline and a tab", "\n\t ", "envelope is not a JSON object"},
+		{"truncated", `{"v":1,"structures":{}`, "envelope is not a JSON object"},
+		{"a member value that is not JSON", `{"v":}`, `envelope member "v": `},
 		{"trailing data", `{"v":1,"structures":{}} {}`, "envelope has data after the object"},
 		{"v missing", `{"structures":{}}`, `envelope field "v" is missing or null`},
 		{"v null", `{"v":null,"structures":{}}`, `envelope field "v" is missing or null`},
@@ -276,6 +278,7 @@ func TestParseCarryForwardRefusesMalformedEnvelopes(t *testing.T) {
 		{"left null", withLeg(`{"left":null,"right":2}`), atKey + ` field "left" is missing or null`},
 		{"right null", withLeg(`{"left":1,"right":null}`), atKey + ` field "right" is missing or null`},
 		{"left a string", withLeg(`{"left":"1","right":2}`), atKey + " left: "},
+		{"right a string", withLeg(`{"left":1,"right":"2"}`), atKey + " right: "},
 		{"unknown leg field", withLeg(`{"left":1,"right":2,"extra":1}`), atKey + ` has unknown field "extra"`},
 		{"empty structure name", `{"v":1,"structures":{"":{"kind":"binary_legs","carry":{}}}}`, "structure name must be non-empty"},
 		{"NUL in structure name", `{"v":1,"structures":{"a\u0000b":{"kind":"binary_legs","carry":{}}}}`, `structure "a\x00b" contains a NUL byte`},
@@ -299,7 +302,7 @@ func TestParseCarryForwardRefusesMalformedEnvelopes(t *testing.T) {
 	}
 }
 
-func TestParseCarryForwardReadsJsonbFormatting(t *testing.T) {
+func TestParseCarryForwardReadsSpacedAndReorderedInput(t *testing.T) {
 	raw := json.RawMessage(`{"structures": {"primary": {"carry": ` +
 		`{"11111111-1111-1111-1111-111111111111": {"right": 2.50, "left": 1.0}}, ` +
 		`"kind": "binary_legs"}}, "v": 1}`)

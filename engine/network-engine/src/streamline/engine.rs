@@ -1292,6 +1292,23 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_accepts_an_engine_after_its_stream_root_is_removed() {
+        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        engine
+            .add_member(test_uuid(1), test_uuid(99), 1000, None)
+            .unwrap();
+        engine
+            .add_member(test_uuid(2), test_uuid(1), 1001, None)
+            .unwrap();
+        engine.remove_member(test_uuid(1), 1002).unwrap();
+
+        let json = serde_json::to_string(&engine).unwrap();
+        let restored: StreamlineEngine = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.validate_restored(), Ok(()));
+    }
+
+    #[test]
     fn bootstrap_first_member() {
         let mut engine = StreamlineEngine::new(default_config(), 1000);
         let result = engine

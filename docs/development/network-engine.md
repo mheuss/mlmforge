@@ -443,6 +443,16 @@ The trap is not specific to contract tests. Any name filter that matches nothing
 
 A filter selects on the *test function's* name, and a suite's tests are not all named after the thing they test. Read the `N passed` count against the number of tests you expect, or run unfiltered. `0 passed` is the loud case; the quiet one is a filter that catches most of a group and drops one.
 
+## Contract-Test Harness: A Message That Extends Another Breaks Its Fixture
+
+`message_contains` matches a substring. It cannot anchor the end of the message.
+
+So a new error message that starts with an older message's whole text makes the older fixture match both. HEU-1009 added `HoldingTankSponsorNil`. Its message reads "holding tank entry {position} names the nil UUID as its sponsor". `HoldingTankUserNil` reads "holding tank entry {position} names the nil UUID". The nil-user fixture's `message_contains` now matches both refusals.
+
+That fixture still passes for the right reason today. Its entry has no sponsor, and the nil-user loop runs before the nil-sponsor loop. The fixture alone no longer tells the two refusals apart.
+
+When you add a sibling variant, make its message differ from the older one before the older text ends. Otherwise, pin the distinction in a Rust unit test that asserts the variant.
+
 ## For A Mutation Check, Read The Go Contract Runner
 
 The Rust contract runner is one test. It panics on the first fixture that does not match, so it names one failure and hides the rest.
@@ -1329,9 +1339,15 @@ HEU-750 closed the last of them.
 
 The arena proves one rooted tree. Parent and child edges name each other, and
 so do sponsor and sponsored edges. Exactly one live node has no parent, and it
-is the root. Every sponsor chain ends. Binary and matrix also prove each
-parent's occupied slots, in slot order, equal its `children`. HEU-732, HEU-712,
-HEU-744 and HEU-734 added these.
+is the root. The root has no sponsor (HEU-916). Every sponsor chain ends. Binary
+and matrix also prove each parent's occupied slots, in slot order, equal its
+`children`. HEU-732, HEU-712, HEU-744 and HEU-734 added these. Board plan keeps
+its sponsors in `sponsor_map`, not in an arena. The root check does not reach
+it. A board's top seat legitimately has a sponsor.
+
+The matrix holding tank refuses an entry whose sponsor is the nil UUID
+(HEU-1009). An entry whose sponsor is absent is legal. Its sponsor may have left
+the tree.
 
 A cycle through `parent` edges never needed its own check. The depth pass
 requires a child to sit one below its parent, so a parent chain cannot return.

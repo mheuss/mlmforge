@@ -1,0 +1,51 @@
+{
+    "description": "restore_snapshot rejects a matrix snapshot whose holding tank entry names the nil UUID as its sponsor, with INCONSISTENT_SNAPSHOT. Cross-language lock for HEU-1009.",
+    "request": {
+        "id": "rs-matrix-tank-nil-sponsor",
+        "op": "restore_snapshot",
+        "params": {
+            "structure": "RestoredMatrixNilSponsor",
+            "tree_type": "matrix",
+            "data": {
+                "arena": {
+                    "nodes": [
+                        {
+                            "user_id": "11111111-1111-1111-1111-111111111111",
+                            "parent": null,
+                            "children": [],
+                            "sponsor": null,
+                            "sponsored": [],
+                            "depth": 0,
+                            "enrolled_at": 100
+                        }
+                    ],
+                    "index": {
+                        "11111111-1111-1111-1111-111111111111": 0
+                    },
+                    "free_list": [],
+                    "root": 0
+                },
+                "width": 2,
+                "spillover": "breadth_first",
+                "slots": {
+                    "0": [null, null]
+                },
+                "holding_tank": [
+                    {
+                        "user_id": "33333333-3333-3333-3333-333333333333",
+                        "sponsor_user_id": "00000000-0000-0000-0000-000000000000",
+                        "enrolled_at": 200
+                    }
+                ]
+            }
+        }
+    },
+    "expected_response": {
+        "id": "rs-matrix-tank-nil-sponsor",
+        "ok": false,
+        "error": {
+            "code": "INCONSISTENT_SNAPSHOT",
+            "message_contains": "holding tank entry 0 names the nil UUID as its sponsor"
+        }
+    }
+}

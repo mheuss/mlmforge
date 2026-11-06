@@ -1,0 +1,49 @@
+{
+    "description": "restore_snapshot rejects a unilevel snapshot whose root names its own child as its sponsor, with INCONSISTENT_SNAPSHOT. The child has no sponsor, so every sponsor chain ends and every edge is reciprocated. Cross-language lock for HEU-916.",
+    "request": {
+        "id": "rs-unilevel-root-sponsored",
+        "op": "restore_snapshot",
+        "params": {
+            "structure": "RestoredRootSponsored",
+            "tree_type": "unilevel",
+            "data": {
+                "arena": {
+                    "nodes": [
+                        {
+                            "user_id": "11111111-1111-1111-1111-111111111111",
+                            "parent": null,
+                            "children": [1],
+                            "sponsor": 1,
+                            "sponsored": [],
+                            "depth": 0,
+                            "enrolled_at": 100
+                        },
+                        {
+                            "user_id": "22222222-2222-2222-2222-222222222222",
+                            "parent": 0,
+                            "children": [],
+                            "sponsor": null,
+                            "sponsored": [0],
+                            "depth": 1,
+                            "enrolled_at": 200
+                        }
+                    ],
+                    "index": {
+                        "11111111-1111-1111-1111-111111111111": 0,
+                        "22222222-2222-2222-2222-222222222222": 1
+                    },
+                    "free_list": [],
+                    "root": 0
+                }
+            }
+        }
+    },
+    "expected_response": {
+        "id": "rs-unilevel-root-sponsored",
+        "ok": false,
+        "error": {
+            "code": "INCONSISTENT_SNAPSHOT",
+            "message_contains": "whose sponsor is node slot 1"
+        }
+    }
+}

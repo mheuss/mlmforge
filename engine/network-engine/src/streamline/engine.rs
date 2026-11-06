@@ -1292,6 +1292,47 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_accepts_an_engine_after_its_stream_root_is_removed() {
+        let mut engine = StreamlineEngine::new(default_config(), 1000);
+        engine
+            .add_member(test_uuid(1), test_uuid(99), 1000, None)
+            .unwrap();
+        engine
+            .add_member(test_uuid(2), test_uuid(1), 1001, None)
+            .unwrap();
+        engine.remove_member(test_uuid(1), 1002).unwrap();
+        let stream = engine.get_stream(1).unwrap();
+        assert!(stream.tree.get_parent(test_uuid(2)).unwrap().is_none());
+
+        let json = serde_json::to_string(&engine).unwrap();
+        let restored: StreamlineEngine = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(restored.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_stream_root_that_has_a_sponsor() {
+        let engine = seeded_streamline();
+        let mut json = serde_json::to_value(&engine).unwrap();
+        let root = &mut json["streams"]["1"]["tree"]["arena"]["nodes"][0];
+        root["sponsor"] = serde_json::json!(0);
+        root["sponsored"] = serde_json::json!([0]);
+        let tampered: StreamlineEngine = serde_json::from_value(json).unwrap();
+
+        assert_eq!(
+            tampered.validate_restored(),
+            Err(SnapshotConsistencyError::Stream {
+                stream_id: 1,
+                source: Box::new(SnapshotConsistencyError::RootHasSponsor {
+                    slot: 0,
+                    user_id: test_uuid(1),
+                    sponsor: 0,
+                }),
+            })
+        );
+    }
+
+    #[test]
     fn bootstrap_first_member() {
         let mut engine = StreamlineEngine::new(default_config(), 1000);
         let result = engine

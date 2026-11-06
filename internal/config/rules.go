@@ -1251,16 +1251,23 @@ func validateCrossFieldRules(plan *CompensationPlan, ranks map[string]bool) []Va
 		}
 	}
 
-	// search_mode "first_levels" without search_depth is likely a misconfiguration.
+	// search_mode "first_levels" needs a depth of at least 1.
 	for i, r := range plan.Ranks {
 		for j, sq := range r.Qualification.Structures {
 			if sq.DistributorCount != nil && sq.DistributorCount.SearchMode == "first_levels" {
-				if sq.DistributorCount.SearchDepth == nil || *sq.DistributorCount.SearchDepth == 0 {
+				observed := ""
+				switch {
+				case sq.DistributorCount.SearchDepth == nil:
+					observed = "search_depth is not set"
+				case *sq.DistributorCount.SearchDepth == 0:
+					observed = "search_depth is 0"
+				}
+				if observed != "" {
 					errs = append(errs, ValidationError{
 						Path:     fmt.Sprintf("/ranks/%d/qualification/structures/%d/distributor_count/search_depth", i, j),
 						Code:     "missing_search_depth",
-						Message:  fmt.Sprintf("rank %q distributor_count uses search_mode \"first_levels\" but search_depth is not set", r.Name),
-						Severity: SeverityWarning,
+						Message:  fmt.Sprintf("rank %q distributor_count uses search_mode \"first_levels\" but %s", r.Name, observed),
+						Severity: SeverityError,
 					})
 				}
 			}

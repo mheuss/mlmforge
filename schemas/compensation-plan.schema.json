@@ -312,7 +312,7 @@
               "type": "null"
             }
           ],
-          "description": "How deep to search. Null means unlimited."
+          "description": "How many levels below the distributor to search. Required when search_mode is first_levels. Ignored when search_mode is any_level."
         },
         "total_count": {
           "type": "integer",
@@ -324,6 +324,22 @@
           "type": "number",
           "minimum": 0,
           "description": "Minimum group volume in each qualifying leg. Absolute value below 10^15, with at most 10 decimal places."
+        }
+      },
+      "if": {
+        "required": ["search_mode"],
+        "properties": {
+          "search_mode": {
+            "const": "first_levels"
+          }
+        }
+      },
+      "then": {
+        "required": ["search_depth"],
+        "properties": {
+          "search_depth": {
+            "type": "integer"
+          }
         }
       }
     },

@@ -40,7 +40,7 @@ This provides compile-time safety. Adding a new commission type requires impleme
 
 `ValidationError` has a `Severity` field: `"error"` or `"warning"`. The `hasErrors()` function checks whether any error in a slice has severity `"error"`. Warnings pass through to the caller but do not block translation.
 
-This matters because some validation checks are advisory. A matrix structure with `width^height > 1,000,000` positions is probably wrong but not definitively invalid. A `search_mode` of `first_levels` without a `search_depth` is suspicious but might be intentional. These produce warnings. Missing required references and type mismatches produce errors.
+This matters because some validation checks are advisory. A matrix structure with `width^height > 1,000,000` positions is probably wrong but not definitively invalid. A `payout_lag_days` above 30 is unusual but might be intentional. These produce warnings. Missing required references and type mismatches produce errors.
 
 The caller receives the full list. It can display warnings to plan authors, log them, or ignore them. The pipeline does not make that decision.
 

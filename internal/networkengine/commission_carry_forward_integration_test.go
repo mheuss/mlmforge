@@ -44,6 +44,9 @@ func TestCarryForwardSurvivesThePostgresStore(t *testing.T) {
 			t.Fatalf("ParseCarryForward(%s): %v", run.CarryForward, err)
 		}
 		assertSameCarryForward(t, got, want)
+		if got["idle-binary"] == nil {
+			t.Fatalf("idle-binary read back as a nil map from %s, want a non-nil empty map", run.CarryForward)
+		}
 	})
 
 	t.Run("no carry-forward reads back as nil", func(t *testing.T) {
@@ -64,10 +67,10 @@ func TestCarryForwardSurvivesThePostgresStore(t *testing.T) {
 		}
 		got, err := ParseCarryForward(run.CarryForward)
 		if err != nil {
-			t.Fatalf("ParseCarryForward: %v", err)
+			t.Fatalf("ParseCarryForward(%s): %v", run.CarryForward, err)
 		}
 		if got != nil {
-			t.Fatalf("ParseCarryForward = %v, want nil", got)
+			t.Fatalf("ParseCarryForward(%s) = %v, want nil", run.CarryForward, got)
 		}
 	})
 }

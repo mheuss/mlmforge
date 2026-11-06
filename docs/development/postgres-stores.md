@@ -410,9 +410,13 @@ the canonical form and on uppercase. It disagrees on other spellings. Postgres
 reads a hyphen after any group of four hex digits, and braces around 32 bare hex
 digits, as a UUID. `uuid.Parse` refuses both. `uuid.Parse` accepts a
 `urn:uuid:` prefix, and a 38-character value whose first and last characters are
-not braces. Postgres refuses both with SQLSTATE 22P02. The memory event store's
-`canonicalEventID` mirrors Postgres's input syntax. HEU-944 asks whether one
-helper should serve both stores.
+not braces. Postgres refuses both with SQLSTATE 22P02.
+
+Use `platform.CanonicalUUID` instead. It accepts the spellings Postgres's uuid
+input accepts and returns the canonical form. The memory event store and the
+memory tree store both call it (HEU-944). The memory tree store's four write
+methods refuse an id it rejects, as Postgres does. Its reads pass a rejected id
+through unchanged (HEU-1018).
 
 ## The test database collates in byte order
 

@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**Test count:** 1860 (Rust), 1729 (Go)
+**Test count:** 1860 (Rust), 1732 (Go)
 
 ### Added
 - Project research documentation (MLM fundamentals, compensation plans, glossary, competitive landscape, legal/regulatory)
@@ -117,6 +117,7 @@
 - The in-memory tree store's `ProjectInsert`, `ProjectRemoval`, `ProjectRejection` and `UndoRootProjection` refuse an id Postgres's uuid input refuses, and write nothing when they do. That includes a removal event id. They used to accept it, so a test could pass in memory and fail against Postgres. (HEU-844, HEU-944)
 - The in-memory tree store's insert drops a caller's `RemovedAt` and `RemovedByEventID` and applies the active-user, root and slot checks to every row, as Postgres's insert does. A row carrying `RemovedAt` used to land as a tombstone in memory and skip those checks. (HEU-945)
 - `GetNodeByRemovalEvent` on the in-memory tree store returns a stamped row with no removal time ahead of every tombstone, as Postgres does. It used to panic on that row. (HEU-844)
+- The in-memory tree store's `ProjectInsert` and `ProjectRemoval` refuse a `position` or `depth` outside the int4 range, and write nothing when they do. Postgres refuses the same values. The store also keeps `enrolled_at` to the microsecond, dropping the rest, as a Postgres read returns it. Postgres truncates here. It does not round. Two rows enrolled less than a microsecond apart used to keep distinct values in memory and tie in Postgres. (HEU-1020)
 - The qualification history store's twins run one shared test suite. The memory twin now stamps EvaluatedAt at microsecond precision with no monotonic reading, as a Postgres read returns it. It also keeps its own copies of each rank and ordinal, so a caller changing a saved entry or a returned row no longer changes what the store holds. It refuses an ordinal of 0 and a save under a cancelled context, as Postgres does. (HEU-938)
 - Every commission calculator checks each snapshot's `personal_volume` before it reads any snapshot. NaN, both infinities and negative values return `InvalidPersonalVolume`, which is `CALCULATION_ERROR` on the wire. A NaN used to clear the minimum-PV gate at any threshold. A `<` comparison against NaN is always false. Over the wire only a negative value reaches the check. The worker's JSON parse already refuses NaN and infinity before any calculator runs. Protocol 15. (HEU-709)
 - A unilevel, binary or matrix tree refuses the nil UUID as a user id with `NIL_USER_ID` on add or place. A streamline engine refuses it on add. The arena marks a freed slot with the nil UUID, so a live node with that id could not be told apart from a freed slot. Reading a freed slot through the arena's node accessors now panics in release builds too. It used to return the freed slot's zeroed node. A tree load refuses a projected row whose user id is the nil UUID as invalid data, so reject-event can clear that placement when it is the stream's last event. Protocol 16. (HEU-710)

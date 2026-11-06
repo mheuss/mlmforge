@@ -21,6 +21,12 @@ pub(crate) struct Arena {
     pub(crate) root: Option<NodeIndex>,
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static SPONSOR_WALK_VISITS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 impl Arena {
     pub(crate) fn new() -> Self {
         Self {
@@ -487,6 +493,8 @@ impl Arena {
                     }
                     Visit::Unseen => {}
                 }
+                #[cfg(test)]
+                SPONSOR_WALK_VISITS.with(|visits| visits.set(visits.get() + 1));
                 visits[idx.0] = Visit::OnWalk;
                 walk.push(idx.0);
                 current = self.nodes[idx.0].sponsor;
@@ -1096,7 +1104,7 @@ macro_rules! impl_arena_delegations {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tree::test_helpers::test_uuid;
+    use crate::tree::test_helpers::{test_uuid, test_uuid_u16};
 
     fn make_node(user_id: Uuid, parent: Option<NodeIndex>, depth: u32) -> Node {
         Node {
@@ -1926,6 +1934,31 @@ mod tests {
         arena.nodes[0].sponsored = vec![NodeIndex(1), second];
 
         assert!(arena.validate_restored().is_ok());
+    }
+
+    #[test]
+    fn sponsor_walk_visits_each_node_once_on_a_long_chain() {
+        // Slot 0 is the root. Reversing the slot order lets a quadratic walk
+        // pass this test.
+        const CHAIN: u16 = 1000;
+        let mut arena = live_arena();
+        for k in 1..CHAIN {
+            let above = NodeIndex(usize::from(k) - 1);
+            let user = test_uuid_u16(k + 1);
+            let idx = arena.alloc_slot(make_node(user, Some(above), u32::from(k)));
+            arena.index.insert(user, idx);
+            arena.nodes[idx.0].sponsor = Some(above);
+            arena.nodes[above.0].children.push(idx);
+            arena.nodes[above.0].sponsored.push(idx);
+        }
+        SPONSOR_WALK_VISITS.with(|visits| visits.set(0));
+
+        assert_eq!(arena.validate_restored(), Ok(()));
+        let visits = SPONSOR_WALK_VISITS.with(|visits| visits.get());
+        assert!(
+            visits >= usize::from(CHAIN) && visits <= 2 * usize::from(CHAIN),
+            "the sponsor walk made {visits} visits over {CHAIN} nodes"
+        );
     }
 
     #[test]

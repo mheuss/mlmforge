@@ -3,6 +3,8 @@ package networkengine
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -330,4 +332,32 @@ func TestMemoryTreeStore_RelocationIntoAVacatedSlotWhateverTheCase(t *testing.T)
 			{UserID: b, ParentID: root, Position: 0, Depth: 1}}}, testNodeUUID(9), 5)
 
 	require.ErrorIs(t, err, ErrSlotConflict)
+}
+
+func TestMemoryTreeStore_ARefusedWriteLeavesTheStoreAsItWas(t *testing.T) {
+	tree, root, child, recruit := testTreeUUID(1), testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	for _, w := range badIDWrites(tree, root, child, recruit) {
+		t.Run(w.name, func(t *testing.T) {
+			s := NewMemoryTreeStore()
+			seedBadIDTree(t, s, tree, root, child, recruit)
+			nodes, projected := slices.Clone(s.nodes), maps.Clone(s.projected)
+
+			err := w.write(context.Background(), s)
+
+			require.ErrorContains(t, err, "is not a UUID; nothing was written")
+			assert.Equal(t, nodes, s.nodes)
+			assert.Equal(t, projected, s.projected)
+		})
+	}
+}
+
+func TestMemoryTreeStore_ProjectInsertNamesTheRefusedID(t *testing.T) {
+	tree, root, child, recruit := testTreeUUID(1), testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	s := NewMemoryTreeStore()
+	seedBadIDTree(t, s, tree, root, child, recruit)
+
+	err := s.ProjectInsert(context.Background(),
+		makeUUIDNode(testNodeUUID(4), tree, "u-4", 2, ptr(child), ptr(child), intPtr(0)), 4)
+
+	require.EqualError(t, err, `project insert in tree `+tree+`: user_id "u-4" is not a UUID; nothing was written`)
 }

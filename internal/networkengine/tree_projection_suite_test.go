@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,50 @@ func readProjectionState(t *testing.T, s TreeStore, tree string, users ...string
 		rows[u] = row
 	}
 	return projectionState{version: version, found: found, rows: rows}
+}
+
+// notAUUID is an id that Postgres's uuid input refuses.
+const notAUUID = "not-a-uuid"
+
+// badIDWrite is one write carrying a single id Postgres's uuid input refuses.
+type badIDWrite struct {
+	name  string
+	write func(ctx context.Context, s TreeStore) error
+}
+
+// seedBadIDTree writes the three rows every badIDWrite runs against, at
+// versions 1 to 3.
+func seedBadIDTree(t *testing.T, s TreeStore, tree, root, child, recruit string) {
+	t.Helper()
+	ctx := context.Background()
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0)), 2))
+	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(3), tree, recruit, 1, ptr(root), ptr(child), intPtr(1)), 3))
+}
+
+// badIDWrites returns one write per id field the four write methods bind as
+// uuid, each with every other value valid.
+func badIDWrites(tree, root, child, recruit string) []badIDWrite {
+	insert := func(field string, edit func(*TreeNodeRow)) badIDWrite {
+		return badIDWrite{"insert " + field, func(ctx context.Context, s TreeStore) error {
+			row := makeUUIDNode(testNodeUUID(4), tree, testUserUUID(4), 2, ptr(child), ptr(child), intPtr(0))
+			edit(&row)
+			return s.ProjectInsert(ctx, row, 4)
+		}}
+	}
+	urn := "urn:uuid:" + testUserUUID(4)
+	wrapped := "x" + testUserUUID(4) + "x"
+	return []badIDWrite{
+		insert("tree_id", func(r *TreeNodeRow) { r.TreeID = notAUUID }),
+		insert("id", func(r *TreeNodeRow) { r.ID = notAUUID }),
+		insert("user_id", func(r *TreeNodeRow) { r.UserID = notAUUID }),
+		insert("parent_id", func(r *TreeNodeRow) { r.ParentID = ptr(notAUUID) }),
+		insert("sponsor_id", func(r *TreeNodeRow) { r.SponsorID = ptr(notAUUID) }),
+		insert("tree_id with a urn:uuid: prefix", func(r *TreeNodeRow) { r.TreeID = urn }),
+		insert("tree_id wrapped in non-braces", func(r *TreeNodeRow) { r.TreeID = wrapped }),
+		insert("user_id with a urn:uuid: prefix", func(r *TreeNodeRow) { r.UserID = urn }),
+		insert("user_id wrapped in non-braces", func(r *TreeNodeRow) { r.UserID = wrapped }),
+	}
 }
 
 // runTreeProjectionSuite checks the projected-version behavior of a TreeStore.
@@ -924,6 +969,38 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		assert.NotNil(t, got.rows[child].RemovedAt, "the rejection under tree %s left the row active", upper)
 		require.NotNil(t, got.rows[root])
 		assert.NotNil(t, got.rows[root].RemovedAt, "the undo under tree %s left the root active", upper)
+	})
+
+	activeIDs := func(t *testing.T, s TreeStore) []string {
+		t.Helper()
+		rows, err := s.GetByTree(context.Background(), tree)
+		require.NoError(t, err)
+		ids := make([]string, 0, len(rows))
+		for _, r := range rows {
+			ids = append(ids, r.ID)
+		}
+		slices.Sort(ids)
+		return ids
+	}
+
+	for _, w := range badIDWrites(tree, root, child, recruit) {
+		t.Run("a write with a non-UUID "+w.name+" is refused and writes nothing", func(t *testing.T) {
+			s := newStore(t)
+			ctx := context.Background()
+			seedBadIDTree(t, s, tree, root, child, recruit)
+			before := readProjectionState(t, s, tree, root, child, recruit)
+			beforeIDs := activeIDs(t, s)
+
+			require.Error(t, w.write(ctx, s))
+			assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit))
+			assert.Equal(t, beforeIDs, activeIDs(t, s), "active rows in tree %s", tree)
+		})
+	}
+
+	t.Run("an insert below version 1 with a non-UUID tree id reports the version", func(t *testing.T) {
+		s := newStore(t)
+		err := s.ProjectInsert(context.Background(), makeUUIDNode(testNodeUUID(1), notAUUID, root, 0, nil, ptr(root), nil), 0)
+		require.EqualError(t, err, "tree "+notAUUID+" was given event version 0, below 1; nothing was written")
 	})
 }
 

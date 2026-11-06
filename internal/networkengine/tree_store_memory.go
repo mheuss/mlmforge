@@ -244,14 +244,20 @@ func (s *MemoryTreeStore) ProjectedRows(ctx context.Context, treeID string) (int
 
 func (s *MemoryTreeStore) ProjectInsert(ctx context.Context, node TreeNodeRow, eventVersion int64) error {
 	given := node.TreeID
-	node.TreeID = uuidKey(node.TreeID)
 	if err := checkEventVersion(given, eventVersion); err != nil {
 		return err
 	}
+	if err := refuseNonUUID("project insert", given, idField{"tree_id", given}); err != nil {
+		return err
+	}
+	node.TreeID = uuidKey(node.TreeID)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := s.refuseBelow(node.TreeID, given, eventVersion); err != nil {
+		return err
+	}
+	if err := refuseNonUUID("project insert", given, insertIDFields(node)...); err != nil {
 		return err
 	}
 	if err := s.insertNode(ctx, node); err != nil {
@@ -401,6 +407,36 @@ func uuidKeyPtr(id *string) *string {
 	}
 	key := uuidKey(*id)
 	return &key
+}
+
+// idField is one id a write binds to a uuid column, with the name a refusal
+// reports.
+type idField struct {
+	name  string
+	value string
+}
+
+// refuseNonUUID returns an error for the first field Postgres's uuid input
+// would refuse.
+func refuseNonUUID(op, treeID string, fields ...idField) error {
+	for _, f := range fields {
+		if _, ok := platform.CanonicalUUID(f.value); !ok {
+			return fmt.Errorf("%s in tree %s: %s %q is not a UUID; nothing was written", op, treeID, f.name, f.value)
+		}
+	}
+	return nil
+}
+
+// insertIDFields lists the ids an insert binds, other than the tree id.
+func insertIDFields(node TreeNodeRow) []idField {
+	fields := []idField{{"id", node.ID}, {"user_id", node.UserID}}
+	if node.ParentID != nil {
+		fields = append(fields, idField{"parent_id", *node.ParentID})
+	}
+	if node.SponsorID != nil {
+		fields = append(fields, idField{"sponsor_id", *node.SponsorID})
+	}
+	return fields
 }
 
 // checkActiveSlots reports two active rows of treeID that claim one slot.

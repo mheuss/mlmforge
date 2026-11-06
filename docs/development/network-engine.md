@@ -1329,9 +1329,14 @@ HEU-750 closed the last of them.
 
 The arena proves one rooted tree. Parent and child edges name each other, and
 so do sponsor and sponsored edges. Exactly one live node has no parent, and it
-is the root. Every sponsor chain ends. Binary and matrix also prove each
-parent's occupied slots, in slot order, equal its `children`. HEU-732, HEU-712,
-HEU-744 and HEU-734 added these.
+is the root. The root has no sponsor (HEU-916). Every sponsor chain ends. Binary
+and matrix also prove each parent's occupied slots, in slot order, equal its
+`children`. HEU-732, HEU-712, HEU-744 and HEU-734 added these.
+
+The matrix holding tank refuses an entry whose sponsor is the nil UUID
+(HEU-1009). An entry whose sponsor is absent is legal. Its sponsor left the
+tree. Board plan keeps its sponsors in `sponsor_map`, not in an arena, so the
+root check does not reach it. A board's top seat legitimately has a sponsor.
 
 A cycle through `parent` edges never needed its own check. The depth pass
 requires a child to sit one below its parent, so a parent chain cannot return.

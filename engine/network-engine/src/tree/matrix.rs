@@ -81,8 +81,8 @@ impl MatrixTree {
     /// Prove a restored tree's stored values are in range and live, that each
     /// live non-root node is a child in exactly one child slot, that each
     /// parent's slots match its children, that the holding tank names no
-    /// nil, placed or repeated user, and that every sponsor chain through the
-    /// holding tank ends.
+    /// nil, placed or repeated user and no nil sponsor, and that every sponsor
+    /// chain through the holding tank ends.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         // A restore does not run the constructor, so the range it enforces has
         // to be re-established here. A width below 2 is not inert: placement
@@ -125,6 +125,14 @@ impl MatrixTree {
         for (position, entry) in self.holding_tank.iter().enumerate() {
             if entry.user_id.is_nil() {
                 return Err(SnapshotConsistencyError::HoldingTankUserNil { position });
+            }
+        }
+        for (position, entry) in self.holding_tank.iter().enumerate() {
+            if entry
+                .sponsor_user_id
+                .is_some_and(|sponsor| sponsor.is_nil())
+            {
+                return Err(SnapshotConsistencyError::HoldingTankSponsorNil { position });
             }
         }
         for entry in &self.holding_tank {
@@ -1713,7 +1721,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_restored_accepts_a_nil_tank_sponsor_until_heu_1009_decides() {
+    fn validate_restored_rejects_a_nil_tank_sponsor() {
         let (mut tree, _) = matrix_pair();
         tree.holding_tank.push(HoldingTankEntry {
             user_id: test_uuid(9),
@@ -1721,7 +1729,30 @@ mod tests {
             enrolled_at: 0,
         });
 
-        assert_eq!(tree.validate_restored(), Ok(()));
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::HoldingTankSponsorNil { position: 0 })
+        );
+    }
+
+    #[test]
+    fn validate_restored_reports_a_nil_tank_user_before_a_nil_sponsor() {
+        let (mut tree, _) = matrix_pair();
+        tree.holding_tank.push(HoldingTankEntry {
+            user_id: test_uuid(9),
+            sponsor_user_id: Some(Uuid::nil()),
+            enrolled_at: 0,
+        });
+        tree.holding_tank.push(HoldingTankEntry {
+            user_id: Uuid::nil(),
+            sponsor_user_id: None,
+            enrolled_at: 0,
+        });
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::HoldingTankUserNil { position: 1 })
+        );
     }
 
     #[test]

@@ -809,6 +809,10 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		{"a relocation targets an occupied slot", RemovalProjection{Users: []string{child},
 			Relocated: []Relocation{{UserID: grand, ParentID: root, Position: 1, Depth: 1}}}, ErrSlotConflict},
 		{"a removed user has no active row", RemovalProjection{Users: []string{child, testUserUUID(7)}}, nil},
+		{"a re-sponsored user is the removed user", RemovalProjection{Users: []string{child},
+			Responsored: []Responsored{{UserID: child, NewSponsorID: root}}}, nil},
+		{"a relocated user is the removed user", RemovalProjection{Users: []string{child},
+			Relocated: []Relocation{{UserID: child, ParentID: root, Position: 5, Depth: 1}}}, nil},
 		{"two relocations swap their slots", RemovalProjection{Users: []string{grand},
 			Relocated: []Relocation{
 				{UserID: child, ParentID: root, Position: 1, Depth: 1},

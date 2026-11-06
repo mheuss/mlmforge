@@ -121,25 +121,35 @@ func badIDWrites(tree, root, child, recruit string) (bad, controls []badIDWrite)
 	}, controls
 }
 
+// int4Write is one write carrying a position and a depth, with the user whose
+// row it writes.
+type int4Write struct {
+	name            string
+	user            string
+	position, depth int
+	write           func(ctx context.Context, s TreeStore) error
+}
+
 // int4Writes returns writes that each carry one position or depth outside the
 // range of Postgres's int4, with every other value valid. controls holds the
-// same writes at the edges of that range.
-func int4Writes(tree, root, child, recruit string) (bad, controls []badIDWrite) {
-	insert := func(name string, position, depth int) badIDWrite {
-		return badIDWrite{"an insert with a " + name, func(ctx context.Context, s TreeStore) error {
+// same writes with each value at the edge of that range.
+func int4Writes(tree, root, child, recruit string) (bad, controls []int4Write) {
+	insert := func(name string, position, depth int) int4Write {
+		user := testUserUUID(4)
+		return int4Write{"an insert with a " + name, user, position, depth, func(ctx context.Context, s TreeStore) error {
 			return s.ProjectInsert(ctx,
-				makeUUIDNode(testNodeUUID(4), tree, testUserUUID(4), depth, ptr(child), ptr(child), intPtr(position)), 4)
+				makeUUIDNode(testNodeUUID(4), tree, user, depth, ptr(child), ptr(child), intPtr(position)), 4)
 		}}
 	}
-	relocate := func(name string, position, depth int) badIDWrite {
-		return badIDWrite{"a relocation with a " + name, func(ctx context.Context, s TreeStore) error {
+	relocate := func(name string, position, depth int) int4Write {
+		return int4Write{"a relocation with a " + name, recruit, position, depth, func(ctx context.Context, s TreeStore) error {
 			return s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{child},
 				Relocated: []Relocation{{UserID: recruit, ParentID: root, Position: position, Depth: depth}}},
 				testNodeUUID(9), 4)
 		}}
 	}
 	const above, below = math.MaxInt32 + 1, math.MinInt32 - 1
-	controls = []badIDWrite{
+	controls = []int4Write{
 		insert("position at the int4 maximum", math.MaxInt32, 2),
 		insert("position at the int4 minimum", math.MinInt32, 2),
 		insert("depth at the int4 maximum", 0, math.MaxInt32),
@@ -149,7 +159,7 @@ func int4Writes(tree, root, child, recruit string) (bad, controls []badIDWrite) 
 		relocate("depth at the int4 maximum", 5, math.MaxInt32),
 		relocate("depth at the int4 minimum", 5, math.MinInt32),
 	}
-	return []badIDWrite{
+	return []int4Write{
 		insert("position above the int4 maximum", above, 2),
 		insert("position below the int4 minimum", below, 2),
 		insert("depth above the int4 maximum", 0, above),
@@ -1112,6 +1122,12 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 			assert.NotEqual(t, before, readProjectionState(t, s, tree, root, child, recruit),
 				"projection state of tree %s after an accepted write", tree)
 			assert.NotEqual(t, beforeIDs, activeIDs(t, s), "active rows in tree %s after an accepted write", tree)
+			got, err := s.GetNode(ctx, tree, w.user)
+			require.NoError(t, err)
+			require.NotNil(t, got, "active row for %s", w.user)
+			require.NotNil(t, got.Position, "position of %s", w.user)
+			assert.Equal(t, w.position, *got.Position, "position of %s", w.user)
+			assert.Equal(t, w.depth, got.Depth, "depth of %s", w.user)
 		})
 	}
 

@@ -473,9 +473,9 @@ func runTreeStoreSuite(
 		micro := time.Date(2026, 5, 17, 13, 45, 6, 7_000, time.UTC)
 		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil), 1))
 		late := makeUUIDNode(testNodeUUID(2), tree, second, 1, ptr(root), ptr(root), intPtr(0))
-		late.EnrolledAt = micro.Add(401)
+		late.EnrolledAt = micro.Add(999)
 		early := makeUUIDNode(testNodeUUID(3), tree, first, 1, ptr(root), ptr(root), intPtr(1))
-		early.EnrolledAt = micro.Add(400)
+		early.EnrolledAt = micro.Add(998)
 		require.NoError(t, s.ProjectInsert(ctx, late, 2))
 		require.NoError(t, s.ProjectInsert(ctx, early, 3))
 

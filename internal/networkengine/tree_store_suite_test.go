@@ -21,6 +21,19 @@ func nodeUserIDs(nodes []TreeNodeRow) []string {
 	return ids
 }
 
+// bracedBare spells id as 32 hex digits inside braces.
+func bracedBare(id string) string { return "{" + strings.ReplaceAll(id, "-", "") + "}" }
+
+// hyphenEveryFour spells id as eight groups of four hex digits.
+func hyphenEveryFour(id string) string {
+	hex := strings.ReplaceAll(id, "-", "")
+	groups := make([]string, 0, 8)
+	for i := 0; i < len(hex); i += 4 {
+		groups = append(groups, hex[i:i+4])
+	}
+	return strings.Join(groups, "-")
+}
+
 // runTreeStoreSuite is the shared behavioral contract. Both the memory and
 // Postgres implementations must pass it identically. newStore returns a
 // fresh, empty store on each call.
@@ -1195,4 +1208,75 @@ func runTreeStoreSuite(
 		require.NotNil(t, got.SponsorID)
 		assert.Equal(t, root, *got.SponsorID)
 	})
+
+	for _, sp := range []struct {
+		name  string
+		spell func(string) string
+	}{
+		{"braced 32-hex", bracedBare},
+		{"hyphen-every-four", hyphenEveryFour},
+		{"bare 32-hex", func(id string) string { return strings.ReplaceAll(id, "-", "") }},
+		{"braced hyphenated", func(id string) string { return "{" + id + "}" }},
+	} {
+		t.Run("a "+sp.name+" tree, user or parent id reads the canonical row", func(t *testing.T) {
+			s := newStore(t)
+			ctx := context.Background()
+			tree := testTreeUUID(1)
+			root, child := hexUser(1), hexUser(2)
+			require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil), 1))
+			require.NoError(t, s.ProjectInsert(ctx,
+				makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0)), 2))
+
+			byTree, err := s.GetNode(ctx, sp.spell(tree), child)
+			require.NoError(t, err)
+			require.NotNil(t, byTree, "GetNode found no row under tree %s", sp.spell(tree))
+			assert.Equal(t, tree, byTree.TreeID)
+
+			byUser, err := s.GetNode(ctx, tree, sp.spell(child))
+			require.NoError(t, err)
+			require.NotNil(t, byUser, "GetNode found no row for user %s", sp.spell(child))
+			assert.Equal(t, child, byUser.UserID)
+
+			children, err := s.GetChildren(ctx, tree, sp.spell(root))
+			require.NoError(t, err)
+			assert.Equal(t, []string{child}, nodeUserIDs(children))
+
+			version, found, err := s.ProjectedVersion(ctx, sp.spell(tree))
+			require.NoError(t, err)
+			assert.True(t, found, "no projection row under tree %s", sp.spell(tree))
+			assert.Equal(t, int64(2), version)
+
+			require.NoError(t, s.ProjectRemoval(ctx, sp.spell(tree),
+				RemovalProjection{Users: []string{child}}, testNodeUUID(9), 3))
+			gone, err := s.GetNode(ctx, tree, child)
+			require.NoError(t, err)
+			assert.Nil(t, gone, "the removal under tree %s left the child active", sp.spell(tree))
+		})
+
+		t.Run("a row written with "+sp.name+" ids reads back canonical", func(t *testing.T) {
+			s := newStore(t)
+			ctx := context.Background()
+			tree := testTreeUUID(1)
+			root, child := hexUser(1), hexUser(2)
+			require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(sp.spell(testNodeUUID(1)), sp.spell(tree),
+				sp.spell(root), 0, nil, ptr(sp.spell(root)), nil), 1))
+			require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(sp.spell(testNodeUUID(2)), sp.spell(tree),
+				sp.spell(child), 1, ptr(sp.spell(root)), ptr(sp.spell(root)), intPtr(0)), 2))
+
+			got, err := s.GetNode(ctx, tree, root)
+			require.NoError(t, err)
+			require.NotNil(t, got, "no row for %s under tree %s", root, tree)
+			assert.Equal(t, testNodeUUID(1), got.ID)
+			assert.Equal(t, tree, got.TreeID)
+			assert.Equal(t, root, got.UserID)
+			require.NotNil(t, got.SponsorID)
+			assert.Equal(t, root, *got.SponsorID)
+
+			children, err := s.GetChildren(ctx, tree, root)
+			require.NoError(t, err)
+			require.Len(t, children, 1)
+			require.NotNil(t, children[0].ParentID)
+			assert.Equal(t, root, *children[0].ParentID)
+		})
+	}
 }

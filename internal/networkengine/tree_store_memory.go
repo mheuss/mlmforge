@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/mlmforge/mlmforge/internal/platform"
 )
 
 // Compile-time check.
@@ -388,11 +388,10 @@ func checkRelocationTargets(rows []TreeNodeRow, treeID string, relocated []Reloc
 // uuidKey returns id in canonical form, so two spellings of one uuid compare equal. An id
 // that does not parse is returned unchanged.
 func uuidKey(id string) string {
-	u, err := uuid.Parse(id)
-	if err != nil {
-		return id
+	if key, ok := platform.CanonicalUUID(id); ok {
+		return key
 	}
-	return u.String()
+	return id
 }
 
 // uuidKeyPtr returns a new pointer to uuidKey of *id, or nil for nil.

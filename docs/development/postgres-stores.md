@@ -58,6 +58,20 @@ Some existing pairs are not under the rule yet. The tree lockers have no shared
 body. HEU-939 adds one. The event store shares bodies for some behaviours and
 tests the rest per twin. HEU-941 moves the rest into shared bodies.
 
+### A table of refused writes needs a control for each kind of write
+
+A shared case that asserts only "this write fails" passes on Postgres whatever
+the reason. Postgres refuses for its own reasons too. A broken seed, a slot
+clash, or a row the template no longer fits all make every refusal row pass.
+Nothing says so.
+
+Give the table one control per kind of write. A control is the same write with
+nothing edited. Assert that both twins accept it and that it changes state. If
+the control fails, the refusal rows are not testing what they name.
+
+HEU-844 found this in review. Its refusal table for the memory tree store had
+no controls until then.
+
 ## pgx sends only a nil slice as SQL NULL
 
 An empty non-nil `[]byte` or `json.RawMessage` is sent as an empty payload, and
@@ -410,9 +424,14 @@ the canonical form and on uppercase. It disagrees on other spellings. Postgres
 reads a hyphen after any group of four hex digits, and braces around 32 bare hex
 digits, as a UUID. `uuid.Parse` refuses both. `uuid.Parse` accepts a
 `urn:uuid:` prefix, and a 38-character value whose first and last characters are
-not braces. Postgres refuses both with SQLSTATE 22P02. The memory event store's
-`canonicalEventID` mirrors Postgres's input syntax. HEU-944 asks whether one
-helper should serve both stores.
+not braces. Postgres refuses both with SQLSTATE 22P02.
+
+Use `platform.CanonicalUUID` instead. It accepts the spellings Postgres's uuid
+input accepts and returns the canonical form. The memory event store and the
+memory tree store both call it (HEU-944). The memory tree store's
+`ProjectInsert`, `ProjectRemoval`, `ProjectRejection` and `UndoRootProjection`
+refuse an id it rejects, as Postgres does. Its reads pass a rejected id through
+unchanged (HEU-1018).
 
 ## The test database collates in byte order
 

@@ -389,6 +389,11 @@ func TestPostgresTreeStore_Suite(t *testing.T) {
 			`UPDATE tree_nodes SET removed_at = $2 WHERE id = $1`, nodeID, at)
 		require.NoError(t, err)
 		require.EqualValues(t, 1, tag.RowsAffected(), "rows updated for id %s", nodeID)
+	}, func(t *testing.T, s TreeStore, nodeID, eventID string) {
+		tag, err := s.(*PostgresTreeStore).pool.Exec(context.Background(),
+			`UPDATE tree_nodes SET removed_by_event_id = $2 WHERE id = $1`, nodeID, eventID)
+		require.NoError(t, err)
+		require.EqualValues(t, 1, tag.RowsAffected(), "rows updated for id %s", nodeID)
 	})
 }
 

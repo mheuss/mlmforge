@@ -21,19 +21,34 @@ func nodeUserIDs(nodes []TreeNodeRow) []string {
 	return ids
 }
 
+// bracedBare spells id as 32 hex digits inside braces.
+func bracedBare(id string) string { return "{" + strings.ReplaceAll(id, "-", "") + "}" }
+
+// hyphenEveryFour spells id as eight groups of four hex digits.
+func hyphenEveryFour(id string) string {
+	hex := strings.ReplaceAll(id, "-", "")
+	groups := make([]string, 0, 8)
+	for i := 0; i < len(hex); i += 4 {
+		groups = append(groups, hex[i:i+4])
+	}
+	return strings.Join(groups, "-")
+}
+
 // runTreeStoreSuite is the shared behavioral contract. Both the memory and
 // Postgres implementations must pass it identically. newStore returns a
 // fresh, empty store on each call.
 //
 // stampOf reads one row's removal stamp by the row's ID, whether or not the
 // row is active. setUpdatedAt and setRemovedAt overwrite one row's update time
-// and removal time by the row's ID.
+// and removal time by the row's ID. setRemovalStamp overwrites one row's
+// removal stamp by the row's ID.
 func runTreeStoreSuite(
 	t *testing.T,
 	newStore func(t *testing.T) TreeStore,
 	stampOf func(t *testing.T, s TreeStore, nodeID string) *string,
 	setUpdatedAt func(t *testing.T, s TreeStore, nodeID string, at time.Time),
 	setRemovedAt func(t *testing.T, s TreeStore, nodeID string, at time.Time),
+	setRemovalStamp func(t *testing.T, s TreeStore, nodeID, eventID string),
 ) {
 	t.Helper()
 
@@ -1194,5 +1209,175 @@ func runTreeStoreSuite(
 		assert.Equal(t, root, *got.ParentID)
 		require.NotNil(t, got.SponsorID)
 		assert.Equal(t, root, *got.SponsorID)
+	})
+
+	for _, sp := range []struct {
+		name  string
+		spell func(string) string
+	}{
+		{"braced 32-hex", bracedBare},
+		{"hyphen-every-four", hyphenEveryFour},
+		{"bare 32-hex", func(id string) string { return strings.ReplaceAll(id, "-", "") }},
+		{"braced hyphenated", func(id string) string { return "{" + id + "}" }},
+	} {
+		t.Run("a "+sp.name+" tree, user or parent id reads the canonical row", func(t *testing.T) {
+			s := newStore(t)
+			ctx := context.Background()
+			tree := testTreeUUID(1)
+			root, child := hexUser(1), hexUser(2)
+			require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil), 1))
+			require.NoError(t, s.ProjectInsert(ctx,
+				makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0)), 2))
+
+			byTree, err := s.GetNode(ctx, sp.spell(tree), child)
+			require.NoError(t, err)
+			require.NotNil(t, byTree, "GetNode found no row under tree %s", sp.spell(tree))
+			assert.Equal(t, tree, byTree.TreeID)
+
+			byUser, err := s.GetNode(ctx, tree, sp.spell(child))
+			require.NoError(t, err)
+			require.NotNil(t, byUser, "GetNode found no row for user %s", sp.spell(child))
+			assert.Equal(t, child, byUser.UserID)
+
+			children, err := s.GetChildren(ctx, tree, sp.spell(root))
+			require.NoError(t, err)
+			assert.Equal(t, []string{child}, nodeUserIDs(children))
+
+			version, found, err := s.ProjectedVersion(ctx, sp.spell(tree))
+			require.NoError(t, err)
+			assert.True(t, found, "no projection row under tree %s", sp.spell(tree))
+			assert.Equal(t, int64(2), version)
+
+			require.NoError(t, s.ProjectRemoval(ctx, sp.spell(tree),
+				RemovalProjection{Users: []string{child}}, testNodeUUID(9), 3))
+			gone, err := s.GetNode(ctx, tree, child)
+			require.NoError(t, err)
+			assert.Nil(t, gone, "the removal under tree %s left the child active", sp.spell(tree))
+		})
+
+		t.Run("a row written with "+sp.name+" ids reads back canonical", func(t *testing.T) {
+			s := newStore(t)
+			ctx := context.Background()
+			tree := testTreeUUID(1)
+			root, child := hexUser(1), hexUser(2)
+			require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(sp.spell(testNodeUUID(1)), sp.spell(tree),
+				sp.spell(root), 0, nil, ptr(sp.spell(root)), nil), 1))
+			require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(sp.spell(testNodeUUID(2)), sp.spell(tree),
+				sp.spell(child), 1, ptr(sp.spell(root)), ptr(sp.spell(root)), intPtr(0)), 2))
+
+			got, err := s.GetNode(ctx, tree, root)
+			require.NoError(t, err)
+			require.NotNil(t, got, "no row for %s under tree %s", root, tree)
+			assert.Equal(t, testNodeUUID(1), got.ID)
+			assert.Equal(t, tree, got.TreeID)
+			assert.Equal(t, root, got.UserID)
+			require.NotNil(t, got.SponsorID)
+			assert.Equal(t, root, *got.SponsorID)
+
+			children, err := s.GetChildren(ctx, tree, root)
+			require.NoError(t, err)
+			require.Len(t, children, 1)
+			require.NotNil(t, children[0].ParentID)
+			assert.Equal(t, root, *children[0].ParentID)
+		})
+	}
+
+	t.Run("ProjectInsert drops a caller's removal fields", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		tree, root := testTreeUUID(1), testUserUUID(1)
+		removed := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+		row := makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)
+		row.RemovedAt, row.RemovedByEventID = &removed, ptr(testNodeUUID(9))
+
+		require.NoError(t, s.ProjectInsert(ctx, row, 1))
+
+		got, err := s.GetNode(ctx, tree, root)
+		require.NoError(t, err)
+		require.NotNil(t, got, "GetNode found no active row for the inserted user")
+		assert.Nil(t, got.RemovedAt)
+		assert.Nil(t, got.RemovedByEventID)
+	})
+
+	t.Run("ProjectInsert applies the active-user check to a row carrying RemovedAt", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		tree, root, child := testTreeUUID(1), testUserUUID(1), testUserUUID(2)
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil), 1))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0)), 2))
+		removed := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+		again := makeUUIDNode(testNodeUUID(3), tree, child, 1, ptr(root), ptr(root), intPtr(1))
+		again.RemovedAt = &removed
+
+		err := s.ProjectInsert(ctx, again, 3)
+
+		assert.ErrorIs(t, err, ErrActiveUserConflict)
+	})
+
+	t.Run("GetNodeByRemovalEvent puts a stamped row with no removed_at ahead of a tombstone stored after it", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		tree, root, active, removed := testTreeUUID(1), testUserUUID(1), testUserUUID(2), testUserUUID(3)
+		event := testNodeUUID(9)
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(2), tree, active, 1, ptr(root), ptr(root), intPtr(0))))
+		setRemovalStamp(t, s, testNodeUUID(2), event)
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(3), tree, removed, 1, ptr(root), ptr(root), intPtr(1))))
+		require.NoError(t, stampRemoval(ctx, s, tree, removed, event, 1))
+
+		got, err := s.GetNodeByRemovalEvent(ctx, tree, event)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, testNodeUUID(2), got.ID, "row read back for event")
+	})
+
+	t.Run("GetNodeByRemovalEvent puts a stamped row with no removed_at ahead of a tombstone stored before it", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		tree, root, active, removed := testTreeUUID(1), testUserUUID(1), testUserUUID(2), testUserUUID(3)
+		event := testNodeUUID(9)
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(3), tree, removed, 1, ptr(root), ptr(root), intPtr(1))))
+		require.NoError(t, stampRemoval(ctx, s, tree, removed, event, 1))
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(2), tree, active, 1, ptr(root), ptr(root), intPtr(0))))
+		setRemovalStamp(t, s, testNodeUUID(2), event)
+
+		got, err := s.GetNodeByRemovalEvent(ctx, tree, event)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, testNodeUUID(2), got.ID, "row read back for event")
+	})
+
+	t.Run("GetNodeByRemovalEvent breaks a tie between stamped rows with no removed_at by the highest id", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		tree, root := testTreeUUID(1), testUserUUID(1)
+		eventA, eventB := testNodeUUID(8), testNodeUUID(9)
+		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)))
+		// eventA stamps its higher id second and eventB stamps its higher id
+		// first, so neither a first-found nor a last-found rule returns both.
+		for i, p := range []struct{ id, event string }{
+			{testNodeUUID(2), eventA}, {testNodeUUID(3), eventA},
+			{testNodeUUID(5), eventB}, {testNodeUUID(4), eventB},
+		} {
+			require.NoError(t, insertRow(ctx, s,
+				makeUUIDNode(p.id, tree, testUserUUID(10+i), 1, ptr(root), ptr(root), intPtr(i))))
+			setRemovalStamp(t, s, p.id, p.event)
+		}
+
+		gotA, err := s.GetNodeByRemovalEvent(ctx, tree, eventA)
+		require.NoError(t, err)
+		require.NotNil(t, gotA)
+		assert.Equal(t, testNodeUUID(3), gotA.ID, "row read back for eventA")
+
+		gotB, err := s.GetNodeByRemovalEvent(ctx, tree, eventB)
+		require.NoError(t, err)
+		require.NotNil(t, gotB)
+		assert.Equal(t, testNodeUUID(5), gotB.ID, "row read back for eventB")
 	})
 }

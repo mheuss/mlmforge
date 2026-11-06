@@ -464,6 +464,51 @@ func runTreeStoreSuite(
 			"EnrolledAt round-trips as the same instant, got %v want %v", got.EnrolledAt, node.EnrolledAt)
 	})
 
+	t.Run("ProjectInsert keeps EnrolledAt to the microsecond, dropping the rest", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree, root := testTreeUUID(1), testUserUUID(1)
+		first, second := testUserUUID(2), testUserUUID(3)
+		micro := time.Date(2026, 5, 17, 13, 45, 6, 7_000, time.UTC)
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil), 1))
+		late := makeUUIDNode(testNodeUUID(2), tree, second, 1, ptr(root), ptr(root), intPtr(0))
+		late.EnrolledAt = micro.Add(999)
+		early := makeUUIDNode(testNodeUUID(3), tree, first, 1, ptr(root), ptr(root), intPtr(1))
+		early.EnrolledAt = micro.Add(998)
+		require.NoError(t, s.ProjectInsert(ctx, late, 2))
+		require.NoError(t, s.ProjectInsert(ctx, early, 3))
+
+		got, err := s.GetByTreeDepthOrdered(ctx, tree)
+		require.NoError(t, err)
+		require.Len(t, got, 3)
+		assert.ElementsMatch(t, []string{first, second}, nodeUserIDs(got[1:]))
+		for _, n := range got[1:] {
+			assert.True(t, micro.Equal(n.EnrolledAt),
+				"EnrolledAt of %s is %v, want %v", n.UserID, n.EnrolledAt, micro)
+		}
+	})
+
+	t.Run("ProjectInsert keeps EnrolledAt values a microsecond apart in order", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+
+		tree, root := testTreeUUID(1), testUserUUID(1)
+		first, second := testUserUUID(2), testUserUUID(3)
+		micro := time.Date(2026, 5, 17, 13, 45, 6, 7_000, time.UTC)
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil), 1))
+		late := makeUUIDNode(testNodeUUID(2), tree, second, 1, ptr(root), ptr(root), intPtr(0))
+		late.EnrolledAt = micro.Add(time.Microsecond)
+		early := makeUUIDNode(testNodeUUID(3), tree, first, 1, ptr(root), ptr(root), intPtr(1))
+		early.EnrolledAt = micro
+		require.NoError(t, s.ProjectInsert(ctx, late, 2))
+		require.NoError(t, s.ProjectInsert(ctx, early, 3))
+
+		got, err := s.GetByTreeDepthOrdered(ctx, tree)
+		require.NoError(t, err)
+		assert.Equal(t, []string{root, first, second}, nodeUserIDs(got))
+	})
+
 	t.Run("ProjectInsert stamps CreatedAt and UpdatedAt over the caller's values", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

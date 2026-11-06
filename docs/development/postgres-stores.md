@@ -455,3 +455,27 @@ lets a later change on either side alter what the store holds. Copy each
 pointed-to value on write and on every read. Pin it with a shared case that
 changes the caller's variable after the save, and a returned row after the read,
 through every read method.
+
+## pgx truncates a time to the microsecond
+
+HEU-1020, 2026-11-06.
+
+A `time.Time` bound to a TIMESTAMPTZ parameter keeps whole microseconds. pgx
+v5.9.2 floors the nanoseconds before the value is sent. The code is in
+`pgtype/timestamptz.go`. It does not round. Measured on `postgres:16-alpine`
+through the tree store: +501ns read back as .000000 and +999999999ns as .999999.
+A memory twin mirrors this with `Truncate(time.Microsecond)`. That call also
+drops the monotonic reading.
+
+A shared case needs values at or above the half microsecond, such as +998ns and
++999ns. Values below the half, such as +400ns, give the same answer under
+rounding as under truncation. So the case also passes on a twin that rounds.
+
+## pgx refuses an int outside int4 before sending
+
+HEU-1020, 2026-11-06.
+
+A Go `int` bound to an `INT` parameter or an `int[]` cast fails in pgx's encoder
+when it is outside the int4 range. The statement never reaches the server. Go's
+`int` is 64-bit and int4 is 32-bit. The type alone allows values the column
+refuses. A memory twin refuses the same range before it writes.

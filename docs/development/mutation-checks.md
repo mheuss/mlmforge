@@ -511,3 +511,25 @@ the write could plausibly reach.
 
 HEU-864's first cross-tree undo case undid only the second root. Three scope-blind
 mutations, one on memory and two on Postgres, passed it.
+
+## A complexity guard only bites under one input order
+
+A visit-count test can pass a quadratic walk if its input lets every walk after
+the first end at once.
+
+HEU-917's test counts sponsor-walk visits on a 1,000-node chain. The walk skips a
+start whose node is already finished. With the root at slot 0, each later start
+takes one step and meets a finished node. The count is 1,000. With
+`Visit::Done => break` mutated to `Visit::Done => {}`, it is 500,500, and the
+test fails.
+
+Put the leaf at slot 0 instead and the first walk covers the whole chain. Every
+later start is skipped, so the mutated walk also counts 1,000 and the test
+passes.
+
+Order the input so the long walks come last. Then prove it with the mutation the
+guard exists for.
+
+Give the count a lower bound too. A counter that is never incremented reads 0,
+which passes an assert that only has an upper bound. HEU-917's first red run
+failed on that lower bound with "made 0 visits".

@@ -443,6 +443,16 @@ The trap is not specific to contract tests. Any name filter that matches nothing
 
 A filter selects on the *test function's* name, and a suite's tests are not all named after the thing they test. Read the `N passed` count against the number of tests you expect, or run unfiltered. `0 passed` is the loud case; the quiet one is a filter that catches most of a group and drops one.
 
+## Contract-Test Harness: A Message That Extends Another Breaks Its Fixture
+
+`message_contains` matches a substring. It cannot anchor the end of the message.
+
+So a new error message that starts with an older message's whole text makes the older fixture match both. HEU-1009 added `HoldingTankSponsorNil`, "holding tank entry {position} names the nil UUID as its sponsor". `HoldingTankUserNil` reads "holding tank entry {position} names the nil UUID". The nil-user fixture's `message_contains` now matches both refusals.
+
+That fixture still passes for the right reason today. Its entry has no sponsor, and the nil-user loop runs before the nil-sponsor loop. The fixture alone no longer tells the two refusals apart.
+
+When you add a sibling variant, make its message differ from the older one before the older text ends. Otherwise, pin the distinction in a Rust unit test that asserts the variant.
+
 ## For A Mutation Check, Read The Go Contract Runner
 
 The Rust contract runner is one test. It panics on the first fixture that does not match, so it names one failure and hides the rest.

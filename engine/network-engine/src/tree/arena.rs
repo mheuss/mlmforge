@@ -494,7 +494,7 @@ impl Arena {
                     Visit::Unseen => {}
                 }
                 #[cfg(test)]
-                SPONSOR_WALK_VISITS.with(|visits| visits.set(visits.get() + 1));
+                SPONSOR_WALK_VISITS.with(|count| count.set(count.get() + 1));
                 visits[idx.0] = Visit::OnWalk;
                 walk.push(idx.0);
                 current = self.nodes[idx.0].sponsor;
@@ -1951,10 +1951,10 @@ mod tests {
             arena.nodes[above.0].children.push(idx);
             arena.nodes[above.0].sponsored.push(idx);
         }
-        SPONSOR_WALK_VISITS.with(|visits| visits.set(0));
+        SPONSOR_WALK_VISITS.with(|count| count.set(0));
 
         assert_eq!(arena.validate_restored(), Ok(()));
-        let visits = SPONSOR_WALK_VISITS.with(|visits| visits.get());
+        let visits = SPONSOR_WALK_VISITS.with(|count| count.get());
         assert!(
             visits >= usize::from(CHAIN) && visits <= 2 * usize::from(CHAIN),
             "the sponsor walk made {visits} visits over {CHAIN} nodes"

@@ -91,6 +91,6 @@ if !ok {
 store[key] = widget
 ```
 
-**Notes:** The memory event store and the memory tree store both use it. The memory tree store refuses an id it rejects on its four write methods and passes it through unchanged on reads. HEU-1018 asks whether reads should refuse too. HEU-1019 covers the tree consumer's gate, which does not check `tree_id`.
+**Notes:** The memory event store and the memory tree store both use it. The memory tree store refuses a rejected id on its four write methods. On reads it passes the id through unchanged. HEU-1018 asks whether reads should refuse too. HEU-1019 covers the tree consumer's gate, which does not check `tree_id`.
 
 ---

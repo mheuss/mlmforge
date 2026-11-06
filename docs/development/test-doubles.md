@@ -119,14 +119,14 @@ write through it. The next section is one way to find them.
 ## Measure a new refusal with a probe that refuses nothing
 
 Before you make a double refuse an input, count who sends it. Copy the tree to
-a scratch directory, make the double log each call it would refuse along with
-the test name, and let every call through. Then run the suite.
+a scratch directory. Make the double log each call it would refuse, with the
+test name. Let every call through. Then run the suite.
 
 A probe that refuses undercounts. Each test stops at its first refused call, so
 the sites behind it never run.
 
 Measured for HEU-844 on 2026-11-06. A probe that refused every non-UUID id
-logged 178 refused calls, all on the insert path, before the tests stopped. A
-probe that logged and refused nothing found 101 calls through the four write
+logged 178 refused calls before the tests stopped. All were on the insert path.
+A probe that logged and refused nothing found 101 calls through the four write
 methods: 80 inserts, 13 removals and 8 root undos. The refusing probe logged no
 removal or undo calls at all.

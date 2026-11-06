@@ -62,8 +62,8 @@ tests the rest per twin. HEU-941 moves the rest into shared bodies.
 
 A shared case that asserts only "this write fails" passes on Postgres whatever
 the reason. Postgres refuses for its own reasons too. A broken seed, a slot
-clash, or a row the template no longer fits all make every refusal row pass,
-and nothing says so.
+clash, or a row the template no longer fits all make every refusal row pass.
+Nothing says so.
 
 Give the table one control per kind of write. A control is the same write with
 nothing edited. Assert that both twins accept it and that it changes state. If

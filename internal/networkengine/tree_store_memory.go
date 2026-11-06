@@ -33,9 +33,10 @@ func (s *MemoryTreeStore) insertNode(ctx context.Context, node TreeNodeRow) erro
 
 // insertNodeAt stores one row, stamped with now.
 func (s *MemoryTreeStore) insertNodeAt(node TreeNodeRow, now time.Time) error {
+	node.RemovedAt, node.RemovedByEventID = nil, nil
 	node.TreeID, node.UserID = uuidKey(node.TreeID), uuidKey(node.UserID)
 	node.ParentID, node.SponsorID = uuidKeyPtr(node.ParentID), uuidKeyPtr(node.SponsorID)
-	node.ID, node.RemovedByEventID = uuidKey(node.ID), uuidKeyPtr(node.RemovedByEventID)
+	node.ID = uuidKey(node.ID)
 	// Primary-key mirror: the row id is the event ID, so a duplicate id is
 	// rejected whatever its tree or removed state. Checked in its own pass
 	// before the partial-index mirrors below, so a caller can tell an id
@@ -48,32 +49,30 @@ func (s *MemoryTreeStore) insertNodeAt(node TreeNodeRow, now time.Time) error {
 	}
 	// Enforce same uniqueness as the Postgres partial unique indexes
 	// (only active nodes are constrained).
-	if node.RemovedAt == nil {
-		for _, n := range s.nodes {
-			if n.RemovedAt != nil || n.TreeID != node.TreeID {
-				continue
-			}
-			if n.UserID == node.UserID {
-				return fmt.Errorf("%w: tree=%s user=%s", ErrActiveUserConflict, node.TreeID, node.UserID)
-			}
-			// One active depth-0 row per tree. Kept after the user check:
-			// a row breaking both rules must report the same sentinel the
-			// database would, and that order is not ours to set (HEU-794).
-			if node.Depth == 0 && n.Depth == 0 {
-				return fmt.Errorf("%w: tree=%s rooted by %s",
-					ErrRootConflict, node.TreeID, n.UserID)
-			}
-			// Mirror idx_tree_nodes_tree_parent_position_active (migration
-			// 000004): one active claim per (tree, parent, position). Rows
-			// without a position are outside the index (WHERE position IS
-			// NOT NULL). Rows without a parent are indexed but never
-			// conflict, because unique indexes treat NULLs as distinct.
-			if node.ParentID != nil && node.Position != nil &&
-				n.ParentID != nil && n.Position != nil &&
-				*n.ParentID == *node.ParentID && *n.Position == *node.Position {
-				return fmt.Errorf("%w: tree=%s parent=%s position=%d (held by %s)",
-					ErrSlotConflict, node.TreeID, *node.ParentID, *node.Position, n.UserID)
-			}
+	for _, n := range s.nodes {
+		if n.RemovedAt != nil || n.TreeID != node.TreeID {
+			continue
+		}
+		if n.UserID == node.UserID {
+			return fmt.Errorf("%w: tree=%s user=%s", ErrActiveUserConflict, node.TreeID, node.UserID)
+		}
+		// One active depth-0 row per tree. Kept after the user check:
+		// a row breaking both rules must report the same sentinel the
+		// database would, and that order is not ours to set (HEU-794).
+		if node.Depth == 0 && n.Depth == 0 {
+			return fmt.Errorf("%w: tree=%s rooted by %s",
+				ErrRootConflict, node.TreeID, n.UserID)
+		}
+		// Mirror idx_tree_nodes_tree_parent_position_active (migration
+		// 000004): one active claim per (tree, parent, position). Rows
+		// without a position are outside the index (WHERE position IS
+		// NOT NULL). Rows without a parent are indexed but never
+		// conflict, because unique indexes treat NULLs as distinct.
+		if node.ParentID != nil && node.Position != nil &&
+			n.ParentID != nil && n.Position != nil &&
+			*n.ParentID == *node.ParentID && *n.Position == *node.Position {
+			return fmt.Errorf("%w: tree=%s parent=%s position=%d (held by %s)",
+				ErrSlotConflict, node.TreeID, *node.ParentID, *node.Position, n.UserID)
 		}
 	}
 	node.CreatedAt = now

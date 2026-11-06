@@ -1279,4 +1279,37 @@ func runTreeStoreSuite(
 			assert.Equal(t, root, *children[0].ParentID)
 		})
 	}
+
+	t.Run("ProjectInsert drops a caller's removal fields", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		tree, root := testTreeUUID(1), testUserUUID(1)
+		removed := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+		row := makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil)
+		row.RemovedAt, row.RemovedByEventID = &removed, ptr(testNodeUUID(9))
+
+		require.NoError(t, s.ProjectInsert(ctx, row, 1))
+
+		got, err := s.GetNode(ctx, tree, root)
+		require.NoError(t, err)
+		require.NotNil(t, got, "the insert landed as a tombstone")
+		assert.Nil(t, got.RemovedAt)
+		assert.Nil(t, got.RemovedByEventID)
+	})
+
+	t.Run("ProjectInsert applies the active-user check to a row carrying RemovedAt", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		tree, root, child := testTreeUUID(1), testUserUUID(1), testUserUUID(2)
+		require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, nil, nil), 1))
+		require.NoError(t, s.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0)), 2))
+		removed := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+		again := makeUUIDNode(testNodeUUID(3), tree, child, 1, ptr(root), ptr(root), intPtr(1))
+		again.RemovedAt = &removed
+
+		err := s.ProjectInsert(ctx, again, 3)
+
+		assert.ErrorIs(t, err, ErrActiveUserConflict)
+	})
 }

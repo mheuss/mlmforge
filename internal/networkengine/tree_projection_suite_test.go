@@ -54,8 +54,8 @@ func seedBadIDTree(t *testing.T, s TreeStore, tree, root, child, recruit string)
 	require.NoError(t, s.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(3), tree, recruit, 1, ptr(root), ptr(child), intPtr(1)), 3))
 }
 
-// badIDWrites returns one write per id field the four write methods bind as
-// uuid, each with every other value valid.
+// badIDWrites returns writes that each carry one id Postgres's uuid input
+// refuses, with every other value valid.
 func badIDWrites(tree, root, child, recruit string) []badIDWrite {
 	insert := func(field string, edit func(*TreeNodeRow)) badIDWrite {
 		return badIDWrite{"insert " + field, func(ctx context.Context, s TreeStore) error {

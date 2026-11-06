@@ -126,13 +126,13 @@ func badIDWrites(tree, root, child, recruit string) (bad, controls []badIDWrite)
 // same writes at the edges of that range.
 func int4Writes(tree, root, child, recruit string) (bad, controls []badIDWrite) {
 	insert := func(name string, position, depth int) badIDWrite {
-		return badIDWrite{"insert " + name, func(ctx context.Context, s TreeStore) error {
+		return badIDWrite{"an insert with a " + name, func(ctx context.Context, s TreeStore) error {
 			return s.ProjectInsert(ctx,
 				makeUUIDNode(testNodeUUID(4), tree, testUserUUID(4), depth, ptr(child), ptr(child), intPtr(position)), 4)
 		}}
 	}
 	relocate := func(name string, position, depth int) badIDWrite {
-		return badIDWrite{"relocation " + name, func(ctx context.Context, s TreeStore) error {
+		return badIDWrite{"a relocation with a " + name, func(ctx context.Context, s TreeStore) error {
 			return s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{child},
 				Relocated: []Relocation{{UserID: recruit, ParentID: root, Position: position, Depth: depth}}},
 				testNodeUUID(9), 4)
@@ -1101,7 +1101,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 
 	outOfRange, inRange := int4Writes(tree, root, child, recruit)
 	for _, w := range inRange {
-		t.Run("the control "+w.name+" is accepted and writes", func(t *testing.T) {
+		t.Run(w.name+" is accepted and writes", func(t *testing.T) {
 			s := newStore(t)
 			ctx := context.Background()
 			seedBadIDTree(t, s, tree, root, child, recruit)
@@ -1116,7 +1116,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 	}
 
 	for _, w := range outOfRange {
-		t.Run("a write with a "+w.name+" is refused and writes nothing", func(t *testing.T) {
+		t.Run(w.name+" is refused and writes nothing", func(t *testing.T) {
 			s := newStore(t)
 			ctx := context.Background()
 			seedBadIDTree(t, s, tree, root, child, recruit)

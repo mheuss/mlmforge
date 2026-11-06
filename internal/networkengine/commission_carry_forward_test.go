@@ -103,34 +103,48 @@ func TestLegVolumesCarryMirrorsTheWireType(t *testing.T) {
 	}
 }
 
+// assertRefusalNames fails unless err is non-nil and its text contains want.
+func assertRefusalNames(t *testing.T, err error, want string) {
+	t.Helper()
+	if err == nil {
+		t.Errorf("got no error, want one containing %q", want)
+		return
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("err = %v, want it to contain %q", err, want)
+	}
+}
+
 func TestCarryForwardFromRefusesABadStructureName(t *testing.T) {
-	for _, name := range []string{"", "bad\xff", "nul\x00byte", "bad�"} {
-		if _, err := CarryForwardFrom(map[string]map[string]LegVolumesDTO{name: nil}); err == nil {
-			t.Errorf("structure %q: expected an error", name)
-		}
+	for _, tc := range []struct{ name, want string }{
+		{"", "structure name must be non-empty"},
+		{"bad\xff", `structure "bad\xff" is not valid UTF-8`},
+		{"nul\x00byte", `structure "nul\x00byte" contains a NUL byte`},
+		{"bad�", "structure \"bad�\" contains U+FFFD"},
+	} {
+		_, err := CarryForwardFrom(map[string]map[string]LegVolumesDTO{tc.name: nil})
+		assertRefusalNames(t, err, tc.want)
 	}
 }
 
 func TestCarryForwardFromRefusesANonCanonicalKey(t *testing.T) {
-	for _, key := range []string{
-		"AAAAAAAA-1111-1111-1111-111111111111",
-		"{11111111-1111-1111-1111-111111111111}",
-		"urn:uuid:11111111-1111-1111-1111-111111111111",
-		"11111111111111111111111111111111",
-		"not-a-uuid",
+	for _, tc := range []struct{ key, want string }{
+		{"AAAAAAAA-1111-1111-1111-111111111111", `key "AAAAAAAA-1111-1111-1111-111111111111" is not canonical`},
+		{"{11111111-1111-1111-1111-111111111111}", `key "{11111111-1111-1111-1111-111111111111}" is not canonical`},
+		{"urn:uuid:11111111-1111-1111-1111-111111111111", `key "urn:uuid:11111111-1111-1111-1111-111111111111" is not canonical`},
+		{"11111111111111111111111111111111", `key "11111111111111111111111111111111" is not canonical`},
+		{"not-a-uuid", `key "not-a-uuid" is not a UUID`},
 	} {
-		in := map[string]map[string]LegVolumesDTO{"primary": {key: {}}}
-		if _, err := CarryForwardFrom(in); err == nil {
-			t.Errorf("key %q: expected an error", key)
-		}
+		in := map[string]map[string]LegVolumesDTO{"primary": {tc.key: {}}}
+		_, err := CarryForwardFrom(in)
+		assertRefusalNames(t, err, tc.want)
 	}
 }
 
 func TestCarryForwardFromRefusesTheNilUUID(t *testing.T) {
 	in := map[string]map[string]LegVolumesDTO{"primary": {uuid.Nil.String(): {}}}
-	if _, err := CarryForwardFrom(in); err == nil {
-		t.Fatal("expected an error for the nil UUID key")
-	}
+	_, err := CarryForwardFrom(in)
+	assertRefusalNames(t, err, `key "00000000-0000-0000-0000-000000000000" is the nil UUID`)
 }
 
 func TestCarryForwardFromRefusesAnAmountTheReaderCannotParse(t *testing.T) {
@@ -142,13 +156,7 @@ func TestCarryForwardFromRefusesAnAmountTheReaderCannotParse(t *testing.T) {
 	} {
 		in := map[string]map[string]LegVolumesDTO{"primary": {key: leg}}
 		_, err := CarryForwardFrom(in)
-		if err == nil {
-			t.Errorf("%s: expected an error for a 65-byte amount", name)
-			continue
-		}
-		if !strings.Contains(err.Error(), `"primary"`) || !strings.Contains(err.Error(), key) {
-			t.Errorf("%s: err = %v, want it to name structure primary and key %s", name, err, key)
-		}
+		assertRefusalNames(t, err, `structure "primary": key "`+key+`" `+name+`:`)
 	}
 }
 
@@ -228,58 +236,82 @@ func TestParseCarryForwardRefusesMalformedEnvelopes(t *testing.T) {
 	withLeg := func(legJSON string) string {
 		return entry(`{"kind":"binary_legs","carry":{"` + key + `":` + legJSON + `}}`)
 	}
-	cases := []struct{ name, raw string }{
-		{"JSON null", `null`},
-		{"JSON null with whitespace", ` null `},
-		{"an array", `[]`},
-		{"a number", `1`},
-		{"trailing data", `{"v":1,"structures":{}} {}`},
-		{"v missing", `{"structures":{}}`},
-		{"v null", `{"v":null,"structures":{}}`},
-		{"v 0", `{"v":0,"structures":{}}`},
-		{"v 2", `{"v":2,"structures":{}}`},
-		{"v a string", `{"v":"1","structures":{}}`},
-		{"structures missing", `{"v":1}`},
-		{"structures null", `{"v":1,"structures":null}`},
-		{"unknown envelope field", `{"v":1,"structures":{},"extra":1}`},
-		{"entry null", entry(`null`)},
-		{"kind missing", entry(`{"carry":{}}`)},
-		{"kind null", entry(`{"kind":null,"carry":{}}`)},
-		{"kind board_cycles", entry(`{"kind":"board_cycles","counts":{}}`)},
-		{"kind unknown", entry(`{"kind":"matrix_legs","carry":{}}`)},
-		{"carry missing", entry(`{"kind":"binary_legs"}`)},
-		{"carry null", entry(`{"kind":"binary_legs","carry":null}`)},
-		{"unknown entry field", entry(`{"kind":"binary_legs","carry":{},"extra":1}`)},
-		{"leg null", withLeg(`null`)},
-		{"leg empty", withLeg(`{}`)},
-		{"left missing", withLeg(`{"right":2}`)},
-		{"right missing", withLeg(`{"left":1}`)},
-		{"left null", withLeg(`{"left":null,"right":2}`)},
-		{"right null", withLeg(`{"left":1,"right":null}`)},
-		{"left a string", withLeg(`{"left":"1","right":2}`)},
-		{"unknown leg field", withLeg(`{"left":1,"right":2,"extra":1}`)},
-		{"empty structure name", `{"v":1,"structures":{"":{"kind":"binary_legs","carry":{}}}}`},
-		{"NUL in structure name", `{"v":1,"structures":{"a\u0000b":{"kind":"binary_legs","carry":{}}}}`},
-		{"invalid UTF-8 in structure name", "{\"v\":1,\"structures\":{\"bad\xff\":{\"kind\":\"binary_legs\",\"carry\":{}}}}"},
-		{"non-canonical key", entry(`{"kind":"binary_legs","carry":{"AAAAAAAA-1111-1111-1111-111111111111":` + leg + `}}`)},
-		{"non-UUID key", entry(`{"kind":"binary_legs","carry":{"nope":` + leg + `}}`)},
-		{"lone surrogate in structure name", `{"v":1,"structures":{"a\ud800":{"kind":"binary_legs","carry":{}}}}`},
-		{"lone surrogate in key", entry(`{"kind":"binary_legs","carry":{"\ud800":` + leg + `}}`)},
-		{"nil UUID key", entry(`{"kind":"binary_legs","carry":{"00000000-0000-0000-0000-000000000000":` + leg + `}}`)},
-		{"duplicate envelope field", `{"v":1,"structures":{"primary":{"kind":"binary_legs","carry":{}}},"structures":{}}`},
-		{"duplicate structure name", `{"v":1,"structures":{"a":{"kind":"binary_legs","carry":{}},"a":{"kind":"binary_legs","carry":{}}}}`},
-		{"duplicate entry field", entry(`{"kind":"binary_legs","carry":{},"carry":{}}`)},
-		{"duplicate carry key", entry(`{"kind":"binary_legs","carry":{"` + key + `":` + leg + `,"` + key + `":` + leg + `}}`)},
-		{"duplicate leg field", withLeg(`{"left":9,"left":1,"right":1}`)},
+	const primary = `structure "primary"`
+	const atKey = primary + ` key "` + key + `"`
+	cases := []struct{ name, raw, want string }{
+		{"JSON null", `null`, "envelope is null"},
+		{"JSON null with whitespace", ` null `, "envelope is null"},
+		{"an array", `[]`, "envelope is not a JSON object"},
+		{"a number", `1`, "envelope is not a JSON object"},
+		{"whitespace only", `   `, "envelope is not a JSON object"},
+		{"whitespace only with a newline and a tab", "\n\t ", "envelope is not a JSON object"},
+		{"trailing data", `{"v":1,"structures":{}} {}`, "envelope has data after the object"},
+		{"v missing", `{"structures":{}}`, `envelope field "v" is missing or null`},
+		{"v null", `{"v":null,"structures":{}}`, `envelope field "v" is missing or null`},
+		{"v 0", `{"v":0,"structures":{}}`, "version 0 has no decoder"},
+		{"v 2", `{"v":2,"structures":{}}`, "version 2 has no decoder"},
+		{"v a string", `{"v":"1","structures":{}}`, "v is not an integer"},
+		{"structures missing", `{"v":1}`, `envelope field "structures" is missing or null`},
+		{"structures null", `{"v":1,"structures":null}`, `envelope field "structures" is missing or null`},
+		{"structures an array", `{"v":1,"structures":[]}`, "structures is not a JSON object"},
+		{"unknown envelope field", `{"v":1,"structures":{},"extra":1}`, `envelope has unknown field "extra"`},
+		{"entry null", entry(`null`), primary + " is null"},
+		{"entry a number", entry(`1`), primary + " is not a JSON object"},
+		{"entry an array", entry(`[]`), primary + " is not a JSON object"},
+		{"kind missing", entry(`{"carry":{}}`), primary + " has no kind"},
+		{"kind null", entry(`{"kind":null,"carry":{}}`), primary + " has no kind"},
+		{"kind a number", entry(`{"kind":1,"carry":{}}`), primary + " kind is not a string"},
+		{"kind an array", entry(`{"kind":["binary_legs"],"carry":{}}`), primary + " kind is not a string"},
+		{"kind board_cycles", entry(`{"kind":"board_cycles","counts":{}}`), primary + ` has kind "board_cycles"`},
+		{"kind unknown", entry(`{"kind":"matrix_legs","carry":{}}`), primary + ` has kind "matrix_legs"`},
+		{"carry missing", entry(`{"kind":"binary_legs"}`), primary + ` field "carry" is missing or null`},
+		{"carry null", entry(`{"kind":"binary_legs","carry":null}`), primary + ` field "carry" is missing or null`},
+		{"carry an array", entry(`{"kind":"binary_legs","carry":[]}`), primary + " carry is not a JSON object"},
+		{"unknown entry field", entry(`{"kind":"binary_legs","carry":{},"extra":1}`), primary + ` has unknown field "extra"`},
+		{"leg null", withLeg(`null`), atKey + " is null"},
+		{"leg an array", withLeg(`[]`), atKey + " is not a JSON object"},
+		{"leg empty", withLeg(`{}`), atKey + ` field "left" is missing or null`},
+		{"left missing", withLeg(`{"right":2}`), atKey + ` field "left" is missing or null`},
+		{"right missing", withLeg(`{"left":1}`), atKey + ` field "right" is missing or null`},
+		{"left null", withLeg(`{"left":null,"right":2}`), atKey + ` field "left" is missing or null`},
+		{"right null", withLeg(`{"left":1,"right":null}`), atKey + ` field "right" is missing or null`},
+		{"left a string", withLeg(`{"left":"1","right":2}`), atKey + " left: "},
+		{"unknown leg field", withLeg(`{"left":1,"right":2,"extra":1}`), atKey + ` has unknown field "extra"`},
+		{"empty structure name", `{"v":1,"structures":{"":{"kind":"binary_legs","carry":{}}}}`, "structure name must be non-empty"},
+		{"NUL in structure name", `{"v":1,"structures":{"a\u0000b":{"kind":"binary_legs","carry":{}}}}`, `structure "a\x00b" contains a NUL byte`},
+		{"invalid UTF-8 in structure name", "{\"v\":1,\"structures\":{\"bad\xff\":{\"kind\":\"binary_legs\",\"carry\":{}}}}", "envelope is not valid UTF-8"},
+		{"non-canonical key", entry(`{"kind":"binary_legs","carry":{"AAAAAAAA-1111-1111-1111-111111111111":` + leg + `}}`), `key "AAAAAAAA-1111-1111-1111-111111111111" is not canonical`},
+		{"non-UUID key", entry(`{"kind":"binary_legs","carry":{"nope":` + leg + `}}`), `key "nope" is not a UUID`},
+		{"lone surrogate in structure name", `{"v":1,"structures":{"a\ud800":{"kind":"binary_legs","carry":{}}}}`, "structure \"a�\" contains U+FFFD"},
+		{"lone surrogate in key", entry(`{"kind":"binary_legs","carry":{"\ud800":` + leg + `}}`), "key \"�\" is not a UUID"},
+		{"nil UUID key", entry(`{"kind":"binary_legs","carry":{"00000000-0000-0000-0000-000000000000":` + leg + `}}`), `key "00000000-0000-0000-0000-000000000000" is the nil UUID`},
+		{"duplicate envelope field", `{"v":1,"structures":{"primary":{"kind":"binary_legs","carry":{}}},"structures":{}}`, `envelope repeats member "structures"`},
+		{"duplicate structure name", `{"v":1,"structures":{"a":{"kind":"binary_legs","carry":{}},"a":{"kind":"binary_legs","carry":{}}}}`, `structures repeats member "a"`},
+		{"duplicate entry field", entry(`{"kind":"binary_legs","carry":{},"carry":{}}`), primary + ` repeats member "carry"`},
+		{"duplicate carry key", entry(`{"kind":"binary_legs","carry":{"` + key + `":` + leg + `,"` + key + `":` + leg + `}}`), primary + ` carry repeats member "` + key + `"`},
+		{"duplicate leg field", withLeg(`{"left":9,"left":1,"right":1}`), atKey + ` repeats member "left"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ParseCarryForward(json.RawMessage(tc.raw))
-			if err == nil {
-				t.Fatalf("ParseCarryForward(%s) = %v, want an error", tc.raw, got)
-			}
+			_, err := ParseCarryForward(json.RawMessage(tc.raw))
+			assertRefusalNames(t, err, tc.want)
 		})
 	}
+}
+
+func TestParseCarryForwardReadsJsonbFormatting(t *testing.T) {
+	raw := json.RawMessage(`{"structures": {"primary": {"carry": ` +
+		`{"11111111-1111-1111-1111-111111111111": {"right": 2.50, "left": 1.0}}, ` +
+		`"kind": "binary_legs"}}, "v": 1}`)
+	got, err := ParseCarryForward(raw)
+	if err != nil {
+		t.Fatalf("ParseCarryForward: %v", err)
+	}
+	assertSameCarryForward(t, got, map[string]map[string]LegVolumesDTO{
+		"primary": {
+			"11111111-1111-1111-1111-111111111111": {Left: dec.MustParse("1"), Right: dec.MustParse("2.5")},
+		},
+	})
 }
 
 func TestParseCarryForwardReportsTheFirstBadKeyInSortedOrder(t *testing.T) {

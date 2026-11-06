@@ -77,6 +77,12 @@ func badIDWrites(tree, root, child, recruit string) (bad, controls []badIDWrite)
 		remove("with every id valid", tree, RemovalProjection{Users: []string{child},
 			Responsored: []Responsored{{UserID: recruit, NewSponsorID: root}},
 			Relocated:   []Relocation{{UserID: recruit, ParentID: root, Position: 5, Depth: 1}}}, testNodeUUID(9)),
+		{"rejection with every id valid", func(ctx context.Context, s TreeStore) error {
+			return s.ProjectRejection(ctx, tree, testNodeUUID(2), 4)
+		}},
+		{"undo root with every id valid", func(ctx context.Context, s TreeStore) error {
+			return s.UndoRootProjection(ctx, tree, root, 3)
+		}},
 	}
 	return []badIDWrite{
 		insert("tree_id", func(r *TreeNodeRow) { r.TreeID = notAUUID }),
@@ -99,6 +105,18 @@ func badIDWrites(tree, root, child, recruit string) (bad, controls []badIDWrite)
 			Relocated: []Relocation{{UserID: notAUUID, ParentID: root, Position: 5, Depth: 1}}}, testNodeUUID(9)),
 		remove("relocated parent_id", tree, RemovalProjection{Users: []string{child},
 			Relocated: []Relocation{{UserID: recruit, ParentID: notAUUID, Position: 5, Depth: 1}}}, testNodeUUID(9)),
+		{"rejection tree_id", func(ctx context.Context, s TreeStore) error {
+			return s.ProjectRejection(ctx, notAUUID, testNodeUUID(2), 4)
+		}},
+		{"rejection rejected_event_id", func(ctx context.Context, s TreeStore) error {
+			return s.ProjectRejection(ctx, tree, notAUUID, 4)
+		}},
+		{"undo root tree_id", func(ctx context.Context, s TreeStore) error {
+			return s.UndoRootProjection(ctx, notAUUID, root, 3)
+		}},
+		{"undo root user_id", func(ctx context.Context, s TreeStore) error {
+			return s.UndoRootProjection(ctx, tree, notAUUID, 3)
+		}},
 	}, controls
 }
 
@@ -1059,6 +1077,18 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 	t.Run("a removal below version 1 with a non-UUID tree id reports the version", func(t *testing.T) {
 		s := newStore(t)
 		err := s.ProjectRemoval(context.Background(), notAUUID, onlyChild, testNodeUUID(9), 0)
+		require.EqualError(t, err, "tree "+notAUUID+" was given event version 0, below 1; nothing was written")
+	})
+
+	t.Run("a rejection below version 1 with a non-UUID tree id reports the version", func(t *testing.T) {
+		s := newStore(t)
+		err := s.ProjectRejection(context.Background(), notAUUID, testNodeUUID(1), 0)
+		require.EqualError(t, err, "tree "+notAUUID+" was given event version 0, below 1; nothing was written")
+	})
+
+	t.Run("an undo below version 1 with a non-UUID tree id reports the version", func(t *testing.T) {
+		s := newStore(t)
+		err := s.UndoRootProjection(context.Background(), notAUUID, root, 0)
 		require.EqualError(t, err, "tree "+notAUUID+" was given event version 0, below 1; nothing was written")
 	})
 }

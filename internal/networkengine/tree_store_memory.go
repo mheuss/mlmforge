@@ -483,16 +483,23 @@ func checkActiveSlots(rows []TreeNodeRow, treeID string) error {
 
 func (s *MemoryTreeStore) ProjectRejection(ctx context.Context, treeID, rejectedEventID string, eventVersion int64) error {
 	given := treeID
-	treeID, rejectedEventID = uuidKey(treeID), uuidKey(rejectedEventID)
 	if err := checkEventVersion(given, eventVersion); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := refuseNonUUID("project rejection", given, idField{"tree_id", given}); err != nil {
+		return err
+	}
+	treeID = uuidKey(treeID)
 	if err := s.refuseBelow(treeID, given, eventVersion); err != nil {
 		return err
 	}
+	if err := refuseNonUUID("project rejection", given, idField{"rejected_event_id", rejectedEventID}); err != nil {
+		return err
+	}
+	rejectedEventID = uuidKey(rejectedEventID)
 	now := time.Now()
 	for i := range s.nodes {
 		if s.nodes[i].TreeID == treeID && s.nodes[i].ID == rejectedEventID && s.nodes[i].RemovedAt == nil {
@@ -506,13 +513,16 @@ func (s *MemoryTreeStore) ProjectRejection(ctx context.Context, treeID, rejected
 
 func (s *MemoryTreeStore) UndoRootProjection(ctx context.Context, treeID, userID string, eventVersion int64) error {
 	givenTree, givenUser := treeID, userID
-	treeID, userID = uuidKey(treeID), uuidKey(userID)
 	if err := checkEventVersion(givenTree, eventVersion); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := refuseNonUUID("undo root projection", givenTree, idField{"tree_id", givenTree}); err != nil {
+		return err
+	}
+	treeID = uuidKey(treeID)
 	projected, found := s.projected[treeID]
 	if !found {
 		return fmt.Errorf("tree %s has no projection row; the root row for %s at version %d was not deleted",
@@ -522,6 +532,10 @@ func (s *MemoryTreeStore) UndoRootProjection(ctx context.Context, treeID, userID
 		return fmt.Errorf("tree %s has projected version %d, not %d; the root row for %s was not deleted",
 			givenTree, projected, eventVersion, givenUser)
 	}
+	if err := refuseNonUUID("undo root projection", givenTree, idField{"user_id", givenUser}); err != nil {
+		return err
+	}
+	userID = uuidKey(userID)
 	row, err := s.GetNode(ctx, treeID, userID)
 	if err != nil {
 		return err

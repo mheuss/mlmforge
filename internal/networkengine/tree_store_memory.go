@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"sort"
 	"strings"
@@ -37,6 +38,7 @@ func (s *MemoryTreeStore) insertNodeAt(node TreeNodeRow, now time.Time) error {
 	node.TreeID, node.UserID = uuidKey(node.TreeID), uuidKey(node.UserID)
 	node.ParentID, node.SponsorID = uuidKeyPtr(node.ParentID), uuidKeyPtr(node.SponsorID)
 	node.ID = uuidKey(node.ID)
+	node.EnrolledAt = node.EnrolledAt.Truncate(time.Microsecond)
 	// Primary-key mirror: the row id is the event ID, so a duplicate id is
 	// rejected whatever its tree or removed state. Checked in its own pass
 	// before the partial-index mirrors below, so a caller can tell an id
@@ -87,6 +89,7 @@ func (s *MemoryTreeStore) appendUnchecked(node TreeNodeRow) error {
 	node.ID, node.TreeID, node.UserID = uuidKey(node.ID), uuidKey(node.TreeID), uuidKey(node.UserID)
 	node.ParentID, node.SponsorID = uuidKeyPtr(node.ParentID), uuidKeyPtr(node.SponsorID)
 	node.RemovedByEventID = uuidKeyPtr(node.RemovedByEventID)
+	node.EnrolledAt = node.EnrolledAt.Truncate(time.Microsecond)
 	s.nodes = append(s.nodes, node)
 	return nil
 }
@@ -264,6 +267,9 @@ func (s *MemoryTreeStore) ProjectInsert(ctx context.Context, node TreeNodeRow, e
 	if err := refuseNonUUID("project insert", given, insertIDFields(node)...); err != nil {
 		return err
 	}
+	if err := refuseNonInt4("project insert", given, insertIntFields(node)...); err != nil {
+		return err
+	}
 	if err := s.insertNode(ctx, node); err != nil {
 		return err
 	}
@@ -296,6 +302,9 @@ func (s *MemoryTreeStore) ProjectRemoval(
 		return err
 	}
 	if err := refuseNonUUID("project removal", given, removalIDFields(r, removalEventID)...); err != nil {
+		return err
+	}
+	if err := refuseNonInt4("project removal", given, relocationIntFields(r)...); err != nil {
 		return err
 	}
 	staged, err := s.stageRemoval(treeID, given, r, uuidKey(removalEventID))
@@ -460,6 +469,43 @@ func removalIDFields(r RemovalProjection, removalEventID string) []idField {
 	}
 	for _, m := range r.Relocated {
 		fields = append(fields, idField{"relocated user_id", m.UserID}, idField{"relocated parent_id", m.ParentID})
+	}
+	return fields
+}
+
+// intField is one integer to check before a write, with the name a refusal
+// reports.
+type intField struct {
+	name  string
+	value int
+}
+
+// refuseNonInt4 returns an error for the first field outside the range of
+// Postgres's int4.
+func refuseNonInt4(op, treeID string, fields ...intField) error {
+	for _, f := range fields {
+		if f.value < math.MinInt32 || f.value > math.MaxInt32 {
+			return fmt.Errorf("%s in tree %s: %s %d is outside the int4 range; nothing was written",
+				op, treeID, f.name, f.value)
+		}
+	}
+	return nil
+}
+
+// insertIntFields lists node's integers to check before an insert.
+func insertIntFields(node TreeNodeRow) []intField {
+	fields := []intField{{"depth", node.Depth}}
+	if node.Position != nil {
+		fields = append(fields, intField{"position", *node.Position})
+	}
+	return fields
+}
+
+// relocationIntFields lists a removal's relocated positions and depths.
+func relocationIntFields(r RemovalProjection) []intField {
+	var fields []intField
+	for _, m := range r.Relocated {
+		fields = append(fields, intField{"relocated position", m.Position}, intField{"relocated depth", m.Depth})
 	}
 	return fields
 }

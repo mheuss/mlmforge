@@ -247,13 +247,13 @@ func (s *MemoryTreeStore) ProjectInsert(ctx context.Context, node TreeNodeRow, e
 	if err := checkEventVersion(given, eventVersion); err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := refuseNonUUID("project insert", given, idField{"tree_id", given}); err != nil {
 		return err
 	}
 	node.TreeID = uuidKey(node.TreeID)
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	if err := s.refuseBelow(node.TreeID, given, eventVersion); err != nil {
 		return err
 	}
@@ -409,8 +409,7 @@ func uuidKeyPtr(id *string) *string {
 	return &key
 }
 
-// idField is one id a write binds to a uuid column, with the name a refusal
-// reports.
+// idField is one id to check before a write, with the name a refusal reports.
 type idField struct {
 	name  string
 	value string
@@ -427,7 +426,8 @@ func refuseNonUUID(op, treeID string, fields ...idField) error {
 	return nil
 }
 
-// insertIDFields lists the ids an insert binds, other than the tree id.
+// insertIDFields lists node's ids to check before an insert, other than the
+// tree id.
 func insertIDFields(node TreeNodeRow) []idField {
 	fields := []idField{{"id", node.ID}, {"user_id", node.UserID}}
 	if node.ParentID != nil {

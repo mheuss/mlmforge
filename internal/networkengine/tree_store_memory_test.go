@@ -336,7 +336,8 @@ func TestMemoryTreeStore_RelocationIntoAVacatedSlotWhateverTheCase(t *testing.T)
 
 func TestMemoryTreeStore_ARefusedWriteLeavesTheStoreAsItWas(t *testing.T) {
 	tree, root, child, recruit := testTreeUUID(1), testUserUUID(1), testUserUUID(2), testUserUUID(3)
-	for _, w := range badIDWrites(tree, root, child, recruit) {
+	bad, _ := badIDWrites(tree, root, child, recruit)
+	for _, w := range bad {
 		t.Run(w.name, func(t *testing.T) {
 			s := NewMemoryTreeStore()
 			seedBadIDTree(t, s, tree, root, child, recruit)

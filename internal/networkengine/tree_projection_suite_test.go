@@ -44,8 +44,7 @@ type badIDWrite struct {
 	write func(ctx context.Context, s TreeStore) error
 }
 
-// seedBadIDTree writes the three rows every badIDWrite runs against, at
-// versions 1 to 3.
+// seedBadIDTree writes a root and two rows under it, at versions 1 to 3.
 func seedBadIDTree(t *testing.T, s TreeStore, tree, root, child, recruit string) {
 	t.Helper()
 	ctx := context.Background()
@@ -55,8 +54,9 @@ func seedBadIDTree(t *testing.T, s TreeStore, tree, root, child, recruit string)
 }
 
 // badIDWrites returns writes that each carry one id Postgres's uuid input
-// refuses, with every other value valid.
-func badIDWrites(tree, root, child, recruit string) []badIDWrite {
+// refuses, with every other value valid. controls holds one unedited write of
+// each kind.
+func badIDWrites(tree, root, child, recruit string) (bad, controls []badIDWrite) {
 	insert := func(field string, edit func(*TreeNodeRow)) badIDWrite {
 		return badIDWrite{"insert " + field, func(ctx context.Context, s TreeStore) error {
 			row := makeUUIDNode(testNodeUUID(4), tree, testUserUUID(4), 2, ptr(child), ptr(child), intPtr(0))
@@ -66,6 +66,9 @@ func badIDWrites(tree, root, child, recruit string) []badIDWrite {
 	}
 	urn := "urn:uuid:" + testUserUUID(4)
 	wrapped := "x" + testUserUUID(4) + "x"
+	controls = []badIDWrite{
+		insert("with every id valid", func(*TreeNodeRow) {}),
+	}
 	return []badIDWrite{
 		insert("tree_id", func(r *TreeNodeRow) { r.TreeID = notAUUID }),
 		insert("id", func(r *TreeNodeRow) { r.ID = notAUUID }),
@@ -76,7 +79,7 @@ func badIDWrites(tree, root, child, recruit string) []badIDWrite {
 		insert("tree_id wrapped in non-braces", func(r *TreeNodeRow) { r.TreeID = wrapped }),
 		insert("user_id with a urn:uuid: prefix", func(r *TreeNodeRow) { r.UserID = urn }),
 		insert("user_id wrapped in non-braces", func(r *TreeNodeRow) { r.UserID = wrapped }),
-	}
+	}, controls
 }
 
 // runTreeProjectionSuite checks the projected-version behavior of a TreeStore.
@@ -983,7 +986,21 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		return ids
 	}
 
-	for _, w := range badIDWrites(tree, root, child, recruit) {
+	bad, controls := badIDWrites(tree, root, child, recruit)
+	for _, w := range controls {
+		t.Run("the control "+w.name+" is accepted and writes", func(t *testing.T) {
+			s := newStore(t)
+			ctx := context.Background()
+			seedBadIDTree(t, s, tree, root, child, recruit)
+			before := readProjectionState(t, s, tree, root, child, recruit)
+
+			require.NoError(t, w.write(ctx, s))
+			assert.NotEqual(t, before, readProjectionState(t, s, tree, root, child, recruit),
+				"projection state of tree %s after an accepted write", tree)
+		})
+	}
+
+	for _, w := range bad {
 		t.Run("a write with a non-UUID "+w.name+" is refused and writes nothing", func(t *testing.T) {
 			s := newStore(t)
 			ctx := context.Background()

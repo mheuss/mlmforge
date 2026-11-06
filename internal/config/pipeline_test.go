@@ -600,6 +600,24 @@ func TestPipelineRefusesANonFiniteRankThresholdWithoutPanicking(t *testing.T) {
 	}
 }
 
+func TestPipelineRefusesFirstLevelsWithNullSearchDepth(t *testing.T) {
+	p, err := NewPipeline(schemaPath(t))
+	require.NoError(t, err)
+	doc := replaceInYAML(t, readFixture(t, "valid/full-unilevel.yaml"),
+		"search_mode: first_levels\n            search_depth: 3\n",
+		"search_mode: first_levels\n            search_depth: null\n")
+
+	jsonBytes, errs, err := p.LoadAndValidate(doc)
+
+	require.NoError(t, err)
+	assert.Nil(t, jsonBytes)
+	require.NotEmpty(t, errs)
+	for _, e := range errs {
+		assert.Equal(t, SeverityError, e.Severity, "errors: %v", errs)
+		assert.Contains(t, e.Path, "/ranks/2/qualification/structures/0/distributor_count", "errors: %v", errs)
+	}
+}
+
 func TestPipelineRefusesAnEmptyDistributorCountAtTheSchema(t *testing.T) {
 	p, err := NewPipeline(schemaPath(t))
 	require.NoError(t, err)

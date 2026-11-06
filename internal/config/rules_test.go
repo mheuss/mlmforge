@@ -1346,7 +1346,7 @@ func TestRateKeyWidth_AcceptsU8Range(t *testing.T) {
 	assert.Empty(t, validateRateKeyWidths(plan), "valid u8 keys should produce no errors")
 }
 
-func TestValidation_SearchModeFirstLevelsWithoutDepthWarning(t *testing.T) {
+func TestValidation_SearchModeFirstLevelsWithoutDepthIsAnError(t *testing.T) {
 	plan := minimalPlan()
 	plan.Ranks[1].Qualification.Structures = []StructureQualification{
 		{
@@ -1357,7 +1357,6 @@ func TestValidation_SearchModeFirstLevelsWithoutDepthWarning(t *testing.T) {
 				Count:      2,
 				MinRank:    "Associate",
 				SearchMode: "first_levels",
-				// SearchDepth intentionally nil.
 			},
 		},
 	}
@@ -1367,12 +1366,59 @@ func TestValidation_SearchModeFirstLevelsWithoutDepthWarning(t *testing.T) {
 	for _, e := range errs {
 		if e.Code == "missing_search_depth" {
 			found = true
-			assert.Equal(t, SeverityWarning, e.Severity)
-			assert.Contains(t, e.Message, "first_levels")
+			assert.Equal(t, SeverityError, e.Severity)
+			assert.Equal(t, "/ranks/1/qualification/structures/0/distributor_count/search_depth", e.Path)
 			break
 		}
 	}
-	assert.True(t, found, "expected missing_search_depth warning, got: %v", errs)
+	assert.True(t, found, "expected missing_search_depth error, got: %v", errs)
+}
+
+func TestValidation_SearchModeFirstLevelsWithZeroDepthIsAnError(t *testing.T) {
+	plan := minimalPlan()
+	depth := uint8(0)
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{
+			Structure:      "Primary",
+			PersonalVolume: dec.MustParse("100"),
+			GroupVolume:    dec.MustParse("3000"),
+			DistributorCount: &DistributorCountRequirement{
+				Count:       2,
+				MinRank:     "Associate",
+				SearchMode:  "first_levels",
+				SearchDepth: &depth,
+			},
+		},
+	}
+
+	errs := validateBusinessRules(plan)
+	var found bool
+	for _, e := range errs {
+		if e.Code == "missing_search_depth" {
+			found = true
+			assert.Equal(t, SeverityError, e.Severity)
+			break
+		}
+	}
+	assert.True(t, found, "expected missing_search_depth error, got: %v", errs)
+}
+
+func TestValidation_SearchModeAnyLevelWithoutDepthPasses(t *testing.T) {
+	plan := minimalPlan()
+	plan.Ranks[1].Qualification.Structures = []StructureQualification{
+		{
+			Structure:      "Primary",
+			PersonalVolume: dec.MustParse("100"),
+			GroupVolume:    dec.MustParse("3000"),
+			DistributorCount: &DistributorCountRequirement{
+				Count:      2,
+				MinRank:    "Associate",
+				SearchMode: "any_level",
+			},
+		},
+	}
+
+	assert.Empty(t, validateBusinessRules(plan))
 }
 
 func TestValidation_SearchModeFirstLevelsWithDepthPasses(t *testing.T) {

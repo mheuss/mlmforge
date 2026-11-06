@@ -132,7 +132,7 @@ type int4Write struct {
 
 // int4Writes returns writes that each carry one position or depth outside the
 // range of Postgres's int4, with every other value valid. controls holds the
-// same writes with each value at the edge of that range.
+// same writes with the out-of-range value moved to the edge of that range.
 func int4Writes(tree, root, child, recruit string) (bad, controls []int4Write) {
 	insert := func(name string, position, depth int) int4Write {
 		user := testUserUUID(4)

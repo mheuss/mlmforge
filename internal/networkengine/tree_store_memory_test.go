@@ -362,3 +362,13 @@ func TestMemoryTreeStore_ProjectInsertNamesTheRefusedID(t *testing.T) {
 
 	require.EqualError(t, err, `project insert in tree `+tree+`: user_id "u-4" is not a UUID; nothing was written`)
 }
+
+func TestMemoryTreeStore_ProjectRemovalNamesTheRefusedID(t *testing.T) {
+	tree, root, child, recruit := testTreeUUID(1), testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	s := NewMemoryTreeStore()
+	seedBadIDTree(t, s, tree, root, child, recruit)
+
+	err := s.ProjectRemoval(context.Background(), tree, RemovalProjection{Users: []string{child}}, "evt-1", 4)
+
+	require.EqualError(t, err, `project removal in tree `+tree+`: removal_event_id "evt-1" is not a UUID; nothing was written`)
+}

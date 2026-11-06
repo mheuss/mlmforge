@@ -275,7 +275,6 @@ func (s *MemoryTreeStore) ProjectRemoval(
 	eventVersion int64,
 ) error {
 	given := treeID
-	treeID, removalEventID = uuidKey(treeID), uuidKey(removalEventID)
 	if len(r.Users) == 0 {
 		return fmt.Errorf("project removal in tree %s: the removal names no users", given)
 	}
@@ -285,10 +284,17 @@ func (s *MemoryTreeStore) ProjectRemoval(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := refuseNonUUID("project removal", given, idField{"tree_id", given}); err != nil {
+		return err
+	}
+	treeID = uuidKey(treeID)
 	if err := s.refuseBelow(treeID, given, eventVersion); err != nil {
 		return err
 	}
-	staged, err := s.stageRemoval(treeID, given, r, removalEventID)
+	if err := refuseNonUUID("project removal", given, removalIDFields(r, removalEventID)...); err != nil {
+		return err
+	}
+	staged, err := s.stageRemoval(treeID, given, r, uuidKey(removalEventID))
 	if err != nil {
 		return err
 	}
@@ -435,6 +441,21 @@ func insertIDFields(node TreeNodeRow) []idField {
 	}
 	if node.SponsorID != nil {
 		fields = append(fields, idField{"sponsor_id", *node.SponsorID})
+	}
+	return fields
+}
+
+// removalIDFields lists a removal's ids to check, other than the tree id.
+func removalIDFields(r RemovalProjection, removalEventID string) []idField {
+	fields := []idField{{"removal_event_id", removalEventID}}
+	for _, u := range r.Users {
+		fields = append(fields, idField{"removed user_id", u})
+	}
+	for _, m := range r.Responsored {
+		fields = append(fields, idField{"re-sponsored user_id", m.UserID}, idField{"new_sponsor_id", m.NewSponsorID})
+	}
+	for _, m := range r.Relocated {
+		fields = append(fields, idField{"relocated user_id", m.UserID}, idField{"relocated parent_id", m.ParentID})
 	}
 	return fields
 }

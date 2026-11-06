@@ -1301,6 +1301,8 @@ mod tests {
             .add_member(test_uuid(2), test_uuid(1), 1001, None)
             .unwrap();
         engine.remove_member(test_uuid(1), 1002).unwrap();
+        let stream = engine.get_stream(1).unwrap();
+        assert!(stream.tree.get_parent(test_uuid(2)).unwrap().is_none());
 
         let json = serde_json::to_string(&engine).unwrap();
         let restored: StreamlineEngine = serde_json::from_str(&json).unwrap();

@@ -1743,6 +1743,25 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_rejects_a_root_that_has_a_parent() {
+        let mut arena = live_arena();
+        let top = arena.alloc_slot(make_node(test_uuid(2), None, 0));
+        arena.index.insert(test_uuid(2), top);
+        arena.nodes[top.0].children.push(NodeIndex(0));
+        arena.nodes[0].parent = Some(top);
+        arena.nodes[0].depth = 1;
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::ParentlessNodeNotRoot {
+                slot: 1,
+                user_id: test_uuid(2),
+                root: 0,
+            })
+        );
+    }
+
+    #[test]
     fn validate_restored_accepts_an_arena_of_tombstones_with_no_root() {
         let mut arena = live_arena();
         arena.index.clear();

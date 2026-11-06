@@ -1311,6 +1311,28 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_rejects_a_stream_root_that_has_a_sponsor() {
+        let engine = seeded_streamline();
+        let mut json = serde_json::to_value(&engine).unwrap();
+        let root = &mut json["streams"]["1"]["tree"]["arena"]["nodes"][0];
+        root["sponsor"] = serde_json::json!(0);
+        root["sponsored"] = serde_json::json!([0]);
+        let tampered: StreamlineEngine = serde_json::from_value(json).unwrap();
+
+        assert_eq!(
+            tampered.validate_restored(),
+            Err(SnapshotConsistencyError::Stream {
+                stream_id: 1,
+                source: Box::new(SnapshotConsistencyError::RootHasSponsor {
+                    slot: 0,
+                    user_id: test_uuid(1),
+                    sponsor: 0,
+                }),
+            })
+        );
+    }
+
+    #[test]
     fn bootstrap_first_member() {
         let mut engine = StreamlineEngine::new(default_config(), 1000);
         let result = engine

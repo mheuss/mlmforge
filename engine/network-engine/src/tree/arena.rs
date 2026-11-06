@@ -32,7 +32,8 @@ impl Arena {
     }
 
     /// Prove every stored `NodeIndex` is in range and live, that the parent
-    /// edges form one rooted tree, and that every sponsor chain ends.
+    /// edges form one rooted tree whose root has no sponsor, and that every
+    /// sponsor chain ends.
     pub(crate) fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         let node_count = self.nodes.len();
 
@@ -186,6 +187,13 @@ impl Arena {
                 })?;
             if slot.user_id == Uuid::nil() {
                 return Err(SnapshotConsistencyError::RootTombstoned { slot: root.0 });
+            }
+            if let Some(sponsor) = slot.sponsor {
+                return Err(SnapshotConsistencyError::RootHasSponsor {
+                    slot: root.0,
+                    user_id: slot.user_id,
+                    sponsor: sponsor.0,
+                });
             }
         }
 
@@ -1453,6 +1461,39 @@ mod tests {
             Err(SnapshotConsistencyError::FreeSlotOutOfRange {
                 slot: 99,
                 node_count: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_root_sponsored_by_its_own_child() {
+        // The child has no sponsor, so every sponsor chain ends.
+        let mut arena = arena_with_a_child(1);
+        arena.nodes[0].sponsor = Some(NodeIndex(1));
+        arena.nodes[1].sponsored = vec![NodeIndex(0)];
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::RootHasSponsor {
+                slot: 0,
+                user_id: test_uuid(1),
+                sponsor: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_root_that_sponsors_itself() {
+        let mut arena = live_arena();
+        arena.nodes[0].sponsor = Some(NodeIndex(0));
+        arena.nodes[0].sponsored = vec![NodeIndex(0)];
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::RootHasSponsor {
+                slot: 0,
+                user_id: test_uuid(1),
+                sponsor: 0,
             })
         );
     }

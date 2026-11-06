@@ -234,6 +234,23 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_rejects_a_root_that_has_a_sponsor() {
+        let mut tree = UnilevelTree::new();
+        let root = tree.add_root(test_uuid(1), 0).unwrap();
+        tree.arena.nodes[root.0].sponsor = Some(root);
+        tree.arena.nodes[root.0].sponsored.push(root);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::RootHasSponsor {
+                slot: 0,
+                user_id: test_uuid(1),
+                sponsor: 0,
+            })
+        );
+    }
+
+    #[test]
     fn validate_restored_surfaces_an_arena_fault() {
         let mut tree = UnilevelTree::new();
         tree.add_root(test_uuid(1), 0).unwrap();

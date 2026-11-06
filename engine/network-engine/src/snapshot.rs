@@ -98,6 +98,13 @@ pub enum SnapshotConsistencyError {
     #[error("root names node slot {slot}; that slot is a tombstone")]
     RootTombstoned { slot: usize },
 
+    #[error("the root at node slot {slot} holds {user_id}, whose sponsor is node slot {sponsor}")]
+    RootHasSponsor {
+        slot: usize,
+        user_id: Uuid,
+        sponsor: usize,
+    },
+
     #[error(
         "{field} on node slot {slot} names node slot {target}; {reverse_field} on node slot {target} does not name node slot {slot}"
     )]
@@ -205,6 +212,9 @@ pub enum SnapshotConsistencyError {
 
     #[error("holding tank entry {position} names the nil UUID")]
     HoldingTankUserNil { position: usize },
+
+    #[error("holding tank entry {position} names the nil UUID as its sponsor")]
+    HoldingTankSponsorNil { position: usize },
 
     #[error("the holding tank's sponsor chain from {start} reaches {revisited} twice")]
     HoldingTankSponsorChainRevisits { start: Uuid, revisited: Uuid },

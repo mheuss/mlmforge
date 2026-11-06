@@ -31,7 +31,8 @@ impl UnilevelTree {
     }
 
     /// Prove a restored tree's stored indexes are in range and live, that the
-    /// parent edges form one rooted tree, and that every sponsor chain ends.
+    /// parent edges form one rooted tree whose root has no sponsor, and that
+    /// every sponsor chain ends.
     pub fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         self.arena.validate_restored()
     }
@@ -231,6 +232,23 @@ mod tests {
         tree.add_root(test_uuid(1), 0).unwrap();
 
         assert_eq!(tree.validate_restored(), Ok(()));
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_root_that_has_a_sponsor() {
+        let mut tree = UnilevelTree::new();
+        let root = tree.add_root(test_uuid(1), 0).unwrap();
+        tree.arena.nodes[root.0].sponsor = Some(root);
+        tree.arena.nodes[root.0].sponsored.push(root);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::RootHasSponsor {
+                slot: 0,
+                user_id: test_uuid(1),
+                sponsor: 0,
+            })
+        );
     }
 
     #[test]

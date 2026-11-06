@@ -21,6 +21,12 @@ pub(crate) struct Arena {
     pub(crate) root: Option<NodeIndex>,
 }
 
+#[cfg(test)]
+thread_local! {
+    static SPONSOR_WALK_VISITS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
 impl Arena {
     pub(crate) fn new() -> Self {
         Self {
@@ -32,7 +38,8 @@ impl Arena {
     }
 
     /// Prove every stored `NodeIndex` is in range and live, that the parent
-    /// edges form one rooted tree, and that every sponsor chain ends.
+    /// edges form one rooted tree whose root has no sponsor, and that every
+    /// sponsor chain ends.
     pub(crate) fn validate_restored(&self) -> Result<(), SnapshotConsistencyError> {
         let node_count = self.nodes.len();
 
@@ -186,6 +193,13 @@ impl Arena {
                 })?;
             if slot.user_id == Uuid::nil() {
                 return Err(SnapshotConsistencyError::RootTombstoned { slot: root.0 });
+            }
+            if let Some(sponsor) = slot.sponsor {
+                return Err(SnapshotConsistencyError::RootHasSponsor {
+                    slot: root.0,
+                    user_id: slot.user_id,
+                    sponsor: sponsor.0,
+                });
             }
         }
 
@@ -479,6 +493,8 @@ impl Arena {
                     }
                     Visit::Unseen => {}
                 }
+                #[cfg(test)]
+                SPONSOR_WALK_VISITS.with(|count| count.set(count.get() + 1));
                 visits[idx.0] = Visit::OnWalk;
                 walk.push(idx.0);
                 current = self.nodes[idx.0].sponsor;
@@ -1088,7 +1104,7 @@ macro_rules! impl_arena_delegations {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tree::test_helpers::test_uuid;
+    use crate::tree::test_helpers::{test_uuid, test_uuid_u16};
 
     fn make_node(user_id: Uuid, parent: Option<NodeIndex>, depth: u32) -> Node {
         Node {
@@ -1458,6 +1474,39 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_rejects_a_root_sponsored_by_its_own_child() {
+        let mut arena = arena_with_a_child(1);
+        assert_eq!(arena.nodes[1].sponsor, None);
+        arena.nodes[0].sponsor = Some(NodeIndex(1));
+        arena.nodes[1].sponsored = vec![NodeIndex(0)];
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::RootHasSponsor {
+                slot: 0,
+                user_id: test_uuid(1),
+                sponsor: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_root_that_sponsors_itself() {
+        let mut arena = live_arena();
+        arena.nodes[0].sponsor = Some(NodeIndex(0));
+        arena.nodes[0].sponsored = vec![NodeIndex(0)];
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::RootHasSponsor {
+                slot: 0,
+                user_id: test_uuid(1),
+                sponsor: 0,
+            })
+        );
+    }
+
+    #[test]
     fn validate_restored_rejects_a_root_naming_a_tombstone() {
         // In range and dead, rather than out of range.
         let mut arena = live_arena();
@@ -1702,6 +1751,44 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_rejects_a_root_that_has_a_parent() {
+        let mut arena = live_arena();
+        let top = arena.alloc_slot(make_node(test_uuid(2), None, 0));
+        arena.index.insert(test_uuid(2), top);
+        arena.nodes[top.0].children.push(NodeIndex(0));
+        arena.nodes[0].parent = Some(top);
+        arena.nodes[0].depth = 1;
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::ParentlessNodeNotRoot {
+                slot: 1,
+                user_id: test_uuid(2),
+                root: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_restored_rejects_a_root_whose_parent_is_its_own_child() {
+        let mut arena = arena_with_a_child(1);
+        let child = NodeIndex(1);
+        arena.nodes[0].parent = Some(child);
+        arena.nodes[child.0].children.push(NodeIndex(0));
+
+        assert_eq!(
+            arena.validate_restored(),
+            Err(SnapshotConsistencyError::NodeDepthMismatch {
+                slot: 0,
+                user_id: test_uuid(1),
+                depth: 0,
+                parent_slot: 1,
+                parent_depth: 1,
+            })
+        );
+    }
+
+    #[test]
     fn validate_restored_accepts_an_arena_of_tombstones_with_no_root() {
         let mut arena = live_arena();
         arena.index.clear();
@@ -1866,6 +1953,29 @@ mod tests {
         arena.nodes[0].sponsored = vec![NodeIndex(1), second];
 
         assert!(arena.validate_restored().is_ok());
+    }
+
+    #[test]
+    fn sponsor_walk_visits_each_node_once_on_a_long_chain() {
+        const CHAIN: u16 = 1000;
+        let mut arena = live_arena();
+        for k in 1..CHAIN {
+            let above = NodeIndex(usize::from(k) - 1);
+            let user = test_uuid_u16(k + 1);
+            let idx = arena.alloc_slot(make_node(user, Some(above), u32::from(k)));
+            arena.index.insert(user, idx);
+            arena.nodes[idx.0].sponsor = Some(above);
+            arena.nodes[above.0].children.push(idx);
+            arena.nodes[above.0].sponsored.push(idx);
+        }
+        SPONSOR_WALK_VISITS.with(|count| count.set(0));
+
+        assert_eq!(arena.validate_restored(), Ok(()));
+        let visits = SPONSOR_WALK_VISITS.with(|count| count.get());
+        assert!(
+            visits >= usize::from(CHAIN) && visits <= 2 * usize::from(CHAIN),
+            "the sponsor walk made {visits} visits over {CHAIN} nodes"
+        );
     }
 
     #[test]

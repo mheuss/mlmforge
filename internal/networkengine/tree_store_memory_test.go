@@ -206,15 +206,20 @@ func TestMemoryTreeStore_Suite(t *testing.T) {
 		}
 		require.Failf(t, "no row", "no row with id %s", nodeID)
 	}, func(t *testing.T, s TreeStore, nodeID string, at time.Time) {
-		nodes := s.(*MemoryTreeStore).nodes
-		for i := range nodes {
-			if nodes[i].ID == uuidKey(nodeID) {
-				nodes[i].RemovedAt = &at
-				return
-			}
-		}
-		require.Failf(t, "no row", "no row with id %s", nodeID)
+		setMemoryRemovedAt(t, s.(*MemoryTreeStore), nodeID, at)
 	})
+}
+
+// setMemoryRemovedAt overwrites the removal time of the row with nodeID.
+func setMemoryRemovedAt(t *testing.T, s *MemoryTreeStore, nodeID string, at time.Time) {
+	t.Helper()
+	for i := range s.nodes {
+		if s.nodes[i].ID == uuidKey(nodeID) {
+			s.nodes[i].RemovedAt = &at
+			return
+		}
+	}
+	require.Failf(t, "no row", "no row with id %s", nodeID)
 }
 
 func TestMemoryTreeStore_RefusesARelocationIntoASlotAnotherRelocationVacates(t *testing.T) {

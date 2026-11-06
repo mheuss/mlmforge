@@ -123,7 +123,7 @@ func TestLoadTree_FailuresAtEveryStageNeverRenderTheFallback(t *testing.T) {
 		{
 			name:     "two roots, rejected by node validation",
 			treeType: "unilevel",
-			rows:     []networkengine.TreeNodeRow{root("t", "u0"), root("t", "u1")},
+			rows:     []networkengine.TreeNodeRow{root(extTree, extUser0), root(extTree, extUser1)},
 			// see HEU-810
 			direct:   true,
 			wantKind: networkengine.TreeLoadDataInvalid,
@@ -131,21 +131,21 @@ func TestLoadTree_FailuresAtEveryStageNeverRenderTheFallback(t *testing.T) {
 		{
 			name:      "create fails, incomplete at the create stage",
 			treeType:  "unilevel",
-			rows:      []networkengine.TreeNodeRow{root("t", "u0")},
+			rows:      []networkengine.TreeNodeRow{root(extTree, extUser0)},
 			engine:    failingMutator{failOn: "CreateTree"},
 			wantStage: networkengine.TreeLoadStageCreate,
 		},
 		{
 			name:      "root placement fails, incomplete at the root stage",
 			treeType:  "unilevel",
-			rows:      []networkengine.TreeNodeRow{root("t", "u0")},
+			rows:      []networkengine.TreeNodeRow{root(extTree, extUser0)},
 			engine:    failingMutator{failOn: "AddRoot"},
 			wantStage: networkengine.TreeLoadStageRoot,
 		},
 		{
 			name:      "a later placement fails, incomplete at the nodes stage",
 			treeType:  "unilevel",
-			rows:      []networkengine.TreeNodeRow{root("t", "u0"), child("t", "u1", "u0")},
+			rows:      []networkengine.TreeNodeRow{root(extTree, extUser0), child(extTree, extUser1, extUser0)},
 			engine:    failingMutator{failOn: "AddNode"},
 			wantStage: networkengine.TreeLoadStageNodes,
 		},
@@ -155,7 +155,7 @@ func TestLoadTree_FailuresAtEveryStageNeverRenderTheFallback(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var store networkengine.TreeStore
 			if tt.direct {
-				store = twoRootStore{treeID: "t", rows: tt.rows}
+				store = twoRootStore{treeID: extTree, rows: tt.rows}
 			} else {
 				seeded := networkengine.NewMemoryTreeStore()
 				for i, r := range tt.rows {
@@ -165,7 +165,7 @@ func TestLoadTree_FailuresAtEveryStageNeverRenderTheFallback(t *testing.T) {
 			}
 
 			_, err := networkengine.NewTreeLoader(store, tt.engine).
-				LoadTree(t.Context(), "t", tt.treeType, tt.opts...)
+				LoadTree(t.Context(), extTree, tt.treeType, tt.opts...)
 
 			require.Error(t, err)
 

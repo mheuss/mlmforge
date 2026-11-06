@@ -146,7 +146,7 @@ func TestTreeMutator_ConsumerAcceptsInterface(t *testing.T) {
 	consumer := NewTreeEventConsumer(store, mutator)
 
 	payload := RootAddedPayload{
-		TreeID:     "tree1",
+		TreeID:     consumerTree,
 		UserID:     userRoot,
 		SponsorID:  userRoot,
 		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),

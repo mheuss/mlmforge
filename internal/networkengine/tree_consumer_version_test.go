@@ -20,7 +20,7 @@ func TestHandleRootAdded_CompensationRestoresTheProjectedVersion(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, activeRow(t, store, posUser), "the row this call inserted is undone")
-	version, found, verr := store.ProjectedVersion(context.Background(), "tree1")
+	version, found, verr := store.ProjectedVersion(context.Background(), consumerTree)
 	require.NoError(t, verr)
 	assert.True(t, found)
 	assert.Equal(t, event.Version-1, version)
@@ -35,10 +35,10 @@ func TestHandleRootAdded_CompensationRestoresTheVersionBeforeALaterRoot(t *testi
 	ctx := context.Background()
 	earlier := "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb"
 	require.NoError(t, store.ProjectInsert(ctx, TreeNodeRow{
-		ID: "eeeeeeee-eeee-eeee-eeee-000000000001", TreeID: "tree1", UserID: earlier,
+		ID: "eeeeeeee-eeee-eeee-eeee-000000000001", TreeID: consumerTree, UserID: earlier,
 		SponsorID: &earlier, EnrolledAt: posEnrolled,
 	}, 1))
-	require.NoError(t, store.ProjectRemoval(ctx, "tree1", RemovalProjection{Users: []string{earlier}}, "eeeeeeee-eeee-eeee-eeee-000000000002", 2))
+	require.NoError(t, store.ProjectRemoval(ctx, consumerTree, RemovalProjection{Users: []string{earlier}}, "eeeeeeee-eeee-eeee-eeee-000000000002", 2))
 	event := makeEvent(EventTypeRootAdded, rootPayload())
 	event.Version = 3
 
@@ -46,7 +46,7 @@ func TestHandleRootAdded_CompensationRestoresTheVersionBeforeALaterRoot(t *testi
 
 	require.Error(t, err)
 	assert.Nil(t, activeRow(t, store, posUser), "the row this call inserted is undone")
-	version, found, verr := store.ProjectedVersion(ctx, "tree1")
+	version, found, verr := store.ProjectedVersion(ctx, consumerTree)
 	require.NoError(t, verr)
 	assert.True(t, found)
 	assert.Equal(t, int64(2), version)

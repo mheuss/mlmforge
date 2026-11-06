@@ -22,6 +22,12 @@ func TestCanonicalUUID(t *testing.T) {
 		{"braced hyphenated", "{" + want + "}", true},
 		{"urn:uuid: prefix", "urn:uuid:" + want, false},
 		{"38 characters wrapped in characters that are not braces", "x" + want + "x", false},
+		{"opening brace with no closing brace", "{" + want, false},
+		{"closing brace with no opening brace", want + "}", false},
+		{"hyphen after two hex digits", "aa-aaaaaa-aaaa-aaaa-aaaa-000000000001", false},
+		{"trailing hyphen", want + "-", false},
+		{"31 hex digits", "aaaaaaaaaaaaaaaaaaaa00000000001", false},
+		{"33 hex digits", "aaaaaaaaaaaaaaaaaaaa0000000000001", false},
 		{"not a UUID", "tree1", false},
 		{"empty", "", false},
 	} {

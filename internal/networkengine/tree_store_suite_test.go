@@ -1315,7 +1315,7 @@ func runTreeStoreSuite(
 		assert.ErrorIs(t, err, ErrActiveUserConflict)
 	})
 
-	t.Run("GetNodeByRemovalEvent puts a stamped row with no removed_at ahead of a later tombstone", func(t *testing.T) {
+	t.Run("GetNodeByRemovalEvent puts a stamped row with no removed_at ahead of a tombstone stored after it", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 		tree, root, active, removed := testTreeUUID(1), testUserUUID(1), testUserUUID(2), testUserUUID(3)
@@ -1331,10 +1331,10 @@ func runTreeStoreSuite(
 		got, err := s.GetNodeByRemovalEvent(ctx, tree, event)
 		require.NoError(t, err)
 		require.NotNil(t, got)
-		assert.Equal(t, testNodeUUID(2), got.ID, "the stamped row with no removed_at")
+		assert.Equal(t, testNodeUUID(2), got.ID, "row read back for event")
 	})
 
-	t.Run("GetNodeByRemovalEvent puts a stamped row with no removed_at ahead of an earlier tombstone", func(t *testing.T) {
+	t.Run("GetNodeByRemovalEvent puts a stamped row with no removed_at ahead of a tombstone stored before it", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 		tree, root, active, removed := testTreeUUID(1), testUserUUID(1), testUserUUID(2), testUserUUID(3)
@@ -1350,7 +1350,7 @@ func runTreeStoreSuite(
 		got, err := s.GetNodeByRemovalEvent(ctx, tree, event)
 		require.NoError(t, err)
 		require.NotNil(t, got)
-		assert.Equal(t, testNodeUUID(2), got.ID, "the stamped row with no removed_at")
+		assert.Equal(t, testNodeUUID(2), got.ID, "row read back for event")
 	})
 
 	t.Run("GetNodeByRemovalEvent breaks a tie between stamped rows with no removed_at by the highest id", func(t *testing.T) {

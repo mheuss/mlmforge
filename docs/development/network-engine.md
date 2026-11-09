@@ -954,7 +954,7 @@ An explicitly placed node can sit shallower than its own sponsor, so depth order
 
 Every tree type reports a missing sponsor as `SponsorNotFound` → `SPONSOR_NOT_FOUND`, and a missing parent as `USER_NOT_FOUND`. The parent is checked first, so a placement missing both reports the parent. Before HEU-940, unilevel and binary reported a missing sponsor as `USER_NOT_FOUND`, so older logs show that code for this fault.
 
-`preflight` keeps only the error. The writer replays in stream order.
+`preflight` keeps only `orderForReplay`'s error. The writer replays in stream order.
 
 ### Matrix and binary require a position on every non-root row
 
@@ -964,7 +964,7 @@ Unilevel carries no position. It appends to the parent's child list. Preflight r
 
 ### Why preflight validates everything before mutating anything
 
-A load that fails partway leaves a partly built tree in the worker. The engine may refuse a call after the create stage while the worker stays usable. A caller may then drop the tree with `drop_structure`. The engine refuses the same input the same way. A reload succeeds only once the cause has changed. UC-NET-032 covers this. Preflight is meant to catch engine refusals before the create. This path should be rare. After a timeout, a cancellation or a crash, the client is closed or the worker is gone. Starting over then means a new worker. Each command starts its own worker, and a failed load ends with it. Either way, a partial load costs a full rebuild. So preflight proves a load is sound before the first engine call.
+A load that fails partway leaves a partly built tree in the worker. The engine may refuse a call after the create stage while the worker stays usable. A caller may then drop the tree with `drop_structure`. The engine refuses the same input the same way. A reload succeeds only once the cause has changed. UC-NET-032 covers this. Preflight is meant to catch engine refusals before the create. This path should be rare. After a timeout, a cancellation or a crash, the client is closed or the worker is gone. Starting over then means a new worker. Each CLI command starts its own worker, and a failed load ends with it. Either way, a partial load costs a full rebuild. So preflight proves a load is sound before the first engine call.
 
 Preflight runs in two phases with different inputs. `validateTreeConfig` checks the tree type, and for a matrix the width and spillover. It reads no rows, so it runs before the store query. A misconfigured load costs no query. `validateNodes` runs after the query and proves the node set is structurally consistent.
 

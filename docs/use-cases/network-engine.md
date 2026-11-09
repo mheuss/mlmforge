@@ -1023,7 +1023,7 @@ if alreadyProjected {
 
 **Problem:** A caller that retries a `TreeWriter.Load` failure has to tell an infrastructure blip apart from a failure that will fail the same way forever. The error kind alone does not carry enough to decide.
 
-**Solution:** `treeLoadRetryable` allowlists rather than denylists. A cause nobody enumerated defaults to stopping. It retries one case: a `TreeLoadRejectedError` whose `Kind` is `TreeLoadStoreReadFailed` and whose wrapped error `pgconn.SafeToRetry` reports never reached the server. Everything else stops. Cancellation is checked first and separately. `TreeLoadStoreReadFailed` covers a refused connection, a cancelled context and a row that will not decode. Only the first of those can succeed on a second attempt. The CLI never drops and retries. Each command starts its own worker, and a failed load ends with it. `tree load` goes through `TreeWriter.Load`. Its read of version 1 and its read of the projected version and rows also fail as `TreeLoadStoreReadFailed`. Both come before any engine call.
+**Solution:** `treeLoadRetryable` allowlists rather than denylists. A cause nobody enumerated defaults to stopping. It retries one case: a `TreeLoadRejectedError` whose `Kind` is `TreeLoadStoreReadFailed` and whose wrapped error `pgconn.SafeToRetry` reports never reached the server. Everything else stops. Cancellation is checked first and separately. `TreeLoadStoreReadFailed` covers a refused connection, a cancelled context and a row that will not decode. Only the first of those can succeed on a second attempt. The CLI's retry loop never drops a structure between attempts. Each command starts its own worker, and a failed load ends with it. `tree load` goes through `TreeWriter.Load`. Its read of version 1 and its read of the projected version and rows also fail as `TreeLoadStoreReadFailed`. Both come before any engine call.
 
 **Usage:**
 ```go
@@ -1035,7 +1035,7 @@ if err != nil && treeLoadRetryable(err) {
 }
 ```
 
-**Notes:** A `TreeReplayError` is never retried. The allowlist is the load-bearing part. Denylisting would mean a new failure mode is retried by default. The failure modes here include ones that never terminate. Related: UC-NET-012 owns the preflight that produces TreeLoadRejectedError before any engine call. This entry owns the retry half, which runs after one has failed. Neither restates the other.
+**Notes:** A `TreeReplayError` is never retried. The allowlist is the load-bearing part. Denylisting would mean a new failure mode is retried by default. The failure modes here include ones that never terminate. Related: UC-NET-012 owns the preflight that produces `TreeLoadRejectedError` before any engine call. This entry owns the retry half, which runs after one has failed. Neither restates the other.
 
 ---
 
@@ -1183,7 +1183,7 @@ if res.ProjectionErr != nil {
 **Added:** Unreleased
 **Files:** `internal/networkengine/structure_dropper.go`, `internal/networkengine/engine_client.go`, `internal/networkengine/tree_writer.go`, `engine/network-engine-worker/src/handlers/tree.rs`
 
-**Problem:** A structure left partly built by a snapshot build the engine refused blocks a full replay under its name.
+**Problem:** A structure left partly built by a snapshot build the engine refused, or that disagreed with the store, blocks a full replay under its name.
 
 **Solution:** `DropStructure` removes the named structure of any kind through `drop_structure` and answers whether it existed. Absence is not an error, so a caller can drop unconditionally before a rebuild without first asking whether the structure exists. The loaded plan stays in place.
 
@@ -1197,13 +1197,14 @@ if !snapshotFallsBack(buildErr) {
 if err := w.dropBuilt(ctx, tree, projected, restored, buildErr); err != nil {
 	return fmt.Errorf("load tree %s; nothing was appended: %w", tree, err)
 }
+...
 return w.buildFromStream(ctx, tree, shape, projected, rows)
 ```
 
 **Notes:**
 - Take `StructureDropper`, not a wider interface. The `TreeMutator` family does not carry it.
 - Preflight is meant to catch engine refusals before the create. This path should be rare.
-- A drop recovers only from an engine refusal. After a timeout, a cancellation or a worker crash, the client is closed or the worker is gone. Start a new worker instead. It starts empty.
+- A drop recovers only from an engine refusal, or from a snapshot build that disagreed with the store. After a timeout, a cancellation or a worker crash, the client is closed or the worker is gone. Start a new worker instead. It starts empty.
 - Hold the client exclusively from the drop to the end of the rebuild. Nothing else enforces that.
 - The caller owns the structure name, not whatever an earlier holder built under it. A `TREE_EXISTS` from the restore means another structure already held the name, and `snapshotFallsBack` refuses to drop it.
 

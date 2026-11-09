@@ -538,17 +538,17 @@ failed on that lower bound with "made 0 visits".
 
 HEU-914, 2026-11-09.
 
-A boolean grows one clause at a time. Each clause gets a test, and a mutation
-that removes it proves the test can fail. A clause added later can make an
+A boolean grows one clause at a time. Each clause gets a test. A mutation that
+removes the clause proves the test can fail. A clause added later can make an
 earlier clause's test pass without the earlier clause. The earlier mutation then
-survives, and nothing reports it.
+survives. Nothing reports it.
 
 `attemptHonored` in HEU-914 is the example. Removing `prep.snapshotReadFailed`
 first failed the failing-Get test. A later change added
 `a.Version <= prep.loaded`. That clause honored the same test's attempt by
-itself, so the test passed with `snapshotReadFailed` removed. An adversarial
-review found it. A new test puts the attempt above every projected version,
-where only the read-failure clause can honor it.
+itself. The test then passed with `snapshotReadFailed` removed. An adversarial
+review found it. A new test puts the attempt above every projected version.
+Only the read-failure clause can honor it there.
 
 After you add a clause to a boolean, run the mutation for each earlier clause
 again. If one survives, give that clause a test the new clause cannot reach.

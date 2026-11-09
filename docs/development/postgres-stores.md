@@ -485,8 +485,8 @@ refuses. A memory twin refuses the same range before it writes.
 HEU-914, 2026-11-09.
 
 `INSERT ... ON CONFLICT ... DO UPDATE ... WHERE` reports one row affected when it
-inserts. It reports one when the update runs, and zero when the WHERE skips the
-update. So one statement can tell its caller whether it stored anything, with no
+inserts. It reports one when the update runs. It reports zero when the WHERE
+skips the update. So one statement can tell its caller whether it stored anything, with no
 read before or after.
 
 `PostgresSnapshotStore.Put` returns `tag.RowsAffected() == 1`. The snapshot store

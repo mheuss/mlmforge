@@ -1323,9 +1323,9 @@ let paid = matched.mul_div_ratio(pairing.percent, multiplier, min_leg, max_leg)?
 **Added:** Unreleased (HEU-914)
 **Files:** `internal/networkengine/tree_writer.go`, `internal/networkengine/snapshot_store.go`, `internal/networkengine/snapshot_store_postgres.go`, `internal/networkengine/snapshot_store_memory.go`, `migrations/000011_create_tree_snapshot_attempts.up.sql`
 
-**Problem:** A step that is expensive and can fail every time must not run again on every command. The CLI builds a new `TreeWriter` per command, so a backoff held in memory would not survive.
+**Problem:** A step that is expensive and can fail every time must not run again on every command, even though the CLI builds a new `TreeWriter` per command.
 
-**Solution:** `tree_snapshot_attempts` holds one row per tree: the version of the last attempt, whether it stored, and what it observed. `RecordAttempt` keeps the highest version, but a failed attempt replaces a stored one at any version. Before the step, the writer reads `LastAttempt`. It skips the step while the attempt counts and is less than 1000 versions behind, and it also skips when the read fails. After the step, it records the attempt on a detached, bounded context, so a caller's cancellation still leaves a record.
+**Solution:** `tree_snapshot_attempts` holds one row per tree with the version of the last attempt, whether it stored, and what it observed. `RecordAttempt` keeps the highest version, but a failed attempt replaces a stored one at any version. The writer reads `LastAttempt` before the step, and skips the step while the attempt counts and is less than 1000 versions behind or when the read fails.
 
 **Usage:**
 ```go
@@ -1347,4 +1347,5 @@ err = store.RecordAttempt(recordCtx, networkengine.SnapshotAttempt{
 **Notes:**
 - Record successful attempts too. Without them, a read of the result that keeps failing makes every command run the step again.
 - `Observed` must be text a `TEXT` column can hold. The writer replaces NUL bytes and invalid UTF-8 before it records.
-- The tree writer counts a stored attempt only when the load could not read the snapshot, kept one at or past it, or projected a version at or past it (UC-NET-033).
+- The writer records the attempt on a detached, bounded context. A caller's cancellation still leaves a record.
+- The tree writer counts a stored attempt in three cases. The load could not read the snapshot, the load kept one at or past it, or the load projected a version at or past it (UC-NET-033).

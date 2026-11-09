@@ -1102,7 +1102,7 @@ Every load builds the tree in the engine from the tree's events, not from `tree_
   - While recording an attempt fails, every write past the threshold takes the snapshot again.
   - A take or put that fails because the caller cancelled counts as a failed attempt. The next snapshot then waits 1000 events.
   - When the snapshot read fails, the backoff saves only the take. Every load still replays the full stream.
-  - When a load drops a snapshot, no snapshot is taken until the stream is 1000 past the dropped one. Each load in between replays the full stream, and no write warns (HEU-1022).
+  - When a load drops a snapshot, no snapshot is taken until the stream is 1000 past the dropped one. Each load in between replays the full stream, and the writes that skip the snapshot do not warn (HEU-1022).
   - A database restore from backup can leave `tree_snapshot_attempts` ahead of the stream. A failed attempt there makes every write past the threshold skip with a warning until the stream is 1000 past it. A stored attempt there makes those writes skip silently while the snapshot read fails. Once the stream passes it, they skip silently again until the stream is 1000 past it. While the snapshot read succeeds and the stream is below it, the backoff ignores it, so a snapshot that every load drops is taken on every write past the threshold.
 - A full replay that fails after a drop leaves a partly built structure in the worker. That is safe only because each command owns its worker. A long-lived caller, such as HEU-298's reconciliation, must drop the structure before reusing the worker.
 - A snapshot must fit in one `bytea` field, which caps at 1 GB. At about 230 bytes per matrix node, that is near 4.3M nodes.

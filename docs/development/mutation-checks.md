@@ -498,6 +498,19 @@ through `ProjectRemoval`. That path never calls the memory store's `deleteNode`.
 `UndoRootProjection` still did. Dropping the tree check from `deleteNode` passed
 the whole suite until a case drove the undo.
 
+A rule written across several branches can be pinned for only one of them.
+Delete that branch and its test, and the rule goes unpinned for the branches
+that remain. When a deleted test pinned an order against a surviving branch,
+give every other branch the rule covers its own case. Then swap the branches and
+watch the case go red.
+
+HEU-912 deleted the incomplete-load branch of `treeLoadFailureMessage`. It also
+deleted the test that joined an incomplete load with a rejection. The rule was
+that an error from a load that reached the engine outranks a rejection. The
+replay branch follows the same rule. No test had checked the message for a
+replay error joined with a rejection. A review caught it. The new test went red
+when the replay and rejected branches were swapped.
+
 ## A one-direction test of a scoped write passes a scope-blind pick
 
 A write that must stay inside one tree can lose its tree filter and still pick

@@ -1264,7 +1264,7 @@ return err
 
 **Solution:** Restore the latest snapshot at version S, replay events S+1 through the projected version into the engine only, then compare the engine's membership with the store's rows. Fall back to replaying the whole stream on an engine refusal or a mismatch.
 
-**Notes:** A drop and full replay follow two causes only: an engine refusal, or a mismatch on the snapshot path. After a transport or context failure the client is closed, and the next command starts a new worker. Read the projected version and the rows in one consistent read. The event after the snapshot decides whether the snapshot is usable. A snapshot whose bytes are not valid JSON is unusable, because the client cannot send it.
+**Notes:** A drop and full replay follow two causes only: an engine refusal, or a mismatch on the snapshot path. After a transport or context failure the client is closed, and the next command starts a new worker. Read the projected version and the rows in one consistent read. The event after the snapshot decides whether the snapshot is usable. A snapshot whose bytes are not valid JSON is unusable, because the client cannot send it. A snapshot that cannot be stored is attempted once per 1000 events, not on every write. `SnapshotStore.LastAttempt` and `RecordAttempt` hold the last attempt (HEU-914).
 
 ### UC-NET-034: Projecting a removal that moves other nodes
 

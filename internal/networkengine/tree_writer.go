@@ -884,7 +884,7 @@ func (w *TreeWriter) maybeSnapshot(ctx context.Context, tree string, shape treeS
 
 // attemptHonored reports whether the backoff counts a, given what the load kept.
 func attemptHonored(a SnapshotAttempt, prep prepared) bool {
-	return !a.Stored || prep.snapshotReadFailed || prep.snapshotVersion >= a.Version
+	return !a.Stored || prep.snapshotReadFailed || prep.snapshotVersion >= a.Version || a.Version <= prep.loaded
 }
 
 // storableObserved returns s with each run of invalid UTF-8, and each NUL byte,

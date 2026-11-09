@@ -14,10 +14,11 @@ var _ SnapshotStore = (*MemorySnapshotStore)(nil)
 type MemorySnapshotStore struct {
 	mu        sync.Mutex
 	snapshots map[string]Snapshot
+	attempts  map[string]SnapshotAttempt
 }
 
 func NewMemorySnapshotStore() *MemorySnapshotStore {
-	return &MemorySnapshotStore{snapshots: map[string]Snapshot{}}
+	return &MemorySnapshotStore{snapshots: map[string]Snapshot{}, attempts: map[string]SnapshotAttempt{}}
 }
 
 func (s *MemorySnapshotStore) Get(ctx context.Context, treeID string) (Snapshot, bool, error) {
@@ -66,5 +67,35 @@ func (s *MemorySnapshotStore) Delete(ctx context.Context, treeID string, version
 	if cur, ok := s.snapshots[treeID]; ok && cur.Version == version {
 		delete(s.snapshots, treeID)
 	}
+	return nil
+}
+
+func (s *MemorySnapshotStore) LastAttempt(ctx context.Context, treeID string) (SnapshotAttempt, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return SnapshotAttempt{}, false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.attempts[treeID]
+	return a, ok, nil
+}
+
+func (s *MemorySnapshotStore) RecordAttempt(ctx context.Context, a SnapshotAttempt) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if a.Version < 1 {
+		return fmt.Errorf("snapshot attempt of tree %s has version %d, below 1", a.TreeID, a.Version)
+	}
+	if a.Stored != (a.Observed == "") {
+		return fmt.Errorf("snapshot attempt of tree %s at version %d has stored %t and observed %q",
+			a.TreeID, a.Version, a.Stored, a.Observed)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if cur, ok := s.attempts[a.TreeID]; ok && a.Version < cur.Version {
+		return nil
+	}
+	s.attempts[a.TreeID] = a
 	return nil
 }

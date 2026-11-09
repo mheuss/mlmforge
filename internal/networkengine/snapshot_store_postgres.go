@@ -52,3 +52,27 @@ func (s *PostgresSnapshotStore) Delete(ctx context.Context, treeID string, versi
 	_, err := s.pool.Exec(ctx, `DELETE FROM tree_snapshots WHERE tree_id = $1 AND version = $2`, treeID, version)
 	return err
 }
+
+const recordAttemptSQL = `INSERT INTO tree_snapshot_attempts (tree_id, version, stored, observed) VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (tree_id) DO UPDATE
+		    SET version = excluded.version, stored = excluded.stored,
+		        observed = excluded.observed, attempted_at = now()
+		  WHERE excluded.version >= tree_snapshot_attempts.version`
+
+func (s *PostgresSnapshotStore) LastAttempt(ctx context.Context, treeID string) (SnapshotAttempt, bool, error) {
+	a := SnapshotAttempt{TreeID: treeID}
+	err := s.pool.QueryRow(ctx, `SELECT version, stored, observed FROM tree_snapshot_attempts WHERE tree_id = $1`, treeID).
+		Scan(&a.Version, &a.Stored, &a.Observed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SnapshotAttempt{}, false, nil
+	}
+	if err != nil {
+		return SnapshotAttempt{}, false, err
+	}
+	return a, true, nil
+}
+
+func (s *PostgresSnapshotStore) RecordAttempt(ctx context.Context, a SnapshotAttempt) error {
+	_, err := s.pool.Exec(ctx, recordAttemptSQL, a.TreeID, a.Version, a.Stored, a.Observed)
+	return err
+}

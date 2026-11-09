@@ -112,12 +112,15 @@ func runSnapshotStoreSuite(t *testing.T, newStore func(t *testing.T) SnapshotSto
 		s := newStore(t)
 		ctx := context.Background()
 
-		_, err := s.Put(ctx, snap(0, `"x"`))
-		assert.Error(t, err)
-		_, err = s.Put(ctx, Snapshot{TreeID: tree, Version: 1, TreeType: "board_plan", Data: []byte(`"x"`)})
-		assert.Error(t, err)
-		_, err = s.Put(ctx, Snapshot{TreeID: tree, Version: 1, TreeType: treeTypeUnilevel})
-		assert.Error(t, err)
+		for name, bad := range map[string]Snapshot{
+			"version 0":         snap(0, `"x"`),
+			"unknown tree type": {TreeID: tree, Version: 1, TreeType: "board_plan", Data: []byte(`"x"`)},
+			"nil data":          {TreeID: tree, Version: 1, TreeType: treeTypeUnilevel},
+		} {
+			stored, err := s.Put(ctx, bad)
+			assert.Error(t, err, name)
+			assert.False(t, stored, name)
+		}
 
 		_, found, err := s.Get(ctx, tree)
 		require.NoError(t, err)
@@ -156,6 +159,150 @@ func runSnapshotStoreSuite(t *testing.T, newStore func(t *testing.T) SnapshotSto
 		assert.Equal(t, Snapshot{TreeID: other, Version: 3000, TreeType: treeTypeBinary, Data: []byte(`"two"`)}, got)
 	})
 
+	attempt := func(version int64, stored bool, observed string) SnapshotAttempt {
+		return SnapshotAttempt{TreeID: tree, Version: version, Stored: stored, Observed: observed}
+	}
+	requireAttempt := func(t *testing.T, s SnapshotStore, want SnapshotAttempt) {
+		t.Helper()
+		got, found, err := s.LastAttempt(context.Background(), tree)
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, want, got)
+	}
+
+	t.Run("a tree with no attempt reports none", func(t *testing.T) {
+		_, found, err := newStore(t).LastAttempt(context.Background(), tree)
+		require.NoError(t, err)
+		assert.False(t, found)
+	})
+
+	t.Run("LastAttempt returns what RecordAttempt recorded", func(t *testing.T) {
+		for name, a := range map[string]SnapshotAttempt{
+			"failed": attempt(1000, false, "storing the snapshot returned: disk full"),
+			"stored": attempt(1000, true, ""),
+		} {
+			t.Run(name, func(t *testing.T) {
+				s := newStore(t)
+				require.NoError(t, s.RecordAttempt(context.Background(), a))
+
+				requireAttempt(t, s, a)
+			})
+		}
+	})
+
+	t.Run("a higher attempt replaces the record", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.RecordAttempt(ctx, attempt(1000, false, "first")))
+		require.NoError(t, s.RecordAttempt(ctx, attempt(2000, true, "")))
+
+		requireAttempt(t, s, attempt(2000, true, ""))
+	})
+
+	t.Run("a lower attempt over the same outcome is ignored", func(t *testing.T) {
+		for name, kept := range map[string]SnapshotAttempt{
+			"stored over stored": attempt(2000, true, ""),
+			"failed over failed": attempt(2000, false, "kept"),
+		} {
+			t.Run(name, func(t *testing.T) {
+				s := newStore(t)
+				ctx := context.Background()
+				require.NoError(t, s.RecordAttempt(ctx, kept))
+				lower := attempt(1000, kept.Stored, kept.Observed)
+				if !kept.Stored {
+					lower.Observed = "lower"
+				}
+				require.NoError(t, s.RecordAttempt(ctx, lower))
+
+				requireAttempt(t, s, kept)
+			})
+		}
+	})
+
+	t.Run("a lower stored attempt over a failed one is ignored", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.RecordAttempt(ctx, attempt(2000, false, "kept")))
+		require.NoError(t, s.RecordAttempt(ctx, attempt(1000, true, "")))
+
+		requireAttempt(t, s, attempt(2000, false, "kept"))
+	})
+
+	t.Run("an attempt at an equal version replaces the record", func(t *testing.T) {
+		cases := map[string]struct{ first, second SnapshotAttempt }{
+			"failed over stored": {attempt(1000, true, ""), attempt(1000, false, "second")},
+			"stored over failed": {attempt(1000, false, "first"), attempt(1000, true, "")},
+		}
+		for name, tc := range cases {
+			t.Run(name, func(t *testing.T) {
+				s := newStore(t)
+				ctx := context.Background()
+				require.NoError(t, s.RecordAttempt(ctx, tc.first))
+				require.NoError(t, s.RecordAttempt(ctx, tc.second))
+
+				requireAttempt(t, s, tc.second)
+			})
+		}
+	})
+
+	t.Run("an invalid attempt is refused and records nothing", func(t *testing.T) {
+		cases := map[string]SnapshotAttempt{
+			"version 0":           attempt(0, false, "x"),
+			"stored with text":    attempt(1000, true, "x"),
+			"failed without text": attempt(1000, false, ""),
+		}
+		for name, a := range cases {
+			t.Run(name, func(t *testing.T) {
+				s := newStore(t)
+
+				assert.Error(t, s.RecordAttempt(context.Background(), a))
+
+				_, found, err := s.LastAttempt(context.Background(), tree)
+				require.NoError(t, err)
+				assert.False(t, found)
+			})
+		}
+	})
+
+	t.Run("a valid attempt of each kind is accepted", func(t *testing.T) {
+		for name, a := range map[string]SnapshotAttempt{
+			"stored": attempt(1, true, ""),
+			"failed": attempt(1, false, "x"),
+		} {
+			t.Run(name, func(t *testing.T) {
+				s := newStore(t)
+				require.NoError(t, s.RecordAttempt(context.Background(), a))
+
+				requireAttempt(t, s, a)
+			})
+		}
+	})
+
+	t.Run("trees keep separate attempts", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		other := testTreeUUID(2)
+		require.NoError(t, s.RecordAttempt(ctx, attempt(1000, true, "")))
+		require.NoError(t, s.RecordAttempt(ctx, SnapshotAttempt{TreeID: other, Version: 3000, Observed: "other"}))
+
+		requireAttempt(t, s, attempt(1000, true, ""))
+		got, found, err := s.LastAttempt(ctx, other)
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, SnapshotAttempt{TreeID: other, Version: 3000, Observed: "other"}, got)
+	})
+
+	t.Run("Delete leaves the attempt", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		requireStored(t, ctx, s, snap(1000, `"x"`))
+		require.NoError(t, s.RecordAttempt(ctx, attempt(1000, true, "")))
+
+		require.NoError(t, s.Delete(ctx, tree, 1000))
+
+		requireAttempt(t, s, attempt(1000, true, ""))
+	})
+
 	t.Run("every method refuses a cancelled context", func(t *testing.T) {
 		s := newStore(t)
 		ctx, cancel := context.WithCancel(context.Background())
@@ -163,9 +310,13 @@ func runSnapshotStoreSuite(t *testing.T, newStore func(t *testing.T) SnapshotSto
 
 		_, _, getErr := s.Get(ctx, tree)
 		assert.ErrorIs(t, getErr, context.Canceled)
-		_, putErr := s.Put(ctx, snap(1000, `"x"`))
+		stored, putErr := s.Put(ctx, snap(1000, `"x"`))
 		assert.ErrorIs(t, putErr, context.Canceled)
+		assert.False(t, stored, "a refused put")
 		assert.ErrorIs(t, s.Delete(ctx, tree, 1000), context.Canceled)
+		_, _, lastErr := s.LastAttempt(ctx, tree)
+		assert.ErrorIs(t, lastErr, context.Canceled)
+		assert.ErrorIs(t, s.RecordAttempt(ctx, attempt(1000, true, "")), context.Canceled)
 	})
 }
 

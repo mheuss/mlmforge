@@ -408,6 +408,18 @@ func TestTreeWriterSnapshotBackoff_ASnapshotEveryLoadDiscardsIsRetakenOncePerTho
 	requireLastAttempt(t, env, SnapshotAttempt{TreeID: writerTree, Version: 2 * snapshotInterval, Stored: true})
 }
 
+func TestTreeWriterSnapshotBackoff_AFailingGetHonorsAStoredAttemptAboveTheStream(t *testing.T) {
+	env := backoffEnv(t)
+	require.NoError(t, env.snapshots.RecordAttempt(context.Background(),
+		SnapshotAttempt{TreeID: writerTree, Version: 1010, Stored: true}))
+	failing := getFailingSnapshots{SnapshotStore: env.snapshots, err: errors.New("connection reset")}
+
+	takes, last := backoffWrites(t, env, failing, newFakeWriterEngine, snapshotInterval, snapshotInterval+10)
+
+	assert.Equal(t, 0, takes, "stored@1010 is above every projected version, and only the failed read honors it")
+	assert.Equal(t, []string{"reading the snapshot of tree " + writerTree + " returned: connection reset"}, last.Warnings)
+}
+
 func TestTreeWriterSnapshotBackoff_EachTakeTriggerTakesOnce(t *testing.T) {
 	cases := map[string]struct {
 		snapshots func(env *writerEnv) SnapshotStore

@@ -539,6 +539,8 @@ func TestTreePersistence_SlotConflictFailsCleanAndTreeReloads(t *testing.T) {
 	rejected, err := it.writer(t).Reject(ctx, RejectRequest{TreeID: tree, EventID: conflict.ID, Reason: "claims the slot u2 holds"})
 	require.NoError(t, err)
 	require.Equal(t, RejectOutcomeRejected, rejected.Outcome, "the retry returned %v", rejected.RetryErr)
+	assert.ErrorIs(t, rejected.RetryErr, ErrSlotConflict)
+	require.NoError(t, rejected.ProjectionErr)
 
 	reload := it.engine(t)
 	_, err = NewTreeWriter(it.events, it.store, it.snapshots, reload, NewPostgresTreeLocker(it.dsn)).Load(ctx, load)

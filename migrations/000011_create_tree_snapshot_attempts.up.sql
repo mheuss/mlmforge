@@ -1,4 +1,4 @@
--- One row per tree: the last snapshot attempt that reached the engine, and what it observed.
+-- One row per tree: an attempt's version, whether it stored a snapshot, and what it observed.
 CREATE TABLE tree_snapshot_attempts (
     tree_id      UUID PRIMARY KEY,
     version      BIGINT NOT NULL CHECK (version >= 1),

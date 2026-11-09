@@ -159,72 +159,38 @@ func TestTreePersistence_PlaceAndRemove(t *testing.T) {
 	assert.Equal(t, 1, removedCount, "child should have removed_at set")
 }
 
-func TestTreePersistence_BulkLoadMatchesEventPath(t *testing.T) {
-	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
+func TestTreePersistence_StreamLoadMatchesEventPath(t *testing.T) {
+	it := newWriterIntegration(t)
 	ctx := context.Background()
-
-	treeID := testTreeUUID(1)
-	rootID := testUserUUID(1)
-	childID := testUserUUID(2)
-	grandchildID := testUserUUID(3)
-	stream := TreeStreamName(treeID)
-
-	require.NoError(t, engine.CreateTree(ctx, treeID, "unilevel"))
-	consumer := NewTreeEventConsumer(treeStore, engine)
-
-	// Build tree via events.
-	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
-		TreeID: treeID, UserID: rootID, SponsorID: rootID,
-		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-	})
-	require.NoError(t, deliver(ctx, consumer, rootEvent))
-
-	childEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: treeID, UserID: childID, ParentID: rootID, SponsorID: rootID,
-		TreeType:   treeTypeUnilevel,
-		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
-	})
-	require.NoError(t, deliver(ctx, consumer, childEvent))
-
-	grandchildEvent := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: treeID, UserID: grandchildID, ParentID: childID, SponsorID: childID,
-		TreeType:   treeTypeUnilevel,
-		EnrolledAt: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
-	})
-	require.NoError(t, deliver(ctx, consumer, grandchildEvent))
-
-	// Capture positions from the event-built engine.
-	rootPos, err := engine.GetPosition(ctx, treeID, rootID)
+	tree := testTreeUUID(1)
+	rootID, childID, grandchildID := testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	it.addUnilevelRoot(t, tree, rootID)
+	placed, err := it.writer(t).Place(ctx, PlaceRequest{TreeID: tree, UserID: childID, ParentID: rootID,
+		SponsorID: rootID, EnrolledAt: writeTime.Add(time.Hour)})
 	require.NoError(t, err)
-	childPos, err := engine.GetPosition(ctx, treeID, childID)
-	require.NoError(t, err)
-	grandchildPos, err := engine.GetPosition(ctx, treeID, grandchildID)
-	require.NoError(t, err)
+	require.NoError(t, placed.ProjectionErr)
 
-	// Stop engine and start a fresh one.
-	require.NoError(t, engine.Stop())
-	freshEngine, err := NewEngineClient(ctx, findWorkerBinary(t))
+	// The worker that applies the last write holds the tree the event path built.
+	eventEngine := it.engine(t)
+	placed, err = NewTreeWriter(it.events, it.store, it.snapshots, eventEngine, NewPostgresTreeLocker(it.dsn)).
+		Place(ctx, PlaceRequest{TreeID: tree, UserID: grandchildID, ParentID: childID, SponsorID: childID,
+			EnrolledAt: writeTime.Add(2 * time.Hour)})
 	require.NoError(t, err)
-	defer func() { _ = freshEngine.Stop() }()
+	require.NoError(t, placed.ProjectionErr)
 
-	// Bulk-load from the adjacency table.
-	loader := NewTreeLoader(treeStore, freshEngine)
-	_, lerr := loader.LoadTree(ctx, treeID, "unilevel")
-
-	require.NoError(t, lerr)
-
-	// Compare positions. The fresh engine should match the original.
-	freshRootPos, err := freshEngine.GetPosition(ctx, treeID, rootID)
+	loadEngine := it.engine(t)
+	loaded, err := NewTreeWriter(it.events, it.store, it.snapshots, loadEngine, NewPostgresTreeLocker(it.dsn)).
+		Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeUnilevel})
 	require.NoError(t, err)
-	assert.Equal(t, rootPos.Depth, freshRootPos.Depth)
+	assert.Equal(t, 3, loaded.Nodes)
 
-	freshChildPos, err := freshEngine.GetPosition(ctx, treeID, childID)
-	require.NoError(t, err)
-	assert.Equal(t, childPos.Depth, freshChildPos.Depth)
-
-	freshGrandchildPos, err := freshEngine.GetPosition(ctx, treeID, grandchildID)
-	require.NoError(t, err)
-	assert.Equal(t, grandchildPos.Depth, freshGrandchildPos.Depth)
+	for _, user := range []string{rootID, childID, grandchildID} {
+		want, err := eventEngine.GetPosition(ctx, tree, user)
+		require.NoError(t, err)
+		got, err := loadEngine.GetPosition(ctx, tree, user)
+		require.NoError(t, err)
+		assert.Equal(t, want.Depth, got.Depth, "depth of %s", user)
+	}
 }
 
 func TestTreePersistence_EngineFailureRetry(t *testing.T) {
@@ -667,72 +633,47 @@ func TestTreePersistence_PreflightRefusalLeavesTheEngineLoadable(t *testing.T) {
 // A recruit whose recruiter is removed must not keep a sponsor_id naming an
 // absent user after the tree reloads.
 func TestTreePersistence_RemovedSponsorStillReloads(t *testing.T) {
-	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
+	it := newWriterIntegration(t)
 	ctx := context.Background()
-
-	treeID := testTreeUUID(1)
-	rootID := testUserUUID(1)
-	recruiterID := testUserUUID(2)
-	recruitID := testUserUUID(3)
-	stream := TreeStreamName(treeID)
-
-	require.NoError(t, engine.CreateTree(ctx, treeID, "unilevel"))
-	consumer := NewTreeEventConsumer(treeStore, engine)
-
-	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
-		TreeID: treeID, UserID: rootID, SponsorID: rootID,
-		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-	})
-	require.NoError(t, deliver(ctx, consumer, rootEvent))
-
-	recruiterEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: treeID, UserID: recruiterID, ParentID: rootID, SponsorID: rootID,
-		TreeType:   treeTypeUnilevel,
-		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
-	})
-	require.NoError(t, deliver(ctx, consumer, recruiterEvent))
-
+	tree := testTreeUUID(1)
+	rootID, recruiterID, recruitID := testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	it.addUnilevelRoot(t, tree, rootID)
+	place := func(user, sponsor string, after time.Duration) {
+		res, err := it.writer(t).Place(ctx, PlaceRequest{TreeID: tree, UserID: user, ParentID: rootID,
+			SponsorID: sponsor, EnrolledAt: writeTime.Add(after)})
+		require.NoError(t, err)
+		require.NoError(t, res.ProjectionErr)
+	}
 	// Placed under the root so the recruiter stays childless and removable,
 	// sponsored by the recruiter so the stored edge outlives its target.
-	recruitEvent := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: treeID, UserID: recruitID, ParentID: rootID, SponsorID: recruiterID,
-		TreeType:   treeTypeUnilevel,
-		EnrolledAt: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
-	})
-	require.NoError(t, deliver(ctx, consumer, recruitEvent))
+	place(recruiterID, rootID, time.Hour)
+	place(recruitID, recruiterID, 2*time.Hour)
 
-	stored, err := treeStore.GetNode(ctx, treeID, recruitID)
+	stored, err := it.store.GetNode(ctx, tree, recruitID)
 	require.NoError(t, err)
 	require.NotNil(t, stored)
 	require.NotNil(t, stored.SponsorID)
 	require.Equal(t, recruiterID, *stored.SponsorID,
 		"the stored edge under test must exist before the removal")
 
-	removeEvent := appendTreeEvent(t, eventStore, stream, 3, EventTypeNodeRemoved, NodeRemovedPayload{
-		TreeID: treeID, UserID: recruiterID, RemovedAt: time.Now(),
-	})
-	require.NoError(t, deliver(ctx, consumer, removeEvent))
+	removed, err := it.writer(t).Remove(ctx, RemoveRequest{TreeID: tree, UserID: recruiterID,
+		RemovedAt: writeTime.Add(3 * time.Hour)})
+	require.NoError(t, err)
+	require.NoError(t, removed.ProjectionErr)
 
-	after, err := treeStore.GetNode(ctx, treeID, recruitID)
+	after, err := it.store.GetNode(ctx, tree, recruitID)
 	require.NoError(t, err)
 	require.NotNil(t, after)
 	require.NotNil(t, after.SponsorID)
 	assert.Equal(t, rootID, *after.SponsorID,
 		"the store must record the sponsor the engine moved the recruit to")
 
-	// A real restart, not just the preflight, so any stage of reload can
-	// catch this.
-	require.NoError(t, engine.Stop())
-	freshEngine, err := NewEngineClient(ctx, findWorkerBinary(t))
-	require.NoError(t, err)
-	defer func() { _ = freshEngine.Stop() }()
+	loadEngine := it.engine(t)
+	_, err = NewTreeWriter(it.events, it.store, it.snapshots, loadEngine, NewPostgresTreeLocker(it.dsn)).
+		Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeUnilevel})
+	require.NoError(t, err, "a tree that has lost a recruiter must still rebuild")
 
-	loader := NewTreeLoader(treeStore, freshEngine)
-	_, lerr := loader.LoadTree(ctx, treeID, "unilevel")
-	require.NoError(t, lerr,
-		"a tree that has lost a recruiter must still rebuild from the store")
-
-	reloaded, err := freshEngine.GetSponsor(ctx, treeID, recruitID)
+	reloaded, err := loadEngine.GetSponsor(ctx, tree, recruitID)
 	require.NoError(t, err)
 	require.NotNil(t, reloaded)
 	assert.Equal(t, rootID, reloaded.UserID,

@@ -617,51 +617,47 @@ func TestTreePersistence_DuplicateDeliveryConverges(t *testing.T) {
 	assert.Len(t, downline, 1, "redelivery added no second engine node")
 }
 
-// TestTreePersistence_RejectedTreeLeavesEngineLoadable proves that after a
-// tree is refused, a corrected load succeeds in the same worker without a
-// drop.
-func TestTreePersistence_RejectedTreeLeavesEngineLoadable(t *testing.T) {
-	_, treeStore, engine, _ := newIntegrationDeps(t)
+// TestTreePersistence_PreflightRefusalLeavesTheEngineLoadable proves that a load
+// preflight refuses leaves no structure, and that a corrected load succeeds in
+// the same worker.
+func TestTreePersistence_PreflightRefusalLeavesTheEngineLoadable(t *testing.T) {
+	it := newWriterIntegration(t)
 	ctx := context.Background()
-
-	treeID := testTreeUUID(1)
+	width, spillover := 3, "breadth_first"
+	tree := testTreeUUID(1)
 	u1, u2, u3 := testUserUUID(1), testUserUUID(2), testUserUUID(3)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	load := LoadRequest{TreeID: tree, TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover}
 
-	rows := []TreeNodeRow{
-		makeUUIDNode(testNodeUUID(1), treeID, u1, 0, nil, ptr(u1), nil),
-		makeUUIDNode(testNodeUUID(2), treeID, u2, 1, ptr(u1), ptr(u1), intPtr(0)),
-		// Depth 3 under a depth-0 parent. Preflight must refuse the tree.
-		// (The old fixture double-claimed a slot; migration 000004 now stops
-		// that at the insert, so the corruption moved to a field the
-		// database cannot check.)
-		makeUUIDNode(testNodeUUID(3), treeID, u3, 3, ptr(u1), ptr(u1), intPtr(1)),
-	}
-	for i := range rows {
-		rows[i].EnrolledAt = base.Add(time.Duration(i) * time.Hour)
-		require.NoError(t, insertNode(ctx, treeStore.pool, rows[i]))
-	}
+	added, err := it.writer(t).AddRoot(ctx, AddRootRequest{TreeID: tree, UserID: u1, SponsorID: u1,
+		TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover, EnrolledAt: base})
+	require.NoError(t, err)
+	require.NoError(t, added.ProjectionErr)
+	placed, err := it.writer(t).Place(ctx, PlaceRequest{TreeID: tree, UserID: u2, ParentID: u1, SponsorID: u1,
+		Position: intPtr(0), EnrolledAt: base.Add(time.Hour)})
+	require.NoError(t, err)
+	require.NoError(t, placed.ProjectionErr)
 
-	loader := NewTreeLoader(treeStore, engine)
-	_, err := loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(3, "breadth_first"))
+	// Depth 3 under a depth-0 parent, with no event behind it.
+	bad := makeUUIDNode(testNodeUUID(3), tree, u3, 3, ptr(u1), ptr(u1), intPtr(1))
+	bad.EnrolledAt = base.Add(2 * time.Hour)
+	require.NoError(t, insertNode(ctx, it.pool, bad))
+
+	engine := it.engine(t)
+	w := NewTreeWriter(it.events, it.store, it.snapshots, engine, NewPostgresTreeLocker(it.dsn))
+
+	_, err = w.Load(ctx, load)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "has depth 3 but parent")
+	_, posErr := engine.GetPosition(ctx, tree, u1)
+	require.True(t, isEngineCode(posErr, "STRUCTURE_NOT_FOUND"),
+		"a refused load must leave no structure behind: %v", posErr)
+	assert.ErrorContains(t, err, "has depth 3 but parent")
 
-	// The structure was never created. Assert on the specific code: GetPosition
-	// also errors for a known structure missing that user, so a bare Error
-	// check would pass even if the create had leaked.
-	_, err = engine.GetPosition(ctx, treeID, u1)
-	require.Error(t, err, "a refused tree must leave no structure behind")
-	assert.Contains(t, err.Error(), "STRUCTURE_NOT_FOUND")
+	require.NoError(t, tombstoneUser(ctx, it.store, tree, u3))
+	_, err = w.Load(ctx, load)
+	require.NoError(t, err)
 
-	// Correct the data the way an operator would, then retry. This is the step
-	// that proves the engine is still usable: a leaked create would fail here.
-	require.NoError(t, tombstoneUser(ctx, treeStore, treeID, u3))
-	_, lerr := loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(3, "breadth_first"))
-
-	require.NoError(t, lerr)
-
-	got, err := engine.GetPosition(ctx, treeID, u2)
+	got, err := engine.GetPosition(ctx, tree, u2)
 	require.NoError(t, err)
 	require.NotNil(t, got.ParentUserID)
 	assert.Equal(t, u1, *got.ParentUserID)

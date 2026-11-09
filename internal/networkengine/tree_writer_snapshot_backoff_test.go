@@ -313,6 +313,64 @@ func TestTreeWriterSnapshotBackoff_RecordsATakeErrorWithBytesTextCannotHold(t *t
 		Observed: "taking a snapshot of tree " + writerTree + " at version 1000 returned: worker said \uFFFD and \uFFFD"})
 }
 
+// storeSnapshotAndAttempt stores a snapshot of writerTree at version with
+// treeType, and records a stored attempt at the same version.
+func storeSnapshotAndAttempt(t *testing.T, env *writerEnv, version int64, treeType string) {
+	t.Helper()
+	snap := takeTreeSnapshot(t, env, version)
+	snap.TreeType = treeType
+	requireStored(t, context.Background(), env.snapshots, snap)
+	require.NoError(t, env.snapshots.RecordAttempt(context.Background(),
+		SnapshotAttempt{TreeID: writerTree, Version: version, Stored: true}))
+}
+
+func TestTreeWriterSnapshotBackoff_ADeleteThatFailsBelowAStuckSnapshotBacksOff(t *testing.T) {
+	env := backoffEnv(t)
+	storeSnapshotAndAttempt(t, env, 1010, treeTypeUnilevel)
+	failing := deleteFailingSnapshots{SnapshotStore: env.snapshots, err: errors.New("connection reset")}
+
+	takes, _ := backoffWrites(t, env, failing, newFakeWriterEngine, snapshotInterval, 1009)
+
+	assert.Equal(t, 1, takes)
+	requireLastAttempt(t, env, SnapshotAttempt{TreeID: writerTree, Version: 1000,
+		Observed: "storing the snapshot of tree " + writerTree + " at version 1000 stored nothing; the store reported no row written"})
+}
+
+func TestTreeWriterSnapshotBackoff_ADeleteThatFailsBelowTheWriteIsReplaced(t *testing.T) {
+	env := backoffEnv(t)
+	storeSnapshotAndAttempt(t, env, 5, treeTypeBinary)
+	failing := deleteFailingSnapshots{SnapshotStore: env.snapshots, err: errors.New("connection reset")}
+
+	takes, _ := backoffWrites(t, env, failing, newFakeWriterEngine, snapshotInterval, snapshotInterval+5)
+
+	assert.Equal(t, 1, takes)
+	snap, found, err := env.snapshots.Get(context.Background(), writerTree)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, int64(snapshotInterval), snap.Version)
+	assert.Equal(t, treeTypeUnilevel, snap.TreeType)
+	requireLastAttempt(t, env, SnapshotAttempt{TreeID: writerTree, Version: 1000, Stored: true})
+}
+
+func TestTreeWriterSnapshotBackoff_ADeletedStraySnapshotIsRetakenAtOnce(t *testing.T) {
+	env := backoffEnv(t)
+	storeSnapshotAndAttempt(t, env, 1010, treeTypeUnilevel)
+
+	takes, _ := backoffWrites(t, env, env.snapshots, newFakeWriterEngine, snapshotInterval, 2*snapshotInterval-1)
+
+	assert.Equal(t, 1, takes, "writes 1000 to 1999")
+	snap, found, err := env.snapshots.Get(context.Background(), writerTree)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, int64(snapshotInterval), snap.Version)
+	requireLastAttempt(t, env, SnapshotAttempt{TreeID: writerTree, Version: 1010, Stored: true})
+
+	takes, _ = backoffWrites(t, env, env.snapshots, newFakeWriterEngine, 2*snapshotInterval, 2*snapshotInterval)
+
+	assert.Equal(t, 1, takes, "write 2000 ignores stored@1010, because the load kept the snapshot at 1000")
+	requireLastAttempt(t, env, SnapshotAttempt{TreeID: writerTree, Version: 2 * snapshotInterval, Stored: true})
+}
+
 func TestTreeWriterSnapshotBackoff_ReadsAndRecordsOnlyPastTheThreshold(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)

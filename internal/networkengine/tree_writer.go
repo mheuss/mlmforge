@@ -553,6 +553,8 @@ type prepared struct {
 	warnings []string
 	// the version of the snapshot this load kept, or 0 when it kept none
 	snapshotVersion int64
+	// the load's snapshot read returned an error
+	snapshotReadFailed bool
 }
 
 // prepare builds the tree in the engine and refuses a stream the store cannot
@@ -649,6 +651,7 @@ func (w *TreeWriter) usableSnapshot(ctx context.Context, tree string, shape tree
 	prep *prepared) (Snapshot, bool, error) {
 	snap, found, err := w.snapshots.Get(ctx, tree)
 	if err != nil {
+		prep.snapshotReadFailed = true
 		prep.warnings = append(prep.warnings,
 			fmt.Sprintf("reading the snapshot of tree %s returned: %s", tree, err))
 		return Snapshot{}, false, nil
@@ -850,7 +853,7 @@ func (w *TreeWriter) maybeSnapshot(ctx context.Context, tree string, shape treeS
 		return []string{fmt.Sprintf("reading the last snapshot attempt of tree %s at version %d returned: %s; no snapshot was taken",
 			tree, version, err)}
 	}
-	if found && version-last.Version < snapshotInterval {
+	if found && attemptHonored(last, prep) && version-last.Version < snapshotInterval {
 		if last.Stored {
 			return nil
 		}
@@ -877,6 +880,11 @@ func (w *TreeWriter) maybeSnapshot(ctx context.Context, tree string, shape treeS
 			tree, version, err))
 	}
 	return warnings
+}
+
+// attemptHonored reports whether the backoff counts a, given what the load kept.
+func attemptHonored(a SnapshotAttempt, prep prepared) bool {
+	return !a.Stored || prep.snapshotReadFailed || prep.snapshotVersion >= a.Version
 }
 
 // storableObserved returns s with each run of invalid UTF-8, and each NUL byte,

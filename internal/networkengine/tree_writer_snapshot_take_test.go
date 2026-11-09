@@ -109,10 +109,62 @@ func TestTreeWriterSnapshot_StoresNothingWhenTheProjectedVersionDiffers(t *testi
 			tc.store.TreeStore = env.store
 			w := NewTreeWriter(env.events, tc.store, env.snapshots, engine, env.locker)
 
-			warning := w.takeSnapshot(context.Background(), writerTree, treeShape{treeType: treeTypeUnilevel}, 1000)
+			warning, attempted, _ := w.takeSnapshot(context.Background(), writerTree, treeShape{treeType: treeTypeUnilevel}, 1000)
 
 			assert.Equal(t, tc.want, warning)
+			assert.False(t, attempted)
 			assert.NotContains(t, engine.calls, "take_snapshot")
+		})
+	}
+}
+
+// noopPutStore reports every Put as storing nothing.
+type noopPutStore struct{ SnapshotStore }
+
+func (noopPutStore) Put(context.Context, Snapshot) (bool, error) { return false, nil }
+
+func TestTreeWriterSnapshot_APutThatStoresNothingIsAWarning(t *testing.T) {
+	env := newWriterEnv()
+	mustAddRoot(t, env, treeTypeUnilevel)
+	placeUnderRoot(t, env, 10, snapshotInterval-2)
+	w := NewTreeWriter(env.events, env.store, noopPutStore{SnapshotStore: env.snapshots}, newFakeWriterEngine(), env.locker)
+
+	res, err := w.Place(context.Background(), placeRequest(testUserUUID(9000), nil))
+
+	require.NoError(t, err)
+	require.NoError(t, res.ProjectionErr)
+	assert.Equal(t, []string{"storing the snapshot of tree " + writerTree +
+		" at version 1000 stored nothing; the store reported no row written"}, res.Warnings)
+}
+
+func TestTreeWriterSnapshot_ReportsWhetherTheEngineWasAskedAndTheStoreKeptIt(t *testing.T) {
+	cases := map[string]struct {
+		snapshots         func(env *writerEnv) SnapshotStore
+		takeErr           error
+		attempted, stored bool
+	}{
+		"stored": {func(env *writerEnv) SnapshotStore { return env.snapshots }, nil, true, true},
+		"put failed": {func(env *writerEnv) SnapshotStore {
+			return failingPutStore{SnapshotStore: env.snapshots, err: errors.New("disk full")}
+		}, nil, true, false},
+		"stored nothing": {func(env *writerEnv) SnapshotStore { return noopPutStore{SnapshotStore: env.snapshots} },
+			nil, true, false},
+		"take failed": {func(env *writerEnv) SnapshotStore { return env.snapshots }, errors.New("worker gone"), true, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			env := newWriterEnv()
+			mustAddRoot(t, env, treeTypeUnilevel)
+			engine := newFakeWriterEngine()
+			w := NewTreeWriter(env.events, env.store, tc.snapshots(env), engine, env.locker)
+			_, err := w.Load(context.Background(), loadRequest())
+			require.NoError(t, err)
+			engine.takeErr = tc.takeErr
+
+			_, attempted, stored := w.takeSnapshot(context.Background(), writerTree, treeShape{treeType: treeTypeUnilevel}, 1)
+
+			assert.Equal(t, tc.attempted, attempted, "attempted")
+			assert.Equal(t, tc.stored, stored, "stored")
 		})
 	}
 }

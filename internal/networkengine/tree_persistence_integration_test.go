@@ -264,18 +264,17 @@ func TestTreePersistence_LoadMatrixTreeCreatesInEngine(t *testing.T) {
 	assert.Equal(t, uint32(0), rootPos.Depth)
 }
 
-// TestTreePersistence_MatrixMultiNodeRoundTrip proves HEU-534 end-to-end
-// against the real worker: a multi-node matrix tree with admin-override
-// placements reloads from the adjacency store with identical topology.
+// TestTreePersistence_MatrixMultiNodeRoundTrip proves a multi-node matrix tree
+// with admin-override placements rebuilds from its stream with identical
+// topology on a real worker.
 //
-// The fixture is deliberately awkward and must not be simplified. Between them
-// the rows cover a placement spillover would not choose, differing parent and
-// sponsor, a sponsor deeper than the node it sponsors, and a slot at width-1 —
-// see the inline notes on u3 and u4, which carry most of that load. Simplify
-// the shape and a loader that re-derives placement, transposes parent and
-// sponsor, or replays in depth order starts passing (HEU-534).
+// The fixture is deliberately awkward and must not be simplified. The rows
+// cover a placement spillover would not choose, differing parent and sponsor, a
+// sponsor deeper than the node it sponsors, and a slot at width-1. Simplify the
+// shape and a build that re-derives placement or transposes parent and sponsor
+// starts passing.
 func TestTreePersistence_MatrixMultiNodeRoundTrip(t *testing.T) {
-	_, treeStore, engine, _ := newIntegrationDeps(t)
+	it := newWriterIntegration(t)
 	ctx := context.Background()
 
 	const width = 3
@@ -283,7 +282,7 @@ func TestTreePersistence_MatrixMultiNodeRoundTrip(t *testing.T) {
 	u1, u2, u3, u4, u5 := testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4), testUserUUID(5)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	// Rows as a prior run's events would have projected them.
+	// The rows the writes below must reproduce.
 	rows := []TreeNodeRow{
 		// root
 		makeUUIDNode(testNodeUUID(1), treeID, u1, 0, nil, ptr(u1), nil),
@@ -292,21 +291,32 @@ func TestTreePersistence_MatrixMultiNodeRoundTrip(t *testing.T) {
 		// u3 pushed a level down under u2 while the root still has free slots.
 		// Spillover would never choose this. Parent and sponsor also differ.
 		makeUUIDNode(testNodeUUID(3), treeID, u3, 2, ptr(u2), ptr(u1), intPtr(2)),
-		// u4 sits at depth 1 but is sponsored by u3 at depth 2, so depth-ordered
-		// replay would reach it before its sponsor exists. Also at width-1.
+		// u4 sits at depth 1 but is sponsored by u3 at depth 2. Also at width-1.
 		makeUUIDNode(testNodeUUID(4), treeID, u4, 1, ptr(u1), ptr(u3), intPtr(2)),
 		// u5 fills the root's last free slot.
 		makeUUIDNode(testNodeUUID(5), treeID, u5, 1, ptr(u1), ptr(u1), intPtr(1)),
 	}
 	for i := range rows {
 		rows[i].EnrolledAt = base.Add(time.Duration(i) * time.Hour)
-		require.NoError(t, insertNode(ctx, treeStore.pool, rows[i]))
 	}
 
-	loader := NewTreeLoader(treeStore, engine)
-	_, lerr := loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(width, "breadth_first"))
+	spillover := "breadth_first"
+	w := width
+	added, err := it.writer(t).AddRoot(ctx, AddRootRequest{TreeID: treeID, UserID: u1, SponsorID: u1,
+		TreeType: treeTypeMatrix, MatrixWidth: &w, MatrixSpillover: &spillover, EnrolledAt: rows[0].EnrolledAt})
+	require.NoError(t, err)
+	require.NoError(t, added.ProjectionErr)
+	for _, r := range rows[1:] {
+		res, err := it.writer(t).Place(ctx, PlaceRequest{TreeID: treeID, UserID: r.UserID, ParentID: *r.ParentID,
+			SponsorID: *r.SponsorID, Position: r.Position, EnrolledAt: r.EnrolledAt})
+		require.NoError(t, err, "placing %s", r.UserID)
+		require.NoError(t, res.ProjectionErr)
+	}
 
-	require.NoError(t, lerr)
+	engine := it.engine(t)
+	_, err = NewTreeWriter(it.events, it.store, it.snapshots, engine, NewPostgresTreeLocker(it.dsn)).
+		Load(ctx, LoadRequest{TreeID: treeID, TreeType: treeTypeMatrix, MatrixWidth: &w, MatrixSpillover: &spillover})
+	require.NoError(t, err)
 
 	// The root carries no sponsor in the engine by construction: AddRoot takes
 	// no sponsor and the Rust root is sponsor: None. Assert it separately.
@@ -340,7 +350,7 @@ func TestTreePersistence_MatrixMultiNodeRoundTrip(t *testing.T) {
 
 	// The engine must hold these five and nothing else. Every assertion above
 	// asks about a node the fixture already knows; none of them would notice a
-	// phantom the loader invented.
+	// phantom the build invented.
 	downline, err := engine.GetDownline(ctx, treeID, u1, 0)
 	require.NoError(t, err)
 	assert.Len(t, downline, len(rows)-1, "engine holds exactly the stored nodes")

@@ -479,3 +479,16 @@ A Go `int` bound to an `INT` parameter or an `int[]` cast fails in pgx's encoder
 when it is outside the int4 range. The statement never reaches the server. Go's
 `int` is 64-bit and int4 is 32-bit. The type alone allows values the column
 refuses. A memory twin refuses the same range before it writes.
+
+## An upsert's RowsAffected says whether its WHERE let it write
+
+HEU-914, 2026-11-09.
+
+`INSERT ... ON CONFLICT ... DO UPDATE ... WHERE` reports one row affected when it
+inserts. It reports one when the update runs. It reports zero when the WHERE
+skips the update. So one statement can tell its caller whether it stored anything.
+It needs no read before or after.
+
+`PostgresSnapshotStore.Put` returns `tag.RowsAffected() == 1`. The snapshot store
+suite pins all three outcomes on the Postgres twin: a first put, a higher put,
+and an equal or lower put.

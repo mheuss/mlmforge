@@ -29,7 +29,7 @@ func TestSnapshotStore_CarriesAMatrixHoldingTankThroughARestore(t *testing.T) {
 	taken, err := first.TakeSnapshot(ctx, tree)
 	require.NoError(t, err)
 	store := NewMemorySnapshotStore()
-	require.NoError(t, store.Put(ctx, Snapshot{TreeID: tree, Version: 1000, TreeType: taken.TreeType, Data: taken.Data}))
+	requireStored(t, ctx, store, Snapshot{TreeID: tree, Version: 1000, TreeType: taken.TreeType, Data: taken.Data})
 	stored, found, err := store.Get(ctx, tree)
 	require.NoError(t, err)
 	require.True(t, found)

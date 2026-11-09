@@ -259,7 +259,7 @@ func seedRealSnapshot(t *testing.T, it *writerIntegration, tree string, width in
 	require.NoError(t, err)
 	taken, err := engine.TakeSnapshot(ctx, tree)
 	require.NoError(t, err)
-	require.NoError(t, it.snapshots.Put(ctx, Snapshot{TreeID: tree, Version: version, TreeType: taken.TreeType, Data: taken.Data}))
+	requireStored(t, ctx, it.snapshots, Snapshot{TreeID: tree, Version: version, TreeType: taken.TreeType, Data: taken.Data})
 }
 
 func TestTreeWriter_AMatrixRemovalWhoseProjectionFailedConvergesOnTheNextWrite(t *testing.T) {

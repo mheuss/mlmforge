@@ -39,6 +39,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-033: Rebuilding a tree from a snapshot and its stream](#uc-net-033-rebuilding-a-tree-from-a-snapshot-and-its-stream)
 - [UC-NET-034: Projecting a removal that moves other nodes](#uc-net-034-projecting-a-removal-that-moves-other-nodes)
 - [UC-NET-035: Exact decimal values for volume and money](#uc-net-035-exact-decimal-values-for-volume-and-money)
+- [UC-NET-036: Bounding a retried expensive step across processes](#uc-net-036-bounding-a-retried-expensive-step-across-processes)
 
 ---
 
@@ -1218,7 +1219,7 @@ return w.buildFromStream(ctx, tree, shape, projected, rows)
 
 **Solution:** Restore the latest snapshot at version S, replay events S+1 through the projected version into the engine only, then compare the engine's membership with the store's rows. Fall back to replaying the whole stream on an engine refusal or a mismatch.
 
-**Notes:** A drop and full replay follow two causes only: an engine refusal, or a mismatch on the snapshot path. After a transport or context failure the client is closed, and the next command starts a new worker. Read the projected version and the rows in one consistent read. The event after the snapshot decides whether the snapshot is usable. A snapshot whose bytes are not valid JSON is unusable, because the client cannot send it.
+**Notes:** A drop and full replay follow two causes only: an engine refusal, or a mismatch on the snapshot path. After a transport or context failure the client is closed, and the next command starts a new worker. Read the projected version and the rows in one consistent read. The event after the snapshot decides whether the snapshot is usable. A snapshot whose bytes are not valid JSON is unusable, because the client cannot send it. A snapshot that cannot be stored is attempted once per 1000 events, not on every write. `SnapshotStore.LastAttempt` and `RecordAttempt` read and write the last attempt (HEU-914).
 
 ### UC-NET-034: Projecting a removal that moves other nodes
 
@@ -1270,3 +1271,37 @@ let paid = matched.mul_div_ratio(pairing.percent, multiplier, min_leg, max_leg)?
 - `Dec` has no arithmetic operators. Use the `try_*` methods so every overflow is handled.
 - In tests, build values with `d!` and compare them with `assert_d!`.
 - A `NumericError` names the operation and its inputs. Its kind is `Overflow`, `Precision`, `DivisionByZero`, `Negative` or `NotWholeUnits`.
+
+### UC-NET-036: Bounding a retried expensive step across processes
+
+**Added:** Unreleased (HEU-914)
+**Files:** `internal/networkengine/tree_writer.go`, `internal/networkengine/snapshot_store.go`, `internal/networkengine/snapshot_store_postgres.go`, `internal/networkengine/snapshot_store_memory.go`, `migrations/000011_create_tree_snapshot_attempts.up.sql`
+
+**Problem:** A step that is expensive and can fail every time must not run again on every command, even though the CLI builds a new `TreeWriter` per command.
+
+**Solution:** `tree_snapshot_attempts` holds one row per tree with the version of the last attempt, whether it stored, and what it observed. The writer reads `LastAttempt` before the step and backs off while that attempt is recent. After the step, it records the attempt with `RecordAttempt`.
+
+**Usage:**
+```go
+last, found, err := store.LastAttempt(ctx, treeID)
+if err != nil {
+	return // skip the step and warn
+}
+if found && version-last.Version < interval {
+	return // back off
+}
+stored, observed := runExpensiveStep()
+recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+defer cancel()
+err = store.RecordAttempt(recordCtx, networkengine.SnapshotAttempt{
+	TreeID: treeID, Version: version, Stored: stored, Observed: observed,
+})
+```
+
+**Notes:**
+- Record successful attempts too. Without them, a read of the result that keeps failing makes every command run the step again.
+- `Observed` must be text a `TEXT` column can hold. The writer replaces NUL bytes and invalid UTF-8 before it records.
+- `RecordAttempt` keeps the highest version. A failed attempt replaces a stored one at any version.
+- The writer skips the step while the attempt counts and is less than 1000 versions behind. It also skips when the read fails.
+- The writer records the attempt after the step, on a detached, bounded context. A caller's cancellation still leaves a record.
+- A stored attempt counts when the load could not read the snapshot. It also counts when the load kept one at or past it, or projected a version at or past it (UC-NET-033).

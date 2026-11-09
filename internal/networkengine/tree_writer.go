@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -448,9 +449,7 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	if result.ProjectionErr != nil {
 		result.Observed = w.observe(ctx, tree)
 	} else if version-prep.snapshotVersion >= snapshotInterval {
-		if warning := w.takeSnapshot(ctx, tree, shape, version); warning != "" {
-			result.Warnings = append(result.Warnings, warning)
-		}
+		result.Warnings = append(result.Warnings, w.maybeSnapshot(ctx, tree, shape, version, prep)...)
 	}
 	return result, nil
 }
@@ -554,6 +553,8 @@ type prepared struct {
 	warnings []string
 	// the version of the snapshot this load kept, or 0 when it kept none
 	snapshotVersion int64
+	// the load's snapshot read returned an error
+	snapshotReadFailed bool
 }
 
 // prepare builds the tree in the engine and refuses a stream the store cannot
@@ -650,6 +651,7 @@ func (w *TreeWriter) usableSnapshot(ctx context.Context, tree string, shape tree
 	prep *prepared) (Snapshot, bool, error) {
 	snap, found, err := w.snapshots.Get(ctx, tree)
 	if err != nil {
+		prep.snapshotReadFailed = true
 		prep.warnings = append(prep.warnings,
 			fmt.Sprintf("reading the snapshot of tree %s returned: %s", tree, err))
 		return Snapshot{}, false, nil
@@ -842,30 +844,86 @@ func (w *TreeWriter) checkReplayed(ctx context.Context, tree string, projected i
 	return nil
 }
 
-// takeSnapshot stores the engine's snapshot of tree at version, and returns a
-// warning when a step fails.
-func (w *TreeWriter) takeSnapshot(ctx context.Context, tree string, shape treeShape, version int64) string {
+// maybeSnapshot takes a snapshot of tree at version unless the tree's last
+// attempt counts and is less than snapshotInterval behind, and records the attempt.
+func (w *TreeWriter) maybeSnapshot(ctx context.Context, tree string, shape treeShape, version int64,
+	prep prepared) []string {
+	last, found, err := w.snapshots.LastAttempt(ctx, tree)
+	if err != nil {
+		return []string{fmt.Sprintf("reading the last snapshot attempt of tree %s at version %d returned: %s; no snapshot was taken",
+			tree, version, err)}
+	}
+	if found && attemptHonored(last, prep) && version-last.Version < snapshotInterval {
+		if last.Stored {
+			return nil
+		}
+		return []string{fmt.Sprintf("skipped the snapshot of tree %s at version %d; the last attempt, at version %d, stored nothing: %s",
+			tree, version, last.Version, last.Observed)}
+	}
+	warning, attempted, stored := w.takeSnapshot(ctx, tree, shape, version)
+	var warnings []string
+	if warning != "" {
+		warnings = append(warnings, warning)
+	}
+	if !attempted {
+		return warnings
+	}
+	// Detached so a take or put that failed on the caller's cancellation is still recorded.
+	recordCtx, cancel := detachedWrite(ctx)
+	defer cancel()
+	attempt := SnapshotAttempt{TreeID: tree, Version: version, Stored: stored}
+	if !stored {
+		attempt.Observed = storableObserved(warning)
+	}
+	if err := w.snapshots.RecordAttempt(recordCtx, attempt); err != nil {
+		warnings = append(warnings, fmt.Sprintf("recording the snapshot attempt of tree %s at version %d returned: %s",
+			tree, version, err))
+	}
+	return warnings
+}
+
+// attemptHonored reports whether the backoff counts a, given what the load read, kept and projected.
+func attemptHonored(a SnapshotAttempt, prep prepared) bool {
+	return !a.Stored || prep.snapshotReadFailed || prep.snapshotVersion >= a.Version || a.Version <= prep.loaded
+}
+
+// storableObserved returns s with each run of invalid UTF-8, and each NUL byte,
+// replaced by U+FFFD.
+func storableObserved(s string) string {
+	return strings.ReplaceAll(strings.ToValidUTF8(s, "\uFFFD"), "\x00", "\uFFFD")
+}
+
+// takeSnapshot stores the engine's snapshot of tree at version. It returns a
+// warning when no snapshot was stored, and reports whether the engine was asked
+// for one and whether the store kept it.
+func (w *TreeWriter) takeSnapshot(ctx context.Context, tree string, shape treeShape,
+	version int64) (warning string, attempted, stored bool) {
 	projected, found, err := w.store.ProjectedVersion(ctx, tree)
 	if err != nil {
 		return fmt.Sprintf("reading the projected version of tree %s before a snapshot returned: %s; no snapshot was stored",
-			tree, err)
+			tree, err), false, false
 	}
 	if !found || projected != version {
 		return fmt.Sprintf("tree %s has projected version %d (projection row found: %t) after the write at version %d; no snapshot was stored",
-			tree, projected, found, version)
+			tree, projected, found, version), false, false
 	}
 	taken, err := w.engine.TakeSnapshot(ctx, tree)
 	if err != nil {
-		return fmt.Sprintf("taking a snapshot of tree %s at version %d returned: %s", tree, version, err)
+		return fmt.Sprintf("taking a snapshot of tree %s at version %d returned: %s", tree, version, err), true, false
 	}
 	if taken.TreeType != shape.treeType {
 		return fmt.Sprintf("take_snapshot for tree %s at version %d returned tree type %s, and version 1 records %s; no snapshot was stored",
-			tree, version, taken.TreeType, shape.treeType)
+			tree, version, taken.TreeType, shape.treeType), true, false
 	}
-	if err := w.snapshots.Put(ctx, Snapshot{TreeID: tree, Version: version, TreeType: taken.TreeType, Data: taken.Data}); err != nil {
-		return fmt.Sprintf("storing the snapshot of tree %s at version %d returned: %s", tree, version, err)
+	stored, err = w.snapshots.Put(ctx, Snapshot{TreeID: tree, Version: version, TreeType: taken.TreeType, Data: taken.Data})
+	if err != nil {
+		return fmt.Sprintf("storing the snapshot of tree %s at version %d returned: %s", tree, version, err), true, false
 	}
-	return ""
+	if !stored {
+		return fmt.Sprintf("storing the snapshot of tree %s at version %d stored nothing; the store reported no row written",
+			tree, version), true, false
+	}
+	return "", true, true
 }
 
 // observe reads the tree's projected version with a context the caller's

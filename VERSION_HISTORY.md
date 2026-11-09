@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**Test count:** 1860 (Rust), 1704 (Go)
+**Test count:** 1860 (Rust), 1727 (Go)
 
 ### Added
 - Project research documentation (MLM fundamentals, compensation plans, glossary, competitive landscape, legal/regulatory)

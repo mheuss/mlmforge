@@ -152,7 +152,7 @@ func causeText(err error) (text string, ok bool) {
 			text, ok = "cause could not be rendered", true
 		}
 	}()
-	if cause, ok := err.(*TreeLoadRejectedError); ok && cause.msg == "" {
+	if cause, isRejected := err.(*TreeLoadRejectedError); isRejected && cause.msg == "" {
 		return rejectedFallbackLabel, true
 	}
 	text = err.Error()

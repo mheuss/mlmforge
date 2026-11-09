@@ -39,6 +39,7 @@ Use-cases for the Network Engine bounded context.
 - [UC-NET-033: Rebuilding a tree from a snapshot and its stream](#uc-net-033-rebuilding-a-tree-from-a-snapshot-and-its-stream)
 - [UC-NET-034: Projecting a removal that moves other nodes](#uc-net-034-projecting-a-removal-that-moves-other-nodes)
 - [UC-NET-035: Exact decimal values for volume and money](#uc-net-035-exact-decimal-values-for-volume-and-money)
+- [UC-NET-036: Bounding a retried expensive step across processes](#uc-net-036-bounding-a-retried-expensive-step-across-processes)
 
 ---
 
@@ -1316,3 +1317,34 @@ let paid = matched.mul_div_ratio(pairing.percent, multiplier, min_leg, max_leg)?
 - `Dec` has no arithmetic operators. Use the `try_*` methods so every overflow is handled.
 - In tests, build values with `d!` and compare them with `assert_d!`.
 - A `NumericError` names the operation and its inputs. Its kind is `Overflow`, `Precision`, `DivisionByZero`, `Negative` or `NotWholeUnits`.
+
+### UC-NET-036: Bounding a retried expensive step across processes
+
+**Added:** Unreleased (HEU-914)
+**Files:** `internal/networkengine/tree_writer.go`, `internal/networkengine/snapshot_store.go`, `internal/networkengine/snapshot_store_postgres.go`, `internal/networkengine/snapshot_store_memory.go`, `migrations/000011_create_tree_snapshot_attempts.up.sql`
+
+**Problem:** A step that is expensive and can fail every time must not run again on every command. The CLI builds a new `TreeWriter` per command, so a backoff held in memory would not survive.
+
+**Solution:** `tree_snapshot_attempts` holds one row per tree: the version of the last attempt, whether it stored, and what it observed. `RecordAttempt` keeps the highest version, but a failed attempt replaces a stored one at any version. Before the step, the writer reads `LastAttempt`. It skips the step while the attempt counts and is less than 1000 versions behind, and it also skips when the read fails. After the step, it records the attempt on a detached, bounded context, so a caller's cancellation still leaves a record.
+
+**Usage:**
+```go
+last, found, err := store.LastAttempt(ctx, treeID)
+if err != nil {
+	return // skip the step and warn
+}
+if found && version-last.Version < interval {
+	return // back off
+}
+stored, observed := runExpensiveStep()
+recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+defer cancel()
+err = store.RecordAttempt(recordCtx, networkengine.SnapshotAttempt{
+	TreeID: treeID, Version: version, Stored: stored, Observed: observed,
+})
+```
+
+**Notes:**
+- Record successful attempts too. Without them, a read of the result that keeps failing makes every command run the step again.
+- `Observed` must be text a `TEXT` column can hold. The writer replaces NUL bytes and invalid UTF-8 before it records.
+- The tree writer counts a stored attempt only when the load could not read the snapshot, kept one at or past it, or projected a version at or past it (UC-NET-033).

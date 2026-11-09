@@ -265,3 +265,57 @@ func TestMigrations_RemovalStampIndexDownUp(t *testing.T) {
 		require.ErrorIs(t, err, migrate.ErrNoChange, "restore the shared container to head")
 	}
 }
+
+// TestMigrations_SnapshotAttemptsDownUp proves migration 000011's files work.
+func TestMigrations_SnapshotAttemptsDownUp(t *testing.T) {
+	if migrationContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+
+	absPath, err := filepath.Abs("../../migrations")
+	require.NoError(t, err)
+	m, err := migrate.New(fmt.Sprintf("file://%s", absPath), migrationContainer.DSN)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = m.Close() })
+
+	tableExists := func() bool {
+		pool, err := pgxpool.New(context.Background(), migrationContainer.DSN)
+		require.NoError(t, err)
+		defer pool.Close()
+		var exists bool
+		require.NoError(t, pool.QueryRow(context.Background(),
+			`SELECT EXISTS (SELECT 1 FROM information_schema.tables
+			                WHERE table_schema = 'public' AND table_name = 'tree_snapshot_attempts')`,
+		).Scan(&exists))
+		return exists
+	}
+
+	require.True(t, tableExists(), "table present after full migrate up")
+	t.Cleanup(func() { _ = m.Up() })
+	require.NoError(t, m.Migrate(10), "migrate down to version 10 (drops 000011)")
+	require.False(t, tableExists(), "down file actually drops the table")
+	require.NoError(t, m.Migrate(11), "migrate back up to version 11")
+	require.True(t, tableExists(), "up file restores the table")
+	if err := m.Up(); err != nil {
+		require.ErrorIs(t, err, migrate.ErrNoChange, "restore the shared container to head")
+	}
+}
+
+func TestPostgresContainer_NewPool_TruncatesSnapshotAttempts(t *testing.T) {
+	if migrationContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	seedPool, err := pgxpool.New(context.Background(), migrationContainer.DSN)
+	require.NoError(t, err)
+	defer seedPool.Close()
+	_, err = seedPool.Exec(context.Background(),
+		`INSERT INTO tree_snapshot_attempts (tree_id, version, stored, observed)
+		 VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-000000000001', 1000, false, 'seeded by the test')`)
+	require.NoError(t, err)
+
+	freshPool := migrationContainer.NewPool(t)
+
+	var count int
+	require.NoError(t, freshPool.QueryRow(context.Background(), "SELECT count(*) FROM tree_snapshot_attempts").Scan(&count))
+	assert.Equal(t, 0, count, "tree_snapshot_attempts must be empty after NewPool truncate")
+}

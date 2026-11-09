@@ -30,7 +30,7 @@ func takeTreeSnapshot(t *testing.T, env *writerEnv, version int64) Snapshot {
 func seedSnapshot(t *testing.T, env *writerEnv, version int64) Snapshot {
 	t.Helper()
 	snap := takeTreeSnapshot(t, env, version)
-	require.NoError(t, env.snapshots.Put(context.Background(), snap))
+	requireStored(t, context.Background(), env.snapshots, snap)
 	return snap
 }
 
@@ -181,8 +181,8 @@ func TestTreeWriterSnapshotLoad_DeletesASnapshotWhoseNextEventRejectsIt(t *testi
 func TestTreeWriterSnapshotLoad_DeletesASnapshotOfAnotherType(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
-	require.NoError(t, env.snapshots.Put(context.Background(),
-		Snapshot{TreeID: writerTree, Version: 1, TreeType: treeTypeBinary, Data: []byte(`{}`)}))
+	requireStored(t, context.Background(), env.snapshots,
+		Snapshot{TreeID: writerTree, Version: 1, TreeType: treeTypeBinary, Data: []byte(`{}`)})
 	w, engine := env.writer()
 
 	res, err := w.Load(context.Background(), loadRequest())
@@ -240,7 +240,7 @@ func TestTreeWriterSnapshotLoad_RecoversFromASnapshotThatDisagreesWithTheStore(t
 	data, err := json.Marshal(held)
 	require.NoError(t, err)
 	snap.Data = data
-	require.NoError(t, env.snapshots.Put(ctx, snap))
+	requireStored(t, ctx, env.snapshots, snap)
 	w, engine := env.writer()
 
 	res, err := w.Load(ctx, loadRequest())
@@ -574,8 +574,8 @@ func TestTreeWriterSnapshotLoad_RecordsTheSnapshotVersionForTheWrite(t *testing.
 func TestTreeWriterSnapshotLoad_DeletesASnapshotThatIsNotJSON(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
-	require.NoError(t, env.snapshots.Put(context.Background(),
-		Snapshot{TreeID: writerTree, Version: 1, TreeType: treeTypeUnilevel, Data: []byte("not json")}))
+	requireStored(t, context.Background(), env.snapshots,
+		Snapshot{TreeID: writerTree, Version: 1, TreeType: treeTypeUnilevel, Data: []byte("not json")})
 	w, engine := env.writer()
 
 	res, err := w.Load(context.Background(), loadRequest())

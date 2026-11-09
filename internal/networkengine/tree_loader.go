@@ -10,15 +10,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// loadTreeConfig is the structure-level configuration preflight checks: the
-// matrix width and spillover, and whether they were set.
+// loadTreeConfig holds the matrix width and spillover, and whether they were set.
 type loadTreeConfig struct {
 	matrixParamsSet bool
 	matrixWidth     int
 	matrixSpillover string
 }
 
-// supportedTreeTypes are the structures preflight accepts.
+// supportedTreeTypes are the accepted tree structures.
 var supportedTreeTypes = map[string]bool{
 	treeTypeUnilevel: true,
 	treeTypeBinary:   true,
@@ -42,10 +41,6 @@ type slotKey struct {
 
 // validateTreeConfig proves the load's configuration is sound: a supported tree
 // type, and for a matrix tree a width and spillover the engine will accept.
-//
-// It is split from validateNodes because it reads no rows, so it can run before
-// any row is read. An empty tree then reports the same configuration errors a
-// populated one does.
 func validateTreeConfig(treeID, treeType string, cfg loadTreeConfig) error {
 	if !supportedTreeTypes[treeType] {
 		return newTreeLoadRejected(TreeLoadConfigInvalid, treeID, nil,
@@ -294,8 +289,7 @@ func (q *replayQueue) Pop() any {
 }
 
 // orderForReplay proves that every non-root node's parent and sponsor can
-// come before it, and returns one such order. Depth order alone does not prove
-// it: an explicitly placed node can sit at a shallower depth than its sponsor.
+// come before it, and returns one such order.
 //
 // Kahn's algorithm over a priority queue, so the result is deterministic.
 // Every node contributes at most two edges, so e <= 2n and the pass is

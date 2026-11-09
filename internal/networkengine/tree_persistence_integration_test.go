@@ -170,7 +170,7 @@ func TestTreePersistence_StreamLoadMatchesTheWritingWorker(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, placed.ProjectionErr)
 
-	// Kept so its depths can be compared with the load worker's.
+	// Kept so its positions can be compared with the load worker's.
 	writingEngine := it.engine(t)
 	placed, err = NewTreeWriter(it.events, it.store, it.snapshots, writingEngine, NewPostgresTreeLocker(it.dsn)).
 		Place(ctx, PlaceRequest{TreeID: tree, UserID: grandchildID, ParentID: childID, SponsorID: childID,
@@ -189,7 +189,13 @@ func TestTreePersistence_StreamLoadMatchesTheWritingWorker(t *testing.T) {
 		require.NoError(t, err)
 		got, err := loadEngine.GetPosition(ctx, tree, user)
 		require.NoError(t, err)
+		if user != rootID {
+			require.NotNil(t, want.ParentUserID, "writing worker parent of %s", user)
+			require.NotNil(t, want.SponsorUserID, "writing worker sponsor of %s", user)
+		}
 		assert.Equal(t, want.Depth, got.Depth, "depth of %s", user)
+		assert.Equal(t, want.ParentUserID, got.ParentUserID, "parent of %s", user)
+		assert.Equal(t, want.SponsorUserID, got.SponsorUserID, "sponsor of %s", user)
 	}
 }
 
@@ -458,11 +464,8 @@ func TestTreePersistence_MatrixConsumerRoundTrip(t *testing.T) {
 
 // TestTreePersistence_SlotConflictFailsCleanAndTreeReloads proves migration
 // 000004's consequence: a second active claim on an occupied (tree, parent,
-// position) dies at the store insert, before the engine, so the stored rows
-// stay clean. The conflicting event stays at the head of the stream, so a load
-// fails until reject-event clears it. Then the tree reloads. Without the index
-// both rows land and load preflight refuses the whole tree (HEU-553 triage,
-// codex C3).
+// position) fails at the store insert, before the engine. The tree reloads once
+// the conflicting event is rejected.
 func TestTreePersistence_SlotConflictFailsCleanAndTreeReloads(t *testing.T) {
 	it := newWriterIntegration(t)
 	ctx := context.Background()
@@ -485,8 +488,8 @@ func TestTreePersistence_SlotConflictFailsCleanAndTreeReloads(t *testing.T) {
 	_, err = NewTreeWriter(it.events, it.store, it.snapshots, engine, NewPostgresTreeLocker(it.dsn)).Load(ctx, load)
 	require.NoError(t, err)
 
-	// u3 claims the slot u2 holds. The writer would refuse it before the
-	// append, so it is appended directly and delivered through the consumer.
+	// u3 claims the slot u2 holds. It is appended directly and delivered
+	// through the consumer.
 	conflict := appendForeign(t, it, tree, EventTypeNodePlaced, NodePlacedPayload{
 		TreeID: tree, UserID: u3, ParentID: u1, SponsorID: u1,
 		Position: intPtr(0), TreeType: treeTypeMatrix, EnrolledAt: base.Add(2 * time.Hour)})

@@ -438,7 +438,7 @@ go test ./internal/config/ && (cd engine && cargo test --test config_width_contr
 
 **Problem:** A tree load builds the engine from a snapshot or the event stream. A build that fails partway leaves a structure in the worker. A retry in the same worker has to drop it first.
 
-**Solution:** Prove the input is sound before the first engine call, in two phases split by what they read. `validateTreeConfig` checks the tree type, and for a matrix the width and spillover. It reads no rows. The writer runs it while it builds the tree's shape, before it reads any row. `preflight` then checks the active rows. `validateNodes` checks empty user IDs, the nil UUID, duplicates, exactly one depth-0 root, the root's parent and position, self-references, reference existence, depth consistency, slot occupancy, and no position on a unilevel node. `orderForReplay` proves every non-root node's parent and sponsor can come before it. `TreeWriter.build` runs `preflight` before it restores a snapshot or creates the structure. A refusal is a `TreeLoadRejectedError`, and the engine was never called.
+**Solution:** Prove the input is sound before the first engine call, in two phases split by what they read. `validateTreeConfig` checks the tree type, and for a matrix the width and spillover. It reads no rows. The writer runs it while it builds the tree's shape, before it reads any row. `preflight` then checks the active rows. `validateNodes` checks empty user IDs, the nil UUID, duplicates, exactly one depth-0 root, the root's parent and position, self-references, reference existence, depth consistency, slot occupancy, and no position on a unilevel node. `orderForReplay` proves every non-root node's parent and sponsor can come before it. `TreeWriter.build` runs `preflight` before it restores a snapshot or creates the structure. A refusal is a `TreeLoadRejectedError`. The engine was never called.
 
 **Usage:**
 ```go
@@ -454,7 +454,7 @@ func (w *TreeWriter) build(ctx context.Context, tree string, shape treeShape, pr
 
 **Notes:** The pattern generalises to any external system with no undo: an engine that cannot undo a lost reply, an API without a rollback, a third party that charges on first call. Two things make it worth the duplication of engine rules in Go. First, the validation must mirror what the remote actually enforces, so it is only as good as that audit — `TestTreePersistence_PreflightRefusalLeavesTheEngineLoadable` proves the guarantee against the real worker rather than a stub, and asserts a *corrected retry succeeds*, which is the part no fake can demonstrate. Second, the mirroring drifts silently if the remote adds a rule; the Rust side keeps its own runtime checks, so preflight is a second line of defence rather than a replacement. Deliberately not covered: divergence between what the store recorded and what the remote actually did — both can be internally consistent, so no read-side validation can detect it. HEU-553 closed the write-side contract for placement, and HEU-582 closed it for matrix removal. HEU-942 made the consumer refuse a type label that disagrees with the stream's version 1. The matrix width bound (HEU-554) remains open. Related: UC-NET-013, which supplies the ordering half.
 
-One ordering trap the split exists to avoid: an empty-input short circuit placed above the configuration checks hides configuration errors while the input stays empty. HEU-566 found a matrix load with no width and spillover, and a load naming an unsupported type, both returning nil on a zero-row tree. Configuration describes the structure, not its contents, so its validity never depends on row count. The writer validates the shape before it reads any row, and preflight passes an empty set.
+One ordering trap the split exists to avoid is an empty-input short circuit above the configuration checks. It hides configuration errors while the input stays empty. HEU-566 found two loads that returned nil on a zero-row tree. One was a matrix load with no width and spillover. The other named an unsupported type. Configuration describes the structure, not its contents. Its validity never depends on row count. The writer validates the shape before it reads any row. Preflight passes an empty set.
 
 ---
 
@@ -1023,11 +1023,10 @@ if alreadyProjected {
 
 **Problem:** A caller that retries a `TreeWriter.Load` failure has to tell an infrastructure blip apart from a failure that will fail the same way forever. The error kind alone does not carry enough to decide.
 
-**Solution:** `treeLoadRetryable` allowlists rather than denylists. A cause nobody enumerated defaults to stopping. It retries one case: a `TreeLoadRejectedError` whose `Kind` is `TreeLoadStoreReadFailed` and whose wrapped error `pgconn.SafeToRetry` reports never reached the server. Everything else stops. Cancellation is checked first and separately. `TreeLoadStoreReadFailed` covers a refused connection, a cancelled context and a row that will not decode. Only the first of those can succeed on a second attempt. The CLI's retry loop never drops a structure between attempts. Each command starts its own worker, and a failed load ends with it. `tree load` goes through `TreeWriter.Load`. Its read of version 1 and its read of the projected version and rows also fail as `TreeLoadStoreReadFailed`. Both come before any engine call.
+**Solution:** `treeLoadRetryable` allowlists rather than denylists. A cause nobody enumerated defaults to stopping. It retries one case: a `TreeLoadRejectedError` whose `Kind` is `TreeLoadStoreReadFailed` and whose wrapped error `pgconn.SafeToRetry` reports never reached the server. Everything else stops. Cancellation is checked first and separately. `TreeLoadStoreReadFailed` covers a refused connection, a cancelled context and a row that will not decode. Only the first of those can succeed on a second attempt. The CLI's retry loop never drops a structure between attempts. Each command starts its own worker. A failed load ends with it. `tree load` goes through `TreeWriter.Load`. Its read of version 1 and its read of the projected version and rows also fail as `TreeLoadStoreReadFailed`. Both come before any engine call.
 
 **Usage:**
 ```go
-// treeLoadRetryable checks cancellation before it looks at the type.
 _, err := w.Load(ctx, req)
 if err != nil && treeLoadRetryable(err) {
     // Only reachable for a store read that never left the client.
@@ -1183,14 +1182,14 @@ if res.ProjectionErr != nil {
 **Added:** Unreleased
 **Files:** `internal/networkengine/structure_dropper.go`, `internal/networkengine/engine_client.go`, `internal/networkengine/tree_writer.go`, `engine/network-engine-worker/src/handlers/tree.rs`
 
-**Problem:** A structure left partly built by a snapshot build the engine refused, or that disagreed with the store, blocks a full replay under its name.
+**Problem:** A snapshot build can leave a structure partly built. This happens when the engine refuses the build or when the build disagrees with the store. The structure blocks a full replay under its name.
 
 **Solution:** `DropStructure` removes the named structure of any kind through `drop_structure` and answers whether it existed. Absence is not an error, so a caller can drop unconditionally before a rebuild without first asking whether the structure exists. The loaded plan stays in place.
 
 **Usage:**
 ```go
-// From TreeWriter.build: a snapshot build the engine refused, or one that
-// disagreed with the store, is dropped before the full replay.
+// A snapshot build the engine refused, or one that disagreed with the store,
+// is dropped before the full replay.
 if !snapshotFallsBack(buildErr) {
 	return fmt.Errorf("load tree %s; nothing was appended: %w", tree, buildErr)
 }
@@ -1206,7 +1205,7 @@ return w.buildFromStream(ctx, tree, shape, projected, rows)
 - Preflight is meant to catch engine refusals before the create. This path should be rare.
 - A drop recovers only from an engine refusal, or from a snapshot build that disagreed with the store. After a timeout, a cancellation or a worker crash, the client is closed or the worker is gone. Start a new worker instead. It starts empty.
 - Hold the client exclusively from the drop to the end of the rebuild. Nothing else enforces that.
-- The caller owns the structure name, not whatever an earlier holder built under it. A `TREE_EXISTS` from the restore means another structure already held the name, and `snapshotFallsBack` refuses to drop it.
+- The caller owns the structure name, not whatever an earlier holder built under it. A `TREE_EXISTS` from the restore means another structure already held the name. `snapshotFallsBack` refuses to drop it.
 
 ---
 

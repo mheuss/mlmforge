@@ -87,8 +87,8 @@ func TestTreeNodesActiveSlotIndex(t *testing.T) {
 }
 
 // conflictError matches this index by name. The name is covered by the
-// behavioral tests; the predicate is not. A wider predicate would refuse rows
-// preflight accepts, and a narrower one would let a second root through.
+// behavioral tests; the predicate is not. A wider predicate would refuse valid
+// rows, and a narrower one would let a second root through.
 func TestTreeNodesActiveRootIndex(t *testing.T) {
 	def := treeNodeIndexDef(t, activeRootIndex)
 

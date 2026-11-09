@@ -84,8 +84,7 @@ func TestPreflight_AcceptsAMatrixSponsorDeeperThanItsNode(t *testing.T) {
 	require.NoError(t, preflightRows(t, "matrix", matrixConfig(3, "breadth_first"), []TreeNodeRow{root, u1, u3, u2}))
 }
 
-// preflightRows seeds an in-memory store with nodes and runs the checks a load
-// runs: the configuration, then preflight over the rows the store returns.
+// preflightRows seeds an in-memory store with nodes, then runs preflightStore.
 func preflightRows(t *testing.T, treeType string, cfg loadTreeConfig, nodes []TreeNodeRow) error {
 	t.Helper()
 	store := NewMemoryTreeStore()
@@ -112,7 +111,7 @@ func preflightStore(t *testing.T, store TreeStore, treeType string, cfg loadTree
 	return preflight("t", treeType, cfg, rows)
 }
 
-// matrixConfig is the configuration a matrix tree of this shape loads with.
+// matrixConfig returns a configuration with matrix params set.
 func matrixConfig(width int, spillover string) loadTreeConfig {
 	return loadTreeConfig{matrixParamsSet: true, matrixWidth: width, matrixSpillover: spillover}
 }
@@ -322,8 +321,6 @@ func TestValidateNodes_RootSponsorIsExempt(t *testing.T) {
 	}
 }
 
-// TestValidateNodes_DuplicateUserID calls validateNodes directly because the
-// fixture cannot be inserted through the memory store.
 func TestValidateNodes_DuplicateUserID(t *testing.T) {
 	nodes := []TreeNodeRow{
 		makeNode("t", "u0", 0, nil, ptr("u0"), nil),

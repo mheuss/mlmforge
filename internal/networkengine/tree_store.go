@@ -63,17 +63,7 @@ type TreeStore interface {
 	// GetByTreeDepthOrdered returns all active nodes in a tree ordered by
 	// depth ascending, then enrolled_at.
 	//
-	// What the sort buys is preflight errors that are stable for rows differing
-	// on enrollment time.
-	// validateNodes runs before orderForReplay and returns on the first fault it
-	// meets. On data with several faults the message therefore depends on row
-	// order: which pair "more than one depth-0 root (%s and %s)" names, and
-	// which of several dangling nodes gets reported. A stable input makes a
-	// failing load fail the same way every time, which is what an
-	// operator needs to act on.
-	//
-	// Rows tying on depth and enrollment time have no defined order. The message
-	// names whichever the sort happened to put first.
+	// Rows tying on depth and enrollment time have no defined order.
 	//
 	// idx_tree_nodes_depth(tree_id, depth) backs the leading key, so the cost
 	// is a sort within each depth group.

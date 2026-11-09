@@ -7,7 +7,7 @@ import (
 )
 
 // The leading segment of a message this package renders from a value it did
-// not construct. A message this package built never begins with it.
+// not construct.
 const rejectedFallbackLabel = "tree load rejected"
 
 // TreeLoadRejectionKind names why a load was refused before the engine was
@@ -28,9 +28,6 @@ const (
 
 // TreeLoadRejectedError reports a load that failed before any engine call, so
 // the engine is unchanged and the load can be retried.
-//
-// Typed rather than a bare fmt.Errorf, so a caller can match it with errors.As
-// and read Kind. The engine was never called, so the load can be retried.
 type TreeLoadRejectedError struct {
 	TreeID string
 	// NodeIDs holds every user the message names, in the order the message

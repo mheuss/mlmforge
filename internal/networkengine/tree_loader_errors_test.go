@@ -421,7 +421,7 @@ func TestTreeLoadErrors_DoNotAliasTheCallersSlice(t *testing.T) {
 
 // Every kind constant is non-empty. The list is maintained by hand, so a new
 // constant has to be added here to be covered.
-func TestTreeLoadErrors_NoConstantCollidesWithTheSentinel(t *testing.T) {
+func TestTreeLoadErrors_EveryKindConstantIsNonEmpty(t *testing.T) {
 	for _, k := range []TreeLoadRejectionKind{
 		TreeLoadDataInvalid, TreeLoadConfigInvalid, TreeLoadStoreReadFailed,
 	} {

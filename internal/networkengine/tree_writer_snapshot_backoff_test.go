@@ -408,6 +408,38 @@ func TestTreeWriterSnapshotBackoff_ASnapshotEveryLoadDiscardsIsRetakenOncePerTho
 	requireLastAttempt(t, env, SnapshotAttempt{TreeID: writerTree, Version: 2 * snapshotInterval, Stored: true})
 }
 
+func TestTreeWriterSnapshotBackoff_EachTakeTriggerTakesOnce(t *testing.T) {
+	cases := map[string]struct {
+		snapshots func(env *writerEnv) SnapshotStore
+		engine    func() *fakeWriterEngine
+		observed  string
+	}{
+		"a put that stores nothing": {
+			func(env *writerEnv) SnapshotStore { return noopPutStore{SnapshotStore: env.snapshots} },
+			newFakeWriterEngine,
+			"storing the snapshot of tree " + writerTree + " at version 1000 stored nothing; the store reported no row written"},
+		"a failing take": {
+			func(env *writerEnv) SnapshotStore { return env.snapshots },
+			func() *fakeWriterEngine { e := newFakeWriterEngine(); e.takeErr = errors.New("worker gone"); return e },
+			"taking a snapshot of tree " + writerTree + " at version 1000 returned: worker gone"},
+		"a take of another type": {
+			func(env *writerEnv) SnapshotStore { return env.snapshots },
+			func() *fakeWriterEngine { e := newFakeWriterEngine(); e.snapshotType = treeTypeBinary; return e },
+			"take_snapshot for tree " + writerTree + " at version 1000 returned tree type binary, " +
+				"and version 1 records unilevel; no snapshot was stored"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			env := backoffEnv(t)
+
+			takes, _ := backoffWrites(t, env, tc.snapshots(env), tc.engine, snapshotInterval, snapshotInterval+10)
+
+			assert.Equal(t, 1, takes)
+			requireLastAttempt(t, env, SnapshotAttempt{TreeID: writerTree, Version: 1000, Observed: tc.observed})
+		})
+	}
+}
+
 func TestTreeWriterSnapshotBackoff_ReadsAndRecordsOnlyPastTheThreshold(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)

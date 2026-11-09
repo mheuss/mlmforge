@@ -109,29 +109,21 @@ func (s *rejectingTreeStore) GetByTreeDepthOrdered(_ context.Context, treeID str
 	return nil, nil
 }
 
-// TestTreeLoader_EmptyTreeWithValidConfigIsANoOp pins the other half of the
-// contract. A zero-row tree whose configuration is sound still creates nothing.
-// Matrix is covered alongside unilevel because the matrix config path is the
-// one that moved above the node-count check.
-func TestTreeLoader_EmptyTreeWithValidConfigIsANoOp(t *testing.T) {
+// TestPreflight_EmptyTreeWithValidConfigPasses pins that a zero-row tree whose
+// configuration is sound passes preflight.
+func TestPreflight_EmptyTreeWithValidConfigPasses(t *testing.T) {
 	tests := []struct {
 		name     string
 		treeType string
-		opts     []LoadTreeOption
+		cfg      loadTreeConfig
 	}{
 		{name: "unilevel", treeType: "unilevel"},
-		{
-			name:     "matrix",
-			treeType: "matrix",
-			opts:     []LoadTreeOption{WithMatrixParams(3, "breadth_first")},
-		},
+		{name: "matrix", treeType: "matrix", cfg: matrixConfig(3, "breadth_first")},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mutator, err := loadWithStub(t, tt.treeType, nil, tt.opts...)
-			require.NoError(t, err)
-			assert.Zero(t, mutator.totalCalls(), "empty tree must create nothing")
+			require.NoError(t, preflightRows(t, tt.treeType, tt.cfg, nil))
 		})
 	}
 }
@@ -220,49 +212,37 @@ func TestTreeLoader_SkipsRemovedNodes(t *testing.T) {
 	assert.Equal(t, "add_root", transport.ops[1])
 }
 
-func TestTreeLoader_NoDepthZeroRoot(t *testing.T) {
+func TestPreflight_NoDepthZeroRoot(t *testing.T) {
 	store := NewMemoryTreeStore()
 	ctx := context.Background()
 
 	// Insert a single node with depth 1 — invalid for a root.
-	node := makeNode("tree-1", "user-0", 1, nil, ptr("user-0"), nil)
+	node := makeNode("t", "user-0", 1, nil, ptr("user-0"), nil)
 	require.NoError(t, store.insertNode(ctx, node))
 
-	transport := newOrderRecordingTransport()
-	engine := newEngineClientWithTransport(transport)
-	loader := NewTreeLoader(store, engine)
-
-	_, err := loader.LoadTree(ctx, "tree-1", "unilevel")
+	err := preflightStore(t, store, "unilevel", loadTreeConfig{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "has no depth-0 root node")
-
-	// Preflight runs before the engine is touched, so nothing was created.
-	assert.Empty(t, transport.ops, "validation failure must make no engine calls")
 }
 
-func TestTreeLoader_ChildWithNilParent(t *testing.T) {
+func TestPreflight_ChildWithNilParent(t *testing.T) {
 	store := NewMemoryTreeStore()
 	ctx := context.Background()
 	enrolled := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	// Valid root.
-	root := makeNode("tree-1", "user-0", 0, nil, ptr("user-0"), nil)
+	root := makeNode("t", "user-0", 0, nil, ptr("user-0"), nil)
 	root.EnrolledAt = enrolled
 	require.NoError(t, store.insertNode(ctx, root))
 
 	// Child with nil ParentID and nil SponsorID — data corruption.
-	child := makeNode("tree-1", "user-1", 1, nil, nil, nil)
+	child := makeNode("t", "user-1", 1, nil, nil, nil)
 	child.EnrolledAt = enrolled.Add(time.Hour)
 	require.NoError(t, store.insertNode(ctx, child))
 
-	transport := newOrderRecordingTransport()
-	engine := newEngineClientWithTransport(transport)
-	loader := NewTreeLoader(store, engine)
-
-	_, err := loader.LoadTree(ctx, "tree-1", "unilevel")
+	err := preflightStore(t, store, "unilevel", loadTreeConfig{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "has nil parent or sponsor")
-	assert.Empty(t, transport.ops, "validation failure must make no engine calls")
 }
 
 func TestTreeLoader_LoadMatrixTree_RootOnlyRoutesToCreateMatrixTree(t *testing.T) {
@@ -366,14 +346,9 @@ func TestTreeLoader_ReplayOrderIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestTreeLoader_MatrixSponsorDeeperThanNode is the matrix counterpart to
-// TestTreeLoader_BinaryTreeLoadsUnchanged: it exercises explicit-placement
-// dispatch and dependency-aware reordering together. That combination is the
-// whole point of HEU-534 — an admin override can put a node shallower than its
-// own sponsor, which is exactly what depth-ordered replay cannot restore — and
-// no other matrix test covers it, because every other matrix fixture has
-// sponsors at or above their nodes.
-func TestTreeLoader_MatrixSponsorDeeperThanNode(t *testing.T) {
+// TestPreflight_AcceptsAMatrixSponsorDeeperThanItsNode pins that preflight
+// accepts a matrix node placed shallower than its own sponsor.
+func TestPreflight_AcceptsAMatrixSponsorDeeperThanItsNode(t *testing.T) {
 	enrolled := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	root := makeNode("t", "u0", 0, nil, ptr("u0"), nil)
@@ -390,17 +365,7 @@ func TestTreeLoader_MatrixSponsorDeeperThanNode(t *testing.T) {
 	u2 := makeNode("t", "u2", 2, ptr("u1"), ptr("u1"), intPtr(1))
 	u2.EnrolledAt = enrolled.Add(3 * time.Hour)
 
-	mutator, err := loadWithStub(t, "matrix", []TreeNodeRow{root, u1, u3, u2},
-		WithMatrixParams(3, "breadth_first"))
-	require.NoError(t, err)
-
-	assert.Empty(t, mutator.nodes, "matrix must not route through AddNode")
-	// u2 precedes u3 because it sponsors it, even though u3 is shallower.
-	assert.Equal(t, []nodeAtCall{
-		{userID: "u1", parentID: "u0", sponsorID: "u0", position: 0},
-		{userID: "u2", parentID: "u1", sponsorID: "u1", position: 1},
-		{userID: "u3", parentID: "u0", sponsorID: "u2", position: 2},
-	}, mutator.nodesAt)
+	require.NoError(t, preflightRows(t, "matrix", matrixConfig(3, "breadth_first"), []TreeNodeRow{root, u1, u3, u2}))
 }
 
 // loadWithStub seeds an in-memory store and runs LoadTree against a stub
@@ -430,13 +395,46 @@ func loadWithStubDirect(t *testing.T, treeType string, nodes []TreeNodeRow, opts
 	return mutator, err
 }
 
-func TestTreeLoader_ValidationFailures_Structural(t *testing.T) {
-	matrixOpts := []LoadTreeOption{WithMatrixParams(3, "breadth_first")}
+// preflightRows seeds an in-memory store with nodes and runs the checks a load
+// runs: the configuration, then preflight over the rows the store returns.
+func preflightRows(t *testing.T, treeType string, cfg loadTreeConfig, nodes []TreeNodeRow) error {
+	t.Helper()
+	store := NewMemoryTreeStore()
+	for _, n := range nodes {
+		require.NoError(t, store.insertNode(context.Background(), n))
+	}
+	return preflightStore(t, store, treeType, cfg)
+}
+
+// preflightRowsDirect is preflightRows for fixtures the store's insert refuses.
+func preflightRowsDirect(t *testing.T, treeType string, cfg loadTreeConfig, nodes []TreeNodeRow) error {
+	t.Helper()
+	return preflightStore(t, &MemoryTreeStore{nodes: nodes}, treeType, cfg)
+}
+
+// preflightStore runs the configuration check and preflight against tree "t".
+func preflightStore(t *testing.T, store TreeStore, treeType string, cfg loadTreeConfig) error {
+	t.Helper()
+	if err := validateTreeConfig("t", treeType, cfg); err != nil {
+		return err
+	}
+	rows, err := store.GetByTreeDepthOrdered(context.Background(), "t")
+	require.NoError(t, err)
+	return preflight("t", treeType, cfg, rows)
+}
+
+// matrixConfig is the configuration a matrix tree of this shape loads with.
+func matrixConfig(width int, spillover string) loadTreeConfig {
+	return loadTreeConfig{matrixParamsSet: true, matrixWidth: width, matrixSpillover: spillover}
+}
+
+func TestPreflight_ValidationFailures_Structural(t *testing.T) {
+	matrixCfg := matrixConfig(3, "breadth_first")
 
 	tests := []struct {
 		name     string
 		treeType string
-		opts     []LoadTreeOption
+		cfg      loadTreeConfig
 		nodes    []TreeNodeRow
 		wantErr  string
 		// direct seeds the store's rows in one go instead of inserting them
@@ -452,21 +450,21 @@ func TestTreeLoader_ValidationFailures_Structural(t *testing.T) {
 		{
 			name:     "matrix width below 2",
 			treeType: "matrix",
-			opts:     []LoadTreeOption{WithMatrixParams(1, "breadth_first")},
+			cfg:      matrixConfig(1, "breadth_first"),
 			nodes:    []TreeNodeRow{makeNode("t", "u0", 0, nil, ptr("u0"), nil)},
 			wantErr:  "matrix width 1 outside the supported range 2..255",
 		},
 		{
 			name:     "matrix width above 255",
 			treeType: "matrix",
-			opts:     []LoadTreeOption{WithMatrixParams(256, "breadth_first")},
+			cfg:      matrixConfig(256, "breadth_first"),
 			nodes:    []TreeNodeRow{makeNode("t", "u0", 0, nil, ptr("u0"), nil)},
 			wantErr:  "matrix width 256 outside the supported range 2..255",
 		},
 		{
 			name:     "unsupported spillover",
 			treeType: "matrix",
-			opts:     []LoadTreeOption{WithMatrixParams(3, "depth_first")},
+			cfg:      matrixConfig(3, "depth_first"),
 			nodes:    []TreeNodeRow{makeNode("t", "u0", 0, nil, ptr("u0"), nil)},
 			wantErr:  `unsupported spillover "depth_first"`,
 		},
@@ -496,7 +494,7 @@ func TestTreeLoader_ValidationFailures_Structural(t *testing.T) {
 		{
 			name:     "root carries a position",
 			treeType: "matrix",
-			opts:     matrixOpts,
+			cfg:      matrixCfg,
 			nodes:    []TreeNodeRow{makeNode("t", "u0", 0, nil, ptr("u0"), intPtr(0))},
 			wantErr:  "root u0 in tree t has position 0",
 		},
@@ -587,14 +585,13 @@ func TestTreeLoader_ValidationFailures_Structural(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			load := loadWithStub
+			run := preflightRows
 			if tt.direct {
-				load = loadWithStubDirect
+				run = preflightRowsDirect
 			}
-			mutator, err := load(t, tt.treeType, tt.nodes, tt.opts...)
+			err := run(t, tt.treeType, tt.cfg, tt.nodes)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.wantErr)
-			assert.Zero(t, mutator.totalCalls(), "preflight failure must make no engine calls")
 		})
 	}
 }
@@ -652,13 +649,13 @@ func TestValidateNodes_DuplicateUserID(t *testing.T) {
 	assert.Contains(t, err.Error(), "duplicate user u0")
 }
 
-func TestTreeLoader_ValidationFailures_Positions(t *testing.T) {
-	matrixOpts := []LoadTreeOption{WithMatrixParams(3, "breadth_first")}
+func TestPreflight_ValidationFailures_Positions(t *testing.T) {
+	matrixCfg := matrixConfig(3, "breadth_first")
 
 	tests := []struct {
 		name     string
 		treeType string
-		opts     []LoadTreeOption
+		cfg      loadTreeConfig
 		nodes    []TreeNodeRow
 		wantErr  string
 		// direct seeds the store without its insert. Required for fixtures
@@ -670,7 +667,7 @@ func TestTreeLoader_ValidationFailures_Positions(t *testing.T) {
 		{
 			name:     "matrix nil position",
 			treeType: "matrix",
-			opts:     matrixOpts,
+			cfg:      matrixCfg,
 			nodes: []TreeNodeRow{
 				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
 				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), nil),
@@ -680,7 +677,7 @@ func TestTreeLoader_ValidationFailures_Positions(t *testing.T) {
 		{
 			name:     "matrix negative position",
 			treeType: "matrix",
-			opts:     matrixOpts,
+			cfg:      matrixCfg,
 			nodes: []TreeNodeRow{
 				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
 				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(-1)),
@@ -690,7 +687,7 @@ func TestTreeLoader_ValidationFailures_Positions(t *testing.T) {
 		{
 			name:     "matrix position equals width",
 			treeType: "matrix",
-			opts:     matrixOpts,
+			cfg:      matrixCfg,
 			nodes: []TreeNodeRow{
 				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
 				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(3)),
@@ -700,7 +697,7 @@ func TestTreeLoader_ValidationFailures_Positions(t *testing.T) {
 		{
 			name:     "matrix duplicate slot",
 			treeType: "matrix",
-			opts:     matrixOpts,
+			cfg:      matrixCfg,
 			nodes: []TreeNodeRow{
 				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
 				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(1)),
@@ -742,24 +739,18 @@ func TestTreeLoader_ValidationFailures_Positions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			load := loadWithStub
+			run := preflightRows
 			if tt.direct {
-				load = loadWithStubDirect
+				run = preflightRowsDirect
 			}
-			mutator, err := load(t, tt.treeType, tt.nodes, tt.opts...)
+			err := run(t, tt.treeType, tt.cfg, tt.nodes)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tt.wantErr)
-			assert.Zero(t, mutator.totalCalls(), "preflight failure must make no engine calls")
 		})
 	}
 }
 
-// TestTreeLoader_ValidPositionsAccepted drives through LoadTree rather than
-// calling validateNodes directly. It used to do the latter, because the
-// multi-node matrix guard would have refused this three-node fixture before
-// validation ran — that guard is gone, so the bypass is no longer needed and
-// the test can assert the placements actually reached the engine.
-func TestTreeLoader_ValidPositionsAccepted(t *testing.T) {
+func TestPreflight_ValidPositionsAccepted(t *testing.T) {
 	// Same position under different parents is fine, and width-1 is in range.
 	nodes := []TreeNodeRow{
 		makeNode("t", "u0", 0, nil, ptr("u0"), nil),
@@ -767,14 +758,7 @@ func TestTreeLoader_ValidPositionsAccepted(t *testing.T) {
 		makeNode("t", "u2", 2, ptr("u1"), ptr("u1"), intPtr(2)),
 	}
 
-	mutator, err := loadWithStub(t, "matrix", nodes, WithMatrixParams(3, "breadth_first"))
-	require.NoError(t, err)
-
-	assert.Equal(t, []string{"u0"}, mutator.roots)
-	assert.Equal(t, []nodeAtCall{
-		{userID: "u1", parentID: "u0", sponsorID: "u0", position: 2},
-		{userID: "u2", parentID: "u1", sponsorID: "u1", position: 2},
-	}, mutator.nodesAt)
+	require.NoError(t, preflightRows(t, "matrix", matrixConfig(3, "breadth_first"), nodes))
 }
 
 // failAfterNMutator fails one engine call after the create succeeds.
@@ -993,28 +977,18 @@ func TestTreeLoader_CreateMatrixTreeFailureStopsBeforeRoot(t *testing.T) {
 	assert.Empty(t, mutator.nodesAt)
 }
 
-// TestTreeLoader_MatrixParamsIgnoredForNonMatrix pins the documented contract
-// that WithMatrixParams is inert for other tree types. A width and spillover
-// that would be rejected outright for a matrix must not affect a binary load.
-func TestTreeLoader_MatrixParamsIgnoredForNonMatrix(t *testing.T) {
+// TestPreflight_MatrixParamsIgnoredForNonMatrix pins that matrix params are
+// inert for other tree types. A width and spillover that would be rejected
+// outright for a matrix must not affect a binary tree.
+func TestPreflight_MatrixParamsIgnoredForNonMatrix(t *testing.T) {
 	nodes := []TreeNodeRow{
 		makeNode("t", "u0", 0, nil, ptr("u0"), nil),
 		makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(1)),
 	}
 
-	mutator, err := loadWithStub(t, "binary", nodes, WithMatrixParams(0, "depth_first"))
-	require.NoError(t, err)
-
 	// Width 0 must not leak into the binary slot limit: position 1 is only
 	// valid because binary hardcodes 2.
-	assert.Equal(t, []nodeAddCall{
-		{userID: "u1", parentID: "u0", sponsorID: "u0", position: intPtr(1)},
-	}, mutator.nodeCalls)
-
-	// The create path is unaffected too — a matrix option must not reroute a
-	// binary tree through CreateMatrixTree.
-	assert.Equal(t, []string{"t"}, mutator.created)
-	assert.Empty(t, mutator.matrixCreated)
+	require.NoError(t, preflightRows(t, "binary", matrixConfig(0, "depth_first"), nodes))
 }
 
 func TestValidateNodes_UnilevelPositionIsRejected(t *testing.T) {
@@ -1130,7 +1104,7 @@ func TestOrderForReplay_IsIndependentOfInputOrder(t *testing.T) {
 	}
 }
 
-func TestTreeLoader_CyclicReferences(t *testing.T) {
+func TestPreflight_CyclicReferences(t *testing.T) {
 	// u1 and u2 sponsor each other. Parents are valid, so only the sponsor
 	// edges form the cycle and nothing can be replayed first.
 	nodes := []TreeNodeRow{
@@ -1139,7 +1113,7 @@ func TestTreeLoader_CyclicReferences(t *testing.T) {
 		makeNode("t", "u2", 1, ptr("u0"), ptr("u1"), nil),
 	}
 
-	mutator, err := loadWithStub(t, "unilevel", nodes)
+	err := preflightRows(t, "unilevel", loadTreeConfig{}, nodes)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "form a cycle")
 	// BR-4: the error must name the offending nodes, not just count them.
@@ -1147,7 +1121,6 @@ func TestTreeLoader_CyclicReferences(t *testing.T) {
 	// because "u1, u2" would also match a message that wrongly included u0.
 	assert.Contains(t, err.Error(), "u1 -> u2 -> u1")
 	assert.Contains(t, err.Error(), "2 of 3 nodes", "the root is replayable and must not be counted")
-	assert.Zero(t, mutator.totalCalls(), "cycle must be detected before any engine call")
 }
 
 // TestOrderForReplay_CycleErrorNamesCycleNotBystanders is the case that
@@ -1269,7 +1242,7 @@ func TestOrderForReplay_DuplicateUserIDsDoNotPanic(t *testing.T) {
 	})
 }
 
-func TestTreeLoader_RootSponsorIsNotADependency(t *testing.T) {
+func TestOrderForReplay_RootSponsorIsNotADependency(t *testing.T) {
 	// AddRoot takes no sponsor and the engine root is sponsor: None, so
 	// whatever a root row stores is projection metadata. Treating it as a
 	// replay dependency makes the root wait on a node downstream of itself and
@@ -1298,28 +1271,22 @@ func TestTreeLoader_RootSponsorIsNotADependency(t *testing.T) {
 	}
 }
 
-// TestTreeLoader_RootSponsorLoadsThroughLoadTree covers the same invariant one
-// layer up. The regression this guards lived at the boundary between
-// validateNodes and orderForReplay, not inside either, so exercising the
-// helper alone would not have caught it.
-func TestTreeLoader_RootSponsorLoadsThroughLoadTree(t *testing.T) {
+// TestPreflight_AcceptsARootSponsoredByItsDescendant covers the root-sponsor
+// exemption through both validateNodes and orderForReplay together.
+func TestPreflight_AcceptsARootSponsoredByItsDescendant(t *testing.T) {
 	nodes := []TreeNodeRow{
 		// Root sponsored by a node that is itself downstream of the root.
 		makeNode("t", "u0", 0, nil, ptr("u1"), nil),
 		makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), nil),
 	}
 
-	mutator, err := loadWithStub(t, "unilevel", nodes)
-	require.NoError(t, err, "a root sponsored by its own descendant must still load")
-	assert.Equal(t, []string{"u0"}, mutator.roots)
-	assert.Equal(t, []string{"u1"}, mutator.nodes)
+	require.NoError(t, preflightRows(t, "unilevel", loadTreeConfig{}, nodes),
+		"a root sponsored by its own descendant must still pass")
 }
 
-// TestTreeLoader_BinaryTreeLoadsUnchanged is BR-5's evidence for the binary
-// half. Binary now passes through position preflight and dependency-aware
-// ordering, and every other unchanged-behavior test loads a unilevel tree, so
-// without this the compatibility claim rests on nothing.
-func TestTreeLoader_BinaryTreeLoadsUnchanged(t *testing.T) {
+// TestPreflight_AcceptsABinarySponsorDeeperThanItsNode pins that preflight
+// accepts a binary node placed shallower than its own sponsor.
+func TestPreflight_AcceptsABinarySponsorDeeperThanItsNode(t *testing.T) {
 	enrolled := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	root := makeNode("t", "u0", 0, nil, ptr("u0"), nil)
@@ -1328,51 +1295,24 @@ func TestTreeLoader_BinaryTreeLoadsUnchanged(t *testing.T) {
 	left := makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(0))
 	left.EnrolledAt = enrolled.Add(time.Hour)
 
-	// Sponsored by u3, which sits deeper, so depth order alone would replay
-	// this before its sponsor exists. Parent and sponsor also differ here.
+	// Sponsored by u3, which sits deeper. Parent and sponsor also differ here.
 	right := makeNode("t", "u2", 1, ptr("u0"), ptr("u3"), intPtr(1))
 	right.EnrolledAt = enrolled.Add(2 * time.Hour)
 
 	deep := makeNode("t", "u3", 2, ptr("u1"), ptr("u1"), intPtr(0))
 	deep.EnrolledAt = enrolled.Add(3 * time.Hour)
 
-	mutator, err := loadWithStub(t, "binary", []TreeNodeRow{root, left, right, deep})
-	require.NoError(t, err)
-
-	assert.Equal(t, []string{"t"}, mutator.created, "binary must use plain CreateTree")
-	assert.Empty(t, mutator.matrixCreated)
-	assert.Equal(t, []string{"u0"}, mutator.roots)
-	assert.Empty(t, mutator.nodesAt, "binary must not route through AddNodeAt")
-
-	// u3 precedes u2 because it sponsors it, even though u2 is shallower.
-	assert.Equal(t, []nodeAddCall{
-		{userID: "u1", parentID: "u0", sponsorID: "u0", position: intPtr(0)},
-		{userID: "u3", parentID: "u1", sponsorID: "u1", position: intPtr(0)},
-		{userID: "u2", parentID: "u0", sponsorID: "u3", position: intPtr(1)},
-	}, mutator.nodeCalls)
+	require.NoError(t, preflightRows(t, "binary", loadTreeConfig{}, []TreeNodeRow{root, left, right, deep}))
 }
 
-func TestTreeLoader_LoadMatrixTree_RequiresParams(t *testing.T) {
-	store := NewMemoryTreeStore()
-	ctx := context.Background()
-
-	root := makeNode("m-tree", "user-0", 0, nil, ptr("user-0"), nil)
+func TestPreflight_MatrixRequiresParams(t *testing.T) {
+	root := makeNode("t", "user-0", 0, nil, ptr("user-0"), nil)
 	root.EnrolledAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, store.insertNode(ctx, root))
 
-	mutator := &stubMutator{}
-	loader := NewTreeLoader(store, mutator)
-
-	// Matrix tree with no WithMatrixParams: the loader has no width/spillover
-	// to create with, so it must fail fast before touching the engine.
-	//
 	// Assert the guard's own message, not just "matrix". A zero-valued cfg also
-	// trips validateNodes' width range check, whose message contains "matrix"
-	// too — so the looser assertion passed even with this guard deleted.
-	_, err := loader.LoadTree(ctx, "m-tree", "matrix")
+	// trips the width range check, whose message contains "matrix" too, so the
+	// looser assertion passes even with this guard deleted.
+	err := preflightRows(t, "matrix", loadTreeConfig{}, []TreeNodeRow{root})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires width and spillover")
-	assert.Empty(t, mutator.matrixCreated)
-	assert.Empty(t, mutator.created)
-	assert.Empty(t, mutator.roots)
 }

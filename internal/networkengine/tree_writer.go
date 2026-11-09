@@ -879,7 +879,8 @@ func (w *TreeWriter) maybeSnapshot(ctx context.Context, tree string, shape treeS
 	return warnings
 }
 
-// storableObserved returns s with invalid UTF-8 and NUL bytes replaced by U+FFFD.
+// storableObserved returns s with each run of invalid UTF-8, and each NUL byte,
+// replaced by U+FFFD.
 func storableObserved(s string) string {
 	return strings.ReplaceAll(strings.ToValidUTF8(s, "\uFFFD"), "\x00", "\uFFFD")
 }

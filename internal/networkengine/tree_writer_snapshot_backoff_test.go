@@ -287,6 +287,7 @@ func TestStorableObserved_ReplacesWhatATextColumnRefuses(t *testing.T) {
 		"a NUL byte":   {"worker said \x00 here", "worker said \uFFFD here"},
 		"invalid UTF8": {"bad \xff byte", "bad \uFFFD byte"},
 		"both":         {"\x00\xff", "\uFFFD\uFFFD"},
+		"invalid run":  {"bad \xff\xfe run", "bad \uFFFD run"},
 		"empty":        {"", ""},
 	}
 	for name, tc := range cases {
@@ -294,6 +295,22 @@ func TestStorableObserved_ReplacesWhatATextColumnRefuses(t *testing.T) {
 			assert.Equal(t, tc.want, storableObserved(tc.in))
 		})
 	}
+}
+
+func TestTreeWriterSnapshotBackoff_RecordsATakeErrorWithBytesTextCannotHold(t *testing.T) {
+	env := backoffEnv(t)
+	newEngine := func() *fakeWriterEngine {
+		e := newFakeWriterEngine()
+		e.takeErr = errors.New("worker said \x00 and \xff")
+		return e
+	}
+
+	_, last := backoffWrites(t, env, env.snapshots, newEngine, snapshotInterval, snapshotInterval)
+
+	assert.Equal(t, []string{"taking a snapshot of tree " + writerTree + " at version 1000 returned: worker said \x00 and \xff"},
+		last.Warnings)
+	requireLastAttempt(t, env, SnapshotAttempt{TreeID: writerTree, Version: 1000,
+		Observed: "taking a snapshot of tree " + writerTree + " at version 1000 returned: worker said \uFFFD and \uFFFD"})
 }
 
 func TestTreeWriterSnapshotBackoff_ReadsAndRecordsOnlyPastTheThreshold(t *testing.T) {

@@ -21,7 +21,8 @@ type SnapshotStore interface {
 	Delete(ctx context.Context, treeID string, version int64) error
 	// LastAttempt returns the tree's recorded attempt. found is false when none is recorded.
 	LastAttempt(ctx context.Context, treeID string) (attempt SnapshotAttempt, found bool, err error)
-	// RecordAttempt records a, unless the tree's recorded attempt is at a higher version.
+	// RecordAttempt records a, unless the tree's recorded attempt is at a higher
+	// version. A failed attempt replaces a stored one at any version.
 	RecordAttempt(ctx context.Context, a SnapshotAttempt) error
 }
 

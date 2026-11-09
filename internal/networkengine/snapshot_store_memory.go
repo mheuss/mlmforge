@@ -99,7 +99,7 @@ func (s *MemorySnapshotStore) RecordAttempt(ctx context.Context, a SnapshotAttem
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cur, ok := s.attempts[a.TreeID]; ok && a.Version < cur.Version {
+	if cur, ok := s.attempts[a.TreeID]; ok && a.Version < cur.Version && !(cur.Stored && !a.Stored) {
 		return nil
 	}
 	s.attempts[a.TreeID] = a

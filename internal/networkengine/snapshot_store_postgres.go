@@ -57,7 +57,8 @@ const recordAttemptSQL = `INSERT INTO tree_snapshot_attempts (tree_id, version, 
 		 ON CONFLICT (tree_id) DO UPDATE
 		    SET version = excluded.version, stored = excluded.stored,
 		        observed = excluded.observed, attempted_at = now()
-		  WHERE excluded.version >= tree_snapshot_attempts.version`
+		  WHERE excluded.version >= tree_snapshot_attempts.version
+		     OR (tree_snapshot_attempts.stored AND NOT excluded.stored)`
 
 func (s *PostgresSnapshotStore) LastAttempt(ctx context.Context, treeID string) (SnapshotAttempt, bool, error) {
 	a := SnapshotAttempt{TreeID: treeID}

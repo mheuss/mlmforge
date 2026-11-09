@@ -225,6 +225,15 @@ func runSnapshotStoreSuite(t *testing.T, newStore func(t *testing.T) SnapshotSto
 		requireAttempt(t, s, attempt(2000, false, "kept"))
 	})
 
+	t.Run("a lower failed attempt over a stored one replaces it", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.RecordAttempt(ctx, attempt(2000, true, "")))
+		require.NoError(t, s.RecordAttempt(ctx, attempt(1000, false, "stored nothing")))
+
+		requireAttempt(t, s, attempt(1000, false, "stored nothing"))
+	})
+
 	t.Run("an attempt at an equal version replaces the record", func(t *testing.T) {
 		cases := map[string]struct{ first, second SnapshotAttempt }{
 			"failed over stored": {attempt(1000, true, ""), attempt(1000, false, "second")},

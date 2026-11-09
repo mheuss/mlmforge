@@ -25,10 +25,11 @@ type SnapshotStore interface {
 	RecordAttempt(ctx context.Context, a SnapshotAttempt) error
 }
 
-// SnapshotAttempt is a tree's last snapshot attempt that reached the engine.
+// SnapshotAttempt is the recorded outcome of a tree's snapshot attempt.
 type SnapshotAttempt struct {
-	TreeID   string
-	Version  int64
-	Stored   bool
+	TreeID  string
+	Version int64
+	Stored  bool
+	// Observed is empty exactly when Stored is true.
 	Observed string
 }

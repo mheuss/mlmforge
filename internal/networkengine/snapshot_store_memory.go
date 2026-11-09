@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 // Compile-time check.
@@ -90,6 +92,10 @@ func (s *MemorySnapshotStore) RecordAttempt(ctx context.Context, a SnapshotAttem
 	if a.Stored != (a.Observed == "") {
 		return fmt.Errorf("snapshot attempt of tree %s at version %d has stored %t and observed %q",
 			a.TreeID, a.Version, a.Stored, a.Observed)
+	}
+	if !utf8.ValidString(a.Observed) || strings.ContainsRune(a.Observed, 0) {
+		return fmt.Errorf("snapshot attempt of tree %s at version %d has observed %q, which a TEXT column cannot hold",
+			a.TreeID, a.Version, a.Observed)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

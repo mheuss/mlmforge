@@ -200,21 +200,18 @@ func runSnapshotStoreSuite(t *testing.T, newStore func(t *testing.T) SnapshotSto
 	})
 
 	t.Run("a lower attempt over the same outcome is ignored", func(t *testing.T) {
-		for name, kept := range map[string]SnapshotAttempt{
-			"stored over stored": attempt(2000, true, ""),
-			"failed over failed": attempt(2000, false, "kept"),
-		} {
+		cases := map[string]struct{ kept, lower SnapshotAttempt }{
+			"stored over stored": {attempt(2000, true, ""), attempt(1000, true, "")},
+			"failed over failed": {attempt(2000, false, "kept"), attempt(1000, false, "lower")},
+		}
+		for name, tc := range cases {
 			t.Run(name, func(t *testing.T) {
 				s := newStore(t)
 				ctx := context.Background()
-				require.NoError(t, s.RecordAttempt(ctx, kept))
-				lower := attempt(1000, kept.Stored, kept.Observed)
-				if !kept.Stored {
-					lower.Observed = "lower"
-				}
-				require.NoError(t, s.RecordAttempt(ctx, lower))
+				require.NoError(t, s.RecordAttempt(ctx, tc.kept))
+				require.NoError(t, s.RecordAttempt(ctx, tc.lower))
 
-				requireAttempt(t, s, kept)
+				requireAttempt(t, s, tc.kept)
 			})
 		}
 	})
@@ -247,9 +244,11 @@ func runSnapshotStoreSuite(t *testing.T, newStore func(t *testing.T) SnapshotSto
 
 	t.Run("an invalid attempt is refused and records nothing", func(t *testing.T) {
 		cases := map[string]SnapshotAttempt{
-			"version 0":           attempt(0, false, "x"),
-			"stored with text":    attempt(1000, true, "x"),
-			"failed without text": attempt(1000, false, ""),
+			"version 0":            attempt(0, false, "x"),
+			"stored with text":     attempt(1000, true, "x"),
+			"failed without text":  attempt(1000, false, ""),
+			"text with a NUL byte": attempt(1000, false, "a\x00b"),
+			"text not valid UTF-8": attempt(1000, false, "\xff"),
 		}
 		for name, a := range cases {
 			t.Run(name, func(t *testing.T) {

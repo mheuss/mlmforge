@@ -489,67 +489,69 @@ func TestTreePersistence_MatrixConsumerRoundTrip(t *testing.T) {
 
 // TestTreePersistence_SlotConflictFailsCleanAndTreeReloads proves migration
 // 000004's consequence: a second active claim on an occupied (tree, parent,
-// position) dies at the store insert — before the engine — and the tree it
-// protects is still loadable afterward. Without the index both rows land and
-// reload preflight refuses the whole tree (HEU-553 triage, codex C3).
+// position) dies at the store insert, before the engine, so the stored rows
+// stay clean. The conflicting event stays at the head of the stream, so a load
+// fails until reject-event clears it. Then the tree reloads. Without the index
+// both rows land and load preflight refuses the whole tree (HEU-553 triage,
+// codex C3).
 func TestTreePersistence_SlotConflictFailsCleanAndTreeReloads(t *testing.T) {
-	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
+	it := newWriterIntegration(t)
 	ctx := context.Background()
-
-	const width = 3
-	treeID := testTreeUUID(1)
+	width, spillover := 3, "breadth_first"
+	tree := testTreeUUID(1)
 	u1, u2, u3 := testUserUUID(1), testUserUUID(2), testUserUUID(3)
-	stream := TreeStreamName(treeID)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	load := LoadRequest{TreeID: tree, TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover}
 
-	require.NoError(t, engine.CreateMatrixTree(ctx, treeID, width, "breadth_first"))
-	consumer := NewTreeEventConsumer(treeStore, engine)
+	added, err := it.writer(t).AddRoot(ctx, AddRootRequest{TreeID: tree, UserID: u1, SponsorID: u1,
+		TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover, EnrolledAt: base})
+	require.NoError(t, err)
+	require.NoError(t, added.ProjectionErr)
+	placed, err := it.writer(t).Place(ctx, PlaceRequest{TreeID: tree, UserID: u2, ParentID: u1, SponsorID: u1,
+		Position: intPtr(0), EnrolledAt: base.Add(time.Hour)})
+	require.NoError(t, err)
+	require.NoError(t, placed.ProjectionErr)
 
-	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
-		TreeID: treeID, UserID: u1, SponsorID: u1, EnrolledAt: base,
-	})
-	require.NoError(t, deliver(ctx, consumer, rootEvent))
+	engine := it.engine(t)
+	_, err = NewTreeWriter(it.events, it.store, it.snapshots, engine, NewPostgresTreeLocker(it.dsn)).Load(ctx, load)
+	require.NoError(t, err)
 
-	pos := 0
-	okEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: treeID, UserID: u2, ParentID: u1, SponsorID: u1,
-		Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: base.Add(time.Hour),
-	})
-	require.NoError(t, deliver(ctx, consumer, okEvent))
-
-	// u3 claims the slot u2 holds. The store insert dies on the partial
-	// unique index; the engine is never called for it.
-	conflict := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: treeID, UserID: u3, ParentID: u1, SponsorID: u1,
-		Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: base.Add(2 * time.Hour),
-	})
-	err := deliver(ctx, consumer, conflict)
+	// u3 claims the slot u2 holds. The writer would refuse it before the
+	// append, so it is appended directly and delivered through the consumer.
+	conflict := appendForeign(t, it, tree, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: tree, UserID: u3, ParentID: u1, SponsorID: u1,
+		Position: intPtr(0), TreeType: treeTypeMatrix, EnrolledAt: base.Add(2 * time.Hour)})
+	err = deliver(ctx, NewTreeEventConsumer(it.store, engine), conflict)
 	assert.ErrorIs(t, err, ErrSlotConflict)
 
-	rows, err := treeStore.GetByTree(ctx, treeID)
+	rows, err := it.store.GetByTree(ctx, tree)
 	require.NoError(t, err)
 	assert.Len(t, rows, 2, "conflicting claim left no row")
 
-	// The conflicting event never reached the engine: the insert failed
-	// first (store-before-engine, ADR-021). Checked before the restart,
-	// which would otherwise erase the evidence.
-	_, posErr := engine.GetPosition(ctx, treeID, u3)
+	// The insert failed before the engine call (store-before-engine, ADR-021).
+	_, posErr := engine.GetPosition(ctx, tree, u3)
 	require.True(t, isEngineCode(posErr, engineCodeUserNotFound),
 		"the code lives in a field, not in the message text: %v", posErr)
 
-	// The store stayed clean, so a fresh engine reloads it. This is the
-	// consequence the index exists for.
-	require.NoError(t, engine.Stop())
-	freshEngine, err := NewEngineClient(ctx, findWorkerBinary(t))
+	_, err = it.writer(t).Load(ctx, load)
+	require.Error(t, err, "a load redelivers the stuck event and must fail on it")
+
+	rejected, err := it.writer(t).Reject(ctx, RejectRequest{TreeID: tree, EventID: conflict.ID, Reason: "claims the slot u2 holds"})
 	require.NoError(t, err)
-	defer func() { _ = freshEngine.Stop() }()
+	require.Equal(t, RejectOutcomeRejected, rejected.Outcome, "the retry returned %v", rejected.RetryErr)
 
-	loader := NewTreeLoader(treeStore, freshEngine)
-	_, lerr := loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(width, "breadth_first"))
+	reload := it.engine(t)
+	_, err = NewTreeWriter(it.events, it.store, it.snapshots, reload, NewPostgresTreeLocker(it.dsn)).Load(ctx, load)
+	require.NoError(t, err)
 
-	require.NoError(t, lerr)
-
-	got, err := freshEngine.GetPosition(ctx, treeID, u2)
+	active, err := it.store.GetByTree(ctx, tree)
+	require.NoError(t, err)
+	users := make([]string, 0, len(active))
+	for _, r := range active {
+		users = append(users, r.UserID)
+	}
+	assert.ElementsMatch(t, []string{u1, u2}, users)
+	got, err := reload.GetPosition(ctx, tree, u2)
 	require.NoError(t, err)
 	require.NotNil(t, got.ParentUserID)
 	assert.Equal(t, u1, *got.ParentUserID)

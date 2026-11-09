@@ -94,7 +94,7 @@ func (s *MemorySnapshotStore) RecordAttempt(ctx context.Context, a SnapshotAttem
 			a.TreeID, a.Version, a.Stored, a.Observed)
 	}
 	if !utf8.ValidString(a.Observed) || strings.ContainsRune(a.Observed, 0) {
-		return fmt.Errorf("snapshot attempt of tree %s at version %d has observed %q, which a TEXT column cannot hold",
+		return fmt.Errorf("snapshot attempt of tree %s at version %d has observed %q, which is not valid UTF-8 or holds a NUL byte",
 			a.TreeID, a.Version, a.Observed)
 	}
 	s.mu.Lock()

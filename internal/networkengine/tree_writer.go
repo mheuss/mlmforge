@@ -843,8 +843,8 @@ func (w *TreeWriter) checkReplayed(ctx context.Context, tree string, projected i
 }
 
 // takeSnapshot stores the engine's snapshot of tree at version. It returns a
-// warning when a step fails, whether the engine was asked for the snapshot, and
-// whether the store kept it.
+// warning when no snapshot was stored, and reports whether the engine was asked
+// for one and whether the store kept it.
 func (w *TreeWriter) takeSnapshot(ctx context.Context, tree string, shape treeShape,
 	version int64) (warning string, attempted, stored bool) {
 	projected, found, err := w.store.ProjectedVersion(ctx, tree)

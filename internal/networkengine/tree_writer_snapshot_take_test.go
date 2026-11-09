@@ -109,10 +109,11 @@ func TestTreeWriterSnapshot_StoresNothingWhenTheProjectedVersionDiffers(t *testi
 			tc.store.TreeStore = env.store
 			w := NewTreeWriter(env.events, tc.store, env.snapshots, engine, env.locker)
 
-			warning, attempted, _ := w.takeSnapshot(context.Background(), writerTree, treeShape{treeType: treeTypeUnilevel}, 1000)
+			warning, attempted, stored := w.takeSnapshot(context.Background(), writerTree, treeShape{treeType: treeTypeUnilevel}, 1000)
 
 			assert.Equal(t, tc.want, warning)
 			assert.False(t, attempted)
+			assert.False(t, stored)
 			assert.NotContains(t, engine.calls, "take_snapshot")
 		})
 	}
@@ -138,18 +139,22 @@ func TestTreeWriterSnapshot_APutThatStoresNothingIsAWarning(t *testing.T) {
 }
 
 func TestTreeWriterSnapshot_ReportsWhetherTheEngineWasAskedAndTheStoreKeptIt(t *testing.T) {
+	unchanged := func(env *writerEnv) SnapshotStore { return env.snapshots }
 	cases := map[string]struct {
 		snapshots         func(env *writerEnv) SnapshotStore
 		takeErr           error
+		snapshotType      string
 		attempted, stored bool
+		warns             bool
 	}{
-		"stored": {func(env *writerEnv) SnapshotStore { return env.snapshots }, nil, true, true},
-		"put failed": {func(env *writerEnv) SnapshotStore {
+		"stored": {snapshots: unchanged, attempted: true, stored: true},
+		"put failed": {snapshots: func(env *writerEnv) SnapshotStore {
 			return failingPutStore{SnapshotStore: env.snapshots, err: errors.New("disk full")}
-		}, nil, true, false},
-		"stored nothing": {func(env *writerEnv) SnapshotStore { return noopPutStore{SnapshotStore: env.snapshots} },
-			nil, true, false},
-		"take failed": {func(env *writerEnv) SnapshotStore { return env.snapshots }, errors.New("worker gone"), true, false},
+		}, attempted: true, warns: true},
+		"stored nothing": {snapshots: func(env *writerEnv) SnapshotStore { return noopPutStore{SnapshotStore: env.snapshots} },
+			attempted: true, warns: true},
+		"take failed":   {snapshots: unchanged, takeErr: errors.New("worker gone"), attempted: true, warns: true},
+		"type mismatch": {snapshots: unchanged, snapshotType: treeTypeBinary, attempted: true, warns: true},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -160,11 +165,13 @@ func TestTreeWriterSnapshot_ReportsWhetherTheEngineWasAskedAndTheStoreKeptIt(t *
 			_, err := w.Load(context.Background(), loadRequest())
 			require.NoError(t, err)
 			engine.takeErr = tc.takeErr
+			engine.snapshotType = tc.snapshotType
 
-			_, attempted, stored := w.takeSnapshot(context.Background(), writerTree, treeShape{treeType: treeTypeUnilevel}, 1)
+			warning, attempted, stored := w.takeSnapshot(context.Background(), writerTree, treeShape{treeType: treeTypeUnilevel}, 1)
 
 			assert.Equal(t, tc.attempted, attempted, "attempted")
 			assert.Equal(t, tc.stored, stored, "stored")
+			assert.Equal(t, tc.warns, warning != "", "warning %q", warning)
 		})
 	}
 }

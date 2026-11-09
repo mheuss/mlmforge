@@ -159,7 +159,7 @@ func TestTreePersistence_PlaceAndRemove(t *testing.T) {
 	assert.Equal(t, 1, removedCount, "child should have removed_at set")
 }
 
-func TestTreePersistence_StreamLoadMatchesEventPath(t *testing.T) {
+func TestTreePersistence_StreamLoadMatchesTheWritingWorker(t *testing.T) {
 	it := newWriterIntegration(t)
 	ctx := context.Background()
 	tree := testTreeUUID(1)

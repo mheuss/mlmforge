@@ -143,6 +143,43 @@ func (e *restoreCountingEngine) RestoreSnapshot(ctx context.Context, structure, 
 	return e.TreeRebuilder.RestoreSnapshot(ctx, structure, treeType, data)
 }
 
+// refuseAfterRestoreEngine refuses the first AddNode after a restore, and counts
+// the calls a snapshot fallback makes.
+type refuseAfterRestoreEngine struct {
+	TreeRebuilder
+	refuse   bool
+	restored bool
+	restores int
+	drops    int
+	creates  int
+}
+
+func (e *refuseAfterRestoreEngine) RestoreSnapshot(ctx context.Context, structure, treeType string, data json.RawMessage) error {
+	e.restores++
+	err := e.TreeRebuilder.RestoreSnapshot(ctx, structure, treeType, data)
+	e.restored = err == nil
+	return err
+}
+
+// AddNode names a parent the engine does not hold, so the engine refuses it.
+func (e *refuseAfterRestoreEngine) AddNode(ctx context.Context, structure, userID, parentID, sponsorID string, enrolledAt int64, opts ...AddNodeOption) error {
+	if e.refuse && e.restored {
+		e.refuse = false
+		parentID = testUserUUID(999)
+	}
+	return e.TreeRebuilder.AddNode(ctx, structure, userID, parentID, sponsorID, enrolledAt, opts...)
+}
+
+func (e *refuseAfterRestoreEngine) DropStructure(ctx context.Context, structure string) (bool, error) {
+	e.drops++
+	return e.TreeRebuilder.DropStructure(ctx, structure)
+}
+
+func (e *refuseAfterRestoreEngine) CreateTree(ctx context.Context, structure, treeType string) error {
+	e.creates++
+	return e.TreeRebuilder.CreateTree(ctx, structure, treeType)
+}
+
 func TestTreeWriter_ALoadRestoresAStoredSnapshotAndReplaysTheRest(t *testing.T) {
 	it := newWriterIntegration(t)
 	ctx := context.Background()
@@ -184,4 +221,46 @@ func TestTreeWriter_ALoadRestoresAStoredSnapshotAndReplaysTheRest(t *testing.T) 
 	require.NoError(t, err)
 	require.True(t, found)
 	assert.Equal(t, int64(3), snap.Version)
+}
+
+func TestTreeWriter_ASnapshotBuildTheEngineRefusesIsDroppedAndReplayedInFull(t *testing.T) {
+	it := newWriterIntegration(t)
+	ctx := context.Background()
+	tree, root := testTreeUUID(2976), testUserUUID(1)
+	it.addUnilevelRoot(t, tree, root)
+	place := func(user string) {
+		res, err := it.writer(t).Place(ctx, PlaceRequest{TreeID: tree, UserID: user, ParentID: root, SponsorID: root, EnrolledAt: writeTime})
+		require.NoError(t, err)
+		require.NoError(t, res.ProjectionErr)
+	}
+	place(testUserUUID(2))
+	place(testUserUUID(3))
+	seeding := it.engine(t)
+	_, err := NewTreeWriter(it.events, it.store, it.snapshots, seeding, NewPostgresTreeLocker(it.dsn)).
+		Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeUnilevel})
+	require.NoError(t, err)
+	taken, err := seeding.TakeSnapshot(ctx, tree)
+	require.NoError(t, err)
+	require.NoError(t, it.snapshots.Put(ctx, Snapshot{TreeID: tree, Version: 3, TreeType: taken.TreeType, Data: taken.Data}))
+	place(testUserUUID(4))
+	place(testUserUUID(5))
+
+	engine := &refuseAfterRestoreEngine{TreeRebuilder: it.engine(t), refuse: true}
+	res, err := NewTreeWriter(it.events, it.store, it.snapshots, engine, NewPostgresTreeLocker(it.dsn)).
+		Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeUnilevel})
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, engine.drops, "the refused snapshot build was not dropped")
+	assert.Equal(t, 1, engine.restores)
+	assert.Equal(t, 1, engine.creates, "the full replay did not create the structure")
+	require.Len(t, res.Warnings, 1)
+	assert.Contains(t, res.Warnings[0], "at version 3 could not be used")
+	assert.Contains(t, res.Warnings[0], "dropped the structure")
+	_, found, err := it.snapshots.Get(ctx, tree)
+	require.NoError(t, err)
+	assert.False(t, found, "the unusable snapshot was kept")
+	assert.Equal(t, 5, res.Nodes)
+	down, err := engine.GetDownline(ctx, tree, root, 0)
+	require.NoError(t, err)
+	assert.Len(t, down, 4)
 }

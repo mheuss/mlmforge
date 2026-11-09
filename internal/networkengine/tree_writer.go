@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -448,9 +449,7 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 	if result.ProjectionErr != nil {
 		result.Observed = w.observe(ctx, tree)
 	} else if version-prep.snapshotVersion >= snapshotInterval {
-		if warning, _, _ := w.takeSnapshot(ctx, tree, shape, version); warning != "" {
-			result.Warnings = append(result.Warnings, warning)
-		}
+		result.Warnings = append(result.Warnings, w.maybeSnapshot(ctx, tree, shape, version, prep)...)
 	}
 	return result, nil
 }
@@ -840,6 +839,49 @@ func (w *TreeWriter) checkReplayed(ctx context.Context, tree string, projected i
 			ProjectedVersion: projected, Mismatch: mismatch}
 	}
 	return nil
+}
+
+// maybeSnapshot takes a snapshot of tree at version unless the tree's last
+// attempt is less than snapshotInterval behind, and records the attempt.
+func (w *TreeWriter) maybeSnapshot(ctx context.Context, tree string, shape treeShape, version int64,
+	prep prepared) []string {
+	last, found, err := w.snapshots.LastAttempt(ctx, tree)
+	if err != nil {
+		return []string{fmt.Sprintf("reading the last snapshot attempt of tree %s at version %d returned: %s; no snapshot was taken",
+			tree, version, err)}
+	}
+	if found && version-last.Version < snapshotInterval {
+		if last.Stored {
+			return nil
+		}
+		return []string{fmt.Sprintf("skipped the snapshot of tree %s at version %d; the last attempt, at version %d, stored nothing: %s",
+			tree, version, last.Version, last.Observed)}
+	}
+	warning, attempted, stored := w.takeSnapshot(ctx, tree, shape, version)
+	var warnings []string
+	if warning != "" {
+		warnings = append(warnings, warning)
+	}
+	if !attempted {
+		return warnings
+	}
+	// Detached so a take or put that failed on the caller's cancellation is still recorded.
+	recordCtx, cancel := detachedWrite(ctx)
+	defer cancel()
+	attempt := SnapshotAttempt{TreeID: tree, Version: version, Stored: stored}
+	if !stored {
+		attempt.Observed = storableObserved(warning)
+	}
+	if err := w.snapshots.RecordAttempt(recordCtx, attempt); err != nil {
+		warnings = append(warnings, fmt.Sprintf("recording the snapshot attempt of tree %s at version %d returned: %s",
+			tree, version, err))
+	}
+	return warnings
+}
+
+// storableObserved returns s with invalid UTF-8 and NUL bytes replaced by U+FFFD.
+func storableObserved(s string) string {
+	return strings.ReplaceAll(strings.ToValidUTF8(s, "�"), "\x00", "�")
 }
 
 // takeSnapshot stores the engine's snapshot of tree at version. It returns a

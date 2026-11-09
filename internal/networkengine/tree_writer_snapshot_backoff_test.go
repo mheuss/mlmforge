@@ -346,7 +346,7 @@ func TestTreeWriterSnapshotBackoff_ADeleteThatFailsBelowTheWriteIsReplaced(t *te
 
 	takes, _ := backoffWrites(t, env, failing, newFakeWriterEngine, snapshotInterval, snapshotInterval+5)
 
-	assert.Equal(t, 1, takes, "stored@5 is at or below the projected version, so writes 1000 to 1004 honor it")
+	assert.Equal(t, 1, takes, "writes 1000 to 1005")
 	snap, found, err := env.snapshots.Get(context.Background(), writerTree)
 	require.NoError(t, err)
 	require.True(t, found)
@@ -370,7 +370,7 @@ func TestTreeWriterSnapshotBackoff_ADeletedStraySnapshotIsRetakenAtOnce(t *testi
 
 	takes, honoring := backoffWrites(t, env, env.snapshots, newFakeWriterEngine, 2*snapshotInterval, 2*snapshotInterval+9)
 
-	assert.Equal(t, 0, takes, "writes 2000 to 2009 honor stored@1010, now at or below the projected version")
+	assert.Equal(t, 0, takes, "writes 2000 to 2009")
 	assert.Empty(t, honoring.Warnings, "write 2009 skips silently")
 
 	takes, _ = backoffWrites(t, env, env.snapshots, newFakeWriterEngine, 2*snapshotInterval+10, 2*snapshotInterval+10)
@@ -393,7 +393,7 @@ func TestTreeWriterSnapshotBackoff_ASnapshotEveryLoadDiscardsIsRetakenOncePerTho
 	takes, discarding := backoffWrites(t, env, env.snapshots, refusingRestores, snapshotInterval+1, snapshotInterval+1)
 
 	assert.Equal(t, 0, takes, "write 1001")
-	require.Len(t, discarding.Warnings, 1, "write 1001 warns only for the discarded snapshot, since its skip is silent")
+	require.Len(t, discarding.Warnings, 1, "warnings of write 1001")
 	assert.Contains(t, discarding.Warnings[0], "the snapshot of tree "+writerTree+" at version 1000 could not be used")
 	assert.Contains(t, discarding.Warnings[0], "deleted the snapshot")
 
@@ -416,7 +416,7 @@ func TestTreeWriterSnapshotBackoff_AFailingGetHonorsAStoredAttemptAboveTheStream
 
 	takes, last := backoffWrites(t, env, failing, newFakeWriterEngine, snapshotInterval, snapshotInterval+10)
 
-	assert.Equal(t, 0, takes, "stored@1010 is above every projected version, and only the failed read honors it")
+	assert.Equal(t, 0, takes, "writes 1000 to 1010")
 	assert.Equal(t, []string{"reading the snapshot of tree " + writerTree + " returned: connection reset"}, last.Warnings)
 }
 

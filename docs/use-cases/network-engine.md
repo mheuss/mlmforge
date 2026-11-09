@@ -1325,7 +1325,7 @@ let paid = matched.mul_div_ratio(pairing.percent, multiplier, min_leg, max_leg)?
 
 **Problem:** A step that is expensive and can fail every time must not run again on every command, even though the CLI builds a new `TreeWriter` per command.
 
-**Solution:** `tree_snapshot_attempts` holds one row per tree with the version of the last attempt, whether it stored, and what it observed. `RecordAttempt` keeps the highest version, but a failed attempt replaces a stored one at any version. The writer reads `LastAttempt` before the step, and skips the step while the attempt counts and is less than 1000 versions behind or when the read fails.
+**Solution:** `tree_snapshot_attempts` holds one row per tree with the version of the last attempt, whether it stored, and what it observed. The writer reads `LastAttempt` before the step and backs off while that attempt is recent. After the step, it records the attempt with `RecordAttempt`.
 
 **Usage:**
 ```go
@@ -1347,5 +1347,7 @@ err = store.RecordAttempt(recordCtx, networkengine.SnapshotAttempt{
 **Notes:**
 - Record successful attempts too. Without them, a read of the result that keeps failing makes every command run the step again.
 - `Observed` must be text a `TEXT` column can hold. The writer replaces NUL bytes and invalid UTF-8 before it records.
-- The writer records the attempt on a detached, bounded context. A caller's cancellation still leaves a record.
-- The tree writer counts a stored attempt in three cases. The load could not read the snapshot, the load kept one at or past it, or the load projected a version at or past it (UC-NET-033).
+- `RecordAttempt` keeps the highest version. A failed attempt replaces a stored one at any version.
+- The writer skips the step while the attempt counts and is less than 1000 versions behind. It also skips when the read fails.
+- The writer records the attempt after the step, on a detached, bounded context. A caller's cancellation still leaves a record.
+- A stored attempt counts when the load could not read the snapshot. It also counts when the load kept one at or past it, or projected a version at or past it (UC-NET-033).

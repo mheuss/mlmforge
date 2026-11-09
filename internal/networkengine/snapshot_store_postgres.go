@@ -40,9 +40,12 @@ func (s *PostgresSnapshotStore) Get(ctx context.Context, treeID string) (Snapsho
 	return snap, true, nil
 }
 
-func (s *PostgresSnapshotStore) Put(ctx context.Context, snap Snapshot) error {
-	_, err := s.pool.Exec(ctx, putSnapshotSQL, snap.TreeID, snap.Version, snap.TreeType, snap.Data)
-	return err
+func (s *PostgresSnapshotStore) Put(ctx context.Context, snap Snapshot) (bool, error) {
+	tag, err := s.pool.Exec(ctx, putSnapshotSQL, snap.TreeID, snap.Version, snap.TreeType, snap.Data)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 func (s *PostgresSnapshotStore) Delete(ctx context.Context, treeID string, version int64) error {

@@ -65,7 +65,7 @@ type failingPutStore struct {
 	err error
 }
 
-func (s failingPutStore) Put(context.Context, Snapshot) error { return s.err }
+func (s failingPutStore) Put(context.Context, Snapshot) (bool, error) { return false, s.err }
 
 func TestTreeWriterSnapshot_AFailedPutIsAWarning(t *testing.T) {
 	env := newWriterEnv()

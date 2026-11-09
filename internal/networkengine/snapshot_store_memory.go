@@ -34,27 +34,27 @@ func (s *MemorySnapshotStore) Get(ctx context.Context, treeID string) (Snapshot,
 	return snap, true, nil
 }
 
-func (s *MemorySnapshotStore) Put(ctx context.Context, snap Snapshot) error {
+func (s *MemorySnapshotStore) Put(ctx context.Context, snap Snapshot) (bool, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return false, err
 	}
 	if snap.Version < 1 {
-		return fmt.Errorf("snapshot of tree %s has version %d, below 1", snap.TreeID, snap.Version)
+		return false, fmt.Errorf("snapshot of tree %s has version %d, below 1", snap.TreeID, snap.Version)
 	}
 	if !supportedTreeTypes[snap.TreeType] {
-		return fmt.Errorf("snapshot of tree %s has tree type %q, not a supported tree type", snap.TreeID, snap.TreeType)
+		return false, fmt.Errorf("snapshot of tree %s has tree type %q, not a supported tree type", snap.TreeID, snap.TreeType)
 	}
 	if snap.Data == nil {
-		return fmt.Errorf("snapshot of tree %s at version %d has nil data", snap.TreeID, snap.Version)
+		return false, fmt.Errorf("snapshot of tree %s at version %d has nil data", snap.TreeID, snap.Version)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if cur, ok := s.snapshots[snap.TreeID]; ok && cur.Version >= snap.Version {
-		return nil
+		return false, nil
 	}
 	snap.Data = bytes.Clone(snap.Data)
 	s.snapshots[snap.TreeID] = snap
-	return nil
+	return true, nil
 }
 
 func (s *MemorySnapshotStore) Delete(ctx context.Context, treeID string, version int64) error {

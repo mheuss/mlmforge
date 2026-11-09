@@ -1190,8 +1190,8 @@ func TestTreeWriterReject_AFencedRetryIsNotEvidence(t *testing.T) {
 func TestTreeWriterReject_CarriesTheLoadsWarnings(t *testing.T) {
 	env := newWriterEnv()
 	removal := unprojectedRemoval(t, env)
-	require.NoError(t, env.snapshots.Put(context.Background(),
-		Snapshot{TreeID: writerTree, Version: 9, TreeType: treeTypeUnilevel, Data: []byte(`{}`)}))
+	requireStored(t, context.Background(), env.snapshots,
+		Snapshot{TreeID: writerTree, Version: 9, TreeType: treeTypeUnilevel, Data: []byte(`{}`)})
 	w, _ := env.writer()
 
 	res, _ := w.Reject(context.Background(), rejectRequest(removal.ID))
@@ -1209,7 +1209,7 @@ func TestTreeWriterReject_AFailedDropIsNotEvidence(t *testing.T) {
 	require.NoError(t, seeding.AddRoot(ctx, writerTree, writerRoot, writeTime.Unix()))
 	taken, err := seeding.TakeSnapshot(ctx, writerTree)
 	require.NoError(t, err)
-	require.NoError(t, env.snapshots.Put(ctx, Snapshot{TreeID: writerTree, Version: 2, TreeType: taken.TreeType, Data: taken.Data}))
+	requireStored(t, ctx, env.snapshots, Snapshot{TreeID: writerTree, Version: 2, TreeType: taken.TreeType, Data: taken.Data})
 	before := streamEvents(t, env.events, TreeStreamName(writerTree))
 	w, engine := env.writer()
 	engine.restoreErr = fakeEngineError("INCONSISTENT_SNAPSHOT", "refused by the test")

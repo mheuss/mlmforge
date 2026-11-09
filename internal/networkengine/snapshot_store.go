@@ -15,7 +15,8 @@ type SnapshotStore interface {
 	// Get returns the tree's snapshot. found is false when none is stored.
 	Get(ctx context.Context, treeID string) (snapshot Snapshot, found bool, err error)
 	// Put stores s, unless the tree's stored snapshot is at s.Version or later.
-	Put(ctx context.Context, s Snapshot) error
+	// stored reports whether it did.
+	Put(ctx context.Context, s Snapshot) (stored bool, err error)
 	// Delete removes the tree's snapshot when it is at version.
 	Delete(ctx context.Context, treeID string, version int64) error
 }

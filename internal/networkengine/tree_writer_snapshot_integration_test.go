@@ -163,7 +163,7 @@ func TestTreeWriter_ALoadRestoresAStoredSnapshotAndReplaysTheRest(t *testing.T) 
 	require.Empty(t, seeded.Warnings)
 	taken, err := seeding.TakeSnapshot(ctx, tree)
 	require.NoError(t, err)
-	require.NoError(t, it.snapshots.Put(ctx, Snapshot{TreeID: tree, Version: 3, TreeType: taken.TreeType, Data: taken.Data}))
+	requireStored(t, ctx, it.snapshots, Snapshot{TreeID: tree, Version: 3, TreeType: taken.TreeType, Data: taken.Data})
 	place(testUserUUID(4))
 	place(testUserUUID(5))
 

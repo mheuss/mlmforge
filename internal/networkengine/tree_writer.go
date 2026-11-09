@@ -862,7 +862,7 @@ func (w *TreeWriter) takeSnapshot(ctx context.Context, tree string, shape treeSh
 		return fmt.Sprintf("take_snapshot for tree %s at version %d returned tree type %s, and version 1 records %s; no snapshot was stored",
 			tree, version, taken.TreeType, shape.treeType)
 	}
-	if err := w.snapshots.Put(ctx, Snapshot{TreeID: tree, Version: version, TreeType: taken.TreeType, Data: taken.Data}); err != nil {
+	if _, err := w.snapshots.Put(ctx, Snapshot{TreeID: tree, Version: version, TreeType: taken.TreeType, Data: taken.Data}); err != nil {
 		return fmt.Sprintf("storing the snapshot of tree %s at version %d returned: %s", tree, version, err)
 	}
 	return ""

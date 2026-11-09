@@ -322,6 +322,21 @@ func TestRunTreeLoad_NamesADeadlineOnAnIncompleteLoad(t *testing.T) {
 	require.Empty(t, out.String())
 }
 
+func TestRunTreeLoad_NamesADeadlineOnAReplayFailure(t *testing.T) {
+	replay := &networkengine.TreeReplayError{
+		TreeID: "t",
+		Stage:  networkengine.TreeReplayStageReplay,
+		Err:    context.DeadlineExceeded,
+	}
+	loader := &stubLoader{err: replay}
+	var out bytes.Buffer
+
+	err := runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("t"))
+
+	require.EqualError(t, err, "load stopped at the replay stage while building the tree from its stream: "+replay.Error()+" (the run exceeded its deadline)")
+	require.Empty(t, out.String())
+}
+
 // Reporting this as a rejection would understate what the engine may hold.
 func TestRunTreeLoad_ReportsAChainHoldingBothAsIncomplete(t *testing.T) {
 	loader := &stubLoader{err: &networkengine.TreeLoadIncompleteError{

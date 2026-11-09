@@ -210,7 +210,7 @@ func (p *parentRenderer) Error() string { return p.parent.Error() }
 // The child process is expected to die. A fatal stack overflow cannot be
 // recovered in-process, so asserting it needs a subprocess. SetMaxStack keeps
 // the crash under a second.
-func TestLoadTree_ExternalCycleStillOverflows(t *testing.T) {
+func TestTreeLoadRejectedError_ExternalCycleStillOverflows(t *testing.T) {
 	if os.Getenv("HEU797_CYCLE_CHILD") == "1" {
 		debug.SetMaxStack(1 << 20)
 		outer := &networkengine.TreeLoadRejectedError{TreeID: "x", Kind: networkengine.TreeLoadDataInvalid}
@@ -221,7 +221,7 @@ func TestLoadTree_ExternalCycleStillOverflows(t *testing.T) {
 		return
 	}
 
-	child := exec.Command(os.Args[0], "-test.run=^TestLoadTree_ExternalCycleStillOverflows$")
+	child := exec.Command(os.Args[0], "-test.run=^TestTreeLoadRejectedError_ExternalCycleStillOverflows$")
 	child.Env = append(os.Environ(), "HEU797_CYCLE_CHILD=1")
 	out, err := child.CombinedOutput()
 

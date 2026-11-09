@@ -153,37 +153,6 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 		// the message is not enough, so a row that names none must wrap none.
 		wantErrIs error
 	}{
-		// validateTreeConfig
-		{
-			name:             "unsupported tree type",
-			treeType:         "streamline",
-			engineFailsAfter: -1,
-			want:             `tree t has unsupported type "streamline"`,
-			wantKind:         TreeLoadConfigInvalid,
-		},
-		{
-			name:             "matrix without params",
-			treeType:         treeTypeMatrix,
-			engineFailsAfter: -1,
-			want:             "tree t requires width and spillover (use WithMatrixParams)",
-			wantKind:         TreeLoadConfigInvalid,
-		},
-		{
-			name:             "matrix width below range",
-			treeType:         treeTypeMatrix,
-			opts:             []LoadTreeOption{WithMatrixParams(1, "breadth_first")},
-			engineFailsAfter: -1,
-			want:             "tree t has matrix width 1 outside the supported range 2..255",
-			wantKind:         TreeLoadConfigInvalid,
-		},
-		{
-			name:             "unsupported spillover",
-			treeType:         treeTypeMatrix,
-			opts:             []LoadTreeOption{WithMatrixParams(3, "sideways")},
-			engineFailsAfter: -1,
-			want:             `tree t has unsupported spillover "sideways"`,
-			wantKind:         TreeLoadConfigInvalid,
-		},
 
 		// the store read
 		{
@@ -194,255 +163,6 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 			want:             "load tree t: connection refused",
 			wantErrIs:        storeErr,
 			wantKind:         TreeLoadStoreReadFailed,
-		},
-
-		// validateNodes
-		{
-			name:     "duplicate user",
-			treeType: treeTypeUnilevel,
-			nodes: []TreeNodeRow{
-				makeNode("t", "u0", 0, nil, nil, nil),
-				makeNode("t", "u0", 1, ptr("u0"), ptr("u0"), nil),
-			},
-			direct:           true,
-			engineFailsAfter: -1,
-			want:             "tree t has duplicate user u0 (data corruption?)",
-			wantKind:         TreeLoadDataInvalid,
-			wantNodeIDs:      []string{"u0"},
-		},
-		{
-			name:     "empty user ID",
-			treeType: treeTypeUnilevel,
-			nodes: []TreeNodeRow{
-				makeNode("t", "u0", 0, nil, nil, nil),
-				makeNode("t", "", 1, ptr("u0"), ptr("u0"), nil),
-			},
-			engineFailsAfter: -1,
-			want:             `tree t has a row with an empty user ID (row ID "id-")`,
-			wantKind:         TreeLoadDataInvalid,
-		},
-		{
-			name:     "nil user ID",
-			treeType: treeTypeUnilevel,
-			nodes: []TreeNodeRow{
-				makeNode("t", "u0", 0, nil, nil, nil),
-				makeNode("t", uuid.Nil.String(), 1, ptr("u0"), ptr("u0"), nil),
-			},
-			engineFailsAfter: -1,
-			want:             "tree t has a row with the nil UUID as its user ID (row ID \"id-" + uuid.Nil.String() + "\")",
-			wantKind:         TreeLoadDataInvalid,
-			wantNodeIDs:      []string{uuid.Nil.String()},
-		},
-		{
-			// The empty row and b form a sponsor cycle.
-			name:     "empty user ID inside a sponsor cycle",
-			treeType: treeTypeUnilevel,
-			nodes: []TreeNodeRow{
-				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
-				makeNode("t", "", 1, ptr("u0"), ptr("b"), nil),
-				makeNode("t", "b", 1, ptr("u0"), ptr(""), nil),
-			},
-			engineFailsAfter: -1,
-			want:             `tree t has a row with an empty user ID (row ID "id-")`,
-			wantKind:         TreeLoadDataInvalid,
-		},
-		{
-			name:     "two roots",
-			treeType: treeTypeUnilevel,
-			nodes: spacedNodes([]TreeNodeRow{
-				makeNode("t", "u0", 0, nil, nil, nil),
-				makeNode("t", "u9", 0, nil, nil, nil),
-			}),
-			// see HEU-810
-			direct:           true,
-			engineFailsAfter: -1,
-			want:             "tree t has more than one depth-0 root (u0 and u9)",
-			wantKind:         TreeLoadDataInvalid,
-			wantNodeIDs:      []string{"u0", "u9"},
-		},
-		{
-			name:     "no root",
-			treeType: treeTypeUnilevel,
-			nodes: []TreeNodeRow{
-				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), nil),
-			},
-			engineFailsAfter: -1,
-			want:             "tree t has no depth-0 root node (data corruption?)",
-			wantKind:         TreeLoadDataInvalid,
-		},
-		{
-			name:     "root carries a parent",
-			treeType: treeTypeUnilevel,
-			nodes: []TreeNodeRow{
-				makeNode("t", "u0", 0, ptr("ghost"), nil, nil),
-			},
-			engineFailsAfter: -1,
-			want:             "root u0 in tree t has parent ghost (the engine root has no parent)",
-			wantKind:         TreeLoadDataInvalid,
-			wantNodeIDs:      []string{"u0", "ghost"},
-		},
-		{
-			name:     "root carries a position",
-			treeType: treeTypeUnilevel,
-			nodes: []TreeNodeRow{
-				makeNode("t", "u0", 0, nil, nil, intPtr(0)),
-			},
-			engineFailsAfter: -1,
-			want:             "root u0 in tree t has position 0 (the engine root occupies no slot)",
-			wantKind:         TreeLoadDataInvalid,
-			wantNodeIDs:      []string{"u0"},
-		},
-		{
-			name:        "nil parent",
-			wantKind:    TreeLoadDataInvalid,
-			wantNodeIDs: []string{"u1"},
-			treeType:    treeTypeUnilevel,
-			nodes: []TreeNodeRow{
-				makeNode("t", "u0", 0, nil, nil, nil),
-				makeNode("t", "u1", 1, nil, ptr("u0"), nil),
-			},
-			engineFailsAfter: -1,
-			want:             "node u1 in tree t has nil parent or sponsor (data corruption?)",
-		},
-		{
-			name:        "nil sponsor",
-			wantKind:    TreeLoadDataInvalid,
-			wantNodeIDs: []string{"u1"},
-			treeType:    treeTypeUnilevel,
-			nodes: []TreeNodeRow{
-				makeNode("t", "u0", 0, nil, nil, nil),
-				makeNode("t", "u1", 1, ptr("u0"), nil, nil),
-			},
-			engineFailsAfter: -1,
-			want:             "node u1 in tree t has nil parent or sponsor (data corruption?)",
-		},
-		{
-			name:     "self parent",
-			treeType: treeTypeUnilevel,
-			nodes: []TreeNodeRow{
-				makeNode("t", "u0", 0, nil, nil, nil),
-				makeNode("t", "u1", 1, ptr("u1"), ptr("u0"), nil),
-			},
-			engineFailsAfter: -1,
-			want:             "node u1 in tree t is its own parent",
-			wantKind:         TreeLoadDataInvalid,
-			wantNodeIDs:      []string{"u1"},
-		},
-		{
-			name:     "self sponsor",
-			treeType: treeTypeUnilevel,
-			nodes: []TreeNodeRow{
-				makeNode("t", "u0", 0, nil, nil, nil),
-				makeNode("t", "u1", 1, ptr("u0"), ptr("u1"), nil),
-			},
-			engineFailsAfter: -1,
-			want:             "node u1 in tree t is its own sponsor",
-			wantKind:         TreeLoadDataInvalid,
-			wantNodeIDs:      []string{"u1"},
-		},
-		{
-			name:     "parent not in tree",
-			treeType: treeTypeUnilevel,
-			nodes: []TreeNodeRow{
-				makeNode("t", "u0", 0, nil, nil, nil),
-				makeNode("t", "u1", 1, ptr("ghost"), ptr("u0"), nil),
-			},
-			engineFailsAfter: -1,
-			want:             "node u1 in tree t references parent ghost that is not in the tree",
-			wantKind:         TreeLoadDataInvalid,
-			wantNodeIDs:      []string{"u1", "ghost"},
-		},
-		{
-			name:     "sponsor not in tree",
-			treeType: treeTypeUnilevel,
-			nodes: []TreeNodeRow{
-				makeNode("t", "u0", 0, nil, nil, nil),
-				makeNode("t", "u1", 1, ptr("u0"), ptr("ghost"), nil),
-			},
-			engineFailsAfter: -1,
-			want:             "node u1 in tree t references sponsor ghost that is not in the tree",
-			wantKind:         TreeLoadDataInvalid,
-			wantNodeIDs:      []string{"u1", "ghost"},
-		},
-		{
-			name:     "depth mismatch",
-			treeType: treeTypeUnilevel,
-			nodes: []TreeNodeRow{
-				makeNode("t", "u0", 0, nil, nil, nil),
-				makeNode("t", "u1", 3, ptr("u0"), ptr("u0"), nil),
-			},
-			engineFailsAfter: -1,
-			want:             "node u1 in tree t has depth 3 but parent u0 has depth 0",
-			wantKind:         TreeLoadDataInvalid,
-			wantNodeIDs:      []string{"u1", "u0"},
-		},
-		{
-			name:     "unilevel position",
-			treeType: treeTypeUnilevel,
-			nodes: []TreeNodeRow{
-				makeNode("t", "u0", 0, nil, nil, nil),
-				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(7)),
-			},
-			engineFailsAfter: -1,
-			want:             "unilevel node u1 in tree t has position 7, expected none",
-			wantKind:         TreeLoadDataInvalid,
-			wantNodeIDs:      []string{"u1"},
-		},
-		{
-			name:     "matrix nil position",
-			treeType: treeTypeMatrix,
-			opts:     matrixOpts(3),
-			nodes: []TreeNodeRow{
-				makeNode("t", "u0", 0, nil, nil, nil),
-				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), nil),
-			},
-			engineFailsAfter: -1,
-			want:             "matrix node u1 in tree t has nil position (the adjacency row is incomplete)",
-			wantKind:         TreeLoadDataInvalid,
-			wantNodeIDs:      []string{"u1"},
-		},
-		{
-			name:     "matrix position outside width",
-			treeType: treeTypeMatrix,
-			opts:     matrixOpts(3),
-			nodes: []TreeNodeRow{
-				makeNode("t", "u0", 0, nil, nil, nil),
-				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(3)),
-			},
-			engineFailsAfter: -1,
-			want:             "matrix node u1 in tree t has position 3 outside the range 0..2",
-			wantKind:         TreeLoadDataInvalid,
-			wantNodeIDs:      []string{"u1"},
-		},
-		{
-			name:     "matrix duplicate slot",
-			treeType: treeTypeMatrix,
-			opts:     matrixOpts(3),
-			nodes: spacedNodes([]TreeNodeRow{
-				makeNode("t", "u0", 0, nil, nil, nil),
-				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(1)),
-				makeNode("t", "u2", 1, ptr("u0"), ptr("u0"), intPtr(1)),
-			}),
-			direct:           true,
-			engineFailsAfter: -1,
-			want:             "matrix nodes u1 and u2 in tree t both claim parent u0 position 1",
-			wantKind:         TreeLoadDataInvalid,
-			wantNodeIDs:      []string{"u1", "u2", "u0"},
-		},
-
-		// cycleError, the reachable branch
-		{
-			name:     "sponsor cycle",
-			treeType: treeTypeUnilevel,
-			nodes: []TreeNodeRow{
-				makeNode("t", "u0", 0, nil, nil, nil),
-				makeNode("t", "u1", 1, ptr("u0"), ptr("u2"), nil),
-				makeNode("t", "u2", 1, ptr("u0"), ptr("u1"), nil),
-			},
-			engineFailsAfter: -1,
-			want:             "tree t: 2 of 3 nodes cannot be replayed because their parent/sponsor references form a cycle: u1 -> u2 -> u1",
-			wantKind:         TreeLoadDataInvalid,
-			wantNodeIDs:      []string{"u1", "u2", "u1"},
 		},
 
 		// LoadTree, after the first engine call
@@ -585,10 +305,303 @@ func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
 	}
 }
 
-// TestTreeLoader_GoldenMessages_DirectCalls covers the exits no fixture reaches
+// TestPreflight_GoldenMessages records the exact text of every preflight exit a
+// fixture can reach, using assert.Equal rather than assert.Contains.
+func TestPreflight_GoldenMessages(t *testing.T) {
+	tests := []struct {
+		name     string
+		treeType string
+		cfg      loadTreeConfig
+		nodes    []TreeNodeRow
+		// direct seeds the store's rows in one go instead of inserting them
+		// one by one.
+		direct      bool
+		want        string
+		wantKind    TreeLoadRejectionKind
+		wantNodeIDs []string
+	}{
+		// validateTreeConfig
+		{
+			name:     "unsupported tree type",
+			treeType: "streamline",
+			want:     `tree t has unsupported type "streamline"`,
+			wantKind: TreeLoadConfigInvalid,
+		},
+		{
+			name:     "matrix without params",
+			treeType: treeTypeMatrix,
+			want:     "tree t requires width and spillover (use WithMatrixParams)",
+			wantKind: TreeLoadConfigInvalid,
+		},
+		{
+			name:     "matrix width below range",
+			treeType: treeTypeMatrix,
+			cfg:      matrixConfig(1, "breadth_first"),
+			want:     "tree t has matrix width 1 outside the supported range 2..255",
+			wantKind: TreeLoadConfigInvalid,
+		},
+		{
+			name:     "unsupported spillover",
+			treeType: treeTypeMatrix,
+			cfg:      matrixConfig(3, "sideways"),
+			want:     `tree t has unsupported spillover "sideways"`,
+			wantKind: TreeLoadConfigInvalid,
+		},
+
+		// validateNodes
+		{
+			name:     "duplicate user",
+			treeType: treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", "u0", 1, ptr("u0"), ptr("u0"), nil),
+			},
+			direct:      true,
+			want:        "tree t has duplicate user u0 (data corruption?)",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{"u0"},
+		},
+		{
+			name:     "empty user ID",
+			treeType: treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", "", 1, ptr("u0"), ptr("u0"), nil),
+			},
+			want:     `tree t has a row with an empty user ID (row ID "id-")`,
+			wantKind: TreeLoadDataInvalid,
+		},
+		{
+			name:     "nil user ID",
+			treeType: treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", uuid.Nil.String(), 1, ptr("u0"), ptr("u0"), nil),
+			},
+			want:        "tree t has a row with the nil UUID as its user ID (row ID \"id-" + uuid.Nil.String() + "\")",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{uuid.Nil.String()},
+		},
+		{
+			// The empty row and b form a sponsor cycle.
+			name:     "empty user ID inside a sponsor cycle",
+			treeType: treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, ptr("u0"), nil),
+				makeNode("t", "", 1, ptr("u0"), ptr("b"), nil),
+				makeNode("t", "b", 1, ptr("u0"), ptr(""), nil),
+			},
+			want:     `tree t has a row with an empty user ID (row ID "id-")`,
+			wantKind: TreeLoadDataInvalid,
+		},
+		{
+			name:     "two roots",
+			treeType: treeTypeUnilevel,
+			nodes: spacedNodes([]TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", "u9", 0, nil, nil, nil),
+			}),
+			// see HEU-810
+			direct:      true,
+			want:        "tree t has more than one depth-0 root (u0 and u9)",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{"u0", "u9"},
+		},
+		{
+			name:     "no root",
+			treeType: treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), nil),
+			},
+			want:     "tree t has no depth-0 root node (data corruption?)",
+			wantKind: TreeLoadDataInvalid,
+		},
+		{
+			name:     "root carries a parent",
+			treeType: treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, ptr("ghost"), nil, nil),
+			},
+			want:        "root u0 in tree t has parent ghost (the engine root has no parent)",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{"u0", "ghost"},
+		},
+		{
+			name:     "root carries a position",
+			treeType: treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, intPtr(0)),
+			},
+			want:        "root u0 in tree t has position 0 (the engine root occupies no slot)",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{"u0"},
+		},
+		{
+			name:        "nil parent",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{"u1"},
+			treeType:    treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", "u1", 1, nil, ptr("u0"), nil),
+			},
+			want: "node u1 in tree t has nil parent or sponsor (data corruption?)",
+		},
+		{
+			name:        "nil sponsor",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{"u1"},
+			treeType:    treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", "u1", 1, ptr("u0"), nil, nil),
+			},
+			want: "node u1 in tree t has nil parent or sponsor (data corruption?)",
+		},
+		{
+			name:     "self parent",
+			treeType: treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", "u1", 1, ptr("u1"), ptr("u0"), nil),
+			},
+			want:        "node u1 in tree t is its own parent",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{"u1"},
+		},
+		{
+			name:     "self sponsor",
+			treeType: treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u1"), nil),
+			},
+			want:        "node u1 in tree t is its own sponsor",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{"u1"},
+		},
+		{
+			name:     "parent not in tree",
+			treeType: treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", "u1", 1, ptr("ghost"), ptr("u0"), nil),
+			},
+			want:        "node u1 in tree t references parent ghost that is not in the tree",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{"u1", "ghost"},
+		},
+		{
+			name:     "sponsor not in tree",
+			treeType: treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("ghost"), nil),
+			},
+			want:        "node u1 in tree t references sponsor ghost that is not in the tree",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{"u1", "ghost"},
+		},
+		{
+			name:     "depth mismatch",
+			treeType: treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", "u1", 3, ptr("u0"), ptr("u0"), nil),
+			},
+			want:        "node u1 in tree t has depth 3 but parent u0 has depth 0",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{"u1", "u0"},
+		},
+		{
+			name:     "unilevel position",
+			treeType: treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(7)),
+			},
+			want:        "unilevel node u1 in tree t has position 7, expected none",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{"u1"},
+		},
+		{
+			name:     "matrix nil position",
+			treeType: treeTypeMatrix,
+			cfg:      matrixConfig(3, "breadth_first"),
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), nil),
+			},
+			want:        "matrix node u1 in tree t has nil position (the adjacency row is incomplete)",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{"u1"},
+		},
+		{
+			name:     "matrix position outside width",
+			treeType: treeTypeMatrix,
+			cfg:      matrixConfig(3, "breadth_first"),
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(3)),
+			},
+			want:        "matrix node u1 in tree t has position 3 outside the range 0..2",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{"u1"},
+		},
+		{
+			name:     "matrix duplicate slot",
+			treeType: treeTypeMatrix,
+			cfg:      matrixConfig(3, "breadth_first"),
+			nodes: spacedNodes([]TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u0"), intPtr(1)),
+				makeNode("t", "u2", 1, ptr("u0"), ptr("u0"), intPtr(1)),
+			}),
+			direct:      true,
+			want:        "matrix nodes u1 and u2 in tree t both claim parent u0 position 1",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{"u1", "u2", "u0"},
+		},
+
+		// cycleError, the reachable branch
+		{
+			name:     "sponsor cycle",
+			treeType: treeTypeUnilevel,
+			nodes: []TreeNodeRow{
+				makeNode("t", "u0", 0, nil, nil, nil),
+				makeNode("t", "u1", 1, ptr("u0"), ptr("u2"), nil),
+				makeNode("t", "u2", 1, ptr("u0"), ptr("u1"), nil),
+			},
+			want:        "tree t: 2 of 3 nodes cannot be replayed because their parent/sponsor references form a cycle: u1 -> u2 -> u1",
+			wantKind:    TreeLoadDataInvalid,
+			wantNodeIDs: []string{"u1", "u2", "u1"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			run := preflightRows
+			if tt.direct {
+				run = preflightRowsDirect
+			}
+			err := run(t, tt.treeType, tt.cfg, tt.nodes)
+
+			require.Error(t, err)
+			assert.Equal(t, tt.want, err.Error())
+			assert.NoError(t, errors.Unwrap(err), "this exit wraps nothing")
+			var rejected *TreeLoadRejectedError
+			require.ErrorAs(t, err, &rejected)
+			assert.Equal(t, tt.wantKind, rejected.Kind)
+			assert.Equal(t, "t", rejected.TreeID)
+			assert.Equal(t, tt.wantNodeIDs, rejected.NodeIDs)
+		})
+	}
+}
+
+// TestPreflight_GoldenMessages_DirectCalls covers the exits no fixture reaches
 // through a full load. Each sits behind a check that runs earlier, so the only
 // way to observe its message is to call the function that produces it.
-func TestTreeLoader_GoldenMessages_DirectCalls(t *testing.T) {
+func TestPreflight_GoldenMessages_DirectCalls(t *testing.T) {
 	t.Run("tree type with no slot rule", func(t *testing.T) {
 		nodes := []TreeNodeRow{makeNode("t", "u0", 0, nil, nil, nil)}
 

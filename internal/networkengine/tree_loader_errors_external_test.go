@@ -176,8 +176,8 @@ func TestTreeLoadErrors_AFailingCauseIsContained(t *testing.T) {
 		},
 		{
 			name: "a cause whose Error panics outright",
-			err:  &networkengine.TreeLoadIncompleteError{TreeID: "t5", Stage: networkengine.TreeLoadStageCreate, Err: panickingCause{}},
-			want: "tree load incomplete: tree t5: stage create: cause could not be rendered",
+			err:  &networkengine.TreeLoadRejectedError{TreeID: "t5", Kind: networkengine.TreeLoadDataInvalid, Err: panickingCause{}},
+			want: "tree load rejected: tree t5: kind data_invalid: cause could not be rendered",
 		},
 	}
 
@@ -197,12 +197,12 @@ func TestTreeLoadErrors_ACyclicCauseDoesNotRecurse(t *testing.T) {
 	self.Err = self
 
 	first := &networkengine.TreeLoadRejectedError{TreeID: "a", Kind: networkengine.TreeLoadDataInvalid}
-	second := &networkengine.TreeLoadIncompleteError{TreeID: "b", Stage: networkengine.TreeLoadStageNodes}
+	second := &networkengine.TreeLoadRejectedError{TreeID: "b", Kind: networkengine.TreeLoadConfigInvalid}
 	first.Err = second
 	second.Err = first
 
 	assert.Equal(t, "tree load rejected: tree t1: kind data_invalid: tree load rejected", self.Error())
-	assert.Equal(t, "tree load rejected: tree a: kind data_invalid: tree load incomplete", first.Error())
+	assert.Equal(t, "tree load rejected: tree a: kind data_invalid: tree load rejected", first.Error())
 }
 
 // A cause is named whenever one is present, because Unwrap returns it either

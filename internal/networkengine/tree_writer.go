@@ -845,7 +845,7 @@ func (w *TreeWriter) checkReplayed(ctx context.Context, tree string, projected i
 }
 
 // maybeSnapshot takes a snapshot of tree at version unless the tree's last
-// attempt is less than snapshotInterval behind, and records the attempt.
+// attempt counts and is less than snapshotInterval behind, and records the attempt.
 func (w *TreeWriter) maybeSnapshot(ctx context.Context, tree string, shape treeShape, version int64,
 	prep prepared) []string {
 	last, found, err := w.snapshots.LastAttempt(ctx, tree)
@@ -882,7 +882,7 @@ func (w *TreeWriter) maybeSnapshot(ctx context.Context, tree string, shape treeS
 	return warnings
 }
 
-// attemptHonored reports whether the backoff counts a, given what the load read and kept.
+// attemptHonored reports whether the backoff counts a, given what the load read, kept and projected.
 func attemptHonored(a SnapshotAttempt, prep prepared) bool {
 	return !a.Stored || prep.snapshotReadFailed || prep.snapshotVersion >= a.Version || a.Version <= prep.loaded
 }

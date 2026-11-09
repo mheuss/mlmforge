@@ -881,7 +881,7 @@ func (w *TreeWriter) maybeSnapshot(ctx context.Context, tree string, shape treeS
 
 // storableObserved returns s with invalid UTF-8 and NUL bytes replaced by U+FFFD.
 func storableObserved(s string) string {
-	return strings.ReplaceAll(strings.ToValidUTF8(s, "�"), "\x00", "�")
+	return strings.ReplaceAll(strings.ToValidUTF8(s, "\uFFFD"), "\x00", "\uFFFD")
 }
 
 // takeSnapshot stores the engine's snapshot of tree at version. It returns a

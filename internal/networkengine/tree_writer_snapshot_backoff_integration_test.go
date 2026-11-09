@@ -38,5 +38,5 @@ func TestTreeWriterSnapshotBackoff_RecordsATakeErrorThatHoldsANulByte(t *testing
 	require.NoError(t, err)
 	require.True(t, found, "no attempt recorded; the write warned %q", res.Warnings)
 	assert.Equal(t, SnapshotAttempt{TreeID: tree, Version: snapshotInterval,
-		Observed: "taking a snapshot of tree " + tree + " at version 1000 returned: worker said � here"}, got)
+		Observed: "taking a snapshot of tree " + tree + " at version 1000 returned: worker said \uFFFD here"}, got)
 }

@@ -284,9 +284,9 @@ func TestTreeWriterSnapshotBackoff_RecordsAnAttemptTheCallerCancelled(t *testing
 func TestStorableObserved_ReplacesWhatATextColumnRefuses(t *testing.T) {
 	cases := map[string]struct{ in, want string }{
 		"plain text":   {"storing returned: disk full", "storing returned: disk full"},
-		"a NUL byte":   {"worker said \x00 here", "worker said � here"},
-		"invalid UTF8": {"bad \xff byte", "bad � byte"},
-		"both":         {"\x00\xff", "��"},
+		"a NUL byte":   {"worker said \x00 here", "worker said \uFFFD here"},
+		"invalid UTF8": {"bad \xff byte", "bad \uFFFD byte"},
+		"both":         {"\x00\xff", "\uFFFD\uFFFD"},
 		"empty":        {"", ""},
 	}
 	for name, tc := range cases {

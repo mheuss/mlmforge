@@ -882,7 +882,7 @@ func (w *TreeWriter) maybeSnapshot(ctx context.Context, tree string, shape treeS
 	return warnings
 }
 
-// attemptHonored reports whether the backoff counts a, given what the load kept.
+// attemptHonored reports whether the backoff counts a, given what the load read and kept.
 func attemptHonored(a SnapshotAttempt, prep prepared) bool {
 	return !a.Stored || prep.snapshotReadFailed || prep.snapshotVersion >= a.Version || a.Version <= prep.loaded
 }

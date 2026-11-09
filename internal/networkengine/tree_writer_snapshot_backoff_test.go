@@ -368,9 +368,10 @@ func TestTreeWriterSnapshotBackoff_ADeletedStraySnapshotIsRetakenAtOnce(t *testi
 	assert.Equal(t, int64(snapshotInterval), snap.Version)
 	requireLastAttempt(t, env, SnapshotAttempt{TreeID: writerTree, Version: 1010, Stored: true})
 
-	takes, _ = backoffWrites(t, env, env.snapshots, newFakeWriterEngine, 2*snapshotInterval, 2*snapshotInterval+9)
+	takes, honoring := backoffWrites(t, env, env.snapshots, newFakeWriterEngine, 2*snapshotInterval, 2*snapshotInterval+9)
 
 	assert.Equal(t, 0, takes, "writes 2000 to 2009 honor stored@1010, now at or below the projected version")
+	assert.Empty(t, honoring.Warnings, "write 2009 skips silently")
 
 	takes, _ = backoffWrites(t, env, env.snapshots, newFakeWriterEngine, 2*snapshotInterval+10, 2*snapshotInterval+10)
 
@@ -396,9 +397,10 @@ func TestTreeWriterSnapshotBackoff_ASnapshotEveryLoadDiscardsIsRetakenOncePerTho
 	assert.Contains(t, discarding.Warnings[0], "the snapshot of tree "+writerTree+" at version 1000 could not be used")
 	assert.Contains(t, discarding.Warnings[0], "deleted the snapshot")
 
-	takes, _ = backoffWrites(t, env, env.snapshots, refusingRestores, snapshotInterval+2, 2*snapshotInterval-1)
+	takes, honoring := backoffWrites(t, env, env.snapshots, refusingRestores, snapshotInterval+2, 2*snapshotInterval-1)
 
 	assert.Equal(t, 0, takes, "writes 1002 to 1999")
+	assert.Empty(t, honoring.Warnings, "write 1999 skips silently")
 
 	takes, _ = backoffWrites(t, env, env.snapshots, refusingRestores, 2*snapshotInterval, 2*snapshotInterval)
 

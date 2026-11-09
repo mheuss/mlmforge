@@ -1,200 +1,25 @@
 package networkengine_test
 
 import (
-	"context"
-	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"runtime/debug"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mlmforge/mlmforge/internal/networkengine"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// The labels treeLoadFallback puts in front of a message it built itself. A
-// message the loader produced must not start with either.
-var fallbackLabels = []string{"tree load rejected", "tree load incomplete"}
+// The label a rejection built outside this package renders with.
+var fallbackLabels = []string{"tree load rejected"}
 
-var _ networkengine.TreeMutator = failingMutator{}
-
-// failingMutator fails one named engine call and lets the rest succeed, so a
-// test can choose which post-create exit the loader reaches.
-type failingMutator struct{ failOn string }
-
-func (m failingMutator) fail(call string) error {
-	if m.failOn == call {
-		return errors.New("worker said no")
-	}
-	return nil
-}
-
-func (m failingMutator) CreateTree(context.Context, string, string) error {
-	return m.fail("CreateTree")
-}
-func (m failingMutator) CreateMatrixTree(context.Context, string, int, string) error {
-	return m.fail("CreateMatrixTree")
-}
-func (m failingMutator) AddRoot(context.Context, string, string, int64) error {
-	return m.fail("AddRoot")
-}
-func (m failingMutator) AddNode(context.Context, string, string, string, string, int64, ...networkengine.AddNodeOption) error {
-	return m.fail("AddNode")
-}
-func (m failingMutator) AddNodeAt(context.Context, string, string, string, string, int, int64) error {
-	return m.fail("AddNodeAt")
-}
-func (m failingMutator) RemoveNode(context.Context, string, string) ([]networkengine.Responsored, error) {
-	return nil, m.fail("RemoveNode")
-}
-
-func (m failingMutator) RemoveMatrixNode(context.Context, string, string, networkengine.PruningMode) (*networkengine.MatrixRemovalResult, error) {
-	return nil, m.fail("RemoveMatrixNode")
-}
-
-var _ networkengine.TreeStore = twoRootStore{}
-
-// twoRootStore serves a fixed row set from GetByTreeDepthOrdered. It answers for
-// the tree it was built for and fails for any other. Rows come back in the order
-// given rather than depth-ordered, so a case using it must not depend on order.
-// The embedded interface is left nil: any other method panics rather than being
-// answered by an empty store.
-type twoRootStore struct {
-	networkengine.TreeStore
-	treeID string
-	rows   []networkengine.TreeNodeRow
-}
-
-func (s twoRootStore) GetByTreeDepthOrdered(_ context.Context, treeID string) ([]networkengine.TreeNodeRow, error) {
-	if treeID != s.treeID {
-		return nil, fmt.Errorf("twoRootStore holds tree %s, asked for %s", s.treeID, treeID)
-	}
-	return s.rows, nil
-}
-
-// The fallback is safe only because every value this package constructs sets
-// its message. This drives a failure at each stage LoadTree can fail at, and
-// asserts none of them renders a fallback label. The table names the stage each
-// case reaches, so a reader can see the coverage rather than infer it from the
-// test name.
-func TestLoadTree_FailuresAtEveryStageNeverRenderTheFallback(t *testing.T) {
-	root := func(treeID, userID string) networkengine.TreeNodeRow {
-		return networkengine.TreeNodeRow{
-			ID: userID, TreeID: treeID, UserID: userID, Depth: 0,
-			EnrolledAt: time.Unix(1, 0),
-		}
-	}
-
-	child := func(treeID, userID, parentID string) networkengine.TreeNodeRow {
-		return networkengine.TreeNodeRow{
-			ID: userID, TreeID: treeID, UserID: userID, Depth: 1,
-			ParentID: &parentID, SponsorID: &parentID,
-			EnrolledAt: time.Unix(2, 0),
-		}
-	}
-
-	tests := []struct {
-		name     string
-		treeType string
-		rows     []networkengine.TreeNodeRow
-		engine   networkengine.TreeMutator
-		opts     []networkengine.LoadTreeOption
-		// Exactly one of these is set. Asserting it stops a case passing
-		// because the loader failed earlier than the case name claims.
-		wantKind  networkengine.TreeLoadRejectionKind
-		wantStage networkengine.TreeLoadStage
-		// direct hands the rows to the loader without inserting them.
-		direct bool
-	}{
-		{
-			name:     "unsupported tree type, rejected before the store read",
-			treeType: "unsupported-type",
-			wantKind: networkengine.TreeLoadConfigInvalid,
-		},
-		{
-			name:     "matrix without params, rejected before the store read",
-			treeType: "matrix",
-			wantKind: networkengine.TreeLoadConfigInvalid,
-		},
-		{
-			name:     "two roots, rejected by node validation",
-			treeType: "unilevel",
-			rows:     []networkengine.TreeNodeRow{root(extTree, extUser0), root(extTree, extUser1)},
-			// see HEU-810
-			direct:   true,
-			wantKind: networkengine.TreeLoadDataInvalid,
-		},
-		{
-			name:      "create fails, incomplete at the create stage",
-			treeType:  "unilevel",
-			rows:      []networkengine.TreeNodeRow{root(extTree, extUser0)},
-			engine:    failingMutator{failOn: "CreateTree"},
-			wantStage: networkengine.TreeLoadStageCreate,
-		},
-		{
-			name:      "root placement fails, incomplete at the root stage",
-			treeType:  "unilevel",
-			rows:      []networkengine.TreeNodeRow{root(extTree, extUser0)},
-			engine:    failingMutator{failOn: "AddRoot"},
-			wantStage: networkengine.TreeLoadStageRoot,
-		},
-		{
-			name:      "a later placement fails, incomplete at the nodes stage",
-			treeType:  "unilevel",
-			rows:      []networkengine.TreeNodeRow{root(extTree, extUser0), child(extTree, extUser1, extUser0)},
-			engine:    failingMutator{failOn: "AddNode"},
-			wantStage: networkengine.TreeLoadStageNodes,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var store networkengine.TreeStore
-			if tt.direct {
-				store = twoRootStore{treeID: extTree, rows: tt.rows}
-			} else {
-				seeded := networkengine.NewMemoryTreeStore()
-				for i, r := range tt.rows {
-					require.NoError(t, seeded.ProjectInsert(t.Context(), r, int64(i+1)))
-				}
-				store = seeded
-			}
-
-			_, err := networkengine.NewTreeLoader(store, tt.engine).
-				LoadTree(t.Context(), extTree, tt.treeType, tt.opts...)
-
-			require.Error(t, err)
-
-			if tt.wantKind != "" {
-				var rejected *networkengine.TreeLoadRejectedError
-				require.ErrorAs(t, err, &rejected)
-				require.Equal(t, tt.wantKind, rejected.Kind, "case did not reach the exit it names")
-			} else {
-				var incomplete *networkengine.TreeLoadIncompleteError
-				require.ErrorAs(t, err, &incomplete)
-				require.Equal(t, tt.wantStage, incomplete.Stage, "case did not reach the stage it names")
-			}
-
-			for _, label := range fallbackLabels {
-				assert.False(t, strings.HasPrefix(err.Error(), label),
-					"message built by the loader carries the fallback label %q: %s", label, err)
-			}
-		})
-	}
-}
-
-// A message the fallback builds does start with a label. Without this, the
-// assertion above would pass against a renderer that emits no label at all.
+// A message the fallback builds starts with the label.
 func TestFallbackLabels_AreWhatTheFallbackActuallyEmits(t *testing.T) {
 	rejected := (&networkengine.TreeLoadRejectedError{TreeID: "t"}).Error()
-	incomplete := (&networkengine.TreeLoadIncompleteError{TreeID: "t"}).Error()
 
 	assert.True(t, strings.HasPrefix(rejected, fallbackLabels[0]), "got %q", rejected)
-	assert.True(t, strings.HasPrefix(incomplete, fallbackLabels[1]), "got %q", incomplete)
 }
 
 // parentRenderer renders the value that holds it. Two of these form a cycle

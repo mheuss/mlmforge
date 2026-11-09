@@ -56,9 +56,6 @@ func TestRejectionEvidence_RefusesWhatSaysNothingAboutTheEvent(t *testing.T) {
 		"a store error":                     caughtUpFailure(last, errors.New("store placed node: connection reset by peer")),
 		"a transport error":                 caughtUpFailure(last, errors.New("engine add_node failed after 2 retries: write |1: broken pipe")),
 		"an untyped error outside catch-up": errors.New("read the last event of stream x; nothing was appended: connection reset"),
-		"an incomplete load carrying a refusal code": &TreeLoadIncompleteError{
-			TreeID: writerTree, Stage: TreeLoadStageNodes, Err: fakeEngineError("SPONSOR_NOT_FOUND", "refused"),
-		},
 		"a load whose store read failed": &TreeLoadRejectedError{
 			TreeID: writerTree, Kind: TreeLoadStoreReadFailed, Err: errors.New("connection reset"),
 		},

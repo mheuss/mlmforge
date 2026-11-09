@@ -133,10 +133,6 @@ func (w *TreeWriter) rejectionEvidence(ctx context.Context, tree string, shape t
 		var engineErr *EngineError
 		return errors.As(failed.Err, &engineErr) && rejectionRefusalCodes[engineErr.Code], nil
 	}
-	var incomplete *TreeLoadIncompleteError
-	if errors.As(retryErr, &incomplete) {
-		return false, nil
-	}
 	var rejected *TreeLoadRejectedError
 	if !errors.As(retryErr, &rejected) || rejected.Kind != TreeLoadDataInvalid {
 		return false, nil

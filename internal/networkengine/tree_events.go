@@ -78,7 +78,7 @@ type RootAddedPayload struct {
 }
 
 // Tree structure types, as carried in tree events and checked by
-// supportedTreeTypes. Loader and consumer share these; raw string
+// supportedTreeTypes. Preflight and consumer share these; raw string
 // literals invite wrong-case drift.
 const (
 	treeTypeUnilevel = "unilevel"

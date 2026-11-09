@@ -2,7 +2,6 @@ package networkengine
 
 import (
 	"container/heap"
-	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -11,156 +10,15 @@ import (
 	"github.com/google/uuid"
 )
 
-// TreeLoader rebuilds the Rust engine's in-memory state from the
-// adjacency table on startup.
-type TreeLoader struct {
-	store  TreeStore
-	engine TreeMutator
-}
-
-func NewTreeLoader(store TreeStore, engine TreeMutator) *TreeLoader {
-	return &TreeLoader{store: store, engine: engine}
-}
-
-// LoadTreeOption configures optional parameters for LoadTree.
-type LoadTreeOption func(*loadTreeConfig)
-
+// loadTreeConfig is the structure-level configuration preflight checks: the
+// matrix width and spillover, and whether they were set.
 type loadTreeConfig struct {
 	matrixParamsSet bool
 	matrixWidth     int
 	matrixSpillover string
 }
 
-// WithMatrixParams supplies the width and spillover a matrix tree needs to be
-// recreated. It is required when treeType is "matrix" (the adjacency store
-// keeps per-node data, not the structure's width/spillover) and ignored
-// otherwise.
-func WithMatrixParams(width int, spillover string) LoadTreeOption {
-	return func(c *loadTreeConfig) {
-		c.matrixParamsSet = true
-		c.matrixWidth = width
-		c.matrixSpillover = spillover
-	}
-}
-
-// LoadTree reads all active nodes for a tree from the store, validates that
-// the set is reconstructable, orders it so every node follows its parent and
-// sponsor, then replays it into the engine. It returns how many nodes it
-// replayed, counting the root, and zero for a tree with no active rows.
-//
-// Matrix trees replay through AddNodeAt so stored placements survive; their
-// AddNode would re-derive placement by spillover. Matrix trees need width and
-// spillover supplied through WithMatrixParams, which plain CreateTree does not
-// carry.
-func (l *TreeLoader) LoadTree(ctx context.Context, treeID, treeType string, opts ...LoadTreeOption) (int, error) {
-	var cfg loadTreeConfig
-	for _, opt := range opts {
-		opt(&cfg)
-	}
-
-	// Configuration is checked before the store is read, and before the
-	// node-count check below. Tree type and matrix params describe the
-	// structure, not its contents, so their validity does not depend on how
-	// many rows came back. Checking them after an empty-set short circuit
-	// would let a typo in startup wiring stay invisible until the first node
-	// arrived.
-	if err := validateTreeConfig(treeID, treeType, cfg); err != nil {
-		return 0, err
-	}
-
-	nodes, err := l.store.GetByTreeDepthOrdered(ctx, treeID)
-	if err != nil {
-		return 0, newTreeLoadRejected(TreeLoadStoreReadFailed, treeID, err,
-			fmt.Sprintf("load tree %s: %s", treeID, err))
-	}
-	if len(nodes) == 0 {
-		return 0, nil
-	}
-
-	// Preflight. Nothing below this point runs until both phases succeed.
-	if err := validateNodes(treeID, treeType, cfg, nodes); err != nil {
-		return 0, err
-	}
-	ordered, err := orderForReplay(treeID, nodes)
-	if err != nil {
-		return 0, err
-	}
-
-	// Counts non-root placements. Read before the first engine call.
-	total := len(ordered) - 1
-
-	if treeType == treeTypeMatrix {
-		if err := l.engine.CreateMatrixTree(ctx, treeID, cfg.matrixWidth, cfg.matrixSpillover); err != nil {
-			return 0, newTreeLoadIncomplete(TreeLoadStageCreate, treeID, err, 0, 0,
-				fmt.Sprintf("create tree %s: %s", treeID, err))
-		}
-	} else if err := l.engine.CreateTree(ctx, treeID, treeType); err != nil {
-		return 0, newTreeLoadIncomplete(TreeLoadStageCreate, treeID, err, 0, 0,
-			fmt.Sprintf("create tree %s: %s", treeID, err))
-	}
-
-	// Every failure from here on says what survived it. The structure now
-	// exists, and the call that failed may also have taken effect.
-	//
-	// ordered[0] is the root: validation proved exactly one depth-0 node exists
-	// and every other node has a non-nil parent that is not itself, so the root
-	// is the only node with zero dependencies.
-	root := ordered[0]
-	if err := l.engine.AddRoot(ctx, treeID, root.UserID, root.EnrolledAt.Unix()); err != nil {
-		return 0, newTreeLoadIncomplete(TreeLoadStageRoot, treeID, err, 0, total,
-			fmt.Sprintf("add root %s (tree %s created; root placement did not report success): %s", root.UserID, treeID, err),
-			root.UserID)
-	}
-
-	for i, node := range ordered[1:] {
-		// validateNodes already proved these non-nil for every non-root, and
-		// ordered[1:] excludes the root. Kept as guards anyway: this runs at
-		// startup, where a nil deref panics the process instead of failing one
-		// tree, and the invariant now spans two functions.
-		if node.ParentID == nil || node.SponsorID == nil {
-			return 0, newTreeLoadIncomplete(TreeLoadStageNodes, treeID, nil, i+1, total,
-				fmt.Sprintf("node %s in tree %s has nil parent or sponsor (data corruption; non-root placement %d of %d, tree left partly built)",
-					node.UserID, treeID, i+1, total),
-				node.UserID)
-		}
-		parentID, sponsorID := *node.ParentID, *node.SponsorID
-
-		if treeType == treeTypeMatrix {
-			// Unreachable for the same reason as the guard above: validateNodes
-			// rejects a nil position on every non-root matrix node. Kept for
-			// the same reason too — a nil deref here panics startup.
-			if node.Position == nil {
-				return 0, newTreeLoadIncomplete(TreeLoadStageNodes, treeID, nil, i+1, total,
-					fmt.Sprintf("matrix node %s in tree %s has nil position (the adjacency row is incomplete; non-root placement %d of %d, tree left partly built)",
-						node.UserID, treeID, i+1, total),
-					node.UserID)
-			}
-			if err := l.engine.AddNodeAt(ctx, treeID, node.UserID, parentID, sponsorID,
-				*node.Position, node.EnrolledAt.Unix()); err != nil {
-				return 0, newTreeLoadIncomplete(TreeLoadStageNodes, treeID, err, i+1, total,
-					fmt.Sprintf("add node %s (non-root placement %d of %d, tree %s left partly built): %s",
-						node.UserID, i+1, total, treeID, err),
-					node.UserID)
-			}
-			continue
-		}
-
-		var addOpts []AddNodeOption
-		if node.Position != nil {
-			addOpts = append(addOpts, WithPosition(*node.Position))
-		}
-		if err := l.engine.AddNode(ctx, treeID, node.UserID, parentID, sponsorID,
-			node.EnrolledAt.Unix(), addOpts...); err != nil {
-			return 0, newTreeLoadIncomplete(TreeLoadStageNodes, treeID, err, i+1, total,
-				fmt.Sprintf("add node %s (non-root placement %d of %d, tree %s left partly built): %s",
-					node.UserID, i+1, total, treeID, err),
-				node.UserID)
-		}
-	}
-	return len(nodes), nil
-}
-
-// supportedTreeTypes are the structures LoadTree knows how to replay.
+// supportedTreeTypes are the structures preflight accepts.
 var supportedTreeTypes = map[string]bool{
 	treeTypeUnilevel: true,
 	treeTypeBinary:   true,
@@ -185,9 +43,9 @@ type slotKey struct {
 // validateTreeConfig proves the load's configuration is sound: a supported tree
 // type, and for a matrix tree a width and spillover the engine will accept.
 //
-// It is split from validateNodes because it reads no rows. LoadTree runs it
-// before touching the store, so a misconfigured load costs no query and an
-// empty tree reports the same configuration errors a populated one does.
+// It is split from validateNodes because it reads no rows, so it can run before
+// any row is read. An empty tree then reports the same configuration errors a
+// populated one does.
 func validateTreeConfig(treeID, treeType string, cfg loadTreeConfig) error {
 	if !supportedTreeTypes[treeType] {
 		return newTreeLoadRejected(TreeLoadConfigInvalid, treeID, nil,
@@ -200,7 +58,7 @@ func validateTreeConfig(treeID, treeType string, cfg loadTreeConfig) error {
 	// spillover, so a matrix load cannot recreate the tree without them.
 	if !cfg.matrixParamsSet {
 		return newTreeLoadRejected(TreeLoadConfigInvalid, treeID, nil,
-			fmt.Sprintf("tree %s requires width and spillover (use WithMatrixParams)", treeID))
+			fmt.Sprintf("tree %s is a matrix tree, and its configuration does not mark a width and spillover as set", treeID))
 	}
 	// MatrixTree::new rejects width < 2, and width is a u8 on the wire.
 	if cfg.matrixWidth < 2 || cfg.matrixWidth > math.MaxUint8 {
@@ -435,10 +293,9 @@ func (q *replayQueue) Pop() any {
 	return item
 }
 
-// orderForReplay returns nodes ordered so that every node appears after both
-// its parent and its sponsor. Depth order alone is not enough: an explicitly
-// placed node can sit at a shallower depth than its sponsor, and every tree
-// type rejects a sponsor that is not yet present.
+// orderForReplay proves that every non-root node's parent and sponsor can
+// come before it, and returns one such order. Depth order alone does not prove
+// it: an explicitly placed node can sit at a shallower depth than its sponsor.
 //
 // Kahn's algorithm over a priority queue, so the result is deterministic.
 // Every node contributes at most two edges, so e <= 2n and the pass is
@@ -524,8 +381,9 @@ func orderForReplay(treeID string, nodes []TreeNodeRow) ([]*TreeNodeRow, error) 
 	return ordered, nil
 }
 
-// preflight validates nodes in the order replay uses, without calling the
-// engine. An empty set passes.
+// preflight proves the rows are structurally consistent and that every
+// non-root node's parent and sponsor can come before it. It calls no engine.
+// An empty set passes.
 func preflight(treeID, treeType string, cfg loadTreeConfig, nodes []TreeNodeRow) error {
 	if len(nodes) == 0 {
 		return nil
@@ -570,7 +428,7 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 	// Every node was emitted yet the counts disagree, so two rows shared a user
 	// ID: both were pushed, one key landed in emitted. validateNodes rejects
 	// duplicates, so this needs a broken precondition to reach — but the walk
-	// below indexes stuck[0], and a panic here takes down startup rather than
+	// below indexes stuck[0], and a panic here takes down the load rather than
 	// failing one tree.
 	if len(stuck) == 0 {
 		return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
@@ -630,7 +488,7 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 	// to the shadowed row the message cannot name. Only duplicate rows reach
 	// that, and validateNodes rejects them.
 	// An empty walk names nobody, so it carries nobody. A bare
-	// path[len(path)-1] would also panic and take down startup rather than
+	// path[len(path)-1] would also panic and take down the load rather than
 	// failing one tree.
 	stopped := ""
 	var named []string

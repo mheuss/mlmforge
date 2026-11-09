@@ -1,7 +1,6 @@
 package networkengine
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -12,297 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// failingTreeStore returns a fixed error from the depth-ordered read instead of
-// failing the test when it is read.
-type failingTreeStore struct {
-	TreeStore
-	err error
-}
-
-func (s *failingTreeStore) GetByTreeDepthOrdered(_ context.Context, _ string) ([]TreeNodeRow, error) {
-	return nil, s.err
-}
-
-// failAtCallMutator succeeds for the first succeedFor engine calls and fails
-// every call after that, so a fixture can stop the load on a chosen call.
-type failAtCallMutator struct {
-	succeedFor int
-	err        error
-	calls      int
-	// failedOp is the method whose call returned err. Two exits share a
-	// message and a stage, so without it a row cannot show which one ran.
-	failedOp string
-}
-
-var _ TreeMutator = (*failAtCallMutator)(nil)
-
-func (m *failAtCallMutator) next(op string) error {
-	m.calls++
-	if m.calls > m.succeedFor {
-		m.failedOp = op
-		return m.err
-	}
-	return nil
-}
-
-func (m *failAtCallMutator) CreateTree(context.Context, string, string) error {
-	return m.next("CreateTree")
-}
-
-func (m *failAtCallMutator) CreateMatrixTree(context.Context, string, int, string) error {
-	return m.next("CreateMatrixTree")
-}
-
-func (m *failAtCallMutator) AddRoot(context.Context, string, string, int64) error {
-	return m.next("AddRoot")
-}
-
-func (m *failAtCallMutator) AddNode(context.Context, string, string, string, string, int64, ...AddNodeOption) error {
-	return m.next("AddNode")
-}
-
-func (m *failAtCallMutator) AddNodeAt(context.Context, string, string, string, string, int, int64) error {
-	return m.next("AddNodeAt")
-}
-
-func (m *failAtCallMutator) RemoveNode(context.Context, string, string) ([]Responsored, error) {
-	return nil, m.next("RemoveNode")
-}
-
-func (m *failAtCallMutator) RemoveMatrixNode(context.Context, string, string, PruningMode) (*MatrixRemovalResult, error) {
-	return nil, m.next("RemoveMatrixNode")
-}
-
-// loadWithMutator seeds an in-memory store and runs a load against a
-// caller-supplied mutator.
-func loadWithMutator(t *testing.T, treeType string, nodes []TreeNodeRow, m TreeMutator, opts ...LoadTreeOption) error {
-	t.Helper()
-	store := NewMemoryTreeStore()
-	ctx := context.Background()
-	for _, n := range nodes {
-		require.NoError(t, store.insertNode(ctx, n))
-	}
-	_, err := NewTreeLoader(store, m).LoadTree(ctx, "t", treeType, opts...)
-	return err
-}
-
 // spacedNodes gives each node a distinct enrollment time.
 func spacedNodes(nodes []TreeNodeRow) []TreeNodeRow {
 	for i := range nodes {
 		nodes[i].EnrolledAt = nodes[i].EnrolledAt.Add(time.Duration(i) * time.Minute)
 	}
 	return nodes
-}
-
-// unilevelFixture is a root plus four children of the root.
-func unilevelFixture() []TreeNodeRow {
-	nodes := []TreeNodeRow{makeNode("t", "u0", 0, nil, nil, nil)}
-	for _, id := range []string{"u1", "u2", "u3", "u4"} {
-		nodes = append(nodes, makeNode("t", id, 1, ptr("u0"), ptr("u0"), nil))
-	}
-	return spacedNodes(nodes)
-}
-
-// matrixFixture is a root plus three children in slots 0, 1 and 2 of a width-3
-// matrix.
-func matrixFixture() []TreeNodeRow {
-	nodes := []TreeNodeRow{makeNode("t", "u0", 0, nil, nil, nil)}
-	for i, id := range []string{"u1", "u2", "u3"} {
-		nodes = append(nodes, makeNode("t", id, 1, ptr("u0"), ptr("u0"), intPtr(i)))
-	}
-	return spacedNodes(nodes)
-}
-
-func matrixOpts(width int) []LoadTreeOption {
-	return []LoadTreeOption{WithMatrixParams(width, "breadth_first")}
-}
-
-// TestTreeLoader_GoldenMessages_ThroughLoadTree records the exact text of every
-// exit a fixture can drive through LoadTree, using assert.Equal rather than
-// assert.Contains.
-func TestTreeLoader_GoldenMessages_ThroughLoadTree(t *testing.T) {
-	storeErr := errors.New("connection refused")
-
-	tests := []struct {
-		name     string
-		treeType string
-		opts     []LoadTreeOption
-		store    TreeStore
-		nodes    []TreeNodeRow
-		// direct seeds the store's rows in one go instead of inserting them
-		// one by one.
-		direct bool
-		// engineFailsAfter is how many engine calls to allow before failing.
-		// Negative means the mutator never fails, which is what every preflight
-		// row wants. Set on every row so the zero value never reads as
-		// "fail the first call".
-		engineFailsAfter int
-		want             string
-		// wantKind and wantStage name the type this exit returns once it is
-		// converted. A row with neither set asserts the exit is still untyped,
-		// so converting an exit without updating its row fails here. The empty
-		// value is reserved as that sentinel and cannot name a real kind or
-		// stage.
-		wantKind    TreeLoadRejectionKind
-		wantStage   TreeLoadStage
-		wantNodeIDs []string
-		// wantFailedOp is the engine method the row's name claims drove it.
-		wantFailedOp string
-		// wantErrIs is the cause this exit must keep reachable, for a row whose
-		// cause is neither the engine's error nor absent. Rendering a cause into
-		// the message is not enough, so a row that names none must wrap none.
-		wantErrIs error
-	}{
-
-		// the store read
-		{
-			name:             "store read fails",
-			treeType:         treeTypeUnilevel,
-			store:            &failingTreeStore{TreeStore: NewMemoryTreeStore(), err: storeErr},
-			engineFailsAfter: -1,
-			want:             "load tree t: connection refused",
-			wantErrIs:        storeErr,
-			wantKind:         TreeLoadStoreReadFailed,
-		},
-
-		// LoadTree, after the first engine call
-		{
-			name:             "CreateTree fails",
-			wantFailedOp:     "CreateTree",
-			wantStage:        TreeLoadStageCreate,
-			treeType:         treeTypeUnilevel,
-			nodes:            unilevelFixture(),
-			engineFailsAfter: 0,
-			want:             "create tree t: engine error [BOOM]: worker said no",
-		},
-		{
-			name:             "CreateMatrixTree fails",
-			wantFailedOp:     "CreateMatrixTree",
-			wantStage:        TreeLoadStageCreate,
-			treeType:         treeTypeMatrix,
-			opts:             matrixOpts(3),
-			nodes:            matrixFixture(),
-			engineFailsAfter: 0,
-			want:             "create tree t: engine error [BOOM]: worker said no",
-		},
-		{
-			name:             "AddRoot fails",
-			wantFailedOp:     "AddRoot",
-			wantStage:        TreeLoadStageRoot,
-			wantNodeIDs:      []string{"u0"},
-			treeType:         treeTypeUnilevel,
-			nodes:            unilevelFixture(),
-			engineFailsAfter: 1,
-			want:             "add root u0 (tree t created; root placement did not report success): engine error [BOOM]: worker said no",
-		},
-		{
-			name:             "AddNode fails",
-			wantFailedOp:     "AddNode",
-			wantStage:        TreeLoadStageNodes,
-			wantNodeIDs:      []string{"u3"},
-			treeType:         treeTypeUnilevel,
-			nodes:            unilevelFixture(),
-			engineFailsAfter: 4,
-			want:             "add node u3 (non-root placement 3 of 4, tree t left partly built): engine error [BOOM]: worker said no",
-		},
-		{
-			name:             "AddNodeAt fails",
-			wantFailedOp:     "AddNodeAt",
-			wantStage:        TreeLoadStageNodes,
-			wantNodeIDs:      []string{"u2"},
-			treeType:         treeTypeMatrix,
-			opts:             matrixOpts(3),
-			nodes:            matrixFixture(),
-			engineFailsAfter: 3,
-			want:             "add node u2 (non-root placement 2 of 3, tree t left partly built): engine error [BOOM]: worker said no",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var err error
-			var m *failAtCallMutator
-			var storeRowMutator *stubMutator
-
-			require.False(t, tt.direct && tt.engineFailsAfter >= 0,
-				"a row cannot both seed past the store's insert and drive an engine failure")
-			require.False(t, tt.store != nil && (tt.direct || tt.engineFailsAfter >= 0),
-				"a row bringing its own store cannot also seed past the store's insert or drive an engine failure")
-			require.False(t, tt.wantFailedOp != "" && tt.engineFailsAfter < 0,
-				"a row naming an engine method must drive an engine failure")
-			require.False(t, tt.wantKind != "" && tt.wantStage != "",
-				"a row carries a kind or a stage, not both")
-
-			switch {
-			case tt.store != nil:
-				storeRowMutator = &stubMutator{}
-				_, err = NewTreeLoader(tt.store, storeRowMutator).LoadTree(
-					context.Background(), "t", tt.treeType, tt.opts...)
-			case tt.direct:
-				_, err = loadWithStubDirect(t, tt.treeType, tt.nodes, tt.opts...)
-			case tt.engineFailsAfter >= 0:
-				m = &failAtCallMutator{
-					succeedFor: tt.engineFailsAfter,
-					err:        &EngineError{Code: "BOOM", Message: "worker said no"},
-				}
-				err = loadWithMutator(t, tt.treeType, tt.nodes, m, tt.opts...)
-			default:
-				_, err = loadWithStub(t, tt.treeType, tt.nodes, tt.opts...)
-			}
-
-			require.Error(t, err)
-			assert.Equal(t, tt.want, err.Error())
-
-			switch {
-			case tt.wantErrIs != nil:
-				assert.ErrorIs(t, err, tt.wantErrIs,
-					"the cause must stay reachable, not just rendered")
-			case m != nil:
-				assert.ErrorIs(t, err, m.err,
-					"the engine's error must stay reachable")
-			default:
-				assert.NoError(t, errors.Unwrap(err), "this exit wraps nothing")
-			}
-
-			var rejected *TreeLoadRejectedError
-			var incomplete *TreeLoadIncompleteError
-			switch {
-			case tt.wantKind != "":
-				require.ErrorAs(t, err, &rejected)
-				assert.Equal(t, tt.wantKind, rejected.Kind)
-				assert.Equal(t, "t", rejected.TreeID)
-				assert.Equal(t, tt.wantNodeIDs, rejected.NodeIDs)
-			case tt.wantStage != "":
-				require.ErrorAs(t, err, &incomplete)
-				assert.Equal(t, tt.wantStage, incomplete.Stage)
-				assert.Equal(t, "t", incomplete.TreeID)
-				assert.Equal(t, tt.wantNodeIDs, incomplete.NodeIDs)
-				if tt.wantStage == TreeLoadStageNodes {
-					assert.Contains(t, err.Error(),
-						fmt.Sprintf("non-root placement %d of %d,", incomplete.Attempted, incomplete.Total),
-						"the printed counts must be the typed counts")
-				}
-			default:
-				assert.False(t, errors.As(err, &rejected),
-					"this exit is typed now; give the row a wantKind")
-				assert.False(t, errors.As(err, &incomplete),
-					"this exit is typed now; give the row a wantStage")
-			}
-
-			if storeRowMutator != nil {
-				assert.Zero(t, storeRowMutator.totalCalls(),
-					"a row bringing its own store must make no engine call")
-			}
-
-			if m != nil {
-				assert.Equal(t, tt.wantFailedOp, m.failedOp,
-					"the row must be driven by the method its name claims")
-				assert.Equal(t, tt.engineFailsAfter+1, m.calls,
-					"LoadTree must return on engine call %d and make no call after it",
-					tt.engineFailsAfter+1)
-			}
-		})
-	}
 }
 
 // TestPreflight_GoldenMessages records the exact text of every preflight exit a
@@ -330,7 +44,7 @@ func TestPreflight_GoldenMessages(t *testing.T) {
 		{
 			name:     "matrix without params",
 			treeType: treeTypeMatrix,
-			want:     "tree t requires width and spillover (use WithMatrixParams)",
+			want:     "tree t is a matrix tree, and its configuration does not mark a width and spillover as set",
 			wantKind: TreeLoadConfigInvalid,
 		},
 		{
@@ -685,82 +399,13 @@ func TestTreeLoadRejectedError_CarriesEveryNamedNode(t *testing.T) {
 	assert.NoError(t, errors.Unwrap(err))
 }
 
-func TestTreeLoadIncompleteError_CarriesProgress(t *testing.T) {
-	engineErr := &EngineError{Code: "BOOM", Message: "worker said no"}
-	err := newTreeLoadIncomplete(TreeLoadStageNodes, "t", engineErr, 3, 5,
-		"add node u3 (non-root placement 3 of 5, tree t left partly built): engine error [BOOM]: worker said no",
-		"u3")
-
-	assert.Equal(t, TreeLoadStageNodes, err.Stage)
-	assert.Equal(t, 2, err.Confirmed)
-	assert.Equal(t, 3, err.Attempted)
-	assert.Equal(t, 5, err.Total)
-
-	var target *EngineError
-	assert.True(t, errors.As(err, &target), "engine error stays reachable")
-}
-
-// This asserts the constructor, not the guards. Feeding a literal message in
-// and reading the same literal back cannot catch a typo at the return site, so
-// it is named for what it does.
-func TestTreeLoadIncompleteError_ConstructorStoresWhatItIsGiven(t *testing.T) {
-	nilRefs := newTreeLoadIncomplete(TreeLoadStageNodes, "t", nil, 3, 5,
-		"node u3 in tree t has nil parent or sponsor (data corruption; non-root placement 3 of 5, tree left partly built)",
-		"u3")
-	assert.Equal(t,
-		"node u3 in tree t has nil parent or sponsor (data corruption; non-root placement 3 of 5, tree left partly built)",
-		nilRefs.Error())
-
-	assert.Equal(t, TreeLoadStageNodes, nilRefs.Stage)
-	assert.Equal(t, 2, nilRefs.Confirmed)
-	assert.Equal(t, 3, nilRefs.Attempted)
-	assert.Equal(t, 5, nilRefs.Total)
-	assert.Equal(t, []string{"u3"}, nilRefs.NodeIDs)
-	assert.Equal(t, "t", nilRefs.TreeID)
-	assert.NoError(t, errors.Unwrap(nilRefs), "a guard wraps nothing")
-}
-
-func TestTreeLoadErrors_DoNotMatchEachOther(t *testing.T) {
-	rejected := newTreeLoadRejected(TreeLoadConfigInvalid, "t", nil,
-		"tree t has type unilevel with no slot rule (add one to validateNodes)")
-	incomplete := newTreeLoadIncomplete(TreeLoadStageCreate, "t", nil, 0, 0,
-		"create tree t: engine error [BOOM]: worker said no")
-
-	var asIncomplete *TreeLoadIncompleteError
-	assert.False(t, errors.As(rejected, &asIncomplete),
-		"a rejection must not satisfy the incomplete type")
-
-	var asRejected *TreeLoadRejectedError
-	assert.False(t, errors.As(incomplete, &asRejected),
-		"an incomplete load must not satisfy the rejection type")
-}
-
 func TestTreeLoadErrors_StayReachableThroughAnOuterWrap(t *testing.T) {
 	rejected := newTreeLoadRejected(TreeLoadConfigInvalid, "t", nil,
 		"tree t has an unsupported spillover")
-	incomplete := newTreeLoadIncomplete(TreeLoadStageRoot, "t", nil, 0, 0,
-		"add root u0 (tree t created; root placement did not report success): engine error [BOOM]: worker said no",
-		"u0")
 
 	var asRejected *TreeLoadRejectedError
 	require.True(t, errors.As(fmt.Errorf("start engine: %w", rejected), &asRejected))
 	assert.Equal(t, TreeLoadConfigInvalid, asRejected.Kind)
-
-	var asIncomplete *TreeLoadIncompleteError
-	require.True(t, errors.As(fmt.Errorf("start engine: %w", incomplete), &asIncomplete))
-	assert.Equal(t, TreeLoadStageRoot, asIncomplete.Stage)
-	assert.Equal(t, []string{"u0"}, asIncomplete.NodeIDs)
-}
-
-func TestTreeLoadIncompleteError_CountsAreZeroBeforeTheNodesStage(t *testing.T) {
-	create := newTreeLoadIncomplete(TreeLoadStageCreate, "t", nil, 0, 0,
-		"create tree t: engine error [BOOM]: worker said no")
-
-	assert.Equal(t, TreeLoadStageCreate, create.Stage)
-	assert.Equal(t, 0, create.Confirmed, "a derived Confirmed must not go negative")
-	assert.Equal(t, 0, create.Attempted)
-	assert.Equal(t, 0, create.Total)
-	assert.Empty(t, create.NodeIDs)
 }
 
 func TestTreeLoadErrors_DoNotAliasTheCallersSlice(t *testing.T) {
@@ -768,158 +413,19 @@ func TestTreeLoadErrors_DoNotAliasTheCallersSlice(t *testing.T) {
 
 	rejected := newTreeLoadRejected(TreeLoadDataInvalid, "t", nil,
 		"tree t has more than one depth-0 root (u0 and u9)", ids...)
-	incomplete := newTreeLoadIncomplete(TreeLoadStageNodes, "t", nil, 3, 5,
-		"add node u0 (non-root placement 3 of 5, tree t left partly built): engine error", ids...)
 
 	ids[0] = "mutated"
 
 	assert.Equal(t, []string{"u0", "u9"}, rejected.NodeIDs)
-	assert.Equal(t, []string{"u0", "u9"}, incomplete.NodeIDs)
 }
 
-// The golden table above reads an empty kind or stage as "this exit is not
-// converted yet". A constant declared empty would make a converted exit read as
-// unconverted, and the table would go green on it. The two lists are maintained
-// by hand, so a new constant has to be added here to be covered.
+// Every kind constant is non-empty. The list is maintained by hand, so a new
+// constant has to be added here to be covered.
 func TestTreeLoadErrors_NoConstantCollidesWithTheSentinel(t *testing.T) {
 	for _, k := range []TreeLoadRejectionKind{
 		TreeLoadDataInvalid, TreeLoadConfigInvalid, TreeLoadStoreReadFailed,
 	} {
-		assert.NotEmpty(t, k, "an empty kind collides with the golden table's sentinel")
-	}
-	for _, stage := range []TreeLoadStage{
-		TreeLoadStageCreate, TreeLoadStageRoot, TreeLoadStageNodes,
-	} {
-		assert.NotEmpty(t, stage, "an empty stage collides with the golden table's sentinel")
-	}
-}
-
-// The golden table pins messages, kinds, stages and node lists, but has no
-// column for the acknowledgement counts. This is where those are checked.
-//
-// An *EngineError rather than errors.New, so the assertion below exercises
-// errors.As reaching an *EngineError through the incomplete type rather than
-// passing on any error.
-func TestTreeLoader_PostCreateExitsCarryTheirCounts(t *testing.T) {
-	engineErr := &EngineError{Code: "BOOM", Message: "worker said no"}
-
-	tests := []struct {
-		name          string
-		treeType      string
-		opts          []LoadTreeOption
-		nodes         []TreeNodeRow
-		succeedFor    int
-		wantFailedOp  string
-		wantStage     TreeLoadStage
-		wantConfirmed int
-		wantAttempted int
-		wantTotal     int
-	}{
-		// Confirmed and Attempted are deliberately zero on the create and root
-		// rows, not omitted. Nothing non-root has been placed. Total is zero
-		// only at the create stage.
-		{
-			name:          "create fails before any placement is attempted",
-			wantFailedOp:  "CreateTree",
-			treeType:      treeTypeUnilevel,
-			nodes:         unilevelFixture(),
-			succeedFor:    0,
-			wantStage:     TreeLoadStageCreate,
-			wantConfirmed: 0,
-			wantAttempted: 0,
-			wantTotal:     0,
-		},
-		{
-			name:          "matrix create fails before any placement is attempted",
-			wantFailedOp:  "CreateMatrixTree",
-			treeType:      treeTypeMatrix,
-			opts:          matrixOpts(3),
-			nodes:         matrixFixture(),
-			succeedFor:    0,
-			wantStage:     TreeLoadStageCreate,
-			wantConfirmed: 0,
-			wantAttempted: 0,
-			wantTotal:     0,
-		},
-		{
-			name:          "root fails before any non-root placement",
-			wantFailedOp:  "AddRoot",
-			treeType:      treeTypeUnilevel,
-			nodes:         unilevelFixture(),
-			succeedFor:    1,
-			wantStage:     TreeLoadStageRoot,
-			wantConfirmed: 0,
-			wantAttempted: 0,
-			wantTotal:     4,
-		},
-		{
-			// Create, root, then two placements are acknowledged. The third
-			// does not come back, so two are confirmed and the message says
-			// "3 of 4".
-			name:          "third placement fails with two acknowledged",
-			wantFailedOp:  "AddNode",
-			treeType:      treeTypeUnilevel,
-			nodes:         unilevelFixture(),
-			succeedFor:    4,
-			wantStage:     TreeLoadStageNodes,
-			wantConfirmed: 2,
-			wantAttempted: 3,
-			wantTotal:     4,
-		},
-		{
-			name:          "matrix second placement fails with one acknowledged",
-			wantFailedOp:  "AddNodeAt",
-			treeType:      treeTypeMatrix,
-			opts:          matrixOpts(3),
-			nodes:         matrixFixture(),
-			succeedFor:    3,
-			wantStage:     TreeLoadStageNodes,
-			wantConfirmed: 1,
-			wantAttempted: 2,
-			wantTotal:     3,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := &failAtCallMutator{succeedFor: tt.succeedFor, err: engineErr}
-			err := loadWithMutator(t, tt.treeType, tt.nodes, m, tt.opts...)
-
-			var incomplete *TreeLoadIncompleteError
-			require.ErrorAs(t, err, &incomplete)
-			assert.Equal(t, tt.wantFailedOp, m.failedOp,
-				"the row must be driven by the method its name claims")
-			assert.Equal(t, tt.wantStage, incomplete.Stage)
-			assert.Equal(t, tt.wantConfirmed, incomplete.Confirmed)
-			assert.Equal(t, tt.wantAttempted, incomplete.Attempted)
-			assert.Equal(t, tt.wantTotal, incomplete.Total)
-
-			var target *EngineError
-			assert.True(t, errors.As(err, &target),
-				"the engine's own error must stay reachable through the typed error")
-		})
-	}
-}
-
-// Confirmed is derived rather than passed, so this pins the derivation against
-// the index the message prints for every placement of a four-node replay.
-func TestTreeLoader_ConfirmedTrailsTheMessageIndex(t *testing.T) {
-	engineErr := &EngineError{Code: "BOOM", Message: "worker said no"}
-
-	// succeedFor 2 is create plus root, so the first placement fails.
-	for attempt := 1; attempt <= 4; attempt++ {
-		t.Run(fmt.Sprintf("placement %d of 4", attempt), func(t *testing.T) {
-			m := &failAtCallMutator{succeedFor: 1 + attempt, err: engineErr}
-			err := loadWithMutator(t, treeTypeUnilevel, unilevelFixture(), m)
-
-			var incomplete *TreeLoadIncompleteError
-			require.ErrorAs(t, err, &incomplete)
-			assert.Equal(t, attempt, incomplete.Attempted)
-			assert.Equal(t, attempt-1, incomplete.Confirmed)
-			assert.Equal(t, 4, incomplete.Total)
-			assert.Contains(t, err.Error(),
-				fmt.Sprintf("(non-root placement %d of %d,", incomplete.Attempted, incomplete.Total))
-		})
+		assert.NotEmpty(t, k, "kind constant is empty")
 	}
 }
 

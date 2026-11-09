@@ -63,21 +63,13 @@ type TreeStore interface {
 	// GetByTreeDepthOrdered returns all active nodes in a tree ordered by
 	// depth ascending, then enrolled_at.
 	//
-	// Row replay does not depend on this order. orderForReplay orders by
-	// dependency, breaking ties by (Depth, EnrolledAt, UserID), a total order
-	// over a set whose duplicate user IDs validateNodes already rejected. So
-	// both the replay sequence and its "%d of %d" progress counter are fixed by
-	// the node set alone.
-	// TestOrderForReplay_IsIndependentOfInputOrder pins that. GetByTree returns
-	// the same set unordered and would replay identically.
-	//
 	// What the sort buys is preflight errors that are stable for rows differing
-	// on enrollment time, which is a different thing from replay order.
+	// on enrollment time.
 	// validateNodes runs before orderForReplay and returns on the first fault it
 	// meets. On data with several faults the message therefore depends on row
 	// order: which pair "more than one depth-0 root (%s and %s)" names, and
 	// which of several dangling nodes gets reported. A stable input makes a
-	// failing startup load fail the same way every time, which is what an
+	// failing load fail the same way every time, which is what an
 	// operator needs to act on.
 	//
 	// Rows tying on depth and enrollment time have no defined order. The message

@@ -170,9 +170,9 @@ func TestTreePersistence_StreamLoadMatchesTheWritingWorker(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, placed.ProjectionErr)
 
-	// The worker that applies the last write holds the tree the event path built.
-	eventEngine := it.engine(t)
-	placed, err = NewTreeWriter(it.events, it.store, it.snapshots, eventEngine, NewPostgresTreeLocker(it.dsn)).
+	// Kept so its depths can be compared with the load worker's.
+	writingEngine := it.engine(t)
+	placed, err = NewTreeWriter(it.events, it.store, it.snapshots, writingEngine, NewPostgresTreeLocker(it.dsn)).
 		Place(ctx, PlaceRequest{TreeID: tree, UserID: grandchildID, ParentID: childID, SponsorID: childID,
 			EnrolledAt: writeTime.Add(2 * time.Hour)})
 	require.NoError(t, err)
@@ -185,7 +185,7 @@ func TestTreePersistence_StreamLoadMatchesTheWritingWorker(t *testing.T) {
 	assert.Equal(t, 3, loaded.Nodes)
 
 	for _, user := range []string{rootID, childID, grandchildID} {
-		want, err := eventEngine.GetPosition(ctx, tree, user)
+		want, err := writingEngine.GetPosition(ctx, tree, user)
 		require.NoError(t, err)
 		got, err := loadEngine.GetPosition(ctx, tree, user)
 		require.NoError(t, err)

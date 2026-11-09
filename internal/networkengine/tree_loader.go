@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// loadTreeConfig holds the matrix width and spillover, and whether they were set.
 type loadTreeConfig struct {
 	matrixParamsSet bool
 	matrixWidth     int
@@ -49,8 +48,6 @@ func validateTreeConfig(treeID, treeType string, cfg loadTreeConfig) error {
 	if treeType != treeTypeMatrix {
 		return nil
 	}
-	// The adjacency store keeps per-node data, not the structure's width and
-	// spillover, so a matrix load cannot recreate the tree without them.
 	if !cfg.matrixParamsSet {
 		return newTreeLoadRejected(TreeLoadConfigInvalid, treeID, nil,
 			fmt.Sprintf("tree %s is a matrix tree, and its configuration does not mark a width and spillover as set", treeID))
@@ -422,8 +419,8 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 	// Every node was emitted yet the counts disagree, so two rows shared a user
 	// ID: both were pushed, one key landed in emitted. validateNodes rejects
 	// duplicates, so this needs a broken precondition to reach — but the walk
-	// below indexes stuck[0], and a panic here takes down the load rather than
-	// failing one tree.
+	// below indexes stuck[0], and a panic here takes down the process rather than
+	// returning an error.
 	if len(stuck) == 0 {
 		return newTreeLoadRejected(TreeLoadDataInvalid, treeID, nil,
 			fmt.Sprintf("tree %s: replay produced %d of %d nodes with no unreplayable node (duplicate user IDs?)",
@@ -482,8 +479,8 @@ func cycleError(treeID string, nodes []TreeNodeRow, ordered []*TreeNodeRow, byID
 	// to the shadowed row the message cannot name. Only duplicate rows reach
 	// that, and validateNodes rejects them.
 	// An empty walk names nobody, so it carries nobody. A bare
-	// path[len(path)-1] would also panic and take down the load rather than
-	// failing one tree.
+	// path[len(path)-1] would also panic and take down the process rather than
+	// returning an error.
 	stopped := ""
 	var named []string
 	if len(path) > 0 {

@@ -966,9 +966,7 @@ Unilevel carries no position. It appends to the parent's child list. Preflight r
 
 A load that fails partway leaves a partly built tree in the worker. The engine may refuse a call after the create stage while the worker stays usable. A caller may then drop the tree with `drop_structure`. The engine refuses the same input the same way. A reload succeeds only once the cause has changed. UC-NET-032 covers this. Preflight is meant to catch engine refusals before the create. This path should be rare. After a timeout, a cancellation or a crash, the client is closed or the worker is gone. Starting over then means a new worker. Each CLI command starts its own worker. A failed load ends with it. Either way, a partial load costs a full rebuild. So preflight proves a load is sound before the first engine call.
 
-A load checks its input in two phases with different inputs. `validateTreeConfig` checks the tree type, and for a matrix the width and spillover. It reads no rows, so it runs before the store query. A misconfigured load costs no query. `validateNodes` runs after the query and proves the node set is structurally consistent.
-
-The empty-tree short circuit sits between the two phases. A tree with zero rows still reports configuration errors. That is why a typo in startup wiring surfaces at the first load instead of staying invisible until the first node arrives.
+A load checks its input in two phases. `validateTreeConfig` checks the shape before the active rows are read. `preflight` then checks the rows, and passes an empty set. A tree with zero rows still reports configuration errors, because the shape check comes first.
 
 ### Matrix events carry authoritative placement (HEU-553)
 

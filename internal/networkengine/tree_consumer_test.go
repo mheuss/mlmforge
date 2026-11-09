@@ -1668,7 +1668,7 @@ func TestHandleRootAdded_ReconcileCompensatesWhenAnotherUserIsRoot(t *testing.T)
 
 	require.Error(t, err)
 	assert.Nil(t, activeRow(t, store, posUser),
-		"two active depth-0 rows would wedge every later startup load")
+		"the root row this call inserted is still active")
 	assert.Len(t, tr.mutationOps, 1, "a second root is not retryable")
 }
 

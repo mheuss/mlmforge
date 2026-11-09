@@ -1035,7 +1035,7 @@ if err != nil && treeLoadRetryable(err) {
 }
 ```
 
-**Notes:** A `TreeReplayError` is never retried. The allowlist is the load-bearing part. Denylisting would mean a new failure mode is retried by default. The failure modes here include ones that never terminate. Related: UC-NET-012 owns the preflight that produces `TreeLoadRejectedError` before any engine call. This entry owns the retry half, which runs after one has failed. Neither restates the other.
+**Notes:** A `TreeReplayError` is never retried. The allowlist is the load-bearing part. Denylisting would mean a new failure mode is retried by default. The failure modes here include ones that never terminate. Related: UC-NET-012 owns the preflight that produces `TreeLoadRejectedError` before any engine call. This entry owns the retry half, which runs after a load has failed. Neither restates the other.
 
 ---
 

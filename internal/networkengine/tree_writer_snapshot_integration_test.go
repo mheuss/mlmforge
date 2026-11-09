@@ -257,15 +257,15 @@ func TestTreeWriter_ASnapshotBuildTheEngineRefusesIsDroppedAndReplayedInFull(t *
 	if assert.ErrorAs(t, engine.refusal, &refused, "no placement was refused after the restore") {
 		assert.Equal(t, engineCodeUserNotFound, refused.Code)
 	}
-	assert.Equal(t, 1, engine.drops, "the refused snapshot build was not dropped")
+	assert.Equal(t, 1, engine.drops, "drop count")
 	assert.Equal(t, 1, engine.restores)
-	assert.Equal(t, 1, engine.creates, "the full replay did not create the structure")
+	assert.Equal(t, 1, engine.creates, "create count")
 	require.Len(t, res.Warnings, 1)
 	assert.Contains(t, res.Warnings[0], "at version 3 could not be used")
 	assert.Contains(t, res.Warnings[0], "dropped the structure")
 	_, found, err := it.snapshots.Get(ctx, tree)
 	require.NoError(t, err)
-	assert.False(t, found, "the unusable snapshot was kept")
+	assert.False(t, found, "expected no snapshot for the tree after the load; Get found one")
 	assert.NoError(t, res.ReleaseErr)
 	assert.Equal(t, 5, res.Nodes)
 	down, err := engine.GetDownline(ctx, tree, root, 0)

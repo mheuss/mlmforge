@@ -19,7 +19,7 @@ const (
 	// trees are unaffected.
 	TreeLoadDataInvalid TreeLoadRejectionKind = "data_invalid"
 	// TreeLoadConfigInvalid means the load's arguments describe a structure
-	// preflight does not accept.
+	// that cannot be loaded.
 	TreeLoadConfigInvalid TreeLoadRejectionKind = "config_invalid"
 	// TreeLoadStoreReadFailed means the node set could not be read. The cause
 	// may be the store, a cancelled context, or a decode failure.
@@ -27,7 +27,7 @@ const (
 )
 
 // TreeLoadRejectedError reports a load that failed before any engine call, so
-// the engine is unchanged and the load can be retried.
+// the engine is unchanged.
 type TreeLoadRejectedError struct {
 	TreeID string
 	// NodeIDs holds every user the message names, in the order the message
@@ -69,13 +69,13 @@ func newTreeLoadRejected(kind TreeLoadRejectionKind, treeID string, err error, m
 // treeLoadFallback builds a message for a value this package did not
 // construct. Each segment is omitted when its field is unset, so a zero value
 // still renders the leading label rather than a run of separators.
-func treeLoadFallback(label, treeID, kindOrStage string, nodeIDs []string, err error) string {
+func treeLoadFallback(label, treeID, kind string, nodeIDs []string, err error) string {
 	parts := []string{label}
 	if treeID != "" {
 		parts = append(parts, fmt.Sprintf("tree %s", treeID))
 	}
-	if kindOrStage != "" {
-		parts = append(parts, kindOrStage)
+	if kind != "" {
+		parts = append(parts, kind)
 	}
 	if list := namedNodes(nodeIDs); list != "" {
 		parts = append(parts, list)

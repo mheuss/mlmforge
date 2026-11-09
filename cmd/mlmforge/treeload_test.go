@@ -256,6 +256,18 @@ func TestRunTreeLoad_NamesADeadlineOnAReplayFailure(t *testing.T) {
 	require.Empty(t, out.String())
 }
 
+func TestRunTreeLoad_ReportsAChainHoldingBothAsTheReplayFailure(t *testing.T) {
+	replay := &networkengine.TreeReplayError{TreeID: "t", Stage: networkengine.TreeReplayStageReplay, Err: errors.New("refused")}
+	rejected := &networkengine.TreeLoadRejectedError{Kind: networkengine.TreeLoadDataInvalid}
+	loader := &stubLoader{err: fmt.Errorf("%w; %w", replay, rejected)}
+	var out bytes.Buffer
+
+	err := runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("t"))
+
+	require.EqualError(t, err, "load stopped at the replay stage while building the tree from its stream: "+replay.Error())
+	require.Empty(t, out.String())
+}
+
 func TestRunTreeLoad_ReportsAnUntypedFailure(t *testing.T) {
 	loader := &stubLoader{err: errors.New("something else")}
 	var out bytes.Buffer

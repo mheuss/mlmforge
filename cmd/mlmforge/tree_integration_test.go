@@ -193,7 +193,7 @@ func TestTreeLoad_PrintsTheCanonicalTreeID(t *testing.T) {
 	require.Empty(t, out.stderr.String())
 }
 
-// The rows have to leave Postgres and reach the loader. A tree holding only a
+// The rows have to leave Postgres and reach the load. A tree holding only a
 // child and no depth-0 root is rejected by name.
 func TestTreeLoad_ReadsTheStoredRows(t *testing.T) {
 	if pgContainer == nil {

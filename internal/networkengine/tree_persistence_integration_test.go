@@ -488,8 +488,7 @@ func TestTreePersistence_SlotConflictFailsCleanAndTreeReloads(t *testing.T) {
 	_, err = NewTreeWriter(it.events, it.store, it.snapshots, engine, NewPostgresTreeLocker(it.dsn)).Load(ctx, load)
 	require.NoError(t, err)
 
-	// u3 claims the slot u2 holds. It is appended directly and delivered
-	// through the consumer.
+	// u3 claims the slot u2 holds.
 	conflict := appendForeign(t, it, tree, EventTypeNodePlaced, NodePlacedPayload{
 		TreeID: tree, UserID: u3, ParentID: u1, SponsorID: u1,
 		Position: intPtr(0), TreeType: treeTypeMatrix, EnrolledAt: base.Add(2 * time.Hour)})
@@ -506,7 +505,7 @@ func TestTreePersistence_SlotConflictFailsCleanAndTreeReloads(t *testing.T) {
 		"the code lives in a field, not in the message text: %v", posErr)
 
 	_, err = it.writer(t).Load(ctx, load)
-	require.Error(t, err, "a load redelivers the stuck event and must fail on it")
+	require.Error(t, err, "expected the load to fail with the conflicting event still in the stream; it returned no error")
 
 	rejected, err := it.writer(t).Reject(ctx, RejectRequest{TreeID: tree, EventID: conflict.ID, Reason: "claims the slot u2 holds"})
 	require.NoError(t, err)

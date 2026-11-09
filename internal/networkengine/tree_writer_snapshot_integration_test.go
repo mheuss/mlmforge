@@ -143,12 +143,13 @@ func (e *restoreCountingEngine) RestoreSnapshot(ctx context.Context, structure, 
 	return e.TreeRebuilder.RestoreSnapshot(ctx, structure, treeType, data)
 }
 
-// refuseAfterRestoreEngine refuses the first AddNode after a restore, and counts
-// the calls a snapshot fallback makes.
+// refuseAfterRestoreEngine refuses one AddNode after a successful restore, and
+// counts restores, drops and creates.
 type refuseAfterRestoreEngine struct {
 	TreeRebuilder
 	refuse   bool
 	restored bool
+	refusal  error
 	restores int
 	drops    int
 	creates  int
@@ -161,11 +162,13 @@ func (e *refuseAfterRestoreEngine) RestoreSnapshot(ctx context.Context, structur
 	return err
 }
 
-// AddNode names a parent the engine does not hold, so the engine refuses it.
+// AddNode names an absent parent on the first call after a successful restore,
+// and records what that call returned.
 func (e *refuseAfterRestoreEngine) AddNode(ctx context.Context, structure, userID, parentID, sponsorID string, enrolledAt int64, opts ...AddNodeOption) error {
 	if e.refuse && e.restored {
 		e.refuse = false
-		parentID = testUserUUID(999)
+		e.refusal = e.TreeRebuilder.AddNode(ctx, structure, userID, testUserUUID(999), sponsorID, enrolledAt, opts...)
+		return e.refusal
 	}
 	return e.TreeRebuilder.AddNode(ctx, structure, userID, parentID, sponsorID, enrolledAt, opts...)
 }
@@ -250,6 +253,10 @@ func TestTreeWriter_ASnapshotBuildTheEngineRefusesIsDroppedAndReplayedInFull(t *
 		Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeUnilevel})
 
 	require.NoError(t, err)
+	var refused *EngineError
+	if assert.ErrorAs(t, engine.refusal, &refused, "no placement was refused after the restore") {
+		assert.Equal(t, engineCodeUserNotFound, refused.Code)
+	}
 	assert.Equal(t, 1, engine.drops, "the refused snapshot build was not dropped")
 	assert.Equal(t, 1, engine.restores)
 	assert.Equal(t, 1, engine.creates, "the full replay did not create the structure")
@@ -259,6 +266,7 @@ func TestTreeWriter_ASnapshotBuildTheEngineRefusesIsDroppedAndReplayedInFull(t *
 	_, found, err := it.snapshots.Get(ctx, tree)
 	require.NoError(t, err)
 	assert.False(t, found, "the unusable snapshot was kept")
+	assert.NoError(t, res.ReleaseErr)
 	assert.Equal(t, 5, res.Nodes)
 	down, err := engine.GetDownline(ctx, tree, root, 0)
 	require.NoError(t, err)

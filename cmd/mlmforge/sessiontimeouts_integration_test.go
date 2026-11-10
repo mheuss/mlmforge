@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -235,6 +237,30 @@ func TestTreePool_EveryConnectionCarriesTheSettings(t *testing.T) {
 		check(c, fmt.Sprintf("after the close, connection %d", i))
 		c.Release()
 	}
+}
+
+func TestMigrateUp_RunsWithoutTheTreeTimeouts(t *testing.T) {
+	dsn := newMigrateDatabase(t)
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "000001_seen.up.sql"), []byte(
+		"CREATE TABLE heu801_seen AS SELECT current_setting('statement_timeout') AS s, current_setting('lock_timeout') AS l;\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "000001_seen.down.sql"), []byte("DROP TABLE heu801_seen;\n"), 0o600))
+	t.Setenv(statementTimeoutEnv, "9s")
+	t.Setenv(lockTimeoutEnv, "8s")
+	t.Setenv("PGOPTIONS", "")
+
+	root := newRootCmd()
+	out := &cmdOutput{}
+	root.SetOut(&out.stdout)
+	root.SetErr(&out.stderr)
+	root.SetArgs([]string{"migrate", "up", "--db-url", dsn, "--migrations", dir})
+	require.NoError(t, root.Execute(), out.stderr.String())
+
+	var statement, lock string
+	require.NoError(t, connectTo(t, dsn).QueryRow(context.Background(),
+		"SELECT s, l FROM heu801_seen").Scan(&statement, &lock))
+	assert.Equal(t, "0", statement)
+	assert.Equal(t, "0", lock)
 }
 
 func TestTreePool_AnEnvVarZeroTurnsTheTimeoutOff(t *testing.T) {

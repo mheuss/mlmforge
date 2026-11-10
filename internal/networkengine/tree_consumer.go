@@ -311,6 +311,17 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, shape treeSha
 		return unprojectable(callErr)
 	}
 
+	// Refused before the engine call, which would otherwise remove a later
+	// placement of the same user. Equal versions must pass, so a redelivery of
+	// the last projected event still reconciles.
+	projected, found, err := c.store.ProjectedVersion(ctx, payload.TreeID)
+	if err != nil {
+		return fmt.Errorf("read the projected version of tree %s: %w", payload.TreeID, err)
+	}
+	if found && event.Version < projected {
+		return &ProjectionRefusedError{TreeID: payload.TreeID, EventVersion: event.Version, ProjectedVersion: projected}
+	}
+
 	var outcome engineOutcome
 
 	// withRetry returning nil cannot say whether this call removed the node or

@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -50,4 +51,83 @@ func TestHandleRootAdded_CompensationRestoresTheVersionBeforeALaterRoot(t *testi
 	require.NoError(t, verr)
 	assert.True(t, found)
 	assert.Equal(t, int64(2), version)
+}
+
+// replacedAfterRemoval projects E1 placing posUser at version 1, removal
+// removing them at version 2, and E2 placing them again at version 3. It
+// returns E2's row ID.
+func replacedAfterRemoval(t *testing.T, store TreeStore, removalID string) string {
+	t.Helper()
+	ctx := context.Background()
+	row := func(id string) TreeNodeRow {
+		return TreeNodeRow{
+			ID: id, TreeID: consumerTree, UserID: posUser,
+			ParentID: ptr(posParent), SponsorID: ptr(posParent), Depth: 1, EnrolledAt: posEnrolled,
+		}
+	}
+	require.NoError(t, store.ProjectInsert(ctx, row("cafe0000-0000-4000-8000-0000000000e1"), 1))
+	require.NoError(t, stampRemoval(ctx, store, consumerTree, posUser, removalID, 2))
+	e2 := "cafe0000-0000-4000-8000-0000000000e2"
+	require.NoError(t, store.ProjectInsert(ctx, row(e2), 3))
+	return e2
+}
+
+func TestHandleNodeRemoved_RefusesARemovalBelowTheProjectedVersionBeforeTheEngine(t *testing.T) {
+	tr := &reconcileTransport{mutationResponse: json.RawMessage(`{"responsored":[]}`)}
+	c, store := newRemovalConsumer(tr)
+	event := makeEvent(EventTypeNodeRemoved, removedPayload())
+	event.Version = 2
+	e2 := replacedAfterRemoval(t, store.MemoryTreeStore, event.ID)
+
+	err := deliver(context.Background(), c, event)
+
+	var refused *ProjectionRefusedError
+	require.ErrorAs(t, err, &refused)
+	assert.Equal(t, int64(2), refused.EventVersion)
+	assert.Equal(t, int64(3), refused.ProjectedVersion)
+	assert.Empty(t, tr.mutationOps, "engine mutations sent for a removal below the projected version")
+	active := activeRow(t, store.MemoryTreeStore, posUser)
+	require.NotNil(t, active, "no active row for the user after the refused removal")
+	assert.Equal(t, e2, active.ID, "the active row after the refused removal")
+}
+
+// HEU-811's step 5: the engine no longer holds the user, the store holds E2
+// active and a tombstone this removal stamped.
+func TestHandleNodeRemoved_ARedeliveryBehindALaterPlacementDoesNotConverge(t *testing.T) {
+	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeUserNotFound}}
+	c, store := newRemovalConsumer(tr)
+	event := makeEvent(EventTypeNodeRemoved, removedPayload())
+	event.Version = 2
+	e2 := replacedAfterRemoval(t, store.MemoryTreeStore, event.ID)
+
+	err := deliver(context.Background(), c, event)
+
+	var refused *ProjectionRefusedError
+	require.ErrorAs(t, err, &refused)
+	assert.Empty(t, tr.mutationOps, "engine mutations sent for a removal below the projected version")
+	assert.Empty(t, store.responsors, "store removal writes attempted")
+	active := activeRow(t, store.MemoryTreeStore, posUser)
+	require.NotNil(t, active, "no active row for the user after the refused removal")
+	assert.Equal(t, e2, active.ID, "the active row after the refused removal")
+}
+
+// catchUp redelivers the stream's last event at the projected version, so a
+// removal at exactly that version has to reach the engine and converge.
+func TestHandleNodeRemoved_ARedeliveryAtTheProjectedVersionReachesTheEngine(t *testing.T) {
+	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeUserNotFound}}
+	c, store := newRemovalConsumer(tr)
+	ctx := context.Background()
+	event := makeEvent(EventTypeNodeRemoved, removedPayload())
+	event.Version = 2
+	require.NoError(t, store.ProjectInsert(ctx, TreeNodeRow{
+		ID: "cafe0000-0000-4000-8000-0000000000e1", TreeID: consumerTree, UserID: posUser,
+		ParentID: ptr(posParent), SponsorID: ptr(posParent), Depth: 1, EnrolledAt: posEnrolled,
+	}, 1))
+	require.NoError(t, stampRemoval(ctx, store.MemoryTreeStore, consumerTree, posUser, event.ID, 2))
+
+	err := deliver(ctx, c, event)
+
+	require.NoError(t, err, "the redelivered removal at the projected version")
+	assert.Equal(t, []string{"remove_node"}, tr.mutationOps, "engine mutations sent")
+	assert.Empty(t, store.responsors, "store removal writes attempted")
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mlmforge/mlmforge/internal/networkengine"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -257,7 +258,7 @@ func TestMigrateUp_RunsWithoutTheTreeTimeouts(t *testing.T) {
 	assert.Equal(t, "0", lock)
 }
 
-// holdTx opens a transaction the server ends after 5s idle, and rolls it back when the test ends.
+// holdTx opens a transaction for a test to hold locks in.
 func holdTx(t *testing.T) pgx.Tx {
 	t.Helper()
 	ctx := context.Background()
@@ -267,7 +268,7 @@ func holdTx(t *testing.T) pgx.Tx {
 	tx, err := conn.Begin(ctx)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback(ctx) })
-	_, err = tx.Exec(ctx, "SET LOCAL idle_in_transaction_session_timeout = '5s'")
+	_, err = tx.Exec(ctx, "SET LOCAL idle_in_transaction_session_timeout = '15s'")
 	require.NoError(t, err)
 	return tx
 }
@@ -295,7 +296,7 @@ var placeTimeoutCases = map[string]struct {
 	"lock_timeout":      {"0", "500ms", "(the server canceled the statement: lock_timeout is 500ms (set by: " + lockTimeoutEnv + "))"},
 }
 
-// placeAgainstAHeldLock seeds a root, runs hold, sets both timeouts and runs tree place.
+// placeAgainstAHeldLock runs tree place while hold's lock blocks it.
 func placeAgainstAHeldLock(t *testing.T, treeID, statement, lock string, hold func(root string)) (*cmdOutput, error) {
 	t.Helper()
 	pgContainer.NewPool(t)
@@ -325,9 +326,19 @@ func TestTreePlace_ARedeliveryTimeoutNamesItsSource(t *testing.T) {
 			})
 
 			require.Error(t, err, "stdout: %s stderr: %s", out.stdout.String(), out.stderr.String())
+			var cu *networkengine.CatchUpFailedError
+			require.ErrorAs(t, err, &cu)
 			assert.Contains(t, err.Error(), tc.want)
 			assert.NotContains(t, out.stdout.String(), "appended event")
 			assert.NotContains(t, out.stderr.String(), "appended and its projection returned an error")
+			ctx := context.Background()
+			conn, err := pgx.Connect(ctx, pgContainer.DSN)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = conn.Close(ctx) })
+			var top int64
+			require.NoError(t, conn.QueryRow(ctx,
+				"SELECT max(version) FROM events WHERE stream = $1", "tree-"+treeID).Scan(&top))
+			assert.Equal(t, int64(1), top)
 		})
 	}
 }
@@ -348,10 +359,10 @@ func TestTreePlace_AProjectionTimeoutNamesItsSource(t *testing.T) {
 			require.ErrorAs(t, err, &ec)
 			assert.Equal(t, exitNotCurrent, ec.code)
 			stderr := out.stderr.String()
-			head := strings.Index(stderr, "appended and its projection returned an error: ")
-			ann := strings.Index(stderr, tc.want)
-			assert.True(t, head >= 0 && ann > head,
-				"stderr has the projection error at offset %d and the annotation at %d: %s", head, ann, stderr)
+			_, warning, found := strings.Cut(stderr, "appended and its projection returned an error: ")
+			require.True(t, found, "stderr: %s", stderr)
+			warning, _, _ = strings.Cut(warning, "\n")
+			assert.Contains(t, warning, tc.want)
 			assert.NotContains(t, stderr, "could not be read")
 		})
 	}

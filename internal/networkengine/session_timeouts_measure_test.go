@@ -529,11 +529,11 @@ func TestMeasureMatrixRemovals(t *testing.T) {
 		elapsed := time.Since(begin)
 		t.Logf("query TreeStore.ProjectRemoval (%s of node %d, generated subtree %d) first run, cache not controlled %8s ms: %d tombstoned, %d re-sponsored, %d relocated",
 			r.mode, r.user, m.subtreeSize(r.user, n), ms(elapsed), len(projection.Users), len(projection.Responsored), len(projection.Relocated))
-		if len(projection.Relocated) > 0 {
+		if r.mode == PruningPromoteEarliest {
 			replay = relocationReplay(tree.id, projection.Relocated)
 		}
 	}
-	require.NotNil(t, replay, "no removal returned a relocation to replay")
+	require.NotEmpty(t, replay.args()[1], "the promote_earliest removal returned no relocations to replay")
 	plan := explainRolledBack(t, ctx, pool, replay)
 	t.Logf("plan for the relocation UPDATE, replayed after the timed runs and rolled back:\n%s", strings.Join(plan, "\n"))
 }

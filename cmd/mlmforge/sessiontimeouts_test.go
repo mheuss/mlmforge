@@ -299,9 +299,22 @@ func TestAnnotate_FindsAPoolTimeoutBehindAnotherBranch(t *testing.T) {
 			got := timeoutRecordWith(t).annotate(err)
 
 			assert.Contains(t, got.Error(), "(the server canceled the statement: statement_timeout is 30s (set by: mlmforge default))")
-			assert.NotContains(t, got.Error(), "lock_timeout is")
 		})
 	}
+}
+
+func TestAnnotate_AnAnnotatedBranchDoesNotStopTheOther(t *testing.T) {
+	r := timeoutRecordWith(t)
+	lockCancel := &pgconn.PgError{Code: "55P03", Message: "canceling statement due to lock timeout"}
+	err := &networkengine.AppendOutcomeUnknownError{
+		AppendErr: r.annotate(fmt.Errorf("append: %w", lockCancel)),
+		ReadErr:   fmt.Errorf("read: %w", statementCancel),
+	}
+
+	got := r.annotate(err)
+
+	assert.Equal(t, 1, strings.Count(got.Error(), "lock_timeout is 5s"))
+	assert.Equal(t, 1, strings.Count(got.Error(), "statement_timeout is 30s"))
 }
 
 // fakeLocker returns its fields from Lock and from the unlock it hands back.

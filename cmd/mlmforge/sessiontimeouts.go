@@ -144,8 +144,7 @@ func (l unrecordedLocker) Lock(ctx context.Context, treeID uuid.UUID) (func() er
 	}, nil
 }
 
-// recordedTimeout finds the first statement or lock timeout in err's tree outside
-// any unrecordedError or timeoutError, and names its setting.
+// recordedTimeout names the setting of the recorded timeout err reports, or returns "".
 func recordedTimeout(err error) string {
 	switch e := err.(type) {
 	case nil, *unrecordedError, *timeoutError:

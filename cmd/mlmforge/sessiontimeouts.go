@@ -147,8 +147,7 @@ func (l unrecordedLocker) Lock(ctx context.Context, treeID uuid.UUID) (func() er
 // pgUnderUnrecorded reports whether pg sits inside an unrecordedError somewhere in err's tree.
 func pgUnderUnrecorded(err error, pg *pgconn.PgError) bool {
 	if u, ok := err.(*unrecordedError); ok {
-		var inner *pgconn.PgError
-		return errors.As(u.err, &inner) && inner == pg
+		return errors.Is(u.err, pg)
 	}
 	switch w := err.(type) {
 	case interface{ Unwrap() error }:

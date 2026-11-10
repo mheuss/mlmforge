@@ -262,6 +262,26 @@ func TestAnnotate_AnUnrecordedSiblingDoesNotHideAPoolTimeout(t *testing.T) {
 	assert.NotContains(t, got.Error(), "lock_timeout is")
 }
 
+func TestAnnotate_AMarkedBranchOfAJoinedErrorIsLeftAlone(t *testing.T) {
+	lockCancel := &pgconn.PgError{Code: "55P03", Message: "canceling statement due to lock timeout"}
+	cases := map[string]*networkengine.AppendOutcomeUnknownError{
+		"marked append": {
+			AppendErr: &unrecordedError{err: fmt.Errorf("append: %w", lockCancel)},
+			ReadErr:   errors.New("read: connection refused"),
+		},
+		"marked read, nil append": {
+			ReadErr: &unrecordedError{err: fmt.Errorf("read: %w", lockCancel)},
+		},
+	}
+	for name, err := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := timeoutRecordWith(t).annotate(err)
+
+			assert.Same(t, error(err), got)
+		})
+	}
+}
+
 // fakeLocker returns its fields from Lock and from the unlock it hands back.
 type fakeLocker struct{ lockErr, unlockErr error }
 

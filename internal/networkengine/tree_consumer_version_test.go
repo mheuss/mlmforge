@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -81,18 +82,18 @@ func TestHandleNodeRemoved_RefusesARemovalBelowTheProjectedVersionBeforeTheEngin
 
 	err := deliver(context.Background(), c, event)
 
+	require.Empty(t, tr.mutationOps, "engine mutations sent for a removal below the projected version")
 	var refused *ProjectionRefusedError
 	require.ErrorAs(t, err, &refused)
 	assert.Equal(t, int64(2), refused.EventVersion)
 	assert.Equal(t, int64(3), refused.ProjectedVersion)
-	assert.Empty(t, tr.mutationOps, "engine mutations sent for a removal below the projected version")
 	active := activeRow(t, store.MemoryTreeStore, posUser)
 	require.NotNil(t, active, "no active row for the user after the refused removal")
 	assert.Equal(t, e2, active.ID, "the active row after the refused removal")
 }
 
-// HEU-811's step 5: the engine no longer holds the user, the store holds E2
-// active and a tombstone this removal stamped.
+// The engine no longer holds the user, and the store holds E2 active behind a
+// tombstone this removal stamped.
 func TestHandleNodeRemoved_ARedeliveryBehindALaterPlacementDoesNotConverge(t *testing.T) {
 	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeUserNotFound}}
 	c, store := newRemovalConsumer(tr)
@@ -111,8 +112,7 @@ func TestHandleNodeRemoved_ARedeliveryBehindALaterPlacementDoesNotConverge(t *te
 	assert.Equal(t, e2, active.ID, "the active row after the refused removal")
 }
 
-// catchUp redelivers the stream's last event at the projected version, so a
-// removal at exactly that version has to reach the engine and converge.
+// A removal at exactly the projected version reaches the engine and converges.
 func TestHandleNodeRemoved_ARedeliveryAtTheProjectedVersionReachesTheEngine(t *testing.T) {
 	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeUserNotFound}}
 	c, store := newRemovalConsumer(tr)
@@ -130,4 +130,32 @@ func TestHandleNodeRemoved_ARedeliveryAtTheProjectedVersionReachesTheEngine(t *t
 	require.NoError(t, err, "the redelivered removal at the projected version")
 	assert.Equal(t, []string{"remove_node"}, tr.mutationOps, "engine mutations sent")
 	assert.Empty(t, store.responsors, "store removal writes attempted")
+}
+
+// projectedVersionFailingStore fails the projected-version read and leaves
+// every other method to the embedded store.
+type projectedVersionFailingStore struct {
+	*deleteRecordingStore
+	err error
+}
+
+func (s *projectedVersionFailingStore) ProjectedVersion(context.Context, string) (int64, bool, error) {
+	return 0, false, s.err
+}
+
+func TestHandleNodeRemoved_AFailedProjectedVersionReadReachesNeitherEngineNorStore(t *testing.T) {
+	tr := &reconcileTransport{mutationResponse: json.RawMessage(`{"responsored":[]}`)}
+	inner := &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}
+	seedRemovable(t, inner)
+	readErr := errors.New("read failed")
+	c := NewTreeEventConsumer(&projectedVersionFailingStore{deleteRecordingStore: inner, err: readErr},
+		newEngineClientWithTransport(tr))
+	c.retryDelay = 0
+
+	err := deliver(context.Background(), c, makeEvent(EventTypeNodeRemoved, removedPayload()))
+
+	require.Empty(t, tr.mutationOps, "engine mutations sent after the projected-version read failed")
+	require.ErrorIs(t, err, readErr)
+	assert.Empty(t, inner.responsors, "store removal writes attempted")
+	assert.NotNil(t, activeRow(t, inner.MemoryTreeStore, posUser), "no active row for the user after the failed read")
 }

@@ -424,8 +424,11 @@ func (mg *migration) nextTarget(rec Record) (Record, error) {
 		return Record{}, &NegativeVersionError{Record: rec}
 	}
 	src := mg.sourceInfo(rec.Version)
-	if src.Err != nil {
+	if src.Err != nil && rec.Version == database.NilVersion {
 		return Record{}, &NotWrittenError{Err: fmt.Errorf("read the migrations directory %s: %w", src.Path, src.Err)}
+	}
+	if src.Err != nil {
+		return Record{}, &NotWrittenError{Err: fmt.Errorf("read migration %d from %s: %w", rec.Version, src.Path, src.Err)}
 	}
 	if rec.Version != database.NilVersion && !src.InSource {
 		return Record{}, &VersionNotInSourceError{Record: rec, Path: src.Path}
@@ -436,12 +439,12 @@ func (mg *migration) nextTarget(rec Record) (Record, error) {
 
 	down, _, err := mg.source.ReadDown(src.Next)
 	if errors.Is(err, os.ErrNotExist) {
-		return Record{}, &NoDownFileError{Record: rec, Version: src.Next, Path: mg.path}
+		return Record{}, &NoDownFileError{Record: rec, Version: src.Next, Path: src.Path}
 	}
 	if err != nil {
-		return Record{}, &NotWrittenError{Err: fmt.Errorf("read the down file of migration %d from %s: %w", src.Next, mg.path, err)}
+		return Record{}, &NotWrittenError{Err: fmt.Errorf("read the down file of migration %d from %s: %w", src.Next, src.Path, err)}
 	}
-	// The open proved the down file exists, so a close error does not refuse the write.
+	// The open proved the down file exists. A close error is not a refusal.
 	_ = down.Close()
 	return Record{Version: int(src.Next)}, nil
 }

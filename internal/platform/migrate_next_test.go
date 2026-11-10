@@ -15,13 +15,10 @@ import (
 
 func TestNextTarget_WritesTheNextThatSourceInfoReports(t *testing.T) {
 	dir := FindMigrationsDir(t)
-	src, err := source.Open("file://" + dir)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = src.Close() })
-	mg := &migration{source: src, path: dir}
+	mg := sourceMigration(t, dir)
 
 	versions := []int{database.NilVersion}
-	for v, verr := src.First(); verr == nil; v, verr = src.Next(v) {
+	for v, verr := mg.source.First(); verr == nil; v, verr = mg.source.Next(v) {
 		versions = append(versions, int(v))
 	}
 	require.Greater(t, len(versions), 2, "versions read from %s", dir)
@@ -42,8 +39,10 @@ func TestNextTarget_WritesTheNextThatSourceInfoReports(t *testing.T) {
 }
 
 // closeFailingSource is a source.Driver over migrations 1, 2 and 3 whose down readers fail to close.
+// Its up reads return upErr when it is set.
 type closeFailingSource struct {
 	source.Driver
+	upErr error
 }
 
 func (closeFailingSource) First() (uint, error) { return 1, nil }
@@ -62,11 +61,20 @@ func (closeFailingSource) Next(v uint) (uint, error) {
 	return v + 1, nil
 }
 
-func (closeFailingSource) ReadUp(uint) (io.ReadCloser, string, error) {
+func (f closeFailingSource) ReadUp(v uint) (io.ReadCloser, string, error) {
+	if v < 1 || v > 3 {
+		return nil, "", os.ErrNotExist
+	}
+	if f.upErr != nil {
+		return nil, "", f.upErr
+	}
 	return io.NopCloser(strings.NewReader("")), "", nil
 }
 
-func (closeFailingSource) ReadDown(uint) (io.ReadCloser, string, error) {
+func (closeFailingSource) ReadDown(v uint) (io.ReadCloser, string, error) {
+	if v < 1 || v > 3 {
+		return nil, "", os.ErrNotExist
+	}
 	return failingCloser{strings.NewReader("")}, "", nil
 }
 
@@ -82,4 +90,14 @@ func TestNextTarget_ADownFileThatFailsToCloseStillCounts(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, Record{Version: 3}, to)
+}
+
+func TestNextTarget_AnUnreadableUpFileNamesTheMigration(t *testing.T) {
+	mg := &migration{source: closeFailingSource{upErr: os.ErrPermission}, path: "/migrations"}
+
+	_, err := mg.nextTarget(Record{Version: 2, Dirty: true})
+
+	var notWritten *NotWrittenError
+	require.ErrorAs(t, err, &notWritten)
+	assert.Equal(t, "read migration 2 from /migrations: permission denied", err.Error())
 }

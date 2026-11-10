@@ -5,7 +5,7 @@ import "fmt"
 // Default session timeouts, in SHOW format.
 const (
 	defaultStatementTimeout = "30s"
-	defaultLockTimeout      = "11s"
+	defaultLockTimeout      = "9s"
 )
 
 // timeoutPlan is the precedence rule's outcome for one setting.

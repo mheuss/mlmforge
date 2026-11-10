@@ -8,7 +8,7 @@ import (
 
 func TestSessionTimeoutDefaults_ArePinned(t *testing.T) {
 	assert.Equal(t, "30s", defaultStatementTimeout)
-	assert.Equal(t, "11s", defaultLockTimeout)
+	assert.Equal(t, "9s", defaultLockTimeout)
 }
 
 func TestResolveTimeout_FollowsThePrecedenceRule(t *testing.T) {

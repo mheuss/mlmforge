@@ -249,6 +249,19 @@ func TestAnnotate_LeavesAnUnrecordedSessionsTimeoutAlone(t *testing.T) {
 	}
 }
 
+func TestAnnotate_AnUnrecordedSiblingDoesNotHideAPoolTimeout(t *testing.T) {
+	lockCancel := &pgconn.PgError{Code: "55P03", Message: "canceling statement due to lock timeout"}
+	err := &networkengine.AppendOutcomeUnknownError{
+		AppendErr: fmt.Errorf("append: %w", statementCancel),
+		ReadErr:   &unrecordedError{err: fmt.Errorf("read: %w", lockCancel)},
+	}
+
+	got := timeoutRecordWith(t).annotate(err)
+
+	assert.Contains(t, got.Error(), "(the server canceled the statement: statement_timeout is 30s (set by: mlmforge default))")
+	assert.NotContains(t, got.Error(), "lock_timeout is")
+}
+
 // fakeLocker returns its fields from Lock and from the unlock it hands back.
 type fakeLocker struct{ lockErr, unlockErr error }
 

@@ -144,6 +144,27 @@ func (l unrecordedLocker) Lock(ctx context.Context, treeID uuid.UUID) (func() er
 	}, nil
 }
 
+// pgUnderUnrecorded reports whether pg sits inside an unrecordedError somewhere in err's tree.
+func pgUnderUnrecorded(err error, pg *pgconn.PgError) bool {
+	if u, ok := err.(*unrecordedError); ok {
+		var inner *pgconn.PgError
+		return errors.As(u.err, &inner) && inner == pg
+	}
+	switch w := err.(type) {
+	case interface{ Unwrap() error }:
+		if next := w.Unwrap(); next != nil {
+			return pgUnderUnrecorded(next, pg)
+		}
+	case interface{ Unwrap() []error }:
+		for _, next := range w.Unwrap() {
+			if next != nil && pgUnderUnrecorded(next, pg) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // timeoutError adds a timeout's recorded value and source to a server cancellation.
 type timeoutError struct {
 	err  error
@@ -163,8 +184,7 @@ func (r *timeoutRecord) annotate(err error) error {
 	if errors.As(err, &done) {
 		return err
 	}
-	var unrecorded *unrecordedError
-	if errors.As(err, &unrecorded) {
+	if pgUnderUnrecorded(err, pg) {
 		return err
 	}
 	var name string

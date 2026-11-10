@@ -23,7 +23,7 @@ func executeRootCaptured(args ...string) (stdout, stderr string, err error) {
 	return out.String(), errOut.String(), err
 }
 
-// migrateSubcommands is each migrate command line the refusal and timeout loops run.
+// migrateSubcommands lists each migrate command line, as the arguments that follow "migrate".
 var migrateSubcommands = [][]string{{"up"}, {"down"}, {"version"}, {"reset-dirty"}, {"reset-dirty", "--after-failed-down"}}
 
 // migrateArgs returns the root arguments for one migrate command line followed by flags.

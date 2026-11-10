@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,6 +63,25 @@ func TestTreeDeps_ARejectedEnvValueFailsAtConnectAndNamesIt(t *testing.T) {
 	t.Logf("observed error: %v", err)
 	assert.Contains(t, err.Error(), statementTimeoutEnv+`="abc"`)
 	assert.Contains(t, err.Error(), "reach database")
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, err, &pgErr)
+	assert.Equal(t, "22023", pgErr.Code)
+}
+
+func TestTreePool_ClientSettingsForBothAreKeptWithNoWrite(t *testing.T) {
+	t.Setenv(statementTimeoutEnv, "9s")
+	t.Setenv(lockTimeoutEnv, "8s")
+	pool, rec := openTestTreePool(t, pgContainer.DSN+"&options=-c%20statement_timeout%3D4321%20-c%20lock_timeout%3D1234")
+
+	statement, lock := showBoth(t, pool)
+
+	assert.Equal(t, "4321ms", statement)
+	assert.Equal(t, "1234ms", lock)
+	client := "the client's connection settings (URL, PGOPTIONS or a service file)"
+	got, _ := rec.describe("statement_timeout")
+	assert.Equal(t, "statement_timeout is 4321ms (set by: "+client+")", got)
+	got, _ = rec.describe("lock_timeout")
+	assert.Equal(t, "lock_timeout is 1234ms (set by: "+client+")", got)
 }
 
 func TestTreePool_AnEnvVarZeroTurnsTheTimeoutOff(t *testing.T) {

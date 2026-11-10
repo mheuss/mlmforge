@@ -61,6 +61,11 @@ func (r *timeoutRecord) afterConnect(ctx context.Context, conn *pgx.Conn) error 
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("read session timeouts on a new tree connection: %w", err)
 	}
+	for _, s := range sessionTimeoutSettings {
+		if _, ok := found[s.name]; !ok {
+			return fmt.Errorf("pg_settings returned no row for %s on a new tree connection", s.name)
+		}
+	}
 
 	var sets, envNotes []string
 	var args []any
@@ -87,7 +92,10 @@ func (r *timeoutRecord) afterConnect(ctx context.Context, conn *pgx.Conn) error 
 		}
 		dest = append(dest, &values[0], &values[1])
 		if err := conn.QueryRow(ctx, q, args...).Scan(dest...); err != nil {
-			return fmt.Errorf("apply session timeouts on a new tree connection (%s): %w", strings.Join(envNotes, ", "), err)
+			if len(envNotes) == 0 {
+				return fmt.Errorf("apply session timeouts on a new tree connection: %w", err)
+			}
+			return fmt.Errorf("apply session timeouts on a new tree connection, writing %s: %w", strings.Join(envNotes, ", "), err)
 		}
 	}
 	for i, s := range sessionTimeoutSettings {
@@ -149,6 +157,9 @@ type timeoutRecord struct {
 
 // add records one connection's result for one setting.
 func (r *timeoutRecord) add(name, value, source string) {
+	if r == nil {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.seen == nil {

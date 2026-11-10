@@ -30,6 +30,14 @@ func TestTreeHelp_NamesTheSessionTimeoutEnvVars(t *testing.T) {
 	assert.Contains(t, out.String(), lockTimeoutEnv)
 	assert.Contains(t, out.String(), "PGOPTIONS")
 	assert.Contains(t, out.String(), defaultStatementTimeout+" and "+defaultLockTimeout)
+
+	help := out.String()
+	client := strings.Index(help, "PGOPTIONS")
+	env := strings.Index(help, statementTimeoutEnv)
+	server := strings.Index(help, "server setting")
+	def := strings.Index(help, defaultStatementTimeout+" and ")
+	assert.True(t, client < env && env < server && server < def,
+		"help names the sources at offsets PGOPTIONS %d, env var %d, server setting %d, default %d", client, env, server, def)
 }
 
 func TestNewTreeCmd_RegistersTheLoadSubcommand(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/golang-migrate/migrate/v4/source"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -102,9 +103,6 @@ func TestUnpairedVersions_NamesEachVersionMissingADirection(t *testing.T) {
 	}, unpairedVersions(t, dir))
 }
 
-// migrationFileName matches a version, a name, a direction and any extension.
-var migrationFileName = regexp.MustCompile(`^([0-9]+)_(.*)\.(down|up)\.(.*)$`)
-
 // nonSQLMigrationFiles returns the name of each migration file in dir whose extension is not exactly sql.
 func nonSQLMigrationFiles(t *testing.T, dir string) []string {
 	t.Helper()
@@ -116,7 +114,7 @@ func nonSQLMigrationFiles(t *testing.T, dir string) []string {
 			continue
 		}
 		name := entry.Name()
-		if parts := migrationFileName.FindStringSubmatch(name); parts != nil && parts[4] != "sql" {
+		if parts := source.Regex.FindStringSubmatch(name); parts != nil && parts[4] != "sql" {
 			files = append(files, name)
 		}
 	}

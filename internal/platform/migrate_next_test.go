@@ -107,6 +107,16 @@ func TestNextTarget_AnUnreadableUpFileNamesTheMigration(t *testing.T) {
 	assert.Equal(t, "read migration 2 from /migrations: permission denied", err.Error())
 }
 
+func TestNextTarget_ARefusalFromSourceInfoRefusesTheReset(t *testing.T) {
+	mg := &migration{source: closeFailingSource{firstErr: os.ErrPermission}, path: "/migrations"}
+
+	to, err := mg.nextTarget(Record{Version: 2, Dirty: true})
+
+	var notWritten *NotWrittenError
+	require.ErrorAs(t, err, &notWritten, "returned %v", to)
+	assert.Equal(t, "read migration 2 from /migrations: permission denied", err.Error())
+}
+
 func TestNextTarget_AnUnreadableDirectoryFromNoVersionNamesTheDirectory(t *testing.T) {
 	mg := &migration{source: closeFailingSource{firstErr: os.ErrPermission}, path: "/migrations"}
 

@@ -320,9 +320,8 @@ func TestPostgresContainer_NewPool_TruncatesSnapshotAttempts(t *testing.T) {
 	assert.Equal(t, 0, count, "tree_snapshot_attempts must be empty after NewPool truncate")
 }
 
-// TestMigrations_QualificationHistoryPeriodCollationDownUp proves migration
-// 000012's files work. period_id and both indexes over it collate as "C" at
-// head, and as the database default below it.
+// TestMigrations_QualificationHistoryPeriodCollationDownUp checks that
+// migration 000012 sets and restores period_id's collation.
 func TestMigrations_QualificationHistoryPeriodCollationDownUp(t *testing.T) {
 	if migrationContainer == nil {
 		t.Skip("Postgres container not available")
@@ -384,11 +383,11 @@ func TestMigrations_QualificationHistoryPeriodCollationDownUp(t *testing.T) {
 	require.Equal(t, "C", columnCollation(), "period_id collation at head")
 	t.Cleanup(func() { _ = m.Up() })
 	require.NoError(t, m.Migrate(11), "migrate down to version 11 (drops 000012)")
-	require.Equal(t, "default", columnCollation(), "down file restores the default collation")
-	assert.Equal(t, collatedAs("default"), indexCollations(), "down file rebuilds the indexes on the default collation")
+	assert.Equal(t, collatedAs("default"), indexCollations(), "index collations after migrating down to 11")
+	require.Equal(t, "default", columnCollation(), "period_id collation after migrating down to 11")
 	require.NoError(t, m.Migrate(12), "migrate back up to version 12")
-	require.Equal(t, "C", columnCollation(), "up file pins the collation again")
-	assert.Equal(t, collatedAs("C"), indexCollations(), "up file rebuilds the indexes on C again")
+	assert.Equal(t, collatedAs("C"), indexCollations(), "index collations after migrating up to 12")
+	require.Equal(t, "C", columnCollation(), "period_id collation after migrating up to 12")
 	if err := m.Up(); err != nil {
 		require.ErrorIs(t, err, migrate.ErrNoChange, "restore the shared container to head")
 	}

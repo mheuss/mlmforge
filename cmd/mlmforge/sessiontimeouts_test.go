@@ -84,6 +84,7 @@ func TestTimeoutRecord_ConcurrentWritersAreSafe(t *testing.T) {
 
 func TestTimeoutRecord_NilAndUnknownDescribeNothing(t *testing.T) {
 	var r *timeoutRecord
+	r.add("statement_timeout", "30s", "mlmforge default")
 	_, ok := r.describe("statement_timeout")
 	assert.False(t, ok, "a nil record described a setting")
 	_, ok = (&timeoutRecord{}).describe("statement_timeout")

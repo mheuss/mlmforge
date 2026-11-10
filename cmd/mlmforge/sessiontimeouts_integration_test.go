@@ -6,8 +6,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -379,4 +381,32 @@ func TestTreePool_AnEnvVarZeroTurnsTheTimeoutOff(t *testing.T) {
 	assert.Equal(t, defaultLockTimeout, lock)
 	got, _ := rec.describe("statement_timeout")
 	assert.Equal(t, "statement_timeout is 0 (set by: "+statementTimeoutEnv+")", got)
+}
+
+func TestMeasureTimeoutHookCost(t *testing.T) {
+	if os.Getenv("MLMFORGE_MEASURE_TIMEOUTS") != "1" {
+		t.Skip("set MLMFORGE_MEASURE_TIMEOUTS=1 to measure the session-timeout hook")
+	}
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	t.Setenv("PGOPTIONS", "")
+	t.Setenv(statementTimeoutEnv, "")
+	t.Setenv(lockTimeoutEnv, "")
+	ctx := context.Background()
+	cfg, err := pgxpool.ParseConfig(pgContainer.DSN)
+	require.NoError(t, err)
+	const runs = 100
+	var hook []time.Duration
+	for range runs {
+		conn, err := pgx.ConnectConfig(ctx, cfg.ConnConfig)
+		require.NoError(t, err)
+		start := time.Now()
+		require.NoError(t, (&timeoutRecord{}).afterConnect(ctx, conn))
+		hook = append(hook, time.Since(start))
+		require.NoError(t, conn.Close(ctx))
+	}
+	slices.Sort(hook)
+	t.Logf("hook cost over %d new connections: median %s, p95 %s, max %s",
+		runs, hook[runs/2], hook[runs*95/100], hook[runs-1])
 }

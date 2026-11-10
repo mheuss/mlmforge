@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,14 +56,16 @@ func requireNoDriverText(t *testing.T, text, password string) {
 }
 
 func TestMigrateCommands_ReportAConnectTimeout(t *testing.T) {
-	for _, sub := range []string{"up", "down", "version", "reset-dirty"} {
-		t.Run(sub, func(t *testing.T) {
+	selected := 0
+	for _, args := range migrateSubcommands {
+		selected++
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			testutil.ClearTimeoutEnv(t)
 			addr := testutil.SilentListener(t)
 			url := "postgres://app:s3cretpw@" + addr + "/app?sslmode=disable&connect_timeout=1"
 
 			start := time.Now()
-			err := executeRoot("migrate", sub, "--db-url", url, "--migrations", platform.FindMigrationsDir(t))
+			err := executeRoot(migrateArgs(args, "--db-url", url, "--migrations", platform.FindMigrationsDir(t))...)
 
 			require.Less(t, time.Since(start), 5*time.Second)
 			require.Error(t, err)
@@ -73,6 +76,7 @@ func TestMigrateCommands_ReportAConnectTimeout(t *testing.T) {
 			requireNoDriverText(t, err.Error(), "s3cretpw")
 		})
 	}
+	require.Equal(t, 5, selected, "migrate runs")
 }
 
 func TestMigrateVersion_AConnectTimeoutOmitsAQueryPassword(t *testing.T) {

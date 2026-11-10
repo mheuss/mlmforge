@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/golang-migrate/migrate/v4/source"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -100,4 +101,33 @@ func TestUnpairedVersions_NamesEachVersionMissingADirection(t *testing.T) {
 		"migration 2 has an up file and no down file",
 		"migration 3 has a down file and no up file",
 	}, unpairedVersions(t, dir))
+}
+
+// nonSQLMigrationFiles returns the name of each migration file in dir whose extension is not exactly sql.
+func nonSQLMigrationFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	var files []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if parts := source.Regex.FindStringSubmatch(name); parts != nil && parts[4] != "sql" {
+			files = append(files, name)
+		}
+	}
+	return files
+}
+
+func TestMigrationFiles_EveryMigrationFileHasTheSQLExtension(t *testing.T) {
+	for _, name := range nonSQLMigrationFiles(t, FindMigrationsDir(t)) {
+		t.Errorf("%s is a migration file whose extension is not sql", name)
+	}
+}
+
+func TestNonSQLMigrationFiles_NamesEachMigrationFileWithoutTheSQLExtension(t *testing.T) {
+	assert.Equal(t, []string{"000002_b.down.txt", "000002_b.up.txt", "000003_c.up.foo.sql", "000004_d.up..sql"},
+		nonSQLMigrationFiles(t, filepath.Join("testdata", "non-sql-migrations")))
 }

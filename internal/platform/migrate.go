@@ -420,41 +420,31 @@ func (mg *migration) previousTarget(rec Record) (Record, error) {
 
 // nextTarget picks the migration after a dirty record's version, or the first migration from -1.
 func (mg *migration) nextTarget(rec Record) (Record, error) {
-	var next uint
-	var err error
-	switch {
-	case rec.Version < database.NilVersion:
+	if rec.Version < database.NilVersion {
 		return Record{}, &NegativeVersionError{Record: rec}
-	case rec.Version == database.NilVersion:
-		next, err = mg.source.First()
-	default:
-		n := uint(rec.Version)
-		body, _, readErr := mg.source.ReadUp(n)
-		if errors.Is(readErr, os.ErrNotExist) {
-			return Record{}, &VersionNotInSourceError{Record: rec, Path: mg.path}
-		}
-		if readErr != nil {
-			return Record{}, &NotWrittenError{Err: fmt.Errorf("read migration %d from %s: %w", n, mg.path, readErr)}
-		}
-		_ = body.Close()
-		next, err = mg.source.Next(n)
 	}
-	if errors.Is(err, os.ErrNotExist) {
-		return Record{}, &NoNextMigrationError{Record: rec, Path: mg.path}
+	src := mg.sourceInfo(rec.Version)
+	if src.Err != nil && rec.Version == database.NilVersion {
+		return Record{}, &NotWrittenError{Err: fmt.Errorf("read the migrations directory %s: %w", src.Path, src.Err)}
 	}
-	if err != nil {
-		return Record{}, &NotWrittenError{Err: fmt.Errorf("read the migrations directory %s: %w", mg.path, err)}
+	if src.Err != nil {
+		return Record{}, &NotWrittenError{Err: fmt.Errorf("read migration %d from %s: %w", rec.Version, src.Path, src.Err)}
+	}
+	if rec.Version != database.NilVersion && !src.InSource {
+		return Record{}, &VersionNotInSourceError{Record: rec, Path: src.Path}
+	}
+	if !src.HasNext {
+		return Record{}, &NoNextMigrationError{Record: rec, Path: src.Path}
 	}
 
-	down, _, err := mg.source.ReadDown(next)
+	down, _, err := mg.source.ReadDown(src.Next)
 	if errors.Is(err, os.ErrNotExist) {
-		return Record{}, &NoDownFileError{Record: rec, Version: next, Path: mg.path}
+		return Record{}, &NoDownFileError{Record: rec, Version: src.Next, Path: src.Path}
 	}
 	if err != nil {
-		return Record{}, &NotWrittenError{Err: fmt.Errorf("read the down file of migration %d from %s: %w", next, mg.path, err)}
+		return Record{}, &NotWrittenError{Err: fmt.Errorf("read the down file of migration %d from %s: %w", src.Next, src.Path, err)}
 	}
-	if err = down.Close(); err != nil {
-		return Record{}, &NotWrittenError{Err: fmt.Errorf("close the down file of migration %d from %s: %w", next, mg.path, err)}
-	}
-	return Record{Version: int(next)}, nil
+	// The open proved the down file exists. A close error is not a refusal.
+	_ = down.Close()
+	return Record{Version: int(src.Next)}, nil
 }

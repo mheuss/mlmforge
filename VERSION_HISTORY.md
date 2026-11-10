@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**Test count:** 1860 (Rust), 1774 (Go)
+**Test count:** 1860 (Rust), 1784 (Go)
 
 ### Added
 - Project research documentation (MLM fundamentals, compensation plans, glossary, competitive landscape, legal/regulatory)
@@ -129,6 +129,8 @@
 - The Go client refuses a `remove_node` response whose `responsored` entry has a missing or null `user_id` or `new_sponsor_id`. The error names the field. The member used to decode as an empty id and reach the store's re-sponsor write. Both `RemoveNode` and `RemoveMatrixNode` decode it this way. No protocol number moves. (HEU-926)
 - The Rust width contract test checks why each over-max value was refused. It asserts serde's range message for that exact value and the type it overflows. It used to pass on any refusal, including one about a different field. (HEU-993)
 - Postgres compares `qualification_history.period_id` in byte order on every server. Ranges and order now match the memory twin. Migration 000012 sets the column to `COLLATE "C"`. On a linguistic database default, the two twins used to disagree on which periods fell in a range and in what order they came back. (HEU-947)
+- `migrate reset-dirty --after-failed-down` writes the version the failed-down and dirty-record texts print as next. Both now come from one function. A failed release of the down file's reader no longer refuses the reset. A failed `First` or `Prev` read of the migrations directory now does. (HEU-890)
+- A file in `migrations/` that golang-migrate runs as a migration fails the tests unless its extension is exactly `sql`. The partial-apply and pairing guards used to read only `.sql` files, so a `.txt` pair could run with both green. (HEU-891)
 
 ### Removed
 - `TreeLoader`, `NewTreeLoader`, `LoadTree`, `WithMatrixParams` and `TreeLoadIncompleteError`. Every tree load has built from the event stream since HEU-297, so the adjacency replay ran on no production path. Preflight stays and runs inside `TreeWriter.Load`. (HEU-912)

@@ -311,6 +311,16 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, shape treeSha
 		return unprojectable(callErr)
 	}
 
+	// Equal versions must pass. A redelivery of the last projected event is
+	// not stale.
+	projected, found, err := c.store.ProjectedVersion(ctx, payload.TreeID)
+	if err != nil {
+		return fmt.Errorf("read the projected version of tree %s: %w", payload.TreeID, err)
+	}
+	if found && event.Version < projected {
+		return &ProjectionRefusedError{TreeID: payload.TreeID, EventVersion: event.Version, ProjectedVersion: projected}
+	}
+
 	var outcome engineOutcome
 
 	// withRetry returning nil cannot say whether this call removed the node or

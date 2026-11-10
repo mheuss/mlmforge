@@ -2,7 +2,7 @@ package main
 
 import "fmt"
 
-// Default session timeouts for the tree commands, in SHOW format.
+// Default session timeouts, in SHOW format.
 const (
 	defaultStatementTimeout = "30s"
 	defaultLockTimeout      = "11s"

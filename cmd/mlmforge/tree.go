@@ -31,7 +31,7 @@ func newTreeCmdWith(open depsOpener, loader loadWriterFor, writer writerFor) *co
 		Use:   "tree",
 		Short: "Tree persistence commands",
 		Long: "Commands that reach the tree persistence layer.\n\n" +
-			"Each database session gets a statement_timeout and a lock_timeout. " +
+			"Each session in the tree commands' pool gets a statement_timeout and a lock_timeout. " +
 			"A value in the URL, PGOPTIONS or a service file is kept. " +
 			"Otherwise a non-empty " + statementTimeoutEnv + " or " + lockTimeoutEnv + " sets its timeout, in any form Postgres accepts. " +
 			"Otherwise a role, database or server setting is kept. Otherwise mlmforge applies " +

@@ -59,7 +59,7 @@ A raw `&` in a `?password=` value splits it. Each piece after the `&` becomes it
 - It sends every query key that is not one of its own settings as a startup parameter, even with an empty value. It does not trim or fold the case of a key, so `+password` and `PASSWORD` are parameters, not the password. Query key order does not change its reading.
   Pinned by `TestDriverReadings_ARawAmpersandSplitsAQueryPassword`, `TestDriverReadings_QueryKeysAreDecodedAndTheirOrderIsIgnored` and `TestDriverReadings_LibPQTrimsSpaceAroundAKeyAndNeitherDriverFoldsCase`. Not pinned, observed on a live Postgres 16 server, 2026-10-04: the server printed such a key in `unrecognized configuration parameter`. The outputs are recorded on HEU-877.
 - A runtime parameter set in `ConnConfig.RuntimeParams` beats the same setting in the URL's `options=-c ...`. With `options=-c statement_timeout=2222` and `RuntimeParams["statement_timeout"]="7000"`, the server reported `7000`, source `client`. A URL key, URL `options`, and `PGOPTIONS` all report source `client`. Inside one `options` string, the later `-c` wins.
-  Not pinned, observed against Postgres 16 with pgx v5.9.2 on 2026-11-10 (HEU-801). The tree pool resolves its timeouts from `pg_settings` after connect for this reason.
+  Not pinned, observed against Postgres 16 with pgx v5.9.2 on 2026-11-10 (HEU-801).
 
 ## golang-migrate v4.19.1
 

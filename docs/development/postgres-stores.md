@@ -455,8 +455,11 @@ already compares text in byte order. Read the collation instead.
 `pg_attribute.attcollation` gives the column's. `pg_index.indcollation` gives
 the collation of each index key. It is indexed by key position. Unnest it beside
 `indkey` and match on `attnum`.
-`ALTER COLUMN ... TYPE ... COLLATE` rebuilds every index on the column without
-rewriting the table. A column with an implicit non-default collation compares
+Changing only the collation of a text column rebuilt both indexes on
+`qualification_history.period_id`. It did not rewrite the table. The change had
+no type change and no `USING`. Measured on Postgres 16: the table's relfilenode was
+unchanged and both index relfilenodes changed. A type change or a `USING` clause
+can rewrite the table. A column with an implicit non-default collation compares
 with a default-collation column or a literal without error. The non-default
 collation wins.
 

@@ -144,24 +144,35 @@ func (l unrecordedLocker) Lock(ctx context.Context, treeID uuid.UUID) (func() er
 	}, nil
 }
 
-// pgUnderUnrecorded reports whether pg sits inside an unrecordedError somewhere in err's tree.
-func pgUnderUnrecorded(err error, pg *pgconn.PgError) bool {
-	if u, ok := err.(*unrecordedError); ok {
-		return errors.Is(u.err, pg)
-	}
-	switch w := err.(type) {
+// recordedTimeout finds the first statement or lock timeout in err's tree outside
+// any unrecordedError or timeoutError, and names its setting.
+func recordedTimeout(err error) string {
+	switch e := err.(type) {
+	case nil, *unrecordedError, *timeoutError:
+		return ""
+	case *pgconn.PgError:
+		return timeoutSettingName(e)
 	case interface{ Unwrap() error }:
-		if next := w.Unwrap(); next != nil {
-			return pgUnderUnrecorded(next, pg)
-		}
+		return recordedTimeout(e.Unwrap())
 	case interface{ Unwrap() []error }:
-		for _, next := range w.Unwrap() {
-			if next != nil && pgUnderUnrecorded(next, pg) {
-				return true
+		for _, next := range e.Unwrap() {
+			if name := recordedTimeout(next); name != "" {
+				return name
 			}
 		}
 	}
-	return false
+	return ""
+}
+
+// timeoutSettingName names the setting a server timeout cancellation reports, or returns "".
+func timeoutSettingName(pg *pgconn.PgError) string {
+	switch {
+	case pg.Code == "57014" && pg.Message == "canceling statement due to statement timeout":
+		return "statement_timeout"
+	case pg.Code == "55P03" && pg.Message == "canceling statement due to lock timeout":
+		return "lock_timeout"
+	}
+	return ""
 }
 
 // timeoutError adds a timeout's recorded value and source to a server cancellation.
@@ -175,24 +186,11 @@ func (e *timeoutError) Unwrap() error { return e.err }
 
 // annotate adds the recorded value and source to a statement or lock timeout error.
 func (r *timeoutRecord) annotate(err error) error {
-	var pg *pgconn.PgError
-	if err == nil || r == nil || !errors.As(err, &pg) {
+	if err == nil || r == nil {
 		return err
 	}
-	var done *timeoutError
-	if errors.As(err, &done) {
-		return err
-	}
-	if pgUnderUnrecorded(err, pg) {
-		return err
-	}
-	var name string
-	switch {
-	case pg.Code == "57014" && pg.Message == "canceling statement due to statement timeout":
-		name = "statement_timeout"
-	case pg.Code == "55P03" && pg.Message == "canceling statement due to lock timeout":
-		name = "lock_timeout"
-	default:
+	name := recordedTimeout(err)
+	if name == "" {
 		return err
 	}
 	text, ok := r.describe(name)

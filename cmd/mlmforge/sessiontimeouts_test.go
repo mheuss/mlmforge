@@ -282,6 +282,28 @@ func TestAnnotate_AMarkedBranchOfAJoinedErrorIsLeftAlone(t *testing.T) {
 	}
 }
 
+func TestAnnotate_FindsAPoolTimeoutBehindAnotherBranch(t *testing.T) {
+	lockCancel := &pgconn.PgError{Code: "55P03", Message: "canceling statement due to lock timeout"}
+	cases := map[string]*networkengine.AppendOutcomeUnknownError{
+		"behind a non-timeout append error": {
+			AppendErr: fmt.Errorf("append: %w", &pgconn.PgError{Code: "40001", Message: "could not serialize access"}),
+			ReadErr:   fmt.Errorf("read: %w", statementCancel),
+		},
+		"behind a marked append timeout": {
+			AppendErr: &unrecordedError{err: fmt.Errorf("append: %w", lockCancel)},
+			ReadErr:   fmt.Errorf("read: %w", statementCancel),
+		},
+	}
+	for name, err := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := timeoutRecordWith(t).annotate(err)
+
+			assert.Contains(t, got.Error(), "(the server canceled the statement: statement_timeout is 30s (set by: mlmforge default))")
+			assert.NotContains(t, got.Error(), "lock_timeout is")
+		})
+	}
+}
+
 // fakeLocker returns its fields from Lock and from the unlock it hands back.
 type fakeLocker struct{ lockErr, unlockErr error }
 

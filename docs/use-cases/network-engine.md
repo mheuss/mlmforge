@@ -1111,7 +1111,7 @@ if errors.As(err, &refused) {
 }
 ```
 
-**Notes:** An event at the projected version runs the existing redelivery logic, which writes nothing for an event the store already holds. The Postgres writes run at Read Committed and create the projection row at 0 before locking it. Two first projections then queue. `TreeStore` declares no write that skips the check (HEU-864).
+**Notes:** An event at the projected version runs the existing redelivery logic, which writes nothing for an event the store already holds. The Postgres writes run at Read Committed and create the projection row at 0 before locking it. Two first projections then queue. `TreeStore` declares no write that skips the check (HEU-864). `handleNodeRemoved` also reads the projected version before its engine call. A removal below it is refused with the same error and never reaches the engine. A removal at the projected version passes. The read is not atomic with the engine call. See HEU-789 and HEU-1024.
 
 ---
 

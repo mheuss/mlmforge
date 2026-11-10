@@ -383,31 +383,64 @@ func explainRolledBack(t *testing.T, ctx context.Context, pool *pgxpool.Pool, e 
 	return plan
 }
 
-// matrixWidth is the width the matrix plan fixtures use.
-const matrixWidth = 3
+// matrixShape is a breadth-first matrix of one width, filled in node order.
+type matrixShape struct{ width int }
 
-// matrixParent gives every node matrixWidth children, filled breadth first.
-func matrixParent(i int) int { return (i - 1) / matrixWidth }
+// parent is node i's parent.
+func (m matrixShape) parent(i int) int { return (i - 1) / m.width }
 
-// matrixPosition is a node's slot under its parent.
-func matrixPosition(i int) int { return (i - 1) % matrixWidth }
+// position is node i's slot under its parent.
+func (m matrixShape) position(i int) int { return (i - 1) % m.width }
+
+// depth is node i's depth.
+func (m matrixShape) depth(i int) int {
+	d := 0
+	for i > 0 {
+		i = m.parent(i)
+		d++
+	}
+	return d
+}
+
+// subtreeSize counts node i and its descendants among n nodes.
+func (m matrixShape) subtreeSize(i, n int) int {
+	size := 0
+	for lo, hi := i, i; lo < n; lo, hi = lo*m.width+1, hi*m.width+m.width {
+		size += min(hi, n-1) - lo + 1
+	}
+	return size
+}
+
+// measureMatrixWidth reads the matrix width for one measurement run.
+func measureMatrixWidth(t *testing.T) int {
+	t.Helper()
+	raw := os.Getenv("MLMFORGE_MEASURE_MATRIX_WIDTH")
+	if raw == "" {
+		return 3
+	}
+	w, err := strconv.Atoi(raw)
+	if err != nil || w < 2 {
+		t.Fatalf("MLMFORGE_MEASURE_MATRIX_WIDTH must be an integer of at least 2, got %q", raw)
+	}
+	return w
+}
 
 // generateMatrixTree builds a breadth-first matrix tree of n nodes in the
 // engine, the event stream, the rows and the projection row, then analyzes
 // the loaded tables.
-func generateMatrixTree(t *testing.T, es *platform.PostgresEventStore, engine *EngineClient, pool *pgxpool.Pool, n int) measuredTree {
+func generateMatrixTree(t *testing.T, es *platform.PostgresEventStore, engine *EngineClient, pool *pgxpool.Pool, m matrixShape, n int) measuredTree {
 	t.Helper()
 	ctx := context.Background()
 	tree := measuredTree{id: testTreeUUID(803), n: n, eventIDs: make([]string, n)}
 	tree.stream = TreeStreamName(tree.id)
 	enrolled := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	width, spillover := matrixWidth, "breadth_first"
+	width, spillover := m.width, "breadth_first"
 
 	require.NoError(t, engine.CreateMatrixTree(ctx, tree.id, width, spillover))
 	require.NoError(t, engine.AddRoot(ctx, tree.id, measureUser(0), enrolled.Unix()))
 	for i := 1; i < n; i++ {
-		p := measureUser(matrixParent(i))
-		require.NoError(t, engine.AddNodeAt(ctx, tree.id, measureUser(i), p, p, matrixPosition(i), enrolled.Unix()))
+		p := measureUser(m.parent(i))
+		require.NoError(t, engine.AddNodeAt(ctx, tree.id, measureUser(i), p, p, m.position(i), enrolled.Unix()))
 	}
 
 	var batch []platform.NewEvent
@@ -424,8 +457,8 @@ func generateMatrixTree(t *testing.T, es *platform.PostgresEventStore, engine *E
 			payload = RootAddedPayload{TreeID: tree.id, UserID: measureUser(0), SponsorID: measureUser(0),
 				EnrolledAt: enrolled, TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover}
 		} else {
-			p := measureUser(matrixParent(i))
-			pos := matrixPosition(i)
+			p := measureUser(m.parent(i))
+			pos := m.position(i)
 			typ = EventTypeNodePlaced
 			payload = NodePlacedPayload{TreeID: tree.id, UserID: measureUser(i), ParentID: p, SponsorID: p,
 				Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: enrolled}
@@ -444,16 +477,16 @@ func generateMatrixTree(t *testing.T, es *platform.PostgresEventStore, engine *E
 
 	depth := make([]int, n)
 	for i := 1; i < n; i++ {
-		depth[i] = depth[matrixParent(i)] + 1
+		depth[i] = depth[m.parent(i)] + 1
 	}
 	cols := []string{"id", "tree_id", "user_id", "parent_id", "sponsor_id", "position", "depth", "enrolled_at"}
 	_, err := pool.CopyFrom(ctx, pgx.Identifier{"tree_nodes"}, cols, pgx.CopyFromSlice(n, func(i int) ([]any, error) {
 		var parent, position any
 		sponsor := measureUser(0)
 		if i > 0 {
-			parent = measureUser(matrixParent(i))
-			sponsor = measureUser(matrixParent(i))
-			position = matrixPosition(i)
+			parent = measureUser(m.parent(i))
+			sponsor = measureUser(m.parent(i))
+			position = m.position(i)
 		}
 		return []any{tree.eventIDs[i], tree.id, measureUser(i), parent, sponsor, position, depth[i], enrolled}, nil
 	}))
@@ -467,13 +500,14 @@ func generateMatrixTree(t *testing.T, es *platform.PostgresEventStore, engine *E
 
 func TestMeasureMatrixRemovals(t *testing.T) {
 	n := measureNodes(t)
+	m := matrixShape{width: measureMatrixWidth(t)}
 	es, store, engine, pool := newIntegrationDeps(t)
 	ctx := context.Background()
 
 	start := time.Now()
-	tree := generateMatrixTree(t, es, engine, pool, n)
+	tree := generateMatrixTree(t, es, engine, pool, m, n)
 	t.Logf("generation: %d-node width-%d breadth-first matrix, depth %d, in %s",
-		n, matrixWidth, depthOf(n-1), time.Since(start))
+		n, m.width, m.depth(n-1), time.Since(start))
 
 	removals := []struct {
 		user int
@@ -482,38 +516,36 @@ func TestMeasureMatrixRemovals(t *testing.T) {
 		{1, PruningPromoteEarliest},
 		{2, PruningHoldingTank},
 	}
+	var replay *explainable
 	for _, r := range removals {
-		user := measureUser(r.user)
-		res, err := engine.RemoveMatrixNode(ctx, tree.id, user, r.mode)
+		call, err := nodeRemovedCall(NodeRemovedPayload{TreeID: tree.id, UserID: measureUser(r.user), PruningMode: r.mode}, treeTypeMatrix)
 		require.NoError(t, err)
-		removed := []string{user}
-		if r.mode == PruningHoldingTank {
-			removed = res.MovedToTank
-		}
-		projection := RemovalProjection{Users: removed, Responsored: res.Responsored, Relocated: res.Relocated}
+		outcome, err := call.apply(ctx, engine)
+		require.NoError(t, err)
+		projection := RemovalProjection{Users: outcome.removed, Responsored: outcome.responsored, Relocated: outcome.relocated}
 		tree.version++
 		begin := time.Now()
 		require.NoError(t, store.ProjectRemoval(ctx, tree.id, projection, nextEventUUID(), tree.version))
-		t.Logf("query TreeStore.ProjectRemoval (%s of node %d, subtree %d) cold %8s ms  (cold only): %d tombstoned, %d re-sponsored, %d relocated",
-			r.mode, r.user, subtreeSize(r.user, n), ms(time.Since(begin)), len(projection.Users), len(projection.Responsored), len(projection.Relocated))
+		elapsed := time.Since(begin)
+		t.Logf("query TreeStore.ProjectRemoval (%s of node %d, generated subtree %d) first run, cache not controlled %8s ms: %d tombstoned, %d re-sponsored, %d relocated",
+			r.mode, r.user, m.subtreeSize(r.user, n), ms(elapsed), len(projection.Users), len(projection.Responsored), len(projection.Relocated))
+		if len(projection.Relocated) > 0 {
+			replay = relocationReplay(tree.id, projection.Relocated)
+		}
 	}
+	require.NotNil(t, replay, "no removal returned a relocation to replay")
+	plan := explainRolledBack(t, ctx, pool, replay)
+	t.Logf("plan for the relocation UPDATE, replayed after the timed runs and rolled back:\n%s", strings.Join(plan, "\n"))
 }
 
-// depthOf is node i's depth in the generated matrix.
-func depthOf(i int) int {
-	d := 0
-	for i > 0 {
-		i = matrixParent(i)
-		d++
+// relocationReplay is the relocation UPDATE with the given relocations as its arguments.
+func relocationReplay(treeID string, relocated []Relocation) *explainable {
+	users := make([]string, len(relocated))
+	parents := make([]string, len(relocated))
+	positions := make([]int, len(relocated))
+	depths := make([]int, len(relocated))
+	for i, r := range relocated {
+		users[i], parents[i], positions[i], depths[i] = r.UserID, r.ParentID, r.Position, r.Depth
 	}
-	return d
-}
-
-// subtreeSize counts node i and its descendants among n generated nodes.
-func subtreeSize(i, n int) int {
-	size := 0
-	for lo, hi := i, i; lo < n; lo, hi = lo*matrixWidth+1, hi*matrixWidth+matrixWidth {
-		size += min(hi, n-1) - lo + 1
-	}
-	return size
+	return &explainable{sql: relocateSurvivorsSQL, args: func() []any { return []any{treeID, users, parents, positions, depths} }}
 }

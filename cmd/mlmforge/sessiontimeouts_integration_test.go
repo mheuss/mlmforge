@@ -36,6 +36,7 @@ func openTestTreePool(t *testing.T, url string) (*pgxpool.Pool, *timeoutRecord) 
 func TestTreePool_AppliesTheDefaultsWhenNothingIsSet(t *testing.T) {
 	t.Setenv(statementTimeoutEnv, "")
 	t.Setenv(lockTimeoutEnv, "")
+	t.Setenv("PGOPTIONS", "")
 	pool, rec := openTestTreePool(t, pgContainer.DSN)
 
 	statement, lock := showBoth(t, pool)
@@ -109,6 +110,8 @@ func TestTreePool_AClientSettingWinsOverTheEnvVar(t *testing.T) {
 			assert.Equal(t, defaultLockTimeout, lock)
 			got, _ := rec.describe("statement_timeout")
 			assert.Equal(t, "statement_timeout is 4321ms (set by: "+clientSource+")", got)
+			got, _ = rec.describe("lock_timeout")
+			assert.Equal(t, "lock_timeout is "+defaultLockTimeout+" (set by: mlmforge default)", got)
 		})
 	}
 }
@@ -122,8 +125,6 @@ func roleURL(t *testing.T) string {
 	defer func() { _ = admin.Close(ctx) }()
 	_, err = admin.Exec(ctx, "CREATE ROLE heu801_timeouts LOGIN PASSWORD 'heu801pw'")
 	require.NoError(t, err)
-	_, err = admin.Exec(ctx, "ALTER ROLE heu801_timeouts SET statement_timeout = 4444")
-	require.NoError(t, err)
 	t.Cleanup(func() {
 		c, err := pgx.Connect(ctx, pgContainer.DSN)
 		if err != nil {
@@ -135,6 +136,8 @@ func roleURL(t *testing.T) string {
 			t.Errorf("drop role heu801_timeouts: %v", err)
 		}
 	})
+	_, err = admin.Exec(ctx, "ALTER ROLE heu801_timeouts SET statement_timeout = 4444")
+	require.NoError(t, err)
 	u, err := url.Parse(pgContainer.DSN)
 	require.NoError(t, err)
 	u.User = url.UserPassword("heu801_timeouts", "heu801pw")
@@ -145,16 +148,20 @@ func TestTreePool_TheEnvVarWinsOverARoleSetting(t *testing.T) {
 	if pgContainer == nil {
 		t.Skip("Postgres container not available")
 	}
-	t.Setenv(statementTimeoutEnv, "9s")
+	t.Setenv(statementTimeoutEnv, "7s")
 	t.Setenv(lockTimeoutEnv, "")
+	t.Setenv("PGOPTIONS", "")
 	pool, rec := openTestTreePool(t, roleURL(t))
 
+	var user string
+	require.NoError(t, pool.QueryRow(context.Background(), "SELECT current_user").Scan(&user))
+	require.Equal(t, "heu801_timeouts", user)
 	statement, lock := showBoth(t, pool)
 
-	assert.Equal(t, "9s", statement)
+	assert.Equal(t, "7s", statement)
 	assert.Equal(t, defaultLockTimeout, lock)
 	got, _ := rec.describe("statement_timeout")
-	assert.Equal(t, "statement_timeout is 9s (set by: "+statementTimeoutEnv+")", got)
+	assert.Equal(t, "statement_timeout is 7s (set by: "+statementTimeoutEnv+")", got)
 }
 
 func TestTreePool_ARoleSettingWinsOverTheDefault(t *testing.T) {
@@ -163,6 +170,7 @@ func TestTreePool_ARoleSettingWinsOverTheDefault(t *testing.T) {
 	}
 	t.Setenv(statementTimeoutEnv, "")
 	t.Setenv(lockTimeoutEnv, "")
+	t.Setenv("PGOPTIONS", "")
 	pool, rec := openTestTreePool(t, roleURL(t))
 
 	statement, lock := showBoth(t, pool)

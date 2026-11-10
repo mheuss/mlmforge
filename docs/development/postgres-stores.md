@@ -450,10 +450,11 @@ byte order matters. HEU-947 declares `COLLATE "C"` on
 
 HEU-947, 2026-11-10.
 
-An ordering test cannot prove a collation pin on the test database, because its
-default already compares text in byte order. Read the collation instead.
+An ordering test cannot prove a collation pin on the test database. Its default
+already compares text in byte order. Read the collation instead.
 `pg_attribute.attcollation` gives the column's. `pg_index.indcollation` gives
-each index key's, by position: unnest it beside `indkey` and match on `attnum`.
+the collation of each index key. It is indexed by key position. Unnest it beside
+`indkey` and match on `attnum`.
 `ALTER COLUMN ... TYPE ... COLLATE` rebuilds every index on the column without
 rewriting the table. A column with an implicit non-default collation compares
 with a default-collation column or a literal without error. The non-default

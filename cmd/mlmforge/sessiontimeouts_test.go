@@ -395,7 +395,7 @@ func TestTimeoutRecord_NilAndUnknownDescribeNothing(t *testing.T) {
 
 func TestSessionTimeoutDefaults_ArePinned(t *testing.T) {
 	assert.Equal(t, "50s", defaultStatementTimeout)
-	assert.Equal(t, "42s", defaultLockTimeout)
+	assert.Equal(t, "48s", defaultLockTimeout)
 }
 
 func TestResolveTimeout_FollowsThePrecedenceRule(t *testing.T) {

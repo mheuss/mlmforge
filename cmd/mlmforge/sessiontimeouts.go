@@ -25,7 +25,7 @@ const (
 // Default session timeouts, in SHOW format.
 const (
 	defaultStatementTimeout = "50s"
-	defaultLockTimeout      = "42s"
+	defaultLockTimeout      = "48s"
 )
 
 // timeoutSetting names one session setting, its override env var and its default.

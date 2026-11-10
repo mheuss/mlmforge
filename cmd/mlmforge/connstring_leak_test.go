@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/mlmforge/mlmforge/internal/platform"
@@ -22,6 +23,14 @@ func executeRootCaptured(args ...string) (stdout, stderr string, err error) {
 	return out.String(), errOut.String(), err
 }
 
+// migrateSubcommands is each migrate command line the refusal and timeout loops run.
+var migrateSubcommands = [][]string{{"up"}, {"down"}, {"version"}, {"reset-dirty"}, {"reset-dirty", "--after-failed-down"}}
+
+// migrateArgs returns the root arguments for one migrate command line followed by flags.
+func migrateArgs(sub []string, flags ...string) []string {
+	return append(append([]string{"migrate"}, sub...), flags...)
+}
+
 // requireRefusalPrinted checks the returned error, stdout and stderr of one refused run.
 func requireRefusalPrinted(t *testing.T, tc testutil.ConnStringCase, want, stdout, stderr string, err error) {
 	t.Helper()
@@ -35,7 +44,8 @@ func requireRefusalPrinted(t *testing.T, tc testutil.ConnStringCase, want, stdou
 
 func TestMigrateCommands_ARefusedConnStringPrintsNoPassword(t *testing.T) {
 	selected := 0
-	for _, sub := range []string{"up", "down", "version", "reset-dirty"} {
+	for _, args := range migrateSubcommands {
+		sub := strings.Join(args, " ")
 		for _, tc := range testutil.ConnStringCases() {
 			if tc.MigrateStage == "" {
 				continue
@@ -49,14 +59,14 @@ func TestMigrateCommands_ARefusedConnStringPrintsNoPassword(t *testing.T) {
 					want = testutil.PreDriverText(t, tc.ResolveStage, tc.ResolvePart)
 				}
 
-				stdout, stderr, err := executeRootCaptured("migrate", sub,
-					"--db-url", tc.ConnString, "--migrations", platform.FindMigrationsDir(t))
+				stdout, stderr, err := executeRootCaptured(migrateArgs(args,
+					"--db-url", tc.ConnString, "--migrations", platform.FindMigrationsDir(t))...)
 
 				requireRefusalPrinted(t, tc, want, stdout, stderr, err)
 			})
 		}
 	}
-	require.Equal(t, 36, selected, "migrate cases selected")
+	require.Equal(t, 45, selected, "migrate cases selected")
 }
 
 // treeRefusalCommands are the tree subcommands with the flags each needs to reach its database.
@@ -136,21 +146,22 @@ func requirePreDriverRefusal(t *testing.T, tc testutil.ResolveRefusedCase, stdou
 
 func TestMigrateCommands_RefuseBeforeTheDriver(t *testing.T) {
 	selected := 0
-	for _, sub := range []string{"up", "down", "version", "reset-dirty"} {
+	for _, args := range migrateSubcommands {
+		sub := strings.Join(args, " ")
 		for _, tc := range testutil.ResolveRefusedCases() {
 			selected++
 			t.Run(sub+"/"+tc.Name, func(t *testing.T) {
 				testutil.ClearTimeoutEnv(t)
 				testutil.ClearLibPQEnv(t)
 
-				stdout, stderr, err := executeRootCaptured("migrate", sub,
-					"--db-url", tc.Wiring, "--migrations", platform.FindMigrationsDir(t))
+				stdout, stderr, err := executeRootCaptured(migrateArgs(args,
+					"--db-url", tc.Wiring, "--migrations", platform.FindMigrationsDir(t))...)
 
 				requirePreDriverRefusal(t, tc, stdout, stderr, err)
 			})
 		}
 	}
-	require.Equal(t, 124, selected, "migrate runs")
+	require.Equal(t, 155, selected, "migrate runs")
 }
 
 func TestTreeCommands_RefuseBeforeTheDriver(t *testing.T) {

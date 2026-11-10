@@ -198,7 +198,6 @@ func TestTreePool_EveryConnectionCarriesTheSettings(t *testing.T) {
 		assert.Equal(t, defaultLockTimeout, lock, label)
 	}
 
-	// Released at cleanup too, so a failed require still lets the pool close.
 	acquire := func() *pgxpool.Conn {
 		c, err := pool.Acquire(ctx)
 		require.NoError(t, err)

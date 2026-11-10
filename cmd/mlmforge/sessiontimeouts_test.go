@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 
@@ -132,6 +133,106 @@ func TestWithTreeDeps_AnnotatesTheReturnedError(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.want)
 		})
 	}
+}
+
+// runTimedWriteCmd executes one write subcommand against w with a timeouts record on the deps.
+func runTimedWriteCmd(t *testing.T, w treeWriter, args ...string) (*cmdOutput, error) {
+	t.Helper()
+	rec := timeoutRecordWith(t)
+	cmd := newTreeCmdWith(
+		func(context.Context, string, string) (*treeDeps, error) {
+			return &treeDeps{timeouts: rec, release: func() error { return nil }}, nil
+		},
+		nil,
+		func(*treeDeps) treeWriter { return w },
+	)
+	out := &cmdOutput{}
+	cmd.SetOut(&out.stdout)
+	cmd.SetErr(&out.stderr)
+	cmd.SetArgs(append(args, "--db-url", "postgres://x", "--worker", workerStub(t)))
+	return out, cmd.ExecuteContext(context.Background())
+}
+
+func TestWriteCommands_AnnotateATimedOutProjection(t *testing.T) {
+	commands := map[string][]string{
+		"add-root": {"add-root", "--tree-id", "t", "--user-id", "u", "--sponsor-id", "u", "--tree-type", "unilevel"},
+		"place":    {"place", "--tree-id", "t", "--user-id", "u", "--parent-id", "p", "--sponsor-id", "p"},
+		"remove":   {"remove", "--tree-id", "t", "--user-id", "u"},
+	}
+	for name, args := range commands {
+		t.Run(name, func(t *testing.T) {
+			w := &recordingWriter{result: networkengine.WriteResult{EventID: "e", Version: 2, Stream: "s",
+				ProjectionErr: fmt.Errorf("store placed node: %w", statementCancel)}}
+
+			out, _ := runTimedWriteCmd(t, w, args...)
+
+			assert.Contains(t, out.stderr.String(), "statement_timeout is 30s (set by: mlmforge default)")
+		})
+	}
+}
+
+func TestWriteCommands_AnnotateATimedOutProjectedVersionRead(t *testing.T) {
+	w := &recordingWriter{result: networkengine.WriteResult{EventID: "e", Version: 2, Stream: "s",
+		ProjectionErr: errors.New("projection failed"),
+		Observed:      &networkengine.ProjectionObservation{Err: fmt.Errorf("read: %w", statementCancel)}}}
+
+	out, _ := runTimedWriteCmd(t, w, "place", "--tree-id", "t", "--user-id", "u", "--parent-id", "p", "--sponsor-id", "p")
+
+	assert.Contains(t, out.stderr.String(), "could not be read")
+	assert.Contains(t, out.stderr.String(), "statement_timeout is 30s (set by: mlmforge default)")
+}
+
+func TestRejectCommand_AnnotatesATimedOutProjection(t *testing.T) {
+	cases := map[string]networkengine.RejectResult{
+		"projection error": {EventID: "r", Version: 3, Stream: "s", RejectedEventID: "e", RejectedVersion: 2,
+			Outcome:       networkengine.RejectOutcomeRejected,
+			ProjectionErr: fmt.Errorf("project: %w", statementCancel),
+			Observed:      &networkengine.ProjectionObservation{Version: 2, Found: true}},
+		"projected-version read": {EventID: "r", Version: 3, Stream: "s", RejectedEventID: "e", RejectedVersion: 2,
+			Outcome:       networkengine.RejectOutcomeRejected,
+			ProjectionErr: errors.New("projection failed"),
+			Observed:      &networkengine.ProjectionObservation{Err: fmt.Errorf("read: %w", statementCancel)}},
+	}
+	for name, res := range cases {
+		t.Run(name, func(t *testing.T) {
+			w := &recordingWriter{rejectResult: res}
+
+			out, _ := runTimedWriteCmd(t, w, "reject-event", "--tree-id", "t", "--event-id", "e", "--reason", "r")
+
+			assert.Contains(t, out.stderr.String(), "statement_timeout is 30s (set by: mlmforge default)")
+		})
+	}
+}
+
+func TestRejectCommand_AnnotatesAPrintedRetryError(t *testing.T) {
+	w := &recordingWriter{
+		rejectResult: networkengine.RejectResult{RejectedEventID: "e", RejectedVersion: 2,
+			RetryErr: fmt.Errorf("retry: %w", statementCancel)},
+		err: errors.New("the rejection was refused"),
+	}
+
+	out, _ := runTimedWriteCmd(t, w, "reject-event", "--tree-id", "t", "--event-id", "e", "--reason", "r")
+
+	assert.Contains(t, out.stderr.String(), "statement_timeout is 30s (set by: mlmforge default)")
+}
+
+func TestWriteCommands_AnnotateATimedOutReturnedError(t *testing.T) {
+	w := &recordingWriter{err: fmt.Errorf("append: %w", statementCancel)}
+
+	_, err := runTimedWriteCmd(t, w, "place", "--tree-id", "t", "--user-id", "u", "--parent-id", "p", "--sponsor-id", "p")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "statement_timeout is 30s (set by: mlmforge default)")
+	assert.Equal(t, 1, exitCode(err))
+}
+
+func TestAnnotate_DoesNotAnnotateTwice(t *testing.T) {
+	r := timeoutRecordWith(t)
+	once := r.annotate(statementCancel)
+
+	twice := r.annotate(fmt.Errorf("outer: %w", once))
+
+	assert.Equal(t, 1, strings.Count(twice.Error(), "the server canceled the statement"))
 }
 
 func TestTimeoutRecord_DescribesTheFirstResult(t *testing.T) {

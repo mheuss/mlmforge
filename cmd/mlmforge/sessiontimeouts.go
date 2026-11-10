@@ -122,6 +122,10 @@ func (r *timeoutRecord) annotate(err error) error {
 	if err == nil || r == nil || !errors.As(err, &pg) {
 		return err
 	}
+	var done *timeoutError
+	if errors.As(err, &done) {
+		return err
+	}
 	var name string
 	switch {
 	case pg.Code == "57014" && pg.Message == "canceling statement due to statement timeout":
@@ -138,14 +142,28 @@ func (r *timeoutRecord) annotate(err error) error {
 	return &timeoutError{err: err, text: "the server canceled the statement: " + text}
 }
 
-// annotateWrite annotates a write's projection error.
+// annotateObservation annotates the error a projected-version read returned, on a copy.
+func annotateObservation(obs *networkengine.ProjectionObservation, r *timeoutRecord) *networkengine.ProjectionObservation {
+	if obs == nil || obs.Err == nil {
+		return obs
+	}
+	annotated := *obs
+	annotated.Err = r.annotate(obs.Err)
+	return &annotated
+}
+
+// annotateWrite annotates a write's projection error and its projected-version read error.
 func annotateWrite(res networkengine.WriteResult, r *timeoutRecord) networkengine.WriteResult {
 	res.ProjectionErr = r.annotate(res.ProjectionErr)
+	res.Observed = annotateObservation(res.Observed, r)
 	return res
 }
 
-// annotateReject annotates a rejection's retry error when it is printed apart from err.
+// annotateReject annotates a rejection's projection error and projected-version read
+// error, and its retry error unless err carries it.
 func annotateReject(res networkengine.RejectResult, r *timeoutRecord, err error) networkengine.RejectResult {
+	res.ProjectionErr = r.annotate(res.ProjectionErr)
+	res.Observed = annotateObservation(res.Observed, r)
 	if res.RetryErr != nil && (err == nil || !errors.Is(err, res.RetryErr)) {
 		res.RetryErr = r.annotate(res.RetryErr)
 	}

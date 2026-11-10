@@ -46,35 +46,6 @@ func TestTreeLoadRejectedError_ExternalLiteralRendersEveryField(t *testing.T) {
 		err.Error())
 }
 
-func TestTreeLoadIncompleteError_ExternalLiteralRendersEveryField(t *testing.T) {
-	err := &networkengine.TreeLoadIncompleteError{
-		TreeID:    "t2",
-		Stage:     networkengine.TreeLoadStageNodes,
-		Confirmed: 2,
-		Attempted: 3,
-		Total:     4,
-		NodeIDs:   []string{"u9"},
-		Err:       errors.New("worker said no"),
-	}
-
-	assert.Equal(t,
-		"tree load incomplete: tree t2: stage nodes: non-root placement 3 of 4, 2 acknowledged: nodes u9: worker said no",
-		err.Error())
-}
-
-// The stage value and the node list both print the word "nodes". This asserts
-// the stage keeps its own name so one message cannot use the word twice
-// meaning two things.
-func TestTreeLoadIncompleteError_StageIsNamedApartFromTheNodeList(t *testing.T) {
-	err := &networkengine.TreeLoadIncompleteError{
-		TreeID:  "t2",
-		Stage:   networkengine.TreeLoadStageNodes,
-		NodeIDs: []string{"u9"},
-	}
-
-	assert.Equal(t, "tree load incomplete: tree t2: stage nodes: nodes u9", err.Error())
-}
-
 func TestTreeLoadErrors_UnsetFieldsAreOmitted(t *testing.T) {
 	tests := []struct {
 		name string
@@ -87,11 +58,6 @@ func TestTreeLoadErrors_UnsetFieldsAreOmitted(t *testing.T) {
 			want: "tree load rejected",
 		},
 		{
-			name: "incomplete, nothing set",
-			err:  &networkengine.TreeLoadIncompleteError{},
-			want: "tree load incomplete",
-		},
-		{
 			name: "rejected, tree only",
 			err:  &networkengine.TreeLoadRejectedError{TreeID: "t3"},
 			want: "tree load rejected: tree t3",
@@ -100,23 +66,6 @@ func TestTreeLoadErrors_UnsetFieldsAreOmitted(t *testing.T) {
 			name: "rejected, kind only",
 			err:  &networkengine.TreeLoadRejectedError{Kind: networkengine.TreeLoadConfigInvalid},
 			want: "tree load rejected: kind config_invalid",
-		},
-		{
-			name: "incomplete, stage only",
-			err:  &networkengine.TreeLoadIncompleteError{TreeID: "t6", Stage: networkengine.TreeLoadStageRoot},
-			want: "tree load incomplete: tree t6: stage root",
-		},
-		{
-			name: "incomplete, first placement with nothing acknowledged",
-			err: &networkengine.TreeLoadIncompleteError{
-				TreeID: "t2", Stage: networkengine.TreeLoadStageNodes, Attempted: 1, Total: 4,
-			},
-			want: "tree load incomplete: tree t2: stage nodes: non-root placement 1 of 4, 0 acknowledged",
-		},
-		{
-			name: "incomplete, acknowledged count with no placement index",
-			err:  &networkengine.TreeLoadIncompleteError{TreeID: "t2", Confirmed: 7},
-			want: "tree load incomplete: tree t2: 7 acknowledged",
 		},
 		{
 			name: "rejected, node ids that print as nothing",
@@ -176,8 +125,8 @@ func TestTreeLoadErrors_AFailingCauseIsContained(t *testing.T) {
 		},
 		{
 			name: "a cause whose Error panics outright",
-			err:  &networkengine.TreeLoadIncompleteError{TreeID: "t5", Stage: networkengine.TreeLoadStageCreate, Err: panickingCause{}},
-			want: "tree load incomplete: tree t5: stage create: cause could not be rendered",
+			err:  &networkengine.TreeLoadRejectedError{TreeID: "t5", Kind: networkengine.TreeLoadDataInvalid, Err: panickingCause{}},
+			want: "tree load rejected: tree t5: kind data_invalid: cause could not be rendered",
 		},
 	}
 
@@ -189,7 +138,7 @@ func TestTreeLoadErrors_AFailingCauseIsContained(t *testing.T) {
 	}
 }
 
-// A cause that is one of these types with no message would re-enter the
+// A cause that is this type with no message would re-enter the
 // renderer. That recursion ends in a stack overflow, which is a runtime fatal
 // error rather than a panic, so no caller can recover from it.
 func TestTreeLoadErrors_ACyclicCauseDoesNotRecurse(t *testing.T) {
@@ -197,12 +146,12 @@ func TestTreeLoadErrors_ACyclicCauseDoesNotRecurse(t *testing.T) {
 	self.Err = self
 
 	first := &networkengine.TreeLoadRejectedError{TreeID: "a", Kind: networkengine.TreeLoadDataInvalid}
-	second := &networkengine.TreeLoadIncompleteError{TreeID: "b", Stage: networkengine.TreeLoadStageNodes}
+	second := &networkengine.TreeLoadRejectedError{TreeID: "b", Kind: networkengine.TreeLoadConfigInvalid}
 	first.Err = second
 	second.Err = first
 
 	assert.Equal(t, "tree load rejected: tree t1: kind data_invalid: tree load rejected", self.Error())
-	assert.Equal(t, "tree load rejected: tree a: kind data_invalid: tree load incomplete", first.Error())
+	assert.Equal(t, "tree load rejected: tree a: kind data_invalid: tree load rejected", first.Error())
 }
 
 // A cause is named whenever one is present, because Unwrap returns it either
@@ -239,17 +188,4 @@ func TestTreeLoadErrors_ExternalLiteralStillMatches(t *testing.T) {
 	var got *networkengine.TreeLoadRejectedError
 	require.ErrorAs(t, wrapped, &got)
 	assert.Equal(t, networkengine.TreeLoadStoreReadFailed, got.Kind)
-}
-
-func TestTreeLoadIncompleteError_ExternalLiteralIsMatchableByType(t *testing.T) {
-	incomplete := &networkengine.TreeLoadIncompleteError{TreeID: "t2", Stage: networkengine.TreeLoadStageNodes}
-
-	wrapped := fmt.Errorf("restart required: %w", incomplete)
-
-	var got *networkengine.TreeLoadIncompleteError
-	require.ErrorAs(t, wrapped, &got)
-	assert.Equal(t, networkengine.TreeLoadStageNodes, got.Stage)
-
-	var wrong *networkengine.TreeLoadRejectedError
-	assert.False(t, errors.As(wrapped, &wrong))
 }

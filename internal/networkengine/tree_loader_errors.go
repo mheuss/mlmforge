@@ -7,11 +7,8 @@ import (
 )
 
 // The leading segment of a message this package renders from a value it did
-// not construct. A message the loader produced never begins with one.
-const (
-	rejectedFallbackLabel   = "tree load rejected"
-	incompleteFallbackLabel = "tree load incomplete"
-)
+// not construct.
+const rejectedFallbackLabel = "tree load rejected"
 
 // TreeLoadRejectionKind names why a load was refused before the engine was
 // called.
@@ -22,7 +19,7 @@ const (
 	// trees are unaffected.
 	TreeLoadDataInvalid TreeLoadRejectionKind = "data_invalid"
 	// TreeLoadConfigInvalid means the load's arguments describe a structure
-	// this loader cannot replay.
+	// that cannot be loaded.
 	TreeLoadConfigInvalid TreeLoadRejectionKind = "config_invalid"
 	// TreeLoadStoreReadFailed means the node set could not be read. The cause
 	// may be the store, a cancelled context, or a decode failure.
@@ -30,12 +27,7 @@ const (
 )
 
 // TreeLoadRejectedError reports a load that failed before any engine call, so
-// the engine is unchanged and the load can be retried.
-//
-// Typed rather than a bare fmt.Errorf.
-// A caller has to tell this apart from TreeLoadIncompleteError with errors.As,
-// because the two need opposite handling: this one leaves the engine usable,
-// the other may not.
+// the engine is unchanged.
 type TreeLoadRejectedError struct {
 	TreeID string
 	// NodeIDs holds every user the message names, in the order the message
@@ -59,84 +51,9 @@ func (e *TreeLoadRejectedError) Error() string {
 	if e.msg != "" {
 		return e.msg
 	}
-	return treeLoadFallback(rejectedFallbackLabel, e.TreeID, namedSegment("kind", string(e.Kind)), e.NodeIDs, e.Err, nil)
+	return treeLoadFallback(rejectedFallbackLabel, e.TreeID, namedSegment("kind", string(e.Kind)), e.NodeIDs, e.Err)
 }
 func (e *TreeLoadRejectedError) Unwrap() error { return e.Err }
-
-// TreeLoadStage names how far a load reached before it failed.
-//
-// Every stage means the load reached that point and did not complete it. None
-// of them means an operation did not take effect. Whether a call was sent at
-// all is what Err distinguishes.
-type TreeLoadStage string
-
-const (
-	// TreeLoadStageCreate means structure creation was attempted and did not
-	// report success.
-	TreeLoadStageCreate TreeLoadStage = "create"
-	// TreeLoadStageRoot means the structure was created and root placement was
-	// attempted and did not report success.
-	TreeLoadStageRoot TreeLoadStage = "root"
-	// TreeLoadStageNodes means the structure was created, the root was
-	// acknowledged, and a later placement did not complete.
-	TreeLoadStageNodes TreeLoadStage = "nodes"
-)
-
-// TreeLoadIncompleteError reports a load that failed after the engine was
-// called. The structure may be partly built.
-//
-// Confirmed and Total count non-root placements. Attempted is the one-based
-// index the message carries, so within TreeLoadStageNodes Confirmed is
-// Attempted minus one. At TreeLoadStageRoot, Total is set and the other two
-// are 0. All three are 0 at TreeLoadStageCreate.
-type TreeLoadIncompleteError struct {
-	TreeID string
-	// NodeIDs holds every user the message names, in the order the message
-	// names them. The order reproduces the message and means nothing else. An
-	// entry may name a user with no row in this tree, and the same user may
-	// appear twice. Empty at TreeLoadStageCreate.
-	NodeIDs []string
-	// Stage names how far the load reached. It is for the operator reading the
-	// log, not for selecting a recovery action.
-	Stage TreeLoadStage
-	// Confirmed is how many non-root placements the engine acknowledged.
-	Confirmed int
-	// Attempted is the one-based index of the placement that did not report
-	// success. When it is non-zero that placement may still have taken effect,
-	// unless Err is nil, which means the load stopped before the call was sent
-	// and no request was made for it.
-	Attempted int
-	// Total is how many non-root placements the load set out to make, once the
-	// create reports success. It is 0 at TreeLoadStageCreate.
-	Total int
-	// Err is the TreeMutator operation's error, or nil when a nil guard fired
-	// instead. It may be a transport or context error rather than an
-	// *EngineError.
-	Err error
-	msg string
-}
-
-// Error returns the stored message. A value built outside this package has
-// none, so it renders from the exported fields instead.
-func (e *TreeLoadIncompleteError) Error() string {
-	if e.msg != "" {
-		return e.msg
-	}
-	var seen []string
-	named := e.Attempted != 0 || e.Total != 0
-	if named {
-		seen = append(seen, fmt.Sprintf("non-root placement %d of %d", e.Attempted, e.Total))
-	}
-	if named || e.Confirmed != 0 {
-		seen = append(seen, fmt.Sprintf("%d acknowledged", e.Confirmed))
-	}
-	var counts []string
-	if len(seen) > 0 {
-		counts = append(counts, strings.Join(seen, ", "))
-	}
-	return treeLoadFallback(incompleteFallbackLabel, e.TreeID, namedSegment("stage", string(e.Stage)), e.NodeIDs, e.Err, counts)
-}
-func (e *TreeLoadIncompleteError) Unwrap() error { return e.Err }
 
 // newTreeLoadRejected builds a TreeLoadRejectedError.
 func newTreeLoadRejected(kind TreeLoadRejectionKind, treeID string, err error, msg string, nodeIDs ...string) *TreeLoadRejectedError {
@@ -149,37 +66,17 @@ func newTreeLoadRejected(kind TreeLoadRejectionKind, treeID string, err error, m
 	}
 }
 
-// newTreeLoadIncomplete builds a TreeLoadIncompleteError.
-// attempted is the one-based index the message carries and total is the
-// non-root count. attempted is 0 outside TreeLoadStageNodes, and total is 0
-// only at TreeLoadStageCreate. Confirmed is derived here rather than passed,
-// so the count an operator reads cannot disagree with the index the message
-// names.
-func newTreeLoadIncomplete(stage TreeLoadStage, treeID string, err error, attempted, total int, msg string, nodeIDs ...string) *TreeLoadIncompleteError {
-	return &TreeLoadIncompleteError{
-		TreeID:    treeID,
-		NodeIDs:   slices.Clone(nodeIDs),
-		Stage:     stage,
-		Confirmed: max(attempted-1, 0),
-		Attempted: attempted,
-		Total:     total,
-		Err:       err,
-		msg:       msg,
-	}
-}
-
 // treeLoadFallback builds a message for a value this package did not
 // construct. Each segment is omitted when its field is unset, so a zero value
 // still renders the leading label rather than a run of separators.
-func treeLoadFallback(label, treeID, kindOrStage string, nodeIDs []string, err error, counts []string) string {
+func treeLoadFallback(label, treeID, kind string, nodeIDs []string, err error) string {
 	parts := []string{label}
 	if treeID != "" {
 		parts = append(parts, fmt.Sprintf("tree %s", treeID))
 	}
-	if kindOrStage != "" {
-		parts = append(parts, kindOrStage)
+	if kind != "" {
+		parts = append(parts, kind)
 	}
-	parts = append(parts, counts...)
 	if list := namedNodes(nodeIDs); list != "" {
 		parts = append(parts, list)
 	}
@@ -221,13 +118,13 @@ func namedNodes(nodeIDs []string) string {
 // the constructors, so nothing constrains what its Error method does. Three
 // shapes are handled here rather than allowed out of a method callers treat as
 // total: a cause that panics, a cause that renders nothing, and a cause that is
-// one of this package's own types carrying no message.
+// this package's own type carrying no message.
 //
 // That third one is named rather than called, because calling it would re-enter
 // this path and recurse until the stack is exhausted. A stack overflow is a
 // runtime fatal error that recover cannot contain.
 //
-// **The cycle guard reaches this package's own types and stops there.** A cause
+// **The cycle guard reaches this package's own type and stops there.** A cause
 // of any other type is called, so a caller whose own Error method renders the
 // value holding it still recurses without bound. That cannot be guarded from
 // inside this method: Error takes no parameter to carry a depth, the recursion
@@ -252,15 +149,8 @@ func causeText(err error) (text string, ok bool) {
 			text, ok = "cause could not be rendered", true
 		}
 	}()
-	switch cause := err.(type) {
-	case *TreeLoadRejectedError:
-		if cause.msg == "" {
-			return rejectedFallbackLabel, true
-		}
-	case *TreeLoadIncompleteError:
-		if cause.msg == "" {
-			return incompleteFallbackLabel, true
-		}
+	if cause, isRejected := err.(*TreeLoadRejectedError); isRejected && cause.msg == "" {
+		return rejectedFallbackLabel, true
 	}
 	text = err.Error()
 	if strings.TrimSpace(text) == "" {

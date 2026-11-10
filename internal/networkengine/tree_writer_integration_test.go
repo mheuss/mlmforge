@@ -219,9 +219,9 @@ func TestTreeWriter_RootPlacementAndRemoval(t *testing.T) {
 	}
 	assert.Equal(t, []string{EventTypeRootAdded, EventTypeNodePlaced, EventTypeNodeRemoved}, types)
 
-	loaded, err := NewTreeLoader(it.store, it.engine(t)).LoadTree(ctx, tree, treeTypeUnilevel)
+	loaded, err := it.writer(t).Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeUnilevel})
 	require.NoError(t, err)
-	assert.Equal(t, 1, loaded, "the store must reload with the root alone")
+	assert.Equal(t, 1, loaded.Nodes, "the store must reload with the root alone")
 }
 
 func TestTreeWriter_MatrixPlacementAtAnExplicitSlot(t *testing.T) {
@@ -388,9 +388,10 @@ func TestTreeWriter_ReRootsATreeWhoseOnlyRootWasRemoved(t *testing.T) {
 	assert.Equal(t, removed.EventID, rerooted.CaughtUp.EventID)
 
 	engine := it.engine(t)
-	loaded, err := NewTreeLoader(it.store, engine).LoadTree(ctx, tree, treeTypeUnilevel)
+	loaded, err := NewTreeWriter(it.events, it.store, it.snapshots, engine, NewPostgresTreeLocker(it.dsn)).
+		Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeUnilevel})
 	require.NoError(t, err)
-	assert.Equal(t, 1, loaded)
+	assert.Equal(t, 1, loaded.Nodes)
 	pos, err := engine.GetPosition(ctx, tree, second)
 	require.NoError(t, err)
 	assert.EqualValues(t, 0, pos.Depth)

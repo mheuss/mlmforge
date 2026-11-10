@@ -274,7 +274,7 @@ git grep -nE 'treeType(Unilevel|Binary|Matrix)|"(unilevel|binary|matrix)" =>' --
 
 Some of those branches refuse a type they do not name. Others fall through to a default that treats it like another type. Among them:
 
-- Refuse: the worker's `create_tree` and `restore_snapshot` dispatches, `supportedTreeTypes`, the loader's slot-rule switch, and `checkNodePlacedShape`.
+- Refuse: the worker's `create_tree` and `restore_snapshot` dispatches, `supportedTreeTypes`, `validateNodes`' slot-rule switch, and `checkNodePlacedShape`.
 - Fall through: `placementCheck` in the writer, the consumer's placement call, and its position comparison. A new type with slots would be checked without its position and projected with it.
 
 A refusal fails at runtime, not in a test. A fall-through does not fail at all.
@@ -934,11 +934,9 @@ Cover both halves on the Rust side too: one test that null is accepted, one that
 absent still fails. See `board_calculate_accepts_null_collections` and
 `board_calculate_still_requires_cycle_events`.
 
-## Tree Reload: What `LoadTree` Restores, and What It Does Not
+## Load Preflight: What It Checks, and Why
 
-Tree loads no longer go through `LoadTree`. See "Building A Tree From Its Stream". This section describes `LoadTree` itself.
-
-`LoadTree` rebuilds a tree in the engine from the `tree_nodes` adjacency rows. The invariants below are not obvious from the code and matter to anyone touching the loader, the projection, or the worker's tree handlers.
+Every load runs `preflight` over the store's active rows before it restores a snapshot or creates the structure. See "Building A Tree From Its Stream" for the build itself. The invariants below are not obvious from the code and matter to anyone touching preflight, the projection, or the worker's tree handlers.
 
 ### A root's stored sponsor is dropped on reload
 
@@ -948,15 +946,15 @@ Preflight deliberately exempts that field from every check a non-root gets: no n
 
 Root **parent** and **position** are the opposite: `AddRoot` accepts neither, so a depth-0 row carrying either describes a topology the engine cannot reproduce, and preflight rejects it.
 
-### Replay order must satisfy sponsor edges, not just parent edges
+### Preflight proves a parent-and-sponsor order exists
 
 Every tree type resolves the sponsor at insert time and rejects one that is not present yet (`unilevel.rs`, `binary.rs`, `matrix.rs`). Depth order satisfies parents — a parent is always shallower — but says nothing about sponsors.
 
-Automatic spillover always places a recruit below their sponsor, so depth order happened to work. Explicit placement removes that coincidence: an admin override can put a node at depth 1 whose sponsor sits at depth 10, and depth-ordered replay then fails mid-tree.
+An explicitly placed node can sit shallower than its own sponsor. Depth order therefore does not prove the rows are consistent. `orderForReplay` orders on both edges. A cycle in them fails preflight.
 
 Every tree type reports a missing sponsor as `SponsorNotFound` → `SPONSOR_NOT_FOUND`, and a missing parent as `USER_NOT_FOUND`. The parent is checked first, so a placement missing both reports the parent. Before HEU-940, unilevel and binary reported a missing sponsor as `USER_NOT_FOUND`, so older logs show that code for this fault.
 
-`orderForReplay` topologically sorts on both edges. Do not replace it with a depth sort.
+`preflight` keeps only `orderForReplay`'s error. The writer replays in stream order.
 
 ### Matrix and binary require a position on every non-root row
 
@@ -966,21 +964,9 @@ Unilevel carries no position. It appends to the parent's child list. Preflight r
 
 ### Why preflight validates everything before mutating anything
 
-A load that fails partway leaves a partly built tree in the worker. The engine may refuse a call after the create stage while the worker stays usable. A caller may then drop the tree with `drop_structure`. The engine refuses the same input the same way. A reload succeeds only once the cause has changed. UC-NET-032 covers this. Preflight is meant to catch engine refusals before the create. This path should be rare. After a timeout, a cancellation or a crash, the client is closed or the worker is gone. Starting over then means a new worker. The CLI never drops. Each command starts its own worker, and a failed load ends with it. Either way, a partial load costs a full rebuild. So `LoadTree` proves a load is sound before the first engine call. Its replay failures return `TreeLoadIncompleteError`. That error carries the stage the load reached and how many placements the engine acknowledged.
+A load that fails partway leaves a partly built tree in the worker. The engine may refuse a call after the create stage while the worker stays usable. A caller may then drop the tree with `drop_structure`. The engine refuses the same input the same way. A reload succeeds only once the cause has changed. UC-NET-032 covers this. Preflight is meant to catch engine refusals before the create. This path should be rare. After a timeout, a cancellation or a crash, the client is closed or the worker is gone. Starting over then means a new worker. Each CLI command starts its own worker. A failed load ends with it. Either way, a partial load costs a full rebuild. So preflight proves a load is sound before the first engine call.
 
-`Confirmed` counts acknowledgements, not what landed. At `TreeLoadStageNodes` the call that failed may also have taken effect, with the reply lost rather than the work undone. The structure then holds at least `Confirmed` placements and possibly one more. That carve-out does not apply when `Err` is nil, which means the load stopped before the call was sent. At the create stage all three counters are zero. At the root stage, `Total` carries the non-root placement count the load set out to make. The other two counters are zero. The operation in doubt is the root placement, which none of the three counters counts.
-
-The loader cannot tell which happened. It holds a `TreeMutator`. That interface carries only mutations. Nothing on this path can read back whether the placement landed. A caller does not need that answer to start over. After a lost reply, starting over means a new worker. A new worker starts empty. HEU-777 and HEU-784 are the same lost-reply shape on the removal path rather than the replay path.
-
-Preflight runs in two phases with different inputs. `validateTreeConfig` checks the tree type, and for a matrix the width and spillover. It reads no rows, so it runs before the store query. A misconfigured load costs no query. `validateNodes` runs after the query and proves the node set is structurally consistent.
-
-The empty-tree short circuit sits between the two phases. A tree with zero rows still reports configuration errors. That is why a typo in startup wiring surfaces at the first load instead of staying invisible until the first node arrives.
-
-### Sponsored-list order is not restored
-
-`Arena::get_sponsored` returns its vec in insertion order, and reload inserts in `(depth, enrolled_at, user_id)` order rather than original event order. So a reloaded tree can report a distributor's recruits in a different order than the live tree did — on the HEU-534 integration fixture, `u1.sponsored` comes back `[u2, u5, u3]` where the event sequence produced `[u2, u3, u5]`.
-
-Harmless today: every other read of that vec is a `retain`, and the adjacency table stores no ordering to restore even if we wanted to. Do not build anything that depends on sponsored-list order surviving a restart.
+A load checks its input in two phases. `validateTreeConfig` checks the shape before the active rows are read. `preflight` then checks the rows, and passes an empty set. A tree with zero rows still reports configuration errors, because the shape check comes first.
 
 ### Matrix events carry authoritative placement (HEU-553)
 
@@ -991,7 +977,7 @@ These limits remain:
 - The gate rejects matrix positions above the u8 ceiling (255), which no width can accept. The real bound is the tree's width, which the placement payload does not carry. Under `TreeWriter`, `check_mutation` refuses such a position before the append. An event appended without the writer is stored, refused loudly by the engine, and then makes the next reload preflight reject the whole tree. HEU-554 decides the direction for this gap. The fix ships under it.
 - Redelivery is bounded (HEU-576). The scope is the event in flight. `TreeWriter` provides it by calling `HandleEvent` synchronously, in process, under the tree's lock. A redelivered placement whose projection is still current completes, however old it is. It stops being current once its node was removed, or once a later event re-placed the user, and is then refused rather than reapplied. It is also refused when its parent's row was since removed, because the parent lookup runs before the guard (HEU-813). A redelivered removal that the engine refuses converges when its own tombstone is in the store (HEU-811). That holds even when a later placement of the user never reached the engine. When no row carries the removal's stamp and the user has no active row, the consumer refuses the removal as unprojectable. Then `reject-event` can clear it (HEU-868). One whose store write never landed fails typed. The next write or `tree load` redelivers it to an engine rebuilt from the stream. One arriving after a later placement landed in full is below the tree's projected version. The store refuses it (HEU-857). The engine may still have applied it. HEU-789 tracks that for when a caller redelivers old events. `TreeWriter` does not reach that case. Catch-up redelivers only the stream's last event. A removal followed by a later placement is no longer the last event. When a redelivery reaches its store write, the store refuses it if it is below the tree's projected version (HEU-857). The parent lookup and a removal's engine call run before that write.
 
-Matrix startup reload is no longer blocked by the placement divergence HEU-553 fixed.
+Matrix reload is no longer blocked by the placement divergence HEU-553 fixed.
 
 ### The event id is the redelivery discriminator
 

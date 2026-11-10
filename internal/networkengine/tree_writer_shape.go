@@ -25,7 +25,6 @@ type treeShape struct {
 	spillover string
 }
 
-// config returns the shape in the loader's configuration form.
 func (s treeShape) config() loadTreeConfig {
 	if s.treeType != treeTypeMatrix {
 		return loadTreeConfig{}

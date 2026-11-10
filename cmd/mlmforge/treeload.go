@@ -31,10 +31,6 @@ func treeLoadRetryable(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	var incomplete *networkengine.TreeLoadIncompleteError
-	if errors.As(err, &incomplete) {
-		return false
-	}
 	var replay *networkengine.TreeReplayError
 	if errors.As(err, &replay) {
 		return false
@@ -137,17 +133,6 @@ func treeLoadFailureMessage(err error) string {
 	if errors.As(err, &replay) {
 		return fmt.Sprintf("load stopped at the %s stage while building the tree from its stream: %s%s",
 			replay.Stage, replay, interrupted(err))
-	}
-	// Incomplete is checked before rejected. A chain holding both must not be
-	// reported as leaving the engine unchanged.
-	var incomplete *networkengine.TreeLoadIncompleteError
-	if errors.As(err, &incomplete) {
-		if incomplete.Stage == networkengine.TreeLoadStageCreate {
-			return fmt.Sprintf("load stopped at the create stage; the create did not report success: %s%s",
-				incomplete, interrupted(err))
-		}
-		return fmt.Sprintf("load stopped at the %s stage; the engine acknowledged %d of %d non-root placements: %s%s",
-			incomplete.Stage, incomplete.Confirmed, incomplete.Total, incomplete, interrupted(err))
 	}
 	var rejected *networkengine.TreeLoadRejectedError
 	if errors.As(err, &rejected) {

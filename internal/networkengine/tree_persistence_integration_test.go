@@ -159,72 +159,44 @@ func TestTreePersistence_PlaceAndRemove(t *testing.T) {
 	assert.Equal(t, 1, removedCount, "child should have removed_at set")
 }
 
-func TestTreePersistence_BulkLoadMatchesEventPath(t *testing.T) {
-	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
+func TestTreePersistence_StreamLoadMatchesTheWritingWorker(t *testing.T) {
+	it := newWriterIntegration(t)
 	ctx := context.Background()
-
-	treeID := testTreeUUID(1)
-	rootID := testUserUUID(1)
-	childID := testUserUUID(2)
-	grandchildID := testUserUUID(3)
-	stream := TreeStreamName(treeID)
-
-	require.NoError(t, engine.CreateTree(ctx, treeID, "unilevel"))
-	consumer := NewTreeEventConsumer(treeStore, engine)
-
-	// Build tree via events.
-	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
-		TreeID: treeID, UserID: rootID, SponsorID: rootID,
-		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-	})
-	require.NoError(t, deliver(ctx, consumer, rootEvent))
-
-	childEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: treeID, UserID: childID, ParentID: rootID, SponsorID: rootID,
-		TreeType:   treeTypeUnilevel,
-		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
-	})
-	require.NoError(t, deliver(ctx, consumer, childEvent))
-
-	grandchildEvent := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: treeID, UserID: grandchildID, ParentID: childID, SponsorID: childID,
-		TreeType:   treeTypeUnilevel,
-		EnrolledAt: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
-	})
-	require.NoError(t, deliver(ctx, consumer, grandchildEvent))
-
-	// Capture positions from the event-built engine.
-	rootPos, err := engine.GetPosition(ctx, treeID, rootID)
+	tree := testTreeUUID(1)
+	rootID, childID, grandchildID := testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	it.addUnilevelRoot(t, tree, rootID)
+	placed, err := it.writer(t).Place(ctx, PlaceRequest{TreeID: tree, UserID: childID, ParentID: rootID,
+		SponsorID: rootID, EnrolledAt: writeTime.Add(time.Hour)})
 	require.NoError(t, err)
-	childPos, err := engine.GetPosition(ctx, treeID, childID)
-	require.NoError(t, err)
-	grandchildPos, err := engine.GetPosition(ctx, treeID, grandchildID)
-	require.NoError(t, err)
+	require.NoError(t, placed.ProjectionErr)
 
-	// Stop engine and start a fresh one.
-	require.NoError(t, engine.Stop())
-	freshEngine, err := NewEngineClient(ctx, findWorkerBinary(t))
+	// Kept so its positions can be compared with the load worker's.
+	writingEngine := it.engine(t)
+	placed, err = NewTreeWriter(it.events, it.store, it.snapshots, writingEngine, NewPostgresTreeLocker(it.dsn)).
+		Place(ctx, PlaceRequest{TreeID: tree, UserID: grandchildID, ParentID: childID, SponsorID: childID,
+			EnrolledAt: writeTime.Add(2 * time.Hour)})
 	require.NoError(t, err)
-	defer func() { _ = freshEngine.Stop() }()
+	require.NoError(t, placed.ProjectionErr)
 
-	// Bulk-load from the adjacency table.
-	loader := NewTreeLoader(treeStore, freshEngine)
-	_, lerr := loader.LoadTree(ctx, treeID, "unilevel")
-
-	require.NoError(t, lerr)
-
-	// Compare positions. The fresh engine should match the original.
-	freshRootPos, err := freshEngine.GetPosition(ctx, treeID, rootID)
+	loadEngine := it.engine(t)
+	loaded, err := NewTreeWriter(it.events, it.store, it.snapshots, loadEngine, NewPostgresTreeLocker(it.dsn)).
+		Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeUnilevel})
 	require.NoError(t, err)
-	assert.Equal(t, rootPos.Depth, freshRootPos.Depth)
+	assert.Equal(t, 3, loaded.Nodes)
 
-	freshChildPos, err := freshEngine.GetPosition(ctx, treeID, childID)
-	require.NoError(t, err)
-	assert.Equal(t, childPos.Depth, freshChildPos.Depth)
-
-	freshGrandchildPos, err := freshEngine.GetPosition(ctx, treeID, grandchildID)
-	require.NoError(t, err)
-	assert.Equal(t, grandchildPos.Depth, freshGrandchildPos.Depth)
+	for _, user := range []string{rootID, childID, grandchildID} {
+		want, err := writingEngine.GetPosition(ctx, tree, user)
+		require.NoError(t, err)
+		got, err := loadEngine.GetPosition(ctx, tree, user)
+		require.NoError(t, err)
+		if user != rootID {
+			require.NotNil(t, want.ParentUserID, "writing worker parent of %s", user)
+			require.NotNil(t, want.SponsorUserID, "writing worker sponsor of %s", user)
+		}
+		assert.Equal(t, want.Depth, got.Depth, "depth of %s", user)
+		assert.Equal(t, want.ParentUserID, got.ParentUserID, "parent of %s", user)
+		assert.Equal(t, want.SponsorUserID, got.SponsorUserID, "sponsor of %s", user)
+	}
 }
 
 func TestTreePersistence_EngineFailureRetry(t *testing.T) {
@@ -267,49 +239,17 @@ func TestTreePersistence_EngineFailureRetry(t *testing.T) {
 	assert.Len(t, transport.calls, 2)
 }
 
-// TestTreePersistence_LoadMatrixTreeCreatesInEngine proves the HEU-533 fix
-// end-to-end against the real worker: reconstructing a matrix tree from the
-// adjacency store now routes through CreateMatrixTree (width + spillover)
-// instead of plain CreateTree, which the worker rejected with MISSING_PARAM.
-// Scope is the create step only. Multi-node replay placement is covered by
-// TestTreePersistence_MatrixMultiNodeRoundTrip.
-func TestTreePersistence_LoadMatrixTreeCreatesInEngine(t *testing.T) {
-	_, treeStore, engine, _ := newIntegrationDeps(t)
-	ctx := context.Background()
-
-	treeID := testTreeUUID(1)
-	rootID := testUserUUID(1)
-
-	// Seed a matrix root directly, as if projected from a prior run's events.
-	root := makeUUIDNode(testNodeUUID(1), treeID, rootID, 0, nil, ptr(rootID), nil)
-	require.NoError(t, insertNode(ctx, treeStore.pool, root))
-
-	// Before HEU-533 this errored at the create step. The engine has never
-	// seen treeID, so this mirrors startup reconstruction.
-	loader := NewTreeLoader(treeStore, engine)
-	_, lerr := loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(3, "breadth_first"))
-
-	require.NoError(t, lerr)
-
-	// The root exists in the freshly reconstructed matrix tree.
-	rootPos, err := engine.GetPosition(ctx, treeID, rootID)
-	require.NoError(t, err)
-	require.NotNil(t, rootPos)
-	assert.Equal(t, uint32(0), rootPos.Depth)
-}
-
-// TestTreePersistence_MatrixMultiNodeRoundTrip proves HEU-534 end-to-end
-// against the real worker: a multi-node matrix tree with admin-override
-// placements reloads from the adjacency store with identical topology.
+// TestTreePersistence_MatrixMultiNodeRoundTrip proves a multi-node matrix tree
+// with admin-override placements rebuilds from its stream with identical
+// topology on a real worker.
 //
-// The fixture is deliberately awkward and must not be simplified. Between them
-// the rows cover a placement spillover would not choose, differing parent and
-// sponsor, a sponsor deeper than the node it sponsors, and a slot at width-1 —
-// see the inline notes on u3 and u4, which carry most of that load. Simplify
-// the shape and a loader that re-derives placement, transposes parent and
-// sponsor, or replays in depth order starts passing (HEU-534).
+// The fixture is deliberately awkward and must not be simplified. The rows
+// cover a placement spillover would not choose, differing parent and sponsor, a
+// sponsor deeper than the node it sponsors, and a slot at width-1. Simplify the
+// shape and a build that re-derives placement or transposes parent and sponsor
+// starts passing.
 func TestTreePersistence_MatrixMultiNodeRoundTrip(t *testing.T) {
-	_, treeStore, engine, _ := newIntegrationDeps(t)
+	it := newWriterIntegration(t)
 	ctx := context.Background()
 
 	const width = 3
@@ -317,7 +257,7 @@ func TestTreePersistence_MatrixMultiNodeRoundTrip(t *testing.T) {
 	u1, u2, u3, u4, u5 := testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4), testUserUUID(5)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	// Rows as a prior run's events would have projected them.
+	// The rows the writes below must reproduce.
 	rows := []TreeNodeRow{
 		// root
 		makeUUIDNode(testNodeUUID(1), treeID, u1, 0, nil, ptr(u1), nil),
@@ -326,21 +266,32 @@ func TestTreePersistence_MatrixMultiNodeRoundTrip(t *testing.T) {
 		// u3 pushed a level down under u2 while the root still has free slots.
 		// Spillover would never choose this. Parent and sponsor also differ.
 		makeUUIDNode(testNodeUUID(3), treeID, u3, 2, ptr(u2), ptr(u1), intPtr(2)),
-		// u4 sits at depth 1 but is sponsored by u3 at depth 2, so depth-ordered
-		// replay would reach it before its sponsor exists. Also at width-1.
+		// u4 sits at depth 1 but is sponsored by u3 at depth 2. Also at width-1.
 		makeUUIDNode(testNodeUUID(4), treeID, u4, 1, ptr(u1), ptr(u3), intPtr(2)),
 		// u5 fills the root's last free slot.
 		makeUUIDNode(testNodeUUID(5), treeID, u5, 1, ptr(u1), ptr(u1), intPtr(1)),
 	}
 	for i := range rows {
 		rows[i].EnrolledAt = base.Add(time.Duration(i) * time.Hour)
-		require.NoError(t, insertNode(ctx, treeStore.pool, rows[i]))
 	}
 
-	loader := NewTreeLoader(treeStore, engine)
-	_, lerr := loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(width, "breadth_first"))
+	spillover := "breadth_first"
+	w := width
+	added, err := it.writer(t).AddRoot(ctx, AddRootRequest{TreeID: treeID, UserID: u1, SponsorID: u1,
+		TreeType: treeTypeMatrix, MatrixWidth: &w, MatrixSpillover: &spillover, EnrolledAt: rows[0].EnrolledAt})
+	require.NoError(t, err)
+	require.NoError(t, added.ProjectionErr)
+	for _, r := range rows[1:] {
+		res, err := it.writer(t).Place(ctx, PlaceRequest{TreeID: treeID, UserID: r.UserID, ParentID: *r.ParentID,
+			SponsorID: *r.SponsorID, Position: r.Position, EnrolledAt: r.EnrolledAt})
+		require.NoError(t, err, "placing %s", r.UserID)
+		require.NoError(t, res.ProjectionErr)
+	}
 
-	require.NoError(t, lerr)
+	engine := it.engine(t)
+	_, err = NewTreeWriter(it.events, it.store, it.snapshots, engine, NewPostgresTreeLocker(it.dsn)).
+		Load(ctx, LoadRequest{TreeID: treeID, TreeType: treeTypeMatrix, MatrixWidth: &w, MatrixSpillover: &spillover})
+	require.NoError(t, err)
 
 	// The root carries no sponsor in the engine by construction: AddRoot takes
 	// no sponsor and the Rust root is sponsor: None. Assert it separately.
@@ -374,7 +325,7 @@ func TestTreePersistence_MatrixMultiNodeRoundTrip(t *testing.T) {
 
 	// The engine must hold these five and nothing else. Every assertion above
 	// asks about a node the fixture already knows; none of them would notice a
-	// phantom the loader invented.
+	// phantom the build invented.
 	downline, err := engine.GetDownline(ctx, treeID, u1, 0)
 	require.NoError(t, err)
 	assert.Len(t, downline, len(rows)-1, "engine holds exactly the stored nodes")
@@ -513,67 +464,67 @@ func TestTreePersistence_MatrixConsumerRoundTrip(t *testing.T) {
 
 // TestTreePersistence_SlotConflictFailsCleanAndTreeReloads proves migration
 // 000004's consequence: a second active claim on an occupied (tree, parent,
-// position) dies at the store insert — before the engine — and the tree it
-// protects is still loadable afterward. Without the index both rows land and
-// reload preflight refuses the whole tree (HEU-553 triage, codex C3).
+// position) fails at the store insert, before the engine. The tree reloads once
+// the conflicting event is rejected.
 func TestTreePersistence_SlotConflictFailsCleanAndTreeReloads(t *testing.T) {
-	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
+	it := newWriterIntegration(t)
 	ctx := context.Background()
-
-	const width = 3
-	treeID := testTreeUUID(1)
+	width, spillover := 3, "breadth_first"
+	tree := testTreeUUID(1)
 	u1, u2, u3 := testUserUUID(1), testUserUUID(2), testUserUUID(3)
-	stream := TreeStreamName(treeID)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	load := LoadRequest{TreeID: tree, TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover}
 
-	require.NoError(t, engine.CreateMatrixTree(ctx, treeID, width, "breadth_first"))
-	consumer := NewTreeEventConsumer(treeStore, engine)
+	added, err := it.writer(t).AddRoot(ctx, AddRootRequest{TreeID: tree, UserID: u1, SponsorID: u1,
+		TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover, EnrolledAt: base})
+	require.NoError(t, err)
+	require.NoError(t, added.ProjectionErr)
+	placed, err := it.writer(t).Place(ctx, PlaceRequest{TreeID: tree, UserID: u2, ParentID: u1, SponsorID: u1,
+		Position: intPtr(0), EnrolledAt: base.Add(time.Hour)})
+	require.NoError(t, err)
+	require.NoError(t, placed.ProjectionErr)
 
-	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
-		TreeID: treeID, UserID: u1, SponsorID: u1, EnrolledAt: base,
-	})
-	require.NoError(t, deliver(ctx, consumer, rootEvent))
+	engine := it.engine(t)
+	_, err = NewTreeWriter(it.events, it.store, it.snapshots, engine, NewPostgresTreeLocker(it.dsn)).Load(ctx, load)
+	require.NoError(t, err)
 
-	pos := 0
-	okEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: treeID, UserID: u2, ParentID: u1, SponsorID: u1,
-		Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: base.Add(time.Hour),
-	})
-	require.NoError(t, deliver(ctx, consumer, okEvent))
-
-	// u3 claims the slot u2 holds. The store insert dies on the partial
-	// unique index; the engine is never called for it.
-	conflict := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: treeID, UserID: u3, ParentID: u1, SponsorID: u1,
-		Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: base.Add(2 * time.Hour),
-	})
-	err := deliver(ctx, consumer, conflict)
+	// u3 claims the slot u2 holds.
+	conflict := appendForeign(t, it, tree, EventTypeNodePlaced, NodePlacedPayload{
+		TreeID: tree, UserID: u3, ParentID: u1, SponsorID: u1,
+		Position: intPtr(0), TreeType: treeTypeMatrix, EnrolledAt: base.Add(2 * time.Hour)})
+	err = deliver(ctx, NewTreeEventConsumer(it.store, engine), conflict)
 	assert.ErrorIs(t, err, ErrSlotConflict)
 
-	rows, err := treeStore.GetByTree(ctx, treeID)
+	rows, err := it.store.GetByTree(ctx, tree)
 	require.NoError(t, err)
 	assert.Len(t, rows, 2, "conflicting claim left no row")
 
-	// The conflicting event never reached the engine: the insert failed
-	// first (store-before-engine, ADR-021). Checked before the restart,
-	// which would otherwise erase the evidence.
-	_, posErr := engine.GetPosition(ctx, treeID, u3)
+	// The insert failed before the engine call (store-before-engine, ADR-021).
+	_, posErr := engine.GetPosition(ctx, tree, u3)
 	require.True(t, isEngineCode(posErr, engineCodeUserNotFound),
 		"the code lives in a field, not in the message text: %v", posErr)
 
-	// The store stayed clean, so a fresh engine reloads it. This is the
-	// consequence the index exists for.
-	require.NoError(t, engine.Stop())
-	freshEngine, err := NewEngineClient(ctx, findWorkerBinary(t))
+	_, err = it.writer(t).Load(ctx, load)
+	require.Error(t, err, "expected the load to fail with the conflicting event still in the stream; it returned no error")
+
+	rejected, err := it.writer(t).Reject(ctx, RejectRequest{TreeID: tree, EventID: conflict.ID, Reason: "claims the slot u2 holds"})
 	require.NoError(t, err)
-	defer func() { _ = freshEngine.Stop() }()
+	require.Equal(t, RejectOutcomeRejected, rejected.Outcome, "the retry returned %v", rejected.RetryErr)
+	assert.ErrorIs(t, rejected.RetryErr, ErrSlotConflict)
+	require.NoError(t, rejected.ProjectionErr)
 
-	loader := NewTreeLoader(treeStore, freshEngine)
-	_, lerr := loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(width, "breadth_first"))
+	reload := it.engine(t)
+	_, err = NewTreeWriter(it.events, it.store, it.snapshots, reload, NewPostgresTreeLocker(it.dsn)).Load(ctx, load)
+	require.NoError(t, err)
 
-	require.NoError(t, lerr)
-
-	got, err := freshEngine.GetPosition(ctx, treeID, u2)
+	active, err := it.store.GetByTree(ctx, tree)
+	require.NoError(t, err)
+	users := make([]string, 0, len(active))
+	for _, r := range active {
+		users = append(users, r.UserID)
+	}
+	assert.ElementsMatch(t, []string{u1, u2}, users)
+	got, err := reload.GetPosition(ctx, tree, u2)
 	require.NoError(t, err)
 	require.NotNil(t, got.ParentUserID)
 	assert.Equal(t, u1, *got.ParentUserID)
@@ -617,51 +568,47 @@ func TestTreePersistence_DuplicateDeliveryConverges(t *testing.T) {
 	assert.Len(t, downline, 1, "redelivery added no second engine node")
 }
 
-// TestTreePersistence_RejectedTreeLeavesEngineLoadable proves that after a
-// tree is refused, a corrected load succeeds in the same worker without a
-// drop.
-func TestTreePersistence_RejectedTreeLeavesEngineLoadable(t *testing.T) {
-	_, treeStore, engine, _ := newIntegrationDeps(t)
+// TestTreePersistence_PreflightRefusalLeavesTheEngineLoadable proves that a load
+// preflight refuses leaves no structure, and that a corrected load succeeds in
+// the same worker.
+func TestTreePersistence_PreflightRefusalLeavesTheEngineLoadable(t *testing.T) {
+	it := newWriterIntegration(t)
 	ctx := context.Background()
-
-	treeID := testTreeUUID(1)
+	width, spillover := 3, "breadth_first"
+	tree := testTreeUUID(1)
 	u1, u2, u3 := testUserUUID(1), testUserUUID(2), testUserUUID(3)
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	load := LoadRequest{TreeID: tree, TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover}
 
-	rows := []TreeNodeRow{
-		makeUUIDNode(testNodeUUID(1), treeID, u1, 0, nil, ptr(u1), nil),
-		makeUUIDNode(testNodeUUID(2), treeID, u2, 1, ptr(u1), ptr(u1), intPtr(0)),
-		// Depth 3 under a depth-0 parent. Preflight must refuse the tree.
-		// (The old fixture double-claimed a slot; migration 000004 now stops
-		// that at the insert, so the corruption moved to a field the
-		// database cannot check.)
-		makeUUIDNode(testNodeUUID(3), treeID, u3, 3, ptr(u1), ptr(u1), intPtr(1)),
-	}
-	for i := range rows {
-		rows[i].EnrolledAt = base.Add(time.Duration(i) * time.Hour)
-		require.NoError(t, insertNode(ctx, treeStore.pool, rows[i]))
-	}
+	added, err := it.writer(t).AddRoot(ctx, AddRootRequest{TreeID: tree, UserID: u1, SponsorID: u1,
+		TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover, EnrolledAt: base})
+	require.NoError(t, err)
+	require.NoError(t, added.ProjectionErr)
+	placed, err := it.writer(t).Place(ctx, PlaceRequest{TreeID: tree, UserID: u2, ParentID: u1, SponsorID: u1,
+		Position: intPtr(0), EnrolledAt: base.Add(time.Hour)})
+	require.NoError(t, err)
+	require.NoError(t, placed.ProjectionErr)
 
-	loader := NewTreeLoader(treeStore, engine)
-	_, err := loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(3, "breadth_first"))
+	// Depth 3 under a depth-0 parent, with no event behind it.
+	bad := makeUUIDNode(testNodeUUID(3), tree, u3, 3, ptr(u1), ptr(u1), intPtr(1))
+	bad.EnrolledAt = base.Add(2 * time.Hour)
+	require.NoError(t, insertNode(ctx, it.pool, bad))
+
+	engine := it.engine(t)
+	w := NewTreeWriter(it.events, it.store, it.snapshots, engine, NewPostgresTreeLocker(it.dsn))
+
+	_, err = w.Load(ctx, load)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "has depth 3 but parent")
+	_, posErr := engine.GetPosition(ctx, tree, u1)
+	require.True(t, isEngineCode(posErr, "STRUCTURE_NOT_FOUND"),
+		"a refused load must leave no structure behind: %v", posErr)
+	assert.ErrorContains(t, err, "has depth 3 but parent")
 
-	// The structure was never created. Assert on the specific code: GetPosition
-	// also errors for a known structure missing that user, so a bare Error
-	// check would pass even if the create had leaked.
-	_, err = engine.GetPosition(ctx, treeID, u1)
-	require.Error(t, err, "a refused tree must leave no structure behind")
-	assert.Contains(t, err.Error(), "STRUCTURE_NOT_FOUND")
+	require.NoError(t, tombstoneUser(ctx, it.store, tree, u3))
+	_, err = w.Load(ctx, load)
+	require.NoError(t, err)
 
-	// Correct the data the way an operator would, then retry. This is the step
-	// that proves the engine is still usable: a leaked create would fail here.
-	require.NoError(t, tombstoneUser(ctx, treeStore, treeID, u3))
-	_, lerr := loader.LoadTree(ctx, treeID, "matrix", WithMatrixParams(3, "breadth_first"))
-
-	require.NoError(t, lerr)
-
-	got, err := engine.GetPosition(ctx, treeID, u2)
+	got, err := engine.GetPosition(ctx, tree, u2)
 	require.NoError(t, err)
 	require.NotNil(t, got.ParentUserID)
 	assert.Equal(t, u1, *got.ParentUserID)
@@ -671,72 +618,47 @@ func TestTreePersistence_RejectedTreeLeavesEngineLoadable(t *testing.T) {
 // A recruit whose recruiter is removed must not keep a sponsor_id naming an
 // absent user after the tree reloads.
 func TestTreePersistence_RemovedSponsorStillReloads(t *testing.T) {
-	eventStore, treeStore, engine, _ := newIntegrationDeps(t)
+	it := newWriterIntegration(t)
 	ctx := context.Background()
-
-	treeID := testTreeUUID(1)
-	rootID := testUserUUID(1)
-	recruiterID := testUserUUID(2)
-	recruitID := testUserUUID(3)
-	stream := TreeStreamName(treeID)
-
-	require.NoError(t, engine.CreateTree(ctx, treeID, "unilevel"))
-	consumer := NewTreeEventConsumer(treeStore, engine)
-
-	rootEvent := appendTreeEvent(t, eventStore, stream, 0, EventTypeRootAdded, RootAddedPayload{
-		TreeID: treeID, UserID: rootID, SponsorID: rootID,
-		EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-	})
-	require.NoError(t, deliver(ctx, consumer, rootEvent))
-
-	recruiterEvent := appendTreeEvent(t, eventStore, stream, 1, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: treeID, UserID: recruiterID, ParentID: rootID, SponsorID: rootID,
-		TreeType:   treeTypeUnilevel,
-		EnrolledAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
-	})
-	require.NoError(t, deliver(ctx, consumer, recruiterEvent))
-
+	tree := testTreeUUID(1)
+	rootID, recruiterID, recruitID := testUserUUID(1), testUserUUID(2), testUserUUID(3)
+	it.addUnilevelRoot(t, tree, rootID)
+	place := func(user, sponsor string, after time.Duration) {
+		res, err := it.writer(t).Place(ctx, PlaceRequest{TreeID: tree, UserID: user, ParentID: rootID,
+			SponsorID: sponsor, EnrolledAt: writeTime.Add(after)})
+		require.NoError(t, err)
+		require.NoError(t, res.ProjectionErr)
+	}
 	// Placed under the root so the recruiter stays childless and removable,
 	// sponsored by the recruiter so the stored edge outlives its target.
-	recruitEvent := appendTreeEvent(t, eventStore, stream, 2, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: treeID, UserID: recruitID, ParentID: rootID, SponsorID: recruiterID,
-		TreeType:   treeTypeUnilevel,
-		EnrolledAt: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
-	})
-	require.NoError(t, deliver(ctx, consumer, recruitEvent))
+	place(recruiterID, rootID, time.Hour)
+	place(recruitID, recruiterID, 2*time.Hour)
 
-	stored, err := treeStore.GetNode(ctx, treeID, recruitID)
+	stored, err := it.store.GetNode(ctx, tree, recruitID)
 	require.NoError(t, err)
 	require.NotNil(t, stored)
 	require.NotNil(t, stored.SponsorID)
 	require.Equal(t, recruiterID, *stored.SponsorID,
 		"the stored edge under test must exist before the removal")
 
-	removeEvent := appendTreeEvent(t, eventStore, stream, 3, EventTypeNodeRemoved, NodeRemovedPayload{
-		TreeID: treeID, UserID: recruiterID, RemovedAt: time.Now(),
-	})
-	require.NoError(t, deliver(ctx, consumer, removeEvent))
+	removed, err := it.writer(t).Remove(ctx, RemoveRequest{TreeID: tree, UserID: recruiterID,
+		RemovedAt: writeTime.Add(3 * time.Hour)})
+	require.NoError(t, err)
+	require.NoError(t, removed.ProjectionErr)
 
-	after, err := treeStore.GetNode(ctx, treeID, recruitID)
+	after, err := it.store.GetNode(ctx, tree, recruitID)
 	require.NoError(t, err)
 	require.NotNil(t, after)
 	require.NotNil(t, after.SponsorID)
 	assert.Equal(t, rootID, *after.SponsorID,
 		"the store must record the sponsor the engine moved the recruit to")
 
-	// A real restart, not just the preflight, so any stage of reload can
-	// catch this.
-	require.NoError(t, engine.Stop())
-	freshEngine, err := NewEngineClient(ctx, findWorkerBinary(t))
-	require.NoError(t, err)
-	defer func() { _ = freshEngine.Stop() }()
+	loadEngine := it.engine(t)
+	_, err = NewTreeWriter(it.events, it.store, it.snapshots, loadEngine, NewPostgresTreeLocker(it.dsn)).
+		Load(ctx, LoadRequest{TreeID: tree, TreeType: treeTypeUnilevel})
+	require.NoError(t, err, "a tree that has lost a recruiter must still rebuild")
 
-	loader := NewTreeLoader(treeStore, freshEngine)
-	_, lerr := loader.LoadTree(ctx, treeID, "unilevel")
-	require.NoError(t, lerr,
-		"a tree that has lost a recruiter must still rebuild from the store")
-
-	reloaded, err := freshEngine.GetSponsor(ctx, treeID, recruitID)
+	reloaded, err := loadEngine.GetSponsor(ctx, tree, recruitID)
 	require.NoError(t, err)
 	require.NotNil(t, reloaded)
 	assert.Equal(t, rootID, reloaded.UserID,

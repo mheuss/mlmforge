@@ -460,3 +460,46 @@ func TestTreeWriter_LoadCreatesAnEmptyMatrixTreeWithTheRequestedShape(t *testing
 	assert.Zero(t, res.Nodes)
 	assert.Equal(t, []string{"create_matrix_tree 5 breadth_first"}, engine.calls)
 }
+
+// rowReadRefusingStore fails the test if the projected rows are read.
+type rowReadRefusingStore struct {
+	TreeStore
+	t *testing.T
+}
+
+func (s *rowReadRefusingStore) ProjectedRows(ctx context.Context, treeID string) (int64, bool, []TreeNodeRow, error) {
+	s.t.Helper()
+	s.t.Errorf("rows of tree %s were read: an invalid configuration must fail before the read", treeID)
+	return s.TreeStore.ProjectedRows(ctx, treeID)
+}
+
+func TestTreeWriter_LoadRefusesAnInvalidConfigurationBeforeReadingRows(t *testing.T) {
+	one, three, breadth, sideways := 1, 3, "breadth_first", "sideways"
+	tests := []struct {
+		name string
+		req  LoadRequest
+		want string
+	}{
+		{"unsupported tree type", LoadRequest{TreeID: writerTree, TreeType: "streamline"},
+			`unsupported type "streamline"`},
+		{"matrix without width and spillover", LoadRequest{TreeID: writerTree, TreeType: treeTypeMatrix},
+			"a matrix tree needs a width and a spillover"},
+		{"matrix width below the supported range", LoadRequest{TreeID: writerTree, TreeType: treeTypeMatrix,
+			MatrixWidth: &one, MatrixSpillover: &breadth}, "outside the supported range"},
+		{"unsupported spillover", LoadRequest{TreeID: writerTree, TreeType: treeTypeMatrix,
+			MatrixWidth: &three, MatrixSpillover: &sideways}, `unsupported spillover "sideways"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newWriterEnv()
+			engine := newFakeWriterEngine()
+			w := NewTreeWriter(env.events, &rowReadRefusingStore{TreeStore: env.store, t: t}, env.snapshots, engine, env.locker)
+
+			_, err := w.Load(context.Background(), tt.req)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+			assert.Empty(t, engine.calls, "an invalid configuration reached the engine")
+		})
+	}
+}

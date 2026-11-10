@@ -161,25 +161,3 @@ func TestTreeMutator_ConsumerAcceptsInterface(t *testing.T) {
 	assert.Empty(t, mutator.removed)
 	assert.Empty(t, mutator.created)
 }
-
-// TestTreeMutator_LoaderAcceptsInterface verifies that TreeLoader accepts
-// any TreeMutator, not just *EngineClient.
-func TestTreeMutator_LoaderAcceptsInterface(t *testing.T) {
-	store := NewMemoryTreeStore()
-	ctx := context.Background()
-
-	root := makeNode("tree-1", "user-0", 0, nil, ptr("user-0"), nil)
-	root.EnrolledAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, store.insertNode(ctx, root))
-
-	mutator := &stubMutator{}
-	loader := NewTreeLoader(store, mutator)
-
-	_, err := loader.LoadTree(ctx, "tree-1", "unilevel")
-	require.NoError(t, err)
-
-	assert.Equal(t, []string{"tree-1"}, mutator.created)
-	assert.Equal(t, []string{"user-0"}, mutator.roots)
-	assert.Empty(t, mutator.nodes)
-	assert.Empty(t, mutator.removed)
-}

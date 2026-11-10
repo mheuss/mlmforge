@@ -123,36 +123,12 @@ func TestTreeLoadRetryable(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "an incomplete load is never retryable",
-			err: &networkengine.TreeLoadIncompleteError{
-				Stage: networkengine.TreeLoadStageNodes,
-				Err:   safeToRetryErr{errors.New("wrote no bytes")},
-			},
-			want: false,
-		},
-		{
-			name: "a cancellation reaching the engine stage is not retryable",
-			err: &networkengine.TreeLoadIncompleteError{
-				Stage: networkengine.TreeLoadStageRoot,
-				Err:   context.Canceled,
-			},
-			want: false,
-		},
-		{
 			// The cancellation check has to run before the allowlist, because
 			// this shape passes the allowlist.
 			name: "a cancellation that is also safe to retry is not retryable",
 			err: &networkengine.TreeLoadRejectedError{
 				Kind: networkengine.TreeLoadStoreReadFailed,
 				Err:  cancelledButSafeErr{},
-			},
-			want: false,
-		},
-		{
-			name: "an incomplete load wrapping a retryable rejection is not retryable",
-			err: &networkengine.TreeLoadIncompleteError{
-				Stage: networkengine.TreeLoadStageNodes,
-				Err:   retryable(),
 			},
 			want: false,
 		},
@@ -265,75 +241,30 @@ func TestRunTreeLoad_ReportsARejectionAsLeavingTheEngineUnchanged(t *testing.T) 
 	require.Empty(t, out.String())
 }
 
-func TestRunTreeLoad_ReportsAnIncompleteLoadWithItsCounts(t *testing.T) {
-	loader := &stubLoader{err: &networkengine.TreeLoadIncompleteError{
-		Stage: networkengine.TreeLoadStageRoot,
-		Total: 47,
-	}}
-	var out bytes.Buffer
-
-	err := runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("t"))
-
-	require.ErrorContains(t, err, "load stopped at the root stage; the engine acknowledged 0 of 47 non-root placements: ")
-	require.Empty(t, out.String())
-}
-
-func TestRunTreeLoad_ReportsAFailedCreateWithoutCounts(t *testing.T) {
-	incomplete := &networkengine.TreeLoadIncompleteError{
-		Stage: networkengine.TreeLoadStageCreate,
+func TestRunTreeLoad_NamesADeadlineOnAReplayFailure(t *testing.T) {
+	replay := &networkengine.TreeReplayError{
+		TreeID: "t",
+		Stage:  networkengine.TreeReplayStageReplay,
+		Err:    context.DeadlineExceeded,
 	}
-	loader := &stubLoader{err: incomplete}
+	loader := &stubLoader{err: replay}
 	var out bytes.Buffer
 
 	err := runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("t"))
 
-	require.EqualError(t, err, "load stopped at the create stage; the create did not report success: "+incomplete.Error())
-	require.NotContains(t, err.Error(), "placements")
+	require.EqualError(t, err, "load stopped at the replay stage while building the tree from its stream: "+replay.Error()+" (the run exceeded its deadline)")
 	require.Empty(t, out.String())
 }
 
-func TestRunTreeLoad_NamesACancellationOnAFailedCreate(t *testing.T) {
-	incomplete := &networkengine.TreeLoadIncompleteError{
-		Stage: networkengine.TreeLoadStageCreate,
-		Err:   context.Canceled,
-	}
-	loader := &stubLoader{err: incomplete}
+func TestRunTreeLoad_ReportsAChainHoldingBothAsTheReplayFailure(t *testing.T) {
+	replay := &networkengine.TreeReplayError{TreeID: "t", Stage: networkengine.TreeReplayStageReplay, Err: errors.New("refused")}
+	rejected := &networkengine.TreeLoadRejectedError{Kind: networkengine.TreeLoadDataInvalid}
+	loader := &stubLoader{err: fmt.Errorf("%w; %w", replay, rejected)}
 	var out bytes.Buffer
 
 	err := runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("t"))
 
-	require.EqualError(t, err, "load stopped at the create stage; the create did not report success: "+incomplete.Error()+" (the run was cancelled)")
-	require.Empty(t, out.String())
-}
-
-func TestRunTreeLoad_NamesADeadlineOnAnIncompleteLoad(t *testing.T) {
-	incomplete := &networkengine.TreeLoadIncompleteError{
-		Stage:     networkengine.TreeLoadStageNodes,
-		Attempted: 1,
-		Total:     4,
-		Err:       context.DeadlineExceeded,
-	}
-	loader := &stubLoader{err: incomplete}
-	var out bytes.Buffer
-
-	err := runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("t"))
-
-	require.EqualError(t, err, "load stopped at the nodes stage; the engine acknowledged 0 of 4 non-root placements: "+incomplete.Error()+" (the run exceeded its deadline)")
-	require.Empty(t, out.String())
-}
-
-// Reporting this as a rejection would understate what the engine may hold.
-func TestRunTreeLoad_ReportsAChainHoldingBothAsIncomplete(t *testing.T) {
-	loader := &stubLoader{err: &networkengine.TreeLoadIncompleteError{
-		Stage: networkengine.TreeLoadStageNodes,
-		Total: 4,
-		Err:   retryable(),
-	}}
-	var out bytes.Buffer
-
-	err := runTreeLoad(t.Context(), &out, io.Discard, loader, unilevelLoad("t"))
-
-	require.ErrorContains(t, err, "load stopped at the nodes stage; the engine acknowledged 0 of 4 non-root placements: ")
+	require.EqualError(t, err, "load stopped at the replay stage while building the tree from its stream: "+replay.Error())
 	require.Empty(t, out.String())
 }
 

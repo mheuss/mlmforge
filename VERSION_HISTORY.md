@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**Test count:** 1860 (Rust), 1733 (Go)
+**Test count:** 1860 (Rust), 1728 (Go)
 
 ### Added
 - Project research documentation (MLM fundamentals, compensation plans, glossary, competitive landscape, legal/regulatory)
@@ -129,7 +129,7 @@
 - The Rust width contract test checks why each over-max value was refused. It asserts serde's range message for that exact value and the type it overflows. It used to pass on any refusal, including one about a different field. (HEU-993)
 
 ### Removed
-- None.
+- `TreeLoader`, `NewTreeLoader`, `LoadTree`, `WithMatrixParams` and `TreeLoadIncompleteError`. Every tree load has built from the event stream since HEU-297, so the adjacency replay ran on no production path. Preflight stays and runs inside `TreeWriter.Load`. (HEU-912)
 
 ---
 

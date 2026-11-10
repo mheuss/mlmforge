@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -256,101 +257,102 @@ func TestMigrateUp_RunsWithoutTheTreeTimeouts(t *testing.T) {
 	assert.Equal(t, "0", lock)
 }
 
-// holdProjectionRow locks the tree's tree_projections row until the test ends.
-func holdProjectionRow(t *testing.T, treeID string) {
+// holdTx opens a transaction the server ends after 5s idle, and rolls it back when the test ends.
+func holdTx(t *testing.T) pgx.Tx {
 	t.Helper()
 	ctx := context.Background()
 	conn, err := pgx.Connect(ctx, pgContainer.DSN)
 	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close(ctx) })
 	tx, err := conn.Begin(ctx)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = tx.Rollback(ctx)
-		_ = conn.Close(ctx)
-	})
-	var v int64
-	require.NoError(t, tx.QueryRow(ctx,
-		"SELECT projected_version FROM tree_projections WHERE tree_id = $1 FOR UPDATE", treeID).Scan(&v))
+	t.Cleanup(func() { _ = tx.Rollback(ctx) })
+	_, err = tx.Exec(ctx, "SET LOCAL idle_in_transaction_session_timeout = '5s'")
+	require.NoError(t, err)
+	return tx
 }
 
-func TestTreePlace_ARedeliveryTimeoutNamesItsSource(t *testing.T) {
-	cases := map[string]struct {
-		statement, lock, want string
-	}{
-		"statement_timeout": {"500ms", "0", "statement_timeout is 500ms (set by: " + statementTimeoutEnv + ")"},
-		"lock_timeout":      {"0", "500ms", "lock_timeout is 500ms (set by: " + lockTimeoutEnv + ")"},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			if pgContainer == nil {
-				t.Skip("Postgres container not available")
-			}
-			pgContainer.NewPool(t)
-			worker := requireWorker(t)
-			treeID := testTreeID(801)
-			t.Setenv("PGOPTIONS", "")
-			seedTree(t, worker, treeID, 0)
-			holdProjectionRow(t, treeID)
-			t.Setenv(statementTimeoutEnv, tc.statement)
-			t.Setenv(lockTimeoutEnv, tc.lock)
-
-			root := testUserID(1)
-			out, err := runTreeCmd(t, "place", "--db-url", pgContainer.DSN, "--worker", worker, "--tree-id", treeID,
-				"--user-id", testUserID(2), "--parent-id", root, "--sponsor-id", root,
-				"--enrolled-at", "2026-09-23T13:00:00Z")
-
-			require.Error(t, err)
-			assert.Contains(t, out.stderr.String(), tc.want)
-		})
-	}
+// holdProjectionRow locks the tree's tree_projections row until the test ends.
+func holdProjectionRow(t *testing.T, treeID string) {
+	t.Helper()
+	var v int64
+	require.NoError(t, holdTx(t).QueryRow(context.Background(),
+		"SELECT projected_version FROM tree_projections WHERE tree_id = $1 FOR UPDATE", treeID).Scan(&v))
 }
 
 // holdUserRowInsert inserts an active row for userID in treeID and holds it uncommitted until the test ends.
 func holdUserRowInsert(t *testing.T, treeID, userID, parentID string) {
 	t.Helper()
-	ctx := context.Background()
-	conn, err := pgx.Connect(ctx, pgContainer.DSN)
-	require.NoError(t, err)
-	tx, err := conn.Begin(ctx)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = tx.Rollback(ctx)
-		_ = conn.Close(ctx)
-	})
-	_, err = tx.Exec(ctx, `INSERT INTO tree_nodes (id, tree_id, user_id, parent_id, sponsor_id, depth, enrolled_at)
+	_, err := holdTx(t).Exec(context.Background(), `INSERT INTO tree_nodes (id, tree_id, user_id, parent_id, sponsor_id, depth, enrolled_at)
 VALUES (gen_random_uuid(), $1, $2, $3, $3, 1, now())`, treeID, userID, parentID)
 	require.NoError(t, err)
 }
 
-func TestTreePlace_AProjectionTimeoutNamesItsSource(t *testing.T) {
-	cases := map[string]struct {
-		statement, lock, want string
-	}{
-		"statement_timeout": {"500ms", "0", "statement_timeout is 500ms (set by: " + statementTimeoutEnv + ")"},
-		"lock_timeout":      {"0", "500ms", "lock_timeout is 500ms (set by: " + lockTimeoutEnv + ")"},
-	}
-	for name, tc := range cases {
+var placeTimeoutCases = map[string]struct {
+	statement, lock, want string
+}{
+	"statement_timeout": {"500ms", "0", "(the server canceled the statement: statement_timeout is 500ms (set by: " + statementTimeoutEnv + "))"},
+	"lock_timeout":      {"0", "500ms", "(the server canceled the statement: lock_timeout is 500ms (set by: " + lockTimeoutEnv + "))"},
+}
+
+// placeAgainstAHeldLock seeds a root, runs hold, sets both timeouts and runs tree place.
+func placeAgainstAHeldLock(t *testing.T, treeID, statement, lock string, hold func(root string)) (*cmdOutput, error) {
+	t.Helper()
+	pgContainer.NewPool(t)
+	worker := requireWorker(t)
+	t.Setenv("PGOPTIONS", "")
+	t.Setenv(statementTimeoutEnv, "")
+	t.Setenv(lockTimeoutEnv, "")
+	seedTree(t, worker, treeID, 0)
+	root := testUserID(1)
+	hold(root)
+	t.Setenv(statementTimeoutEnv, statement)
+	t.Setenv(lockTimeoutEnv, lock)
+	return runTreeCmd(t, "place", "--db-url", pgContainer.DSN, "--worker", worker, "--tree-id", treeID,
+		"--user-id", testUserID(2), "--parent-id", root, "--sponsor-id", root,
+		"--enrolled-at", "2026-09-23T13:00:00Z")
+}
+
+func TestTreePlace_ARedeliveryTimeoutNamesItsSource(t *testing.T) {
+	for name, tc := range placeTimeoutCases {
 		t.Run(name, func(t *testing.T) {
 			if pgContainer == nil {
 				t.Skip("Postgres container not available")
 			}
-			pgContainer.NewPool(t)
-			worker := requireWorker(t)
+			treeID := testTreeID(801)
+			out, err := placeAgainstAHeldLock(t, treeID, tc.statement, tc.lock, func(string) {
+				holdProjectionRow(t, treeID)
+			})
+
+			require.Error(t, err, "stdout: %s stderr: %s", out.stdout.String(), out.stderr.String())
+			assert.Contains(t, err.Error(), tc.want)
+			assert.NotContains(t, out.stdout.String(), "appended event")
+			assert.NotContains(t, out.stderr.String(), "appended and its projection returned an error")
+		})
+	}
+}
+
+func TestTreePlace_AProjectionTimeoutNamesItsSource(t *testing.T) {
+	for name, tc := range placeTimeoutCases {
+		t.Run(name, func(t *testing.T) {
+			if pgContainer == nil {
+				t.Skip("Postgres container not available")
+			}
 			treeID := testTreeID(802)
-			t.Setenv("PGOPTIONS", "")
-			seedTree(t, worker, treeID, 0)
-			root := testUserID(1)
-			holdUserRowInsert(t, treeID, testUserID(2), root)
-			t.Setenv(statementTimeoutEnv, tc.statement)
-			t.Setenv(lockTimeoutEnv, tc.lock)
+			out, err := placeAgainstAHeldLock(t, treeID, tc.statement, tc.lock, func(root string) {
+				holdUserRowInsert(t, treeID, testUserID(2), root)
+			})
 
-			out, err := runTreeCmd(t, "place", "--db-url", pgContainer.DSN, "--worker", worker, "--tree-id", treeID,
-				"--user-id", testUserID(2), "--parent-id", root, "--sponsor-id", root,
-				"--enrolled-at", "2026-09-23T13:00:00Z")
-
-			require.Error(t, err)
-			assert.Contains(t, out.stderr.String(), "appended and its projection returned an error")
-			assert.Contains(t, out.stderr.String(), tc.want)
+			require.Error(t, err, "stdout: %s stderr: %s", out.stdout.String(), out.stderr.String())
+			var ec *exitCodeError
+			require.ErrorAs(t, err, &ec)
+			assert.Equal(t, exitNotCurrent, ec.code)
+			stderr := out.stderr.String()
+			head := strings.Index(stderr, "appended and its projection returned an error: ")
+			ann := strings.Index(stderr, tc.want)
+			assert.True(t, head >= 0 && ann > head,
+				"stderr has the projection error at offset %d and the annotation at %d: %s", head, ann, stderr)
+			assert.NotContains(t, stderr, "could not be read")
 		})
 	}
 }

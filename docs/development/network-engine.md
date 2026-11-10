@@ -706,11 +706,11 @@ re-evaluation, breaking BR5 from the design.
 
 ### period_id contract
 
-The store treats `period_id` as opaque and orders rows lexicographically.
+The store treats `period_id` as opaque and compares it in byte order.
 Callers must zero-pad so the strings sort correctly: `"2026-05"`,
 `"2026-W21"`. Mixed widths like `"2026-1"` / `"2026-10"` / `"2026-2"` sort
-incorrectly. A unit test in `qualification_history_store_memory_test.go`
-documents the failure mode.
+incorrectly. The shared qualification history store suite has a case for this
+failure mode.
 
 ### Read semantics
 

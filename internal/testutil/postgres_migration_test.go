@@ -319,3 +319,77 @@ func TestPostgresContainer_NewPool_TruncatesSnapshotAttempts(t *testing.T) {
 	require.NoError(t, freshPool.QueryRow(context.Background(), "SELECT count(*) FROM tree_snapshot_attempts").Scan(&count))
 	assert.Equal(t, 0, count, "tree_snapshot_attempts must be empty after NewPool truncate")
 }
+
+// TestMigrations_QualificationHistoryPeriodCollationDownUp proves migration
+// 000012's files work. period_id and both indexes over it collate as "C" at
+// head, and as the database default below it.
+func TestMigrations_QualificationHistoryPeriodCollationDownUp(t *testing.T) {
+	if migrationContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+
+	absPath, err := filepath.Abs("../../migrations")
+	require.NoError(t, err)
+	m, err := migrate.New(fmt.Sprintf("file://%s", absPath), migrationContainer.DSN)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = m.Close() })
+
+	// Matched on attnum, so period_id's key position in each index does not
+	// matter.
+	indexCollations := func() map[string]string {
+		pool, err := pgxpool.New(context.Background(), migrationContainer.DSN)
+		require.NoError(t, err)
+		defer pool.Close()
+		rows, err := pool.Query(context.Background(),
+			`SELECT i.indexrelid::regclass::text, coll.collname
+			   FROM pg_index i
+			   CROSS JOIN LATERAL unnest(i.indkey::int2[], i.indcollation::oid[]) AS k(attnum, colloid)
+			   JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+			   JOIN pg_collation coll ON coll.oid = k.colloid
+			  WHERE i.indrelid = 'public.qualification_history'::regclass
+			    AND a.attname = 'period_id'`)
+		require.NoError(t, err)
+		defer rows.Close()
+		got := map[string]string{}
+		for rows.Next() {
+			var index, collation string
+			require.NoError(t, rows.Scan(&index, &collation))
+			got[index] = collation
+		}
+		require.NoError(t, rows.Err())
+		return got
+	}
+	collatedAs := func(collation string) map[string]string {
+		return map[string]string{
+			"qualification_history_pkey":            collation,
+			"qualification_history_user_period_idx": collation,
+		}
+	}
+	columnCollation := func() string {
+		pool, err := pgxpool.New(context.Background(), migrationContainer.DSN)
+		require.NoError(t, err)
+		defer pool.Close()
+		var collation string
+		require.NoError(t, pool.QueryRow(context.Background(),
+			`SELECT coll.collname
+			   FROM pg_attribute a
+			   JOIN pg_collation coll ON coll.oid = a.attcollation
+			  WHERE a.attrelid = 'public.qualification_history'::regclass
+			    AND a.attname = 'period_id'`,
+		).Scan(&collation))
+		return collation
+	}
+
+	assert.Equal(t, collatedAs("C"), indexCollations(), "index collations at head")
+	require.Equal(t, "C", columnCollation(), "period_id collation at head")
+	t.Cleanup(func() { _ = m.Up() })
+	require.NoError(t, m.Migrate(11), "migrate down to version 11 (drops 000012)")
+	require.Equal(t, "default", columnCollation(), "down file restores the default collation")
+	assert.Equal(t, collatedAs("default"), indexCollations(), "down file rebuilds the indexes on the default collation")
+	require.NoError(t, m.Migrate(12), "migrate back up to version 12")
+	require.Equal(t, "C", columnCollation(), "up file pins the collation again")
+	assert.Equal(t, collatedAs("C"), indexCollations(), "up file rebuilds the indexes on C again")
+	if err := m.Up(); err != nil {
+		require.ErrorIs(t, err, migrate.ErrNoChange, "restore the shared container to head")
+	}
+}

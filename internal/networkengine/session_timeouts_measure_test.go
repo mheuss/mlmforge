@@ -165,7 +165,7 @@ func measure(t *testing.T, name string, explain *explainable, setup func(run int
 
 func ms(d time.Duration) string { return fmt.Sprintf("%.1f", float64(d.Microseconds())/1000) }
 
-// streamPageSQL is a stream page read for EXPLAIN.
+// streamPageSQL is a stream page read.
 const streamPageSQL = "SELECT global_position, id, stream, type, version, payload, metadata, timestamp " +
 	"FROM events WHERE stream = $1 AND version >= $2 ORDER BY version LIMIT $3"
 

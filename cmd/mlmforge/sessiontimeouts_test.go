@@ -418,13 +418,13 @@ func TestResolveTimeout_FollowsThePrecedenceRule(t *testing.T) {
 		{"database user kept", "database user", "", timeoutPlan{source: "the database role or database settings"}},
 		{"configuration file kept", "configuration file", "", timeoutPlan{source: "the server configuration"}},
 		{"default gets the mlmforge default", "default", "",
-			timeoutPlan{apply: true, value: "30s", source: "mlmforge default"}},
+			timeoutPlan{apply: true, value: "11s", source: "mlmforge default"}},
 		{"unknown source kept and named", "override", "",
 			timeoutPlan{source: `the server (pg_settings source "override")`}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, resolveTimeout(tc.source, env, tc.envValue, "30s"))
+			assert.Equal(t, tc.want, resolveTimeout(tc.source, env, tc.envValue, "11s"))
 		})
 	}
 }

@@ -184,8 +184,8 @@ func runQualificationHistoryStoreSuite(t *testing.T, newStore func(t *testing.T)
 		assert.Empty(t, periodUsers(t, s, "2026-05"))
 	})
 
-	// Period order is byte order. The Postgres twin gives it only while
-	// period_id is COLLATE "C".
+	// Period order is byte order. On Postgres, period_id's COLLATE "C"
+	// guarantees it whatever the server default is.
 	t.Run("GetByUserAndPeriodRange reads an inclusive range in period order", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

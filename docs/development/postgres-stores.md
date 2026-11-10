@@ -443,7 +443,25 @@ the same as Go. A linguistic collation does not. Under ICU's `en-US-x-icu`,
 `'2026-a' < '2026-B'` is true, and in Go it is false. So a test of ordering or
 range filtering on a text column passes against both twins in CI, whatever the
 production server's collation does. Declare the collation on the column when
-byte order matters. HEU-947 asks this for `qualification_history.period_id`.
+byte order matters. HEU-947 declares `COLLATE "C"` on
+`qualification_history.period_id`.
+
+## Prove a column's collation from the catalog
+
+HEU-947, 2026-11-10.
+
+An ordering test cannot prove a collation pin on the test database. Its default
+already compares text in byte order. Read the collation instead.
+`pg_attribute.attcollation` gives the column's. `pg_index.indcollation` gives
+the collation of each index key. It is indexed by key position. Unnest it beside
+`indkey` and match on `attnum`.
+Changing only the collation of a text column rebuilt both indexes on
+`qualification_history.period_id`. It did not rewrite the table. The change had
+no type change and no `USING`. Measured on Postgres 16: the table's relfilenode was
+unchanged and both index relfilenodes changed. A type change or a `USING` clause
+can rewrite the table. A column with an implicit non-default collation compares
+with a default-collation column or a literal without error. The non-default
+collation wins.
 
 ## A memory twin copies pointer fields in and out
 

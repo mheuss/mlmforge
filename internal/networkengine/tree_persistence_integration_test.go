@@ -987,7 +987,8 @@ func TestTreePersistence_RedeliveredRemovalFailsWhenTheStoreNeverLanded(t *testi
 }
 
 // E1 places U, R1 removes U, E2 places U again with the engine call failing,
-// then R1 is redelivered. R1 projected in full before E2 arrived.
+// then R1 is redelivered. R1 projected in full before E2 arrived, so the
+// redelivery is below the projected version and is refused.
 func TestTreePersistence_RedeliveredRemovalAfterAFailedReplacement(t *testing.T) {
 	eventStore, treeStore, _, _ := newIntegrationDeps(t)
 	ctx := context.Background()
@@ -1043,7 +1044,11 @@ func TestTreePersistence_RedeliveredRemovalAfterAFailedReplacement(t *testing.T)
 	require.True(t, isEngineCode(perr, engineCodeUserNotFound),
 		"engine GetPosition for the user after E2's failed delivery returned %v", perr)
 
-	require.NoError(t, deliver(ctx, consumer, r1), "the redelivered removal")
+	var refused *ProjectionRefusedError
+	require.ErrorAs(t, deliver(ctx, consumer, r1), &refused, "the redelivered removal")
+	_, perr = engine.GetPosition(ctx, treeID, userID)
+	assert.True(t, isEngineCode(perr, engineCodeUserNotFound),
+		"engine GetPosition for the user after R1's redelivery returned %v", perr)
 
 	survivor, err := treeStore.GetNode(ctx, treeID, userID)
 	require.NoError(t, err)

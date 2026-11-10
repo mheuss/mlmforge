@@ -39,13 +39,19 @@ func TestNextTarget_WritesTheNextThatSourceInfoReports(t *testing.T) {
 }
 
 // closeFailingSource is a source.Driver over migrations 1, 2 and 3 whose down readers fail to close.
-// Its up reads return upErr when it is set.
+// Its up reads return upErr, and First returns firstErr, when each is set.
 type closeFailingSource struct {
 	source.Driver
-	upErr error
+	upErr    error
+	firstErr error
 }
 
-func (closeFailingSource) First() (uint, error) { return 1, nil }
+func (f closeFailingSource) First() (uint, error) {
+	if f.firstErr != nil {
+		return 0, f.firstErr
+	}
+	return 1, nil
+}
 
 func (closeFailingSource) Prev(v uint) (uint, error) {
 	if v <= 1 {
@@ -100,4 +106,14 @@ func TestNextTarget_AnUnreadableUpFileNamesTheMigration(t *testing.T) {
 	var notWritten *NotWrittenError
 	require.ErrorAs(t, err, &notWritten)
 	assert.Equal(t, "read migration 2 from /migrations: permission denied", err.Error())
+}
+
+func TestNextTarget_AnUnreadableDirectoryFromNoVersionNamesTheDirectory(t *testing.T) {
+	mg := &migration{source: closeFailingSource{firstErr: os.ErrPermission}, path: "/migrations"}
+
+	_, err := mg.nextTarget(Record{Version: database.NilVersion, Dirty: true})
+
+	var notWritten *NotWrittenError
+	require.ErrorAs(t, err, &notWritten)
+	assert.Equal(t, "read the migrations directory /migrations: permission denied", err.Error())
 }

@@ -105,28 +105,31 @@ func TestUnpairedVersions_NamesEachVersionMissingADirection(t *testing.T) {
 // migrationFileName matches a version, a name, a direction and any extension.
 var migrationFileName = regexp.MustCompile(`^([0-9]+)_(.*)\.(down|up)\.(.*)$`)
 
-// nonSQLMigrationFiles returns the name of each migration file in dir that does not end in .sql.
+// nonSQLMigrationFiles returns the name of each migration file in dir whose extension is not exactly sql.
 func nonSQLMigrationFiles(t *testing.T, dir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	var files []string
 	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
 		name := entry.Name()
-		if migrationFileName.MatchString(name) && !strings.HasSuffix(name, ".sql") {
+		if parts := migrationFileName.FindStringSubmatch(name); parts != nil && parts[4] != "sql" {
 			files = append(files, name)
 		}
 	}
 	return files
 }
 
-func TestMigrationFiles_EveryMigrationFileEndsInSQL(t *testing.T) {
+func TestMigrationFiles_EveryMigrationFileHasTheSQLExtension(t *testing.T) {
 	for _, name := range nonSQLMigrationFiles(t, FindMigrationsDir(t)) {
-		t.Errorf("%s is a migration file that does not end in .sql", name)
+		t.Errorf("%s is a migration file whose extension is not sql", name)
 	}
 }
 
-func TestNonSQLMigrationFiles_NamesEachMigrationFileNotEndingInSQL(t *testing.T) {
-	assert.Equal(t, []string{"000002_b.down.txt", "000002_b.up.txt"},
+func TestNonSQLMigrationFiles_NamesEachMigrationFileWithoutTheSQLExtension(t *testing.T) {
+	assert.Equal(t, []string{"000002_b.down.txt", "000002_b.up.txt", "000003_c.up.foo.sql", "000004_d.up..sql"},
 		nonSQLMigrationFiles(t, filepath.Join("testdata", "non-sql-migrations")))
 }

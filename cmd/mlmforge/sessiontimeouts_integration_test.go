@@ -153,9 +153,6 @@ func roleURL(t *testing.T) string {
 }
 
 func TestTreePool_TheEnvVarWinsOverARoleSetting(t *testing.T) {
-	if pgContainer == nil {
-		t.Skip("Postgres container not available")
-	}
 	t.Setenv(statementTimeoutEnv, "7s")
 	t.Setenv(lockTimeoutEnv, "")
 	t.Setenv("PGOPTIONS", "")
@@ -173,9 +170,6 @@ func TestTreePool_TheEnvVarWinsOverARoleSetting(t *testing.T) {
 }
 
 func TestTreePool_ARoleSettingWinsOverTheDefault(t *testing.T) {
-	if pgContainer == nil {
-		t.Skip("Postgres container not available")
-	}
 	t.Setenv(statementTimeoutEnv, "")
 	t.Setenv(lockTimeoutEnv, "")
 	t.Setenv("PGOPTIONS", "")
@@ -204,7 +198,7 @@ func TestTreePool_EveryConnectionCarriesTheSettings(t *testing.T) {
 		assert.Equal(t, defaultLockTimeout, lock, label)
 	}
 
-	// A held connection blocks pool.Close at cleanup, so each one is also released there.
+	// Released at cleanup too, so a failed require still lets the pool close.
 	acquire := func() *pgxpool.Conn {
 		c, err := pool.Acquire(ctx)
 		require.NoError(t, err)

@@ -565,3 +565,13 @@ Only the read-failure clause can honor it there.
 
 After you add a clause to a boolean, run the mutation for each earlier clause
 again. If one survives, give that clause a test the new clause cannot reach.
+
+## Run a new test against the old code
+
+HEU-890, 2026-11-10.
+
+A test written for a change can pass on the code before the change. Three of
+the first four new tests for HEU-890's `nextTarget` did. Copy the base commit
+outside the worktree, put the new test file in it, and run it. Then put back
+only the parts of the change the test is not about, and run it again. The test
+that pins the change is the one that fails only there.

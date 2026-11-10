@@ -101,3 +101,32 @@ func TestUnpairedVersions_NamesEachVersionMissingADirection(t *testing.T) {
 		"migration 3 has a down file and no up file",
 	}, unpairedVersions(t, dir))
 }
+
+// migrationFileName matches a version, a name, a direction and any extension.
+var migrationFileName = regexp.MustCompile(`^([0-9]+)_(.*)\.(down|up)\.(.*)$`)
+
+// nonSQLMigrationFiles returns the name of each migration file in dir that does not end in .sql.
+func nonSQLMigrationFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	var files []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if migrationFileName.MatchString(name) && !strings.HasSuffix(name, ".sql") {
+			files = append(files, name)
+		}
+	}
+	return files
+}
+
+func TestMigrationFiles_EveryMigrationFileEndsInSQL(t *testing.T) {
+	for _, name := range nonSQLMigrationFiles(t, FindMigrationsDir(t)) {
+		t.Errorf("%s is a migration file that does not end in .sql", name)
+	}
+}
+
+func TestNonSQLMigrationFiles_NamesEachMigrationFileNotEndingInSQL(t *testing.T) {
+	assert.Equal(t, []string{"000002_b.down.txt", "000002_b.up.txt"},
+		nonSQLMigrationFiles(t, filepath.Join("testdata", "non-sql-migrations")))
+}

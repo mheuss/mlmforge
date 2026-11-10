@@ -1,10 +1,76 @@
 package main
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestTimeoutRecord_DescribesTheFirstResult(t *testing.T) {
+	r := &timeoutRecord{}
+	r.add("statement_timeout", "30s", "mlmforge default")
+
+	got, ok := r.describe("statement_timeout")
+
+	require.True(t, ok)
+	assert.Equal(t, "statement_timeout is 30s (set by: mlmforge default)", got)
+}
+
+func TestTimeoutRecord_ASameResultChangesNothing(t *testing.T) {
+	r := &timeoutRecord{}
+	r.add("statement_timeout", "30s", "mlmforge default")
+	r.add("statement_timeout", "30s", "mlmforge default")
+
+	got, _ := r.describe("statement_timeout")
+
+	assert.Equal(t, "statement_timeout is 30s (set by: mlmforge default)", got)
+}
+
+func TestTimeoutRecord_ADifferentResultMarksItVaried(t *testing.T) {
+	for name, second := range map[string][2]string{
+		"value":  {"10s", "mlmforge default"},
+		"source": {"30s", "MLMFORGE_TREE_STATEMENT_TIMEOUT"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := &timeoutRecord{}
+			r.add("statement_timeout", "30s", "mlmforge default")
+			r.add("statement_timeout", second[0], second[1])
+
+			got, ok := r.describe("statement_timeout")
+
+			require.True(t, ok)
+			assert.Equal(t, "statement_timeout varied across this command's connections", got)
+		})
+	}
+}
+
+func TestTimeoutRecord_ConcurrentWritersAreSafe(t *testing.T) {
+	r := &timeoutRecord{}
+	var wg sync.WaitGroup
+	for i := range 50 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r.add("lock_timeout", fmt.Sprintf("%ds", i%2+5), "mlmforge default")
+		}()
+	}
+	wg.Wait()
+
+	got, _ := r.describe("lock_timeout")
+
+	assert.Equal(t, "lock_timeout varied across this command's connections", got)
+}
+
+func TestTimeoutRecord_NilAndUnknownDescribeNothing(t *testing.T) {
+	var r *timeoutRecord
+	_, ok := r.describe("statement_timeout")
+	assert.False(t, ok, "a nil record described a setting")
+	_, ok = (&timeoutRecord{}).describe("statement_timeout")
+	assert.False(t, ok, "an empty record described a setting")
+}
 
 func TestSessionTimeoutDefaults_ArePinned(t *testing.T) {
 	assert.Equal(t, "30s", defaultStatementTimeout)

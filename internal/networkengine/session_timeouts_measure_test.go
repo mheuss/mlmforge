@@ -18,7 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// measureMinNodes is the smallest tree on which every timed query does its full work.
+// measureMinNodes is the smallest node count the harness accepts.
 const measureMinNodes = 51
 
 // measureNodes reads the node count for one measurement run.
@@ -118,10 +118,13 @@ func generateMeasuredTree(t *testing.T, es *platform.PostgresEventStore, engine 
 	return tree
 }
 
-// explainable is one statement the harness can run under EXPLAIN, with its arguments.
+// explainable is one statement the harness can run under EXPLAIN, with its
+// arguments, after an optional preparing statement in the same transaction.
 type explainable struct {
-	sql  string
-	args func() []any
+	sql      string
+	args     func() []any
+	prep     string
+	prepArgs func() []any
 }
 
 // timing is one query's measured durations.
@@ -132,7 +135,13 @@ type timing struct {
 	explain *explainable
 }
 
-func (m timing) warmMax() time.Duration { return slices.Max(m.warm) }
+// warmMax is zero for a query timed cold only.
+func (m timing) warmMax() time.Duration {
+	if len(m.warm) == 0 {
+		return 0
+	}
+	return slices.Max(m.warm)
+}
 
 // measure runs setup untimed, then fn timed, once cold and three times warm.
 func measure(t *testing.T, name string, explain *explainable, setup func(run int), fn func(run int) error) timing {
@@ -157,7 +166,8 @@ func measure(t *testing.T, name string, explain *explainable, setup func(run int
 func ms(d time.Duration) string { return fmt.Sprintf("%.1f", float64(d.Microseconds())/1000) }
 
 // streamPageSQL is a stream page read for EXPLAIN.
-const streamPageSQL = "SELECT * FROM events WHERE stream = $1 AND version >= $2 ORDER BY version LIMIT $3"
+const streamPageSQL = "SELECT global_position, id, stream, type, version, payload, metadata, timestamp " +
+	"FROM events WHERE stream = $1 AND version >= $2 ORDER BY version LIMIT $3"
 
 func TestMeasureSessionTimeouts(t *testing.T) {
 	n := measureNodes(t)
@@ -184,13 +194,13 @@ func TestMeasureSessionTimeouts(t *testing.T) {
 
 	results = append(results,
 		measure(t, "EventStore.ReadStream (first 500)",
-			&explainable{streamPageSQL, func() []any { return []any{tree.stream, int64(1), int64(500)} }}, nil,
+			&explainable{sql: streamPageSQL, args: func() []any { return []any{tree.stream, int64(1), int64(500)} }}, nil,
 			func(int) error {
 				_, err := es.ReadStream(ctx, tree.stream, 1, 500)
 				return err
 			}),
 		measure(t, "EventStore.ReadStream (last 500)",
-			&explainable{streamPageSQL, func() []any { return []any{tree.stream, tree.version - 499, int64(500)} }}, nil,
+			&explainable{sql: streamPageSQL, args: func() []any { return []any{tree.stream, tree.version - 499, int64(500)} }}, nil,
 			func(int) error {
 				_, err := es.ReadStream(ctx, tree.stream, tree.version-499, 500)
 				return err
@@ -203,15 +213,15 @@ func TestMeasureSessionTimeouts(t *testing.T) {
 			_, _, err := store.ProjectedVersion(ctx, tree.id)
 			return err
 		}),
-		measure(t, "TreeStore.ProjectedRows", &explainable{getByTreeDepthOrderedSQL, treeArg}, nil, func(int) error {
+		measure(t, "TreeStore.ProjectedRows", &explainable{sql: getByTreeDepthOrderedSQL, args: treeArg}, nil, func(int) error {
 			_, _, _, err := store.ProjectedRows(ctx, tree.id)
 			return err
 		}),
-		measure(t, "TreeStore.GetByTree", &explainable{getByTreeSQL, treeArg}, nil, func(int) error {
+		measure(t, "TreeStore.GetByTree", &explainable{sql: getByTreeSQL, args: treeArg}, nil, func(int) error {
 			_, err := store.GetByTree(ctx, tree.id)
 			return err
 		}),
-		measure(t, "TreeStore.GetByTreeDepthOrdered", &explainable{getByTreeDepthOrderedSQL, treeArg}, nil, func(int) error {
+		measure(t, "TreeStore.GetByTreeDepthOrdered", &explainable{sql: getByTreeDepthOrderedSQL, args: treeArg}, nil, func(int) error {
 			_, err := store.GetByTreeDepthOrdered(ctx, tree.id)
 			return err
 		}),
@@ -230,9 +240,17 @@ func TestMeasureSessionTimeouts(t *testing.T) {
 			return err
 		}),
 		measure(t, "SnapshotStore.Put",
-			&explainable{putSnapshotSQL, func() []any {
-				return []any{tree.id, version + 1000, treeTypeUnilevel, snapData}
-			}}, nil,
+			&explainable{
+				sql: putSnapshotSQL,
+				args: func() []any {
+					return []any{tree.id, version + 1000, treeTypeUnilevel, snapData}
+				},
+				// The warm Put runs hit a stored row, so the plan puts one there first.
+				prep: putSnapshotSQL,
+				prepArgs: func() []any {
+					return []any{tree.id, version + 999, treeTypeUnilevel, snapData}
+				},
+			}, nil,
 			func(int) error {
 				putVersion = next()
 				stored, err := snaps.Put(ctx, Snapshot{TreeID: tree.id, Version: putVersion, TreeType: treeTypeUnilevel, Data: snapData})
@@ -312,10 +330,22 @@ func TestMeasureSessionTimeouts(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, found, "a snapshot was still stored after the last Delete")
 
+	// UndoRootProjection acts once per tree, so it is timed once, cold, on a tree of its own.
+	rootTree, root := testTreeUUID(802), testUserUUID(1)
+	require.NoError(t, store.ProjectInsert(ctx, TreeNodeRow{ID: nextEventUUID(), TreeID: rootTree, UserID: root,
+		SponsorID: &root, Depth: 0, EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}, 1))
+	undoStart := time.Now()
+	require.NoError(t, store.UndoRootProjection(ctx, rootTree, root, 1))
+	results = append(results, timing{name: "TreeStore.UndoRootProjection (cold only)", cold: time.Since(undoStart)})
+
 	for _, m := range results {
 		warm := make([]string, len(m.warm))
 		for i, d := range m.warm {
 			warm[i] = ms(d)
+		}
+		if len(warm) == 0 {
+			t.Logf("query %-42s cold %8s ms  (cold only)", m.name, ms(m.cold))
+			continue
 		}
 		t.Logf("query %-42s cold %8s ms  warm %s ms", m.name, ms(m.cold), strings.Join(warm, " / "))
 	}
@@ -326,19 +356,30 @@ func TestMeasureSessionTimeouts(t *testing.T) {
 			t.Logf("plan for %s: not captured; the harness holds no statement to explain for it", m.name)
 			continue
 		}
-		tx, err := pool.Begin(ctx)
-		require.NoError(t, err)
-		rows, err := tx.Query(ctx, "EXPLAIN (ANALYZE, BUFFERS) "+m.explain.sql, m.explain.args()...)
-		require.NoError(t, err)
-		var plan []string
-		for rows.Next() {
-			var line string
-			require.NoError(t, rows.Scan(&line))
-			plan = append(plan, line)
-		}
-		rows.Close()
-		require.NoError(t, rows.Err())
-		require.NoError(t, tx.Rollback(ctx))
+		plan := explainRolledBack(t, ctx, pool, m.explain)
 		t.Logf("plan for %s (rolled back):\n%s", m.name, strings.Join(plan, "\n"))
 	}
+}
+
+// explainRolledBack runs e under EXPLAIN (ANALYZE, BUFFERS) in a transaction it rolls back.
+func explainRolledBack(t *testing.T, ctx context.Context, pool *pgxpool.Pool, e *explainable) []string {
+	t.Helper()
+	tx, err := pool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(ctx) }()
+	if e.prep != "" {
+		_, err := tx.Exec(ctx, e.prep, e.prepArgs()...)
+		require.NoError(t, err)
+	}
+	rows, err := tx.Query(ctx, "EXPLAIN (ANALYZE, BUFFERS) "+e.sql, e.args()...)
+	require.NoError(t, err)
+	defer rows.Close()
+	var plan []string
+	for rows.Next() {
+		var line string
+		require.NoError(t, rows.Scan(&line))
+		plan = append(plan, line)
+	}
+	require.NoError(t, rows.Err())
+	return plan
 }

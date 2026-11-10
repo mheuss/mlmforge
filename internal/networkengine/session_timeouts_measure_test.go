@@ -258,7 +258,7 @@ func TestMeasureSessionTimeouts(t *testing.T) {
 	slices.SortFunc(results, func(a, b timing) int { return int(b.worst() - a.worst()) })
 	for _, m := range results[:3] {
 		if m.explain == "" {
-			t.Logf("plan for %s: not captured; it runs more than one statement or a write", m.name)
+			t.Logf("plan for %s: not captured; the harness holds no statement to explain for it", m.name)
 			continue
 		}
 		args := []any{tree.id}

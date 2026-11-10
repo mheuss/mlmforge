@@ -339,7 +339,7 @@ result, err := client.EvaluateRanks(ctx, req,
     networkengine.WithPersistence("2026-05", store))
 ```
 
-**Notes:** `period_id` is opaque and compared lexicographically. Callers must zero-pad so widths sort correctly. Missing rows mean "not evaluated". Rows with `rank IS NULL` hold an Unranked result, which the engine returns only for a plan with no ranks (HEU-761). On store-write failure the engine result is still returned alongside a wrapped error (NFR4: prior period rows survive). The `qualificationHistoryCopySource` is the reference adapter for future bulk-write callers in this codebase. HEU-516 added `GetByUsersAndPeriodRange`, a batched read that returns a distributor set's rows across a period range in one index-served query.
+**Notes:** `period_id` is opaque and compared in byte order. The Postgres column pins this with `COLLATE "C"`. Callers must zero-pad so widths sort correctly. Missing rows mean "not evaluated". Rows with `rank IS NULL` hold an Unranked result, which the engine returns only for a plan with no ranks (HEU-761). On store-write failure the engine result is still returned alongside a wrapped error (NFR4: prior period rows survive). The `qualificationHistoryCopySource` is the reference adapter for future bulk-write callers in this codebase. HEU-516 added `GetByUsersAndPeriodRange`, a batched read that returns a distributor set's rows across a period range in one index-served query.
 
 ---
 

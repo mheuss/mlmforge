@@ -34,9 +34,10 @@ type QualificationHistoryRow struct {
 // results to this store after a successful evaluate_ranks call when the
 // caller supplied WithPersistence on EvaluateRanks.
 //
-// period_id is opaque to the store and compared lexicographically. Callers
-// must use zero-padded, sortable strings (e.g., "2026-05", "2026-W21").
-// Mixed widths like "2026-1" vs "2026-10" sort incorrectly.
+// period_id is opaque to the store and compared in byte order, which the
+// Postgres column pins with COLLATE "C". Callers must use zero-padded,
+// sortable strings (e.g., "2026-05", "2026-W21"). Mixed widths like "2026-1"
+// vs "2026-10" sort incorrectly.
 //
 // Read semantics: a missing row means "not evaluated for this period." An
 // explicit row with a NULL rank holds an Unranked result.

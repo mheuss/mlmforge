@@ -443,7 +443,8 @@ the same as Go. A linguistic collation does not. Under ICU's `en-US-x-icu`,
 `'2026-a' < '2026-B'` is true, and in Go it is false. So a test of ordering or
 range filtering on a text column passes against both twins in CI, whatever the
 production server's collation does. Declare the collation on the column when
-byte order matters. HEU-947 asks this for `qualification_history.period_id`.
+byte order matters. HEU-947 declares `COLLATE "C"` on
+`qualification_history.period_id`.
 
 ## A memory twin copies pointer fields in and out
 

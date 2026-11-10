@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-**Test count:** 1860 (Rust), 1728 (Go)
+**Test count:** 1860 (Rust), 1729 (Go)
 
 ### Added
 - Project research documentation (MLM fundamentals, compensation plans, glossary, competitive landscape, legal/regulatory)
@@ -127,6 +127,7 @@
 - A binary aggregate cap no longer refuses with a `Precision` error when an owner's exact earnings total does not fit a 96-bit decimal. The total is compared with the cap in wide integers, and the cap is split the same way. Protocol 28. (HEU-997)
 - The Go client refuses a `remove_node` response whose `responsored` entry has a missing or null `user_id` or `new_sponsor_id`. The error names the field. The member used to decode as an empty id and reach the store's re-sponsor write. Both `RemoveNode` and `RemoveMatrixNode` decode it this way. No protocol number moves. (HEU-926)
 - The Rust width contract test checks why each over-max value was refused. It asserts serde's range message for that exact value and the type it overflows. It used to pass on any refusal, including one about a different field. (HEU-993)
+- Postgres compares `qualification_history.period_id` in byte order on every server, so ranges and order match the memory twin. Migration 000012 sets the column to `COLLATE "C"`. On a linguistic database default, the two twins used to disagree on which periods fell in a range and in what order they came back. (HEU-947)
 
 ### Removed
 - `TreeLoader`, `NewTreeLoader`, `LoadTree`, `WithMatrixParams` and `TreeLoadIncompleteError`. Every tree load has built from the event stream since HEU-297, so the adjacency replay ran on no production path. Preflight stays and runs inside `TreeWriter.Load`. (HEU-912)

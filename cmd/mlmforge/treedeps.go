@@ -102,5 +102,5 @@ func withTreeDeps(ctx context.Context, warn io.Writer, open depsOpener, dbURL, w
 			_, _ = fmt.Fprintf(warn, "warning: the run finished; releasing its worker and pool reported: %s\n", relErr)
 		}
 	}()
-	return run(ctx, deps)
+	return deps.timeouts.annotate(run(ctx, deps))
 }

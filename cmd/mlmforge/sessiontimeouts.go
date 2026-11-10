@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mlmforge/mlmforge/internal/networkengine"
 	"github.com/mlmforge/mlmforge/internal/platform"
 )
 
@@ -102,6 +105,51 @@ func (r *timeoutRecord) afterConnect(ctx context.Context, conn *pgx.Conn) error 
 		r.add(s.name, values[i], plans[i].source)
 	}
 	return nil
+}
+
+// timeoutError adds a timeout's recorded value and source to a server cancellation.
+type timeoutError struct {
+	err  error
+	text string
+}
+
+func (e *timeoutError) Error() string { return e.err.Error() + " (" + e.text + ")" }
+func (e *timeoutError) Unwrap() error { return e.err }
+
+// annotate adds the recorded value and source to a statement or lock timeout error.
+func (r *timeoutRecord) annotate(err error) error {
+	var pg *pgconn.PgError
+	if err == nil || r == nil || !errors.As(err, &pg) {
+		return err
+	}
+	var name string
+	switch {
+	case pg.Code == "57014" && pg.Message == "canceling statement due to statement timeout":
+		name = "statement_timeout"
+	case pg.Code == "55P03" && pg.Message == "canceling statement due to lock timeout":
+		name = "lock_timeout"
+	default:
+		return err
+	}
+	text, ok := r.describe(name)
+	if !ok {
+		return err
+	}
+	return &timeoutError{err: err, text: "the server canceled the statement: " + text}
+}
+
+// annotateWrite annotates a write's projection error.
+func annotateWrite(res networkengine.WriteResult, r *timeoutRecord) networkengine.WriteResult {
+	res.ProjectionErr = r.annotate(res.ProjectionErr)
+	return res
+}
+
+// annotateReject annotates a rejection's retry error when it is printed apart from err.
+func annotateReject(res networkengine.RejectResult, r *timeoutRecord, err error) networkengine.RejectResult {
+	if res.RetryErr != nil && (err == nil || !errors.Is(err, res.RetryErr)) {
+		res.RetryErr = r.annotate(res.RetryErr)
+	}
+	return res
 }
 
 // openTreePool opens a pool whose connections resolve their session timeouts on connect.

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -79,6 +80,86 @@ func TestTreeDeps_ARejectedEnvValueFailsAtConnectAndNamesIt(t *testing.T) {
 	var pgErr *pgconn.PgError
 	require.ErrorAs(t, err, &pgErr)
 	assert.Equal(t, "22023", pgErr.Code)
+	var unrecorded *unrecordedError
+	assert.ErrorAs(t, err, &unrecorded)
+}
+
+func TestTreeDeps_LockerErrorsAreMarkedUnrecorded(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	worker := requireWorker(t)
+	t.Setenv("PGOPTIONS", "")
+	t.Setenv(statementTimeoutEnv, "")
+	t.Setenv(lockTimeoutEnv, "")
+	deps, err := openTreeDeps(context.Background(), pgContainer.DSN, worker)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = deps.release() })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = deps.locker.Lock(ctx, uuid.New())
+
+	require.Error(t, err)
+	var unrecorded *unrecordedError
+	assert.ErrorAs(t, err, &unrecorded)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestTreePool_AHookTimeoutUnderAnInheritedValueIsNotAnnotated(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	t.Setenv("PGOPTIONS", "")
+	t.Setenv(statementTimeoutEnv, "")
+	t.Setenv(lockTimeoutEnv, "5s")
+	ctx := context.Background()
+	u := roleURL(t)
+	admin, err := pgx.Connect(ctx, pgContainer.DSN)
+	require.NoError(t, err)
+	_, err = admin.Exec(ctx, "ALTER ROLE heu801_timeouts SET lock_timeout = '200ms'")
+	require.NoError(t, err)
+	require.NoError(t, admin.Close(ctx))
+	rec := &timeoutRecord{}
+	pool, err := openTreePool(ctx, u, rec)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	first, err := pool.Acquire(ctx)
+	require.NoError(t, err)
+	t.Cleanup(first.Release)
+	recorded, _ := rec.describe("lock_timeout")
+	require.Equal(t, "lock_timeout is 5s (set by: "+lockTimeoutEnv+")", recorded)
+	_, err = holdTx(t).Exec(ctx, "LOCK TABLE pg_catalog.pg_settings IN ACCESS EXCLUSIVE MODE")
+	require.NoError(t, err)
+
+	_, err = pool.Acquire(ctx)
+
+	require.Error(t, err)
+	var pg *pgconn.PgError
+	require.ErrorAs(t, err, &pg)
+	assert.Equal(t, "55P03", pg.Code)
+	got := rec.annotate(fmt.Errorf("reach database: %w", err))
+	assert.NotContains(t, got.Error(), "the server canceled the statement")
+}
+
+func TestTreePool_RecordsEachSettingUnderItsOwnName(t *testing.T) {
+	saved := sessionTimeoutSettings
+	t.Cleanup(func() { sessionTimeoutSettings = saved })
+	sessionTimeoutSettings = slices.Clone(saved)
+	slices.Reverse(sessionTimeoutSettings)
+	t.Setenv("PGOPTIONS", "")
+	t.Setenv(statementTimeoutEnv, "7s")
+	t.Setenv(lockTimeoutEnv, "3s")
+	pool, rec := openTestTreePool(t, sameDSN)
+
+	statement, lock := showBoth(t, pool)
+
+	assert.Equal(t, "7s", statement)
+	assert.Equal(t, "3s", lock)
+	got, _ := rec.describe("statement_timeout")
+	assert.Equal(t, "statement_timeout is 7s (set by: "+statementTimeoutEnv+")", got)
+	got, _ = rec.describe("lock_timeout")
+	assert.Equal(t, "lock_timeout is 3s (set by: "+lockTimeoutEnv+")", got)
 }
 
 func TestTreePool_ClientSettingsForBothAreKeptWithNoWrite(t *testing.T) {

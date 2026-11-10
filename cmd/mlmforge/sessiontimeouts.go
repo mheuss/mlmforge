@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -45,6 +46,14 @@ WHERE name IN ('statement_timeout', 'lock_timeout')`
 
 // afterConnect resolves both settings on one new connection and records the result.
 func (r *timeoutRecord) afterConnect(ctx context.Context, conn *pgx.Conn) error {
+	if err := r.resolve(ctx, conn); err != nil {
+		return &unrecordedError{err: err}
+	}
+	return nil
+}
+
+// resolve reads both settings, applies the precedence rule, and records the result.
+func (r *timeoutRecord) resolve(ctx context.Context, conn *pgx.Conn) error {
 	rows, err := conn.Query(ctx, readTimeoutsSQL)
 	if err != nil {
 		return fmt.Errorf("read session timeouts on a new tree connection: %w", err)
@@ -85,15 +94,21 @@ func (r *timeoutRecord) afterConnect(ctx context.Context, conn *pgx.Conn) error 
 		}
 	}
 
-	values := []string{found["statement_timeout"].value, found["lock_timeout"].value}
+	values := make([]string, len(sessionTimeoutSettings))
+	reads := make([]string, len(sessionTimeoutSettings))
+	for i, s := range sessionTimeoutSettings {
+		values[i] = found[s.name].value
+		reads[i] = fmt.Sprintf("current_setting('%s')", s.name)
+	}
 	if len(sets) > 0 {
-		q := "SELECT " + strings.Join(sets, ", ") +
-			", current_setting('statement_timeout'), current_setting('lock_timeout')"
+		q := "SELECT " + strings.Join(sets, ", ") + ", " + strings.Join(reads, ", ")
 		var dest []any
 		for range sets {
 			dest = append(dest, new(string))
 		}
-		dest = append(dest, &values[0], &values[1])
+		for i := range values {
+			dest = append(dest, &values[i])
+		}
 		if err := conn.QueryRow(ctx, q, args...).Scan(dest...); err != nil {
 			if len(envNotes) == 0 {
 				return fmt.Errorf("apply session timeouts on a new tree connection: %w", err)
@@ -105,6 +120,28 @@ func (r *timeoutRecord) afterConnect(ctx context.Context, conn *pgx.Conn) error 
 		r.add(s.name, values[i], plans[i].source)
 	}
 	return nil
+}
+
+// unrecordedError marks an error from a session whose settings the record does not describe.
+type unrecordedError struct{ err error }
+
+func (e *unrecordedError) Error() string { return e.err.Error() }
+func (e *unrecordedError) Unwrap() error { return e.err }
+
+// unrecordedLocker marks every error from a locker whose sessions do not get the recorded settings.
+type unrecordedLocker struct{ networkengine.TreeLocker }
+
+func (l unrecordedLocker) Lock(ctx context.Context, treeID uuid.UUID) (func() error, error) {
+	unlock, err := l.TreeLocker.Lock(ctx, treeID)
+	if err != nil {
+		return nil, &unrecordedError{err: err}
+	}
+	return func() error {
+		if err := unlock(); err != nil {
+			return &unrecordedError{err: err}
+		}
+		return nil
+	}, nil
 }
 
 // timeoutError adds a timeout's recorded value and source to a server cancellation.
@@ -124,6 +161,10 @@ func (r *timeoutRecord) annotate(err error) error {
 	}
 	var done *timeoutError
 	if errors.As(err, &done) {
+		return err
+	}
+	var unrecorded *unrecordedError
+	if errors.As(err, &unrecorded) {
 		return err
 	}
 	var name string

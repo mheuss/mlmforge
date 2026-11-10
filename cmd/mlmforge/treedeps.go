@@ -80,7 +80,7 @@ func openTreeDeps(ctx context.Context, dbURL, workerPath string) (*treeDeps, err
 		store:     networkengine.NewPostgresTreeStore(pool),
 		snapshots: networkengine.NewPostgresSnapshotStore(pool),
 		engine:    engine,
-		locker:    networkengine.NewPostgresTreeLocker(dbURL),
+		locker:    unrecordedLocker{networkengine.NewPostgresTreeLocker(dbURL)},
 		timeouts:  rec,
 		release:   func() error { return releaseDeps(engine, pool) },
 	}, nil

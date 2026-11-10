@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mlmforge/mlmforge/internal/networkengine"
 	"github.com/stretchr/testify/assert"
@@ -233,6 +234,48 @@ func TestAnnotate_DoesNotAnnotateTwice(t *testing.T) {
 	twice := r.annotate(fmt.Errorf("outer: %w", once))
 
 	assert.Equal(t, 1, strings.Count(twice.Error(), "the server canceled the statement"))
+}
+
+func TestAnnotate_LeavesAnUnrecordedSessionsTimeoutAlone(t *testing.T) {
+	for name, tc := range channelCases {
+		t.Run(name, func(t *testing.T) {
+			err := fmt.Errorf("lock tree: %w", &unrecordedError{err: fmt.Errorf("query: %w", tc.pg)})
+
+			got := timeoutRecordWith(t).annotate(err)
+
+			assert.Same(t, err, got)
+			assert.NotContains(t, got.Error(), "the server canceled the statement")
+		})
+	}
+}
+
+// fakeLocker returns its fields from Lock and from the unlock it hands back.
+type fakeLocker struct{ lockErr, unlockErr error }
+
+func (f fakeLocker) Lock(context.Context, uuid.UUID) (func() error, error) {
+	if f.lockErr != nil {
+		return nil, f.lockErr
+	}
+	return func() error { return f.unlockErr }, nil
+}
+
+func TestUnrecordedLocker_MarksLockAndUnlockErrors(t *testing.T) {
+	var unrecorded *unrecordedError
+
+	_, err := unrecordedLocker{fakeLocker{lockErr: statementCancel}}.Lock(context.Background(), uuid.New())
+	require.Error(t, err)
+	assert.ErrorAs(t, err, &unrecorded)
+	assert.ErrorIs(t, err, statementCancel)
+
+	unlock, err := unrecordedLocker{fakeLocker{unlockErr: statementCancel}}.Lock(context.Background(), uuid.New())
+	require.NoError(t, err)
+	err = unlock()
+	require.Error(t, err)
+	assert.ErrorAs(t, err, &unrecorded)
+
+	unlock, err = unrecordedLocker{fakeLocker{}}.Lock(context.Background(), uuid.New())
+	require.NoError(t, err)
+	assert.NoError(t, unlock())
 }
 
 func TestTimeoutRecord_DescribesTheFirstResult(t *testing.T) {

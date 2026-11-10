@@ -382,3 +382,138 @@ func explainRolledBack(t *testing.T, ctx context.Context, pool *pgxpool.Pool, e 
 	require.NoError(t, rows.Err())
 	return plan
 }
+
+// matrixWidth is the width the matrix plan fixtures use.
+const matrixWidth = 3
+
+// matrixParent gives every node matrixWidth children, filled breadth first.
+func matrixParent(i int) int { return (i - 1) / matrixWidth }
+
+// matrixPosition is a node's slot under its parent.
+func matrixPosition(i int) int { return (i - 1) % matrixWidth }
+
+// generateMatrixTree builds a breadth-first matrix tree of n nodes in the
+// engine, the event stream, the rows and the projection row, then analyzes
+// the loaded tables.
+func generateMatrixTree(t *testing.T, es *platform.PostgresEventStore, engine *EngineClient, pool *pgxpool.Pool, n int) measuredTree {
+	t.Helper()
+	ctx := context.Background()
+	tree := measuredTree{id: testTreeUUID(803), n: n, eventIDs: make([]string, n)}
+	tree.stream = TreeStreamName(tree.id)
+	enrolled := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	width, spillover := matrixWidth, "breadth_first"
+
+	require.NoError(t, engine.CreateMatrixTree(ctx, tree.id, width, spillover))
+	require.NoError(t, engine.AddRoot(ctx, tree.id, measureUser(0), enrolled.Unix()))
+	for i := 1; i < n; i++ {
+		p := measureUser(matrixParent(i))
+		require.NoError(t, engine.AddNodeAt(ctx, tree.id, measureUser(i), p, p, matrixPosition(i), enrolled.Unix()))
+	}
+
+	var batch []platform.NewEvent
+	flush := func() {
+		require.NoError(t, es.Append(ctx, tree.stream, tree.version, batch))
+		tree.version += int64(len(batch))
+		batch = batch[:0]
+	}
+	for i := 0; i < n; i++ {
+		var typ string
+		var payload any
+		if i == 0 {
+			typ = EventTypeRootAdded
+			payload = RootAddedPayload{TreeID: tree.id, UserID: measureUser(0), SponsorID: measureUser(0),
+				EnrolledAt: enrolled, TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover}
+		} else {
+			p := measureUser(matrixParent(i))
+			pos := matrixPosition(i)
+			typ = EventTypeNodePlaced
+			payload = NodePlacedPayload{TreeID: tree.id, UserID: measureUser(i), ParentID: p, SponsorID: p,
+				Position: &pos, TreeType: treeTypeMatrix, EnrolledAt: enrolled}
+		}
+		data, err := json.Marshal(payload)
+		require.NoError(t, err)
+		tree.eventIDs[i] = nextEventUUID()
+		batch = append(batch, platform.NewEvent{ID: tree.eventIDs[i], Type: typ, Payload: data})
+		if len(batch) == 1000 {
+			flush()
+		}
+	}
+	if len(batch) > 0 {
+		flush()
+	}
+
+	depth := make([]int, n)
+	for i := 1; i < n; i++ {
+		depth[i] = depth[matrixParent(i)] + 1
+	}
+	cols := []string{"id", "tree_id", "user_id", "parent_id", "sponsor_id", "position", "depth", "enrolled_at"}
+	_, err := pool.CopyFrom(ctx, pgx.Identifier{"tree_nodes"}, cols, pgx.CopyFromSlice(n, func(i int) ([]any, error) {
+		var parent, position any
+		sponsor := measureUser(0)
+		if i > 0 {
+			parent = measureUser(matrixParent(i))
+			sponsor = measureUser(matrixParent(i))
+			position = matrixPosition(i)
+		}
+		return []any{tree.eventIDs[i], tree.id, measureUser(i), parent, sponsor, position, depth[i], enrolled}, nil
+	}))
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, "INSERT INTO tree_projections (tree_id, projected_version) VALUES ($1, $2)", tree.id, tree.version)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, "ANALYZE tree_nodes, events, tree_projections")
+	require.NoError(t, err)
+	return tree
+}
+
+func TestMeasureMatrixRemovals(t *testing.T) {
+	n := measureNodes(t)
+	es, store, engine, pool := newIntegrationDeps(t)
+	ctx := context.Background()
+
+	start := time.Now()
+	tree := generateMatrixTree(t, es, engine, pool, n)
+	t.Logf("generation: %d-node width-%d breadth-first matrix, depth %d, in %s",
+		n, matrixWidth, depthOf(n-1), time.Since(start))
+
+	removals := []struct {
+		user int
+		mode PruningMode
+	}{
+		{1, PruningPromoteEarliest},
+		{2, PruningHoldingTank},
+	}
+	for _, r := range removals {
+		user := measureUser(r.user)
+		res, err := engine.RemoveMatrixNode(ctx, tree.id, user, r.mode)
+		require.NoError(t, err)
+		removed := []string{user}
+		if r.mode == PruningHoldingTank {
+			removed = res.MovedToTank
+		}
+		projection := RemovalProjection{Users: removed, Responsored: res.Responsored, Relocated: res.Relocated}
+		tree.version++
+		begin := time.Now()
+		require.NoError(t, store.ProjectRemoval(ctx, tree.id, projection, nextEventUUID(), tree.version))
+		t.Logf("query TreeStore.ProjectRemoval (%s of node %d, subtree %d) cold %8s ms  (cold only): %d tombstoned, %d re-sponsored, %d relocated",
+			r.mode, r.user, subtreeSize(r.user, n), ms(time.Since(begin)), len(projection.Users), len(projection.Responsored), len(projection.Relocated))
+	}
+}
+
+// depthOf is node i's depth in the generated matrix.
+func depthOf(i int) int {
+	d := 0
+	for i > 0 {
+		i = matrixParent(i)
+		d++
+	}
+	return d
+}
+
+// subtreeSize counts node i and its descendants among n generated nodes.
+func subtreeSize(i, n int) int {
+	size := 0
+	for lo, hi := i, i; lo < n; lo, hi = lo*matrixWidth+1, hi*matrixWidth+matrixWidth {
+		size += min(hi, n-1) - lo + 1
+	}
+	return size
+}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"testing"
 
@@ -179,6 +180,50 @@ func TestTreePool_ARoleSettingWinsOverTheDefault(t *testing.T) {
 	assert.Equal(t, defaultLockTimeout, lock)
 	got, _ := rec.describe("statement_timeout")
 	assert.Equal(t, "statement_timeout is 4444ms (set by: the database role or database settings)", got)
+}
+
+func TestTreePool_EveryConnectionCarriesTheSettings(t *testing.T) {
+	t.Setenv(statementTimeoutEnv, "")
+	t.Setenv(lockTimeoutEnv, "")
+	t.Setenv("PGOPTIONS", "")
+	pool, _ := openTestTreePool(t, pgContainer.DSN)
+	ctx := context.Background()
+
+	check := func(c *pgxpool.Conn, label string) {
+		var statement, lock string
+		require.NoError(t, c.QueryRow(ctx,
+			"SELECT current_setting('statement_timeout'), current_setting('lock_timeout')").Scan(&statement, &lock))
+		assert.Equal(t, defaultStatementTimeout, statement, label)
+		assert.Equal(t, defaultLockTimeout, lock, label)
+	}
+
+	a, err := pool.Acquire(ctx)
+	require.NoError(t, err)
+	b, err := pool.Acquire(ctx)
+	require.NoError(t, err)
+	check(a, "first of two held at once")
+	check(b, "second of two held at once")
+	a.Release()
+	b.Release()
+
+	a, err = pool.Acquire(ctx)
+	require.NoError(t, err)
+	check(a, "reacquired")
+	require.NoError(t, a.Conn().Close(ctx))
+	a.Release()
+
+	before := pool.Stat().NewConnsCount()
+	var held []*pgxpool.Conn
+	for range 2 {
+		c, err := pool.Acquire(ctx)
+		require.NoError(t, err)
+		held = append(held, c)
+	}
+	require.Greater(t, pool.Stat().NewConnsCount(), before, "no replacement connection was opened")
+	for i, c := range held {
+		check(c, fmt.Sprintf("after the close, connection %d", i))
+		c.Release()
+	}
 }
 
 func TestTreePool_AnEnvVarZeroTurnsTheTimeoutOff(t *testing.T) {

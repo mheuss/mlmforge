@@ -397,16 +397,24 @@ func TestMeasureTimeoutHookCost(t *testing.T) {
 	cfg, err := pgxpool.ParseConfig(pgContainer.DSN)
 	require.NoError(t, err)
 	const runs = 100
-	var hook []time.Duration
+	var connect, hook []time.Duration
 	for range runs {
+		start := time.Now()
 		conn, err := pgx.ConnectConfig(ctx, cfg.ConnConfig)
 		require.NoError(t, err)
-		start := time.Now()
-		require.NoError(t, (&timeoutRecord{}).afterConnect(ctx, conn))
+		connect = append(connect, time.Since(start))
+		t.Cleanup(func() { _ = conn.Close(ctx) })
+		rec := &timeoutRecord{}
+		start = time.Now()
+		require.NoError(t, rec.afterConnect(ctx, conn))
 		hook = append(hook, time.Since(start))
 		require.NoError(t, conn.Close(ctx))
+		got, _ := rec.describe("statement_timeout")
+		require.Equal(t, "statement_timeout is "+defaultStatementTimeout+" (set by: mlmforge default)", got)
 	}
+	slices.Sort(connect)
 	slices.Sort(hook)
-	t.Logf("hook cost over %d new connections: median %s, p95 %s, max %s",
-		runs, hook[runs/2], hook[runs*95/100], hook[runs-1])
+	p95 := (runs*95+99)/100 - 1
+	t.Logf("default-writing hook over %d new connections: median %s, p95 %s, max %s; connect median %s",
+		runs, hook[runs/2-1], hook[p95], hook[runs-1], connect[runs/2-1])
 }

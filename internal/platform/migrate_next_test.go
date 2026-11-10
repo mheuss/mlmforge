@@ -39,7 +39,7 @@ func TestNextTarget_WritesTheNextThatSourceInfoReports(t *testing.T) {
 }
 
 // closeFailingSource is a source.Driver over migrations 1, 2 and 3 whose down readers fail to close.
-// Its up reads return upErr, and First returns firstErr, when each is set.
+// Its up reads return upErr when it is set. First returns firstErr when it is set.
 type closeFailingSource struct {
 	source.Driver
 	upErr    error

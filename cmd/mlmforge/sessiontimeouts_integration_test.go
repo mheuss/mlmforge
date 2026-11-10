@@ -21,14 +21,17 @@ func showBoth(t *testing.T, pool *pgxpool.Pool) (statement, lock string) {
 	return statement, lock
 }
 
-// openTestTreePool opens the tree pool against url and closes it at cleanup.
-func openTestTreePool(t *testing.T, url string) (*pgxpool.Pool, *timeoutRecord) {
+// sameDSN builds the test container's URL unchanged.
+func sameDSN(dsn string) string { return dsn }
+
+// openTestTreePool opens the tree pool against the URL url builds and closes it at cleanup.
+func openTestTreePool(t *testing.T, url func(dsn string) string) (*pgxpool.Pool, *timeoutRecord) {
 	t.Helper()
 	if pgContainer == nil {
 		t.Skip("Postgres container not available")
 	}
 	rec := &timeoutRecord{}
-	pool, err := openTreePool(context.Background(), url, rec)
+	pool, err := openTreePool(context.Background(), url(pgContainer.DSN), rec)
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
 	return pool, rec
@@ -38,7 +41,7 @@ func TestTreePool_AppliesTheDefaultsWhenNothingIsSet(t *testing.T) {
 	t.Setenv(statementTimeoutEnv, "")
 	t.Setenv(lockTimeoutEnv, "")
 	t.Setenv("PGOPTIONS", "")
-	pool, rec := openTestTreePool(t, pgContainer.DSN)
+	pool, rec := openTestTreePool(t, sameDSN)
 
 	statement, lock := showBoth(t, pool)
 
@@ -75,7 +78,9 @@ func TestTreeDeps_ARejectedEnvValueFailsAtConnectAndNamesIt(t *testing.T) {
 func TestTreePool_ClientSettingsForBothAreKeptWithNoWrite(t *testing.T) {
 	t.Setenv(statementTimeoutEnv, "9s")
 	t.Setenv(lockTimeoutEnv, "8s")
-	pool, rec := openTestTreePool(t, pgContainer.DSN+"&options=-c%20statement_timeout%3D4321%20-c%20lock_timeout%3D1234")
+	pool, rec := openTestTreePool(t, func(d string) string {
+		return d + "&options=-c%20statement_timeout%3D4321%20-c%20lock_timeout%3D1234"
+	})
 
 	statement, lock := showBoth(t, pool)
 
@@ -103,7 +108,7 @@ func TestTreePool_AClientSettingWinsOverTheEnvVar(t *testing.T) {
 			t.Setenv(statementTimeoutEnv, "9s")
 			t.Setenv(lockTimeoutEnv, "")
 			t.Setenv("PGOPTIONS", tc.pgoptions)
-			pool, rec := openTestTreePool(t, tc.url(pgContainer.DSN))
+			pool, rec := openTestTreePool(t, tc.url)
 
 			statement, lock := showBoth(t, pool)
 
@@ -152,7 +157,7 @@ func TestTreePool_TheEnvVarWinsOverARoleSetting(t *testing.T) {
 	t.Setenv(statementTimeoutEnv, "7s")
 	t.Setenv(lockTimeoutEnv, "")
 	t.Setenv("PGOPTIONS", "")
-	pool, rec := openTestTreePool(t, roleURL(t))
+	pool, rec := openTestTreePool(t, func(string) string { return roleURL(t) })
 
 	var user string
 	require.NoError(t, pool.QueryRow(context.Background(), "SELECT current_user").Scan(&user))
@@ -172,7 +177,7 @@ func TestTreePool_ARoleSettingWinsOverTheDefault(t *testing.T) {
 	t.Setenv(statementTimeoutEnv, "")
 	t.Setenv(lockTimeoutEnv, "")
 	t.Setenv("PGOPTIONS", "")
-	pool, rec := openTestTreePool(t, roleURL(t))
+	pool, rec := openTestTreePool(t, func(string) string { return roleURL(t) })
 
 	statement, lock := showBoth(t, pool)
 
@@ -186,7 +191,7 @@ func TestTreePool_EveryConnectionCarriesTheSettings(t *testing.T) {
 	t.Setenv(statementTimeoutEnv, "")
 	t.Setenv(lockTimeoutEnv, "")
 	t.Setenv("PGOPTIONS", "")
-	pool, _ := openTestTreePool(t, pgContainer.DSN)
+	pool, _ := openTestTreePool(t, sameDSN)
 	ctx := context.Background()
 
 	check := func(c *pgxpool.Conn, label string) {
@@ -197,17 +202,24 @@ func TestTreePool_EveryConnectionCarriesTheSettings(t *testing.T) {
 		assert.Equal(t, defaultLockTimeout, lock, label)
 	}
 
-	a, err := pool.Acquire(ctx)
-	require.NoError(t, err)
-	b, err := pool.Acquire(ctx)
-	require.NoError(t, err)
+	// A held connection blocks pool.Close at cleanup, so each one is also released there.
+	acquire := func() *pgxpool.Conn {
+		c, err := pool.Acquire(ctx)
+		require.NoError(t, err)
+		t.Cleanup(c.Release)
+		return c
+	}
+
+	a := acquire()
+	b := acquire()
 	check(a, "first of two held at once")
 	check(b, "second of two held at once")
 	a.Release()
 	b.Release()
 
-	a, err = pool.Acquire(ctx)
-	require.NoError(t, err)
+	reused := pool.Stat().NewConnsCount()
+	a = acquire()
+	require.Equal(t, reused, pool.Stat().NewConnsCount(), "NewConnsCount changed on the reacquire")
 	check(a, "reacquired")
 	require.NoError(t, a.Conn().Close(ctx))
 	a.Release()
@@ -215,11 +227,10 @@ func TestTreePool_EveryConnectionCarriesTheSettings(t *testing.T) {
 	before := pool.Stat().NewConnsCount()
 	var held []*pgxpool.Conn
 	for range 2 {
-		c, err := pool.Acquire(ctx)
-		require.NoError(t, err)
-		held = append(held, c)
+		held = append(held, acquire())
 	}
-	require.Greater(t, pool.Stat().NewConnsCount(), before, "no replacement connection was opened")
+	require.Greater(t, pool.Stat().NewConnsCount(), before,
+		"NewConnsCount stayed at %d after acquiring two connections post-close", before)
 	for i, c := range held {
 		check(c, fmt.Sprintf("after the close, connection %d", i))
 		c.Release()
@@ -229,7 +240,7 @@ func TestTreePool_EveryConnectionCarriesTheSettings(t *testing.T) {
 func TestTreePool_AnEnvVarZeroTurnsTheTimeoutOff(t *testing.T) {
 	t.Setenv(statementTimeoutEnv, "0")
 	t.Setenv(lockTimeoutEnv, "")
-	pool, rec := openTestTreePool(t, pgContainer.DSN)
+	pool, rec := openTestTreePool(t, sameDSN)
 
 	statement, lock := showBoth(t, pool)
 

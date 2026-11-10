@@ -16,6 +16,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDialSession_IgnoresTheTreeTimeoutEnvVars(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	t.Setenv("MLMFORGE_TREE_STATEMENT_TIMEOUT", "9s")
+	t.Setenv("MLMFORGE_TREE_LOCK_TIMEOUT", "8s")
+	t.Setenv("PGOPTIONS", "")
+	s, err := dialSession(context.Background(), pgContainer.DSN)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.close() })
+
+	var statement, lock string
+	require.NoError(t, s.conn.QueryRowContext(context.Background(),
+		"SELECT current_setting('statement_timeout'), current_setting('lock_timeout')").Scan(&statement, &lock))
+
+	assert.Equal(t, "0", statement)
+	assert.Equal(t, "0", lock)
+}
+
 func TestReleaseSession_RunsEveryStepInOrderAndTagsEachFailure(t *testing.T) {
 	var calls []string
 	err := releaseSession(

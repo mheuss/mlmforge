@@ -24,9 +24,22 @@ func TestTimeoutRecord_ASameResultChangesNothing(t *testing.T) {
 	r.add("statement_timeout", "30s", "mlmforge default")
 	r.add("statement_timeout", "30s", "mlmforge default")
 
-	got, _ := r.describe("statement_timeout")
+	got, ok := r.describe("statement_timeout")
 
+	require.True(t, ok)
 	assert.Equal(t, "statement_timeout is 30s (set by: mlmforge default)", got)
+}
+
+func TestTimeoutRecord_AVariedSettingStaysVaried(t *testing.T) {
+	r := &timeoutRecord{}
+	r.add("statement_timeout", "30s", "mlmforge default")
+	r.add("statement_timeout", "10s", "mlmforge default")
+	r.add("statement_timeout", "30s", "mlmforge default")
+
+	got, ok := r.describe("statement_timeout")
+
+	require.True(t, ok)
+	assert.Equal(t, "statement_timeout varied across this command's connections", got)
 }
 
 func TestTimeoutRecord_ADifferentResultMarksItVaried(t *testing.T) {
@@ -51,16 +64,21 @@ func TestTimeoutRecord_ConcurrentWritersAreSafe(t *testing.T) {
 	r := &timeoutRecord{}
 	var wg sync.WaitGroup
 	for i := range 50 {
-		wg.Add(1)
+		wg.Add(2)
 		go func() {
 			defer wg.Done()
 			r.add("lock_timeout", fmt.Sprintf("%ds", i%2+5), "mlmforge default")
 		}()
+		go func() {
+			defer wg.Done()
+			_, _ = r.describe("lock_timeout")
+		}()
 	}
 	wg.Wait()
 
-	got, _ := r.describe("lock_timeout")
+	got, ok := r.describe("lock_timeout")
 
+	require.True(t, ok)
 	assert.Equal(t, "lock_timeout varied across this command's connections", got)
 }
 

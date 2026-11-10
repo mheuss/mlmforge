@@ -54,9 +54,8 @@ func TestHandleRootAdded_CompensationRestoresTheVersionBeforeALaterRoot(t *testi
 	assert.Equal(t, int64(2), version)
 }
 
-// replacedAfterRemoval projects E1 placing posUser at version 1, removal
-// removing them at version 2, and E2 placing them again at version 3. It
-// returns E2's row ID.
+// replacedAfterRemoval seeds a store where posUser is placed again after a
+// removal. It returns the later placement's row ID.
 func replacedAfterRemoval(t *testing.T, store TreeStore, removalID string) string {
 	t.Helper()
 	ctx := context.Background()
@@ -132,8 +131,7 @@ func TestHandleNodeRemoved_ARedeliveryAtTheProjectedVersionReachesTheEngine(t *t
 	assert.Empty(t, store.responsors, "store removal writes attempted")
 }
 
-// projectedVersionFailingStore fails the projected-version read and leaves
-// every other method to the embedded store.
+// projectedVersionFailingStore fails the projected-version read.
 type projectedVersionFailingStore struct {
 	*deleteRecordingStore
 	err error

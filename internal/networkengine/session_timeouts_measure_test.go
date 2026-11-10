@@ -245,7 +245,7 @@ func TestMeasureSessionTimeouts(t *testing.T) {
 				args: func() []any {
 					return []any{tree.id, version + 1000, treeTypeUnilevel, snapData}
 				},
-				// The warm Put runs hit a stored row, so the plan puts one there first.
+				// Explain the conflict branch, not the plain insert.
 				prep: putSnapshotSQL,
 				prepArgs: func() []any {
 					return []any{tree.id, version + 999, treeTypeUnilevel, snapData}
@@ -330,13 +330,12 @@ func TestMeasureSessionTimeouts(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, found, "a snapshot was still stored after the last Delete")
 
-	// UndoRootProjection acts once per tree, so it is timed once, cold, on a tree of its own.
 	rootTree, root := testTreeUUID(802), testUserUUID(1)
 	require.NoError(t, store.ProjectInsert(ctx, TreeNodeRow{ID: nextEventUUID(), TreeID: rootTree, UserID: root,
 		SponsorID: &root, Depth: 0, EnrolledAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}, 1))
 	undoStart := time.Now()
 	require.NoError(t, store.UndoRootProjection(ctx, rootTree, root, 1))
-	results = append(results, timing{name: "TreeStore.UndoRootProjection (cold only)", cold: time.Since(undoStart)})
+	results = append(results, timing{name: "TreeStore.UndoRootProjection", cold: time.Since(undoStart)})
 
 	for _, m := range results {
 		warm := make([]string, len(m.warm))

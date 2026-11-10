@@ -1,8 +1,21 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"strings"
 	"sync"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mlmforge/mlmforge/internal/platform"
+)
+
+// Env vars an operator sets to override the session timeouts.
+const (
+	statementTimeoutEnv = "MLMFORGE_TREE_STATEMENT_TIMEOUT"
+	lockTimeoutEnv      = "MLMFORGE_TREE_LOCK_TIMEOUT"
 )
 
 // Default session timeouts, in SHOW format.
@@ -10,6 +23,92 @@ const (
 	defaultStatementTimeout = "30s"
 	defaultLockTimeout      = "9s"
 )
+
+// timeoutSetting names one session setting, its override env var and its default.
+type timeoutSetting struct {
+	name string
+	env  string
+	def  string
+}
+
+var sessionTimeoutSettings = []timeoutSetting{
+	{name: "statement_timeout", env: statementTimeoutEnv, def: defaultStatementTimeout},
+	{name: "lock_timeout", env: lockTimeoutEnv, def: defaultLockTimeout},
+}
+
+// readTimeoutsSQL reads each setting's source and its current value.
+const readTimeoutsSQL = `SELECT name, source, current_setting(name) FROM pg_settings
+WHERE name IN ('statement_timeout', 'lock_timeout')`
+
+// afterConnect resolves both settings on one new connection and records the result.
+func (r *timeoutRecord) afterConnect(ctx context.Context, conn *pgx.Conn) error {
+	rows, err := conn.Query(ctx, readTimeoutsSQL)
+	if err != nil {
+		return fmt.Errorf("read session timeouts on a new tree connection: %w", err)
+	}
+	type current struct{ source, value string }
+	found := map[string]current{}
+	for rows.Next() {
+		var name string
+		var c current
+		if err := rows.Scan(&name, &c.source, &c.value); err != nil {
+			rows.Close()
+			return fmt.Errorf("read session timeouts on a new tree connection: %w", err)
+		}
+		found[name] = c
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read session timeouts on a new tree connection: %w", err)
+	}
+
+	var sets, envNotes []string
+	var args []any
+	plans := make([]timeoutPlan, len(sessionTimeoutSettings))
+	for i, s := range sessionTimeoutSettings {
+		envValue := os.Getenv(s.env)
+		plans[i] = resolveTimeout(found[s.name].source, s.env, envValue, s.def)
+		if plans[i].apply {
+			args = append(args, plans[i].value)
+			sets = append(sets, fmt.Sprintf("set_config('%s', $%d, false)", s.name, len(args)))
+			if plans[i].source == s.env {
+				envNotes = append(envNotes, fmt.Sprintf("%s=%q", s.env, envValue))
+			}
+		}
+	}
+
+	values := []string{found["statement_timeout"].value, found["lock_timeout"].value}
+	if len(sets) > 0 {
+		q := "SELECT " + strings.Join(sets, ", ") +
+			", current_setting('statement_timeout'), current_setting('lock_timeout')"
+		var dest []any
+		for range sets {
+			dest = append(dest, new(string))
+		}
+		dest = append(dest, &values[0], &values[1])
+		if err := conn.QueryRow(ctx, q, args...).Scan(dest...); err != nil {
+			return fmt.Errorf("apply session timeouts on a new tree connection (%s): %w", strings.Join(envNotes, ", "), err)
+		}
+	}
+	for i, s := range sessionTimeoutSettings {
+		r.add(s.name, values[i], plans[i].source)
+	}
+	return nil
+}
+
+// openTreePool opens a pool whose connections resolve their session timeouts on connect.
+func openTreePool(ctx context.Context, dbURL string, rec *timeoutRecord) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(dbURL)
+	if err != nil {
+		return nil, fmt.Errorf("open database pool: %w", platform.PgxConnStringError(err))
+	}
+	cfg.AfterConnect = rec.afterConnect
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("open database pool: %w", platform.PgxConnStringError(err))
+	}
+	return pool, nil
+}
 
 // timeoutPlan is the precedence rule's outcome for one setting.
 type timeoutPlan struct {

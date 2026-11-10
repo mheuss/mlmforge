@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mlmforge/mlmforge/internal/networkengine"
 	"github.com/mlmforge/mlmforge/internal/platform"
 )
@@ -17,6 +16,7 @@ type treeDeps struct {
 	snapshots networkengine.SnapshotStore
 	engine    networkengine.TreeRebuilder
 	locker    networkengine.TreeLocker
+	timeouts  *timeoutRecord
 	release   func() error
 }
 
@@ -66,9 +66,10 @@ type treeRunner func(ctx context.Context, deps *treeDeps) error
 
 // openTreeDeps opens a pool and starts the worker.
 func openTreeDeps(ctx context.Context, dbURL, workerPath string) (*treeDeps, error) {
-	pool, err := pgxpool.New(ctx, dbURL)
+	rec := &timeoutRecord{}
+	pool, err := openTreePool(ctx, dbURL, rec)
 	if err != nil {
-		return nil, fmt.Errorf("open database pool: %w", platform.PgxConnStringError(err))
+		return nil, err
 	}
 	engine, err := startEngine(ctx, dbURL, workerPath, pool)
 	if err != nil {
@@ -80,6 +81,7 @@ func openTreeDeps(ctx context.Context, dbURL, workerPath string) (*treeDeps, err
 		snapshots: networkengine.NewPostgresSnapshotStore(pool),
 		engine:    engine,
 		locker:    networkengine.NewPostgresTreeLocker(dbURL),
+		timeouts:  rec,
 		release:   func() error { return releaseDeps(engine, pool) },
 	}, nil
 }

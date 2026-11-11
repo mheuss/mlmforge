@@ -664,10 +664,15 @@ func testCategoryReads(t *testing.T, newStore func(t *testing.T) EventStore) {
 		appendTo(t, s, "order-def", "00000000-0000-0000-0000-000000000003")
 
 		got, err := s.ReadCategory(ctx, "order", 0, 0)
+		require.NoError(t, err)
+		between, err := s.ReadCategory(ctx, "autoship", 0, 0)
 
 		require.NoError(t, err)
-		assert.Equal(t, []string{"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000003"}, ids(got))
+		require.Equal(t, []string{"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000003"}, ids(got))
 		requireIncreasing(t, got)
+		require.Len(t, between, 1)
+		assert.Greater(t, between[0].GlobalPosition, got[0].GlobalPosition)
+		assert.Less(t, between[0].GlobalPosition, got[1].GlobalPosition)
 	})
 
 	t.Run("append order wins over stream and ID order", func(t *testing.T) {
@@ -705,8 +710,12 @@ func testCategoryReads(t *testing.T, newStore func(t *testing.T) EventStore) {
 
 	t.Run("an empty category returns none", func(t *testing.T) {
 		s := newStore(t)
-		appendTo(t, s, "autoship-xyz", "00000000-0000-0000-0000-000000000001")
 
+		fresh, err := s.ReadCategory(ctx, "nonexistent", 0, 0)
+		require.NoError(t, err)
+		assert.Empty(t, fresh)
+
+		appendTo(t, s, "autoship-xyz", "00000000-0000-0000-0000-000000000001")
 		got, err := s.ReadCategory(ctx, "nonexistent", 0, 0)
 
 		require.NoError(t, err)
@@ -910,17 +919,24 @@ func testConcurrentUse(t *testing.T, newStore func(t *testing.T) EventStore) {
 	}()
 	wg.Wait()
 
-	total := 0
+	var streamIDs []string
 	for w := range numWriters {
 		got, err := s.ReadStream(ctx, fmt.Sprintf("stream-%d", w), 1, 0)
 		require.NoError(t, err)
 		assert.Len(t, got, eventsPerWrite, "stream-%d", w)
-		total += len(got)
+		for _, e := range got {
+			streamIDs = append(streamIDs, e.ID)
+		}
 	}
-	assert.Equal(t, numWriters*eventsPerWrite, total)
+	assert.Len(t, streamIDs, numWriters*eventsPerWrite)
 	all, err := s.ReadCategory(ctx, "stream", 0, 0)
 	require.NoError(t, err)
 	assert.Len(t, all, numWriters*eventsPerWrite)
+	categoryIDs := make([]string, len(all))
+	for i, e := range all {
+		categoryIDs[i] = e.ID
+	}
+	assert.ElementsMatch(t, streamIDs, categoryIDs)
 }
 
 func TestMemoryEventStore_ConcurrentUse(t *testing.T) {

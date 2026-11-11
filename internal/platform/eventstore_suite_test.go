@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -356,4 +358,678 @@ func TestMemoryEventStore_EventIDForms(t *testing.T) {
 
 func TestPostgresEventStore_EventIDForms(t *testing.T) {
 	testEventIDForms(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}
+
+// testAppendAndRead checks what an EventStore stores on append and returns on read.
+func testAppendAndRead(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+
+	t.Run("one event reads back with the fields the store assigns", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-abc", 0, []NewEvent{{
+			ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCompleted",
+			Payload: json.RawMessage(`{"order_id":"abc"}`),
+		}}))
+
+		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, "00000000-0000-0000-0000-000000000001", got[0].ID)
+		assert.Equal(t, "order-abc", got[0].Stream)
+		assert.Equal(t, "OrderCompleted", got[0].Type)
+		assert.Equal(t, int64(1), got[0].Version)
+		assert.Positive(t, got[0].GlobalPosition)
+		assert.JSONEq(t, `{"order_id":"abc"}`, string(got[0].Payload))
+		assert.False(t, got[0].Timestamp.IsZero())
+	})
+
+	t.Run("several events in one append get consecutive versions and increasing positions", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-abc", 0, []NewEvent{
+			{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+			{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
+		}))
+
+		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+
+		require.NoError(t, err)
+		require.Len(t, got, 2)
+		assert.Equal(t, int64(1), got[0].Version)
+		assert.Equal(t, int64(2), got[1].Version)
+		assert.Positive(t, got[0].GlobalPosition)
+		assert.Greater(t, got[1].GlobalPosition, got[0].GlobalPosition)
+	})
+
+	t.Run("metadata reads back", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-abc", 0, []NewEvent{{
+			ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCompleted",
+			Payload: json.RawMessage(`{}`), Metadata: json.RawMessage(`{"actor":"user-123"}`),
+		}}))
+
+		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.JSONEq(t, `{"actor":"user-123"}`, string(got[0].Metadata))
+	})
+
+	t.Run("nil metadata reads back as nil", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-abc", 0, []NewEvent{{
+			ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCompleted", Payload: json.RawMessage(`{}`),
+		}}))
+
+		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Nil(t, got[0].Metadata)
+	})
+}
+
+func TestMemoryEventStore_AppendAndRead(t *testing.T) {
+	testAppendAndRead(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_AppendAndRead(t *testing.T) {
+	testAppendAndRead(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}
+
+// testOptimisticConcurrency checks an EventStore's expected-version rules.
+func testOptimisticConcurrency(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	event := func(id, typ string) []NewEvent {
+		return []NewEvent{{ID: id, Type: typ, Payload: json.RawMessage(`{}`)}}
+	}
+
+	t.Run("a stale expected version is refused with its versions", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-abc", 0, event("00000000-0000-0000-0000-000000000001", "OrderCreated")))
+
+		err := s.Append(ctx, "order-abc", 0, event("00000000-0000-0000-0000-000000000002", "OrderCompleted"))
+
+		var concErr *ConcurrencyError
+		require.ErrorAs(t, err, &concErr)
+		assert.Equal(t, "order-abc", concErr.Stream)
+		assert.Equal(t, int64(0), concErr.ExpectedVersion)
+		assert.Equal(t, int64(1), concErr.ActualVersion)
+	})
+
+	t.Run("a refused append leaves the stream unchanged", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-abc", 0, event("00000000-0000-0000-0000-000000000001", "OrderCreated")))
+		var concErr *ConcurrencyError
+		require.ErrorAs(t, s.Append(ctx, "order-abc", 0, event("00000000-0000-0000-0000-000000000002", "OrderCompleted")), &concErr)
+
+		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, "00000000-0000-0000-0000-000000000001", got[0].ID)
+	})
+
+	t.Run("expected version 0 creates a new stream", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-new", 0, event("00000000-0000-0000-0000-000000000001", "OrderCreated")))
+
+		got, err := s.ReadStream(ctx, "order-new", 1, 0)
+
+		require.NoError(t, err)
+		assert.Len(t, got, 1)
+	})
+
+	t.Run("the current version as expected version appends", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-abc", 0, event("00000000-0000-0000-0000-000000000001", "OrderCreated")))
+		require.NoError(t, s.Append(ctx, "order-abc", 1, event("00000000-0000-0000-0000-000000000002", "OrderCompleted")))
+
+		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+
+		require.NoError(t, err)
+		assert.Len(t, got, 2)
+	})
+
+	t.Run("expected version -1 skips the check", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-abc", 0, event("00000000-0000-0000-0000-000000000001", "OrderCreated")))
+		require.NoError(t, s.Append(ctx, "order-abc", -1, event("00000000-0000-0000-0000-000000000002", "OrderCompleted")))
+
+		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+
+		require.NoError(t, err)
+		assert.Len(t, got, 2)
+	})
+
+	t.Run("versions count per stream", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-abc", 0, []NewEvent{
+			{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+			{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
+		}))
+		require.NoError(t, s.Append(ctx, "order-def", 0, event("00000000-0000-0000-0000-000000000003", "OrderCreated")))
+
+		abc, err := s.ReadStream(ctx, "order-abc", 1, 0)
+		require.NoError(t, err)
+		def, err := s.ReadStream(ctx, "order-def", 1, 0)
+		require.NoError(t, err)
+
+		require.Len(t, abc, 2)
+		assert.Equal(t, int64(1), abc[0].Version)
+		assert.Equal(t, int64(2), abc[1].Version)
+		require.Len(t, def, 1)
+		assert.Equal(t, int64(1), def[0].Version)
+	})
+}
+
+func TestMemoryEventStore_OptimisticConcurrency(t *testing.T) {
+	testOptimisticConcurrency(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_OptimisticConcurrency(t *testing.T) {
+	testOptimisticConcurrency(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}
+
+// testReadStream checks what an EventStore's ReadStream returns.
+func testReadStream(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	appendN := func(t *testing.T, s EventStore, n int) {
+		t.Helper()
+		events := make([]NewEvent, n)
+		for i := range events {
+			events[i] = NewEvent{
+				ID:   fmt.Sprintf("00000000-0000-0000-0000-%012d", i+1),
+				Type: "OrderStep", Payload: json.RawMessage(`{}`),
+			}
+		}
+		require.NoError(t, s.Append(ctx, "order-abc", 0, events))
+	}
+	ids := func(events []Event) []string {
+		out := make([]string, len(events))
+		for i, e := range events {
+			out[i] = e.ID
+		}
+		return out
+	}
+
+	t.Run("a stream with no events returns none", func(t *testing.T) {
+		s := newStore(t)
+
+		got, err := s.ReadStream(ctx, "nonexistent-stream", 1, 0)
+
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("reading from a version returns that version onward", func(t *testing.T) {
+		s := newStore(t)
+		appendN(t, s, 3)
+
+		got, err := s.ReadStream(ctx, "order-abc", 2, 0)
+
+		require.NoError(t, err)
+		require.Len(t, got, 2)
+		assert.Equal(t, int64(2), got[0].Version)
+		assert.Equal(t, int64(3), got[1].Version)
+	})
+
+	t.Run("reading from version 0 reads from version 1", func(t *testing.T) {
+		s := newStore(t)
+		appendN(t, s, 2)
+
+		got, err := s.ReadStream(ctx, "order-abc", 0, 0)
+
+		require.NoError(t, err)
+		require.Len(t, got, 2)
+		assert.Equal(t, int64(1), got[0].Version)
+		assert.Equal(t, int64(2), got[1].Version)
+	})
+
+	t.Run("a limit returns the first events in version order", func(t *testing.T) {
+		s := newStore(t)
+		appendN(t, s, 5)
+
+		got, err := s.ReadStream(ctx, "order-abc", 1, 3)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{
+			"00000000-0000-0000-0000-000000000001",
+			"00000000-0000-0000-0000-000000000002",
+			"00000000-0000-0000-0000-000000000003",
+		}, ids(got))
+	})
+
+	t.Run("an invalid stream name is refused", func(t *testing.T) {
+		s := newStore(t)
+
+		got, err := s.ReadStream(ctx, "nohyphen", 1, 0)
+
+		require.ErrorIs(t, err, ErrInvalidStreamName)
+		assert.Nil(t, got)
+	})
+}
+
+func TestMemoryEventStore_ReadStream(t *testing.T) {
+	testReadStream(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_ReadStream(t *testing.T) {
+	testReadStream(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}
+
+// testCategoryReads checks what an EventStore's ReadCategory returns.
+func testCategoryReads(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	appendTo := func(t *testing.T, s EventStore, stream, id string) {
+		t.Helper()
+		require.NoError(t, s.Append(ctx, stream, 0, []NewEvent{{
+			ID: id, Type: "Created", Payload: json.RawMessage(`{}`),
+		}}))
+	}
+	ids := func(events []Event) []string {
+		out := make([]string, len(events))
+		for i, e := range events {
+			out[i] = e.ID
+		}
+		return out
+	}
+	requireIncreasing := func(t *testing.T, events []Event) {
+		t.Helper()
+		for i := range events {
+			require.Positive(t, events[i].GlobalPosition, "event %d", i)
+			if i > 0 {
+				require.Greater(t, events[i].GlobalPosition, events[i-1].GlobalPosition, "event %d", i)
+			}
+		}
+	}
+
+	t.Run("a category returns its streams' events in append order", func(t *testing.T) {
+		s := newStore(t)
+		appendTo(t, s, "order-abc", "00000000-0000-0000-0000-000000000001")
+		appendTo(t, s, "order-def", "00000000-0000-0000-0000-000000000002")
+		appendTo(t, s, "autoship-xyz", "00000000-0000-0000-0000-000000000003")
+
+		got, err := s.ReadCategory(ctx, "order", 0, 0)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"}, ids(got))
+		requireIncreasing(t, got)
+	})
+
+	t.Run("events from other categories between them keep the order", func(t *testing.T) {
+		s := newStore(t)
+		appendTo(t, s, "order-abc", "00000000-0000-0000-0000-000000000001")
+		appendTo(t, s, "autoship-xyz", "00000000-0000-0000-0000-000000000002")
+		appendTo(t, s, "order-def", "00000000-0000-0000-0000-000000000003")
+
+		got, err := s.ReadCategory(ctx, "order", 0, 0)
+		require.NoError(t, err)
+		between, err := s.ReadCategory(ctx, "autoship", 0, 0)
+
+		require.NoError(t, err)
+		require.Equal(t, []string{"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000003"}, ids(got))
+		requireIncreasing(t, got)
+		require.Len(t, between, 1)
+		assert.Greater(t, between[0].GlobalPosition, got[0].GlobalPosition)
+		assert.Less(t, between[0].GlobalPosition, got[1].GlobalPosition)
+	})
+
+	t.Run("append order wins over stream and ID order", func(t *testing.T) {
+		s := newStore(t)
+		appendTo(t, s, "order-zzz", "00000000-0000-0000-0000-000000000009")
+		appendTo(t, s, "order-aaa", "00000000-0000-0000-0000-000000000001")
+		require.NoError(t, s.Append(ctx, "order-zzz", 1, []NewEvent{{
+			ID: "00000000-0000-0000-0000-000000000005", Type: "Created", Payload: json.RawMessage(`{}`),
+		}}))
+
+		got, err := s.ReadCategory(ctx, "order", 0, 0)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{
+			"00000000-0000-0000-0000-000000000009",
+			"00000000-0000-0000-0000-000000000001",
+			"00000000-0000-0000-0000-000000000005",
+		}, ids(got))
+		requireIncreasing(t, got)
+	})
+
+	t.Run("afterPosition returns only later events", func(t *testing.T) {
+		s := newStore(t)
+		appendTo(t, s, "order-abc", "00000000-0000-0000-0000-000000000001")
+		appendTo(t, s, "order-def", "00000000-0000-0000-0000-000000000002")
+		all, err := s.ReadCategory(ctx, "order", 0, 0)
+		require.NoError(t, err)
+		require.Len(t, all, 2)
+
+		got, err := s.ReadCategory(ctx, "order", all[0].GlobalPosition, 0)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{"00000000-0000-0000-0000-000000000002"}, ids(got))
+	})
+
+	t.Run("an empty category returns none", func(t *testing.T) {
+		s := newStore(t)
+
+		fresh, err := s.ReadCategory(ctx, "nonexistent", 0, 0)
+		require.NoError(t, err)
+		assert.Empty(t, fresh)
+
+		appendTo(t, s, "autoship-xyz", "00000000-0000-0000-0000-000000000001")
+		got, err := s.ReadCategory(ctx, "nonexistent", 0, 0)
+
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("the category is the part before the first hyphen", func(t *testing.T) {
+		s := newStore(t)
+		appendTo(t, s, "commission-period-2026-01", "00000000-0000-0000-0000-000000000001")
+		appendTo(t, s, "order-abc", "00000000-0000-0000-0000-000000000002")
+		appendTo(t, s, "commissionfee-1", "00000000-0000-0000-0000-000000000003")
+
+		got, err := s.ReadCategory(ctx, "commission", 0, 0)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{"00000000-0000-0000-0000-000000000001"}, ids(got))
+
+		hyphenated, err := s.ReadCategory(ctx, "commission-period", 0, 0)
+
+		require.NoError(t, err)
+		assert.Empty(t, hyphenated)
+	})
+
+	t.Run("a limit returns the first events in append order", func(t *testing.T) {
+		s := newStore(t)
+		appendTo(t, s, "autoship-xyz", "00000000-0000-0000-0000-000000000008")
+		appendTo(t, s, "order-zzz", "00000000-0000-0000-0000-000000000009")
+		appendTo(t, s, "order-aaa", "00000000-0000-0000-0000-000000000001")
+		require.NoError(t, s.Append(ctx, "order-zzz", 1, []NewEvent{{
+			ID: "00000000-0000-0000-0000-000000000005", Type: "Created", Payload: json.RawMessage(`{}`),
+		}}))
+		appendTo(t, s, "order-mmm", "00000000-0000-0000-0000-000000000003")
+
+		got, err := s.ReadCategory(ctx, "order", 0, 3)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{
+			"00000000-0000-0000-0000-000000000009",
+			"00000000-0000-0000-0000-000000000001",
+			"00000000-0000-0000-0000-000000000005",
+		}, ids(got))
+	})
+
+	t.Run("a refused append between two appends keeps the order and afterPosition", func(t *testing.T) {
+		s := newStore(t)
+		appendTo(t, s, "order-abc", "00000000-0000-0000-0000-000000000001")
+		refused := s.Append(ctx, "order-def", 0, []NewEvent{{
+			ID: "00000000-0000-0000-0000-000000000001", Type: "Created", Payload: json.RawMessage(`{}`),
+		}})
+		require.Error(t, refused)
+		var concErr *ConcurrencyError
+		require.False(t, errors.As(refused, &concErr), "expected a duplicate ID refusal, got %v", refused)
+		appendTo(t, s, "order-ghi", "00000000-0000-0000-0000-000000000002")
+
+		got, err := s.ReadCategory(ctx, "order", 0, 0)
+		require.NoError(t, err)
+		require.Equal(t, []string{"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"}, ids(got))
+		requireIncreasing(t, got)
+		t.Logf("positions after a refused append: %d, %d", got[0].GlobalPosition, got[1].GlobalPosition)
+
+		after, err := s.ReadCategory(ctx, "order", got[0].GlobalPosition, 0)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{"00000000-0000-0000-0000-000000000002"}, ids(after))
+	})
+}
+
+func TestMemoryEventStore_CategoryReads(t *testing.T) {
+	testCategoryReads(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_CategoryReads(t *testing.T) {
+	testCategoryReads(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}
+
+// testAppendRefusals checks the inputs an EventStore's Append refuses before writing.
+func testAppendRefusals(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	valid := []NewEvent{{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)}}
+
+	t.Run("the unedited batch is accepted", func(t *testing.T) {
+		s := newStore(t)
+
+		require.NoError(t, s.Append(ctx, "order-abc", 0, valid))
+
+		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, "00000000-0000-0000-0000-000000000001", got[0].ID)
+	})
+
+	for _, stream := range []string{"", "singleton", "-abc", "order-"} {
+		t.Run(fmt.Sprintf("stream name %q is refused", stream), func(t *testing.T) {
+			s := newStore(t)
+
+			err := s.Append(ctx, stream, 0, valid)
+
+			require.ErrorIs(t, err, ErrInvalidStreamName)
+		})
+	}
+
+	t.Run("an empty batch is refused", func(t *testing.T) {
+		s := newStore(t)
+
+		require.ErrorIs(t, s.Append(ctx, "order-abc", 0, []NewEvent{}), ErrEmptyAppend)
+	})
+
+	t.Run("a nil batch is refused", func(t *testing.T) {
+		s := newStore(t)
+
+		require.ErrorIs(t, s.Append(ctx, "order-abc", 0, nil), ErrEmptyAppend)
+	})
+
+	for _, tc := range []struct {
+		name  string
+		event NewEvent
+		want  string
+	}{
+		{"an empty ID", NewEvent{ID: "", Type: "OrderCreated", Payload: json.RawMessage(`{}`)}, "empty ID"},
+		{"an empty Type", NewEvent{ID: "00000000-0000-0000-0000-000000000001", Type: "", Payload: json.RawMessage(`{}`)}, "empty Type"},
+		{"a nil Payload", NewEvent{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated"}, "nil Payload"},
+	} {
+		t.Run(tc.name+" is refused", func(t *testing.T) {
+			s := newStore(t)
+
+			err := s.Append(ctx, "order-abc", 0, []NewEvent{tc.event})
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+			got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+			require.NoError(t, err)
+			assert.Empty(t, got)
+		})
+	}
+
+	t.Run("a later event's refusal names it and writes nothing", func(t *testing.T) {
+		s := newStore(t)
+
+		err := s.Append(ctx, "order-abc", 0, []NewEvent{
+			{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+			{ID: "00000000-0000-0000-0000-000000000002", Type: "", Payload: json.RawMessage(`{}`)},
+		})
+
+		require.ErrorContains(t, err, "index 1 has empty Type")
+		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+}
+
+func TestMemoryEventStore_AppendRefusals(t *testing.T) {
+	testAppendRefusals(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_AppendRefusals(t *testing.T) {
+	testAppendRefusals(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}
+
+// testConcurrentUse checks that concurrent appends and reads lose no events.
+func testConcurrentUse(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	const (
+		numWriters     = 10
+		eventsPerWrite = 5
+	)
+	s := newStore(t)
+	submitted := make([][]string, numWriters)
+	var allSubmitted []string
+	for w := range numWriters {
+		for i := range eventsPerWrite {
+			id := fmt.Sprintf("00000000-0000-0000-%04d-%012d", w, i)
+			submitted[w] = append(submitted[w], id)
+			allSubmitted = append(allSubmitted, id)
+		}
+	}
+	ids := func(events []Event) []string {
+		out := make([]string, len(events))
+		for i, e := range events {
+			out[i] = e.ID
+		}
+		return out
+	}
+
+	const half = 2
+	reachedHalf := make(chan struct{}, numWriters)
+	release := make(chan struct{})
+	releaseWriters := sync.OnceFunc(func() { close(release) })
+	done := make(chan struct{})
+	stopReaders := sync.OnceFunc(func() { close(done) })
+	var writers, readers sync.WaitGroup
+	// A failed require must still release and join every goroutine, or they
+	// block on release or call t after the test returns.
+	defer func() {
+		releaseWriters()
+		writers.Wait()
+		stopReaders()
+		readers.Wait()
+	}()
+
+	for w := range numWriters {
+		writers.Add(1)
+		go func() {
+			defer writers.Done()
+			signalled := false
+			defer func() {
+				if !signalled {
+					reachedHalf <- struct{}{}
+				}
+			}()
+			stream := fmt.Sprintf("stream-%d", w)
+			for i, id := range submitted[w] {
+				if i == half {
+					signalled = true
+					reachedHalf <- struct{}{}
+					<-release
+				}
+				if !assert.NoError(t, s.Append(ctx, stream, -1, []NewEvent{{
+					ID: id, Type: "TestEvent", Payload: json.RawMessage(`{}`),
+				}})) {
+					return
+				}
+
+				own, err := s.ReadStream(ctx, stream, 1, 0)
+				assert.NoError(t, err)
+				assert.Equal(t, submitted[w][:i+1], ids(own), "stream-%d after append %d", w, i)
+				category, err := s.ReadCategory(ctx, "stream", 0, 0)
+				assert.NoError(t, err)
+				assert.Contains(t, ids(category), id, "stream-%d after append %d", w, i)
+			}
+		}()
+	}
+
+	for range numWriters {
+		<-reachedHalf
+	}
+	var halfSubmitted []string
+	for w := range numWriters {
+		got, err := s.ReadStream(ctx, fmt.Sprintf("stream-%d", w), 1, 0)
+		require.NoError(t, err)
+		assert.Equal(t, submitted[w][:half], ids(got), "stream-%d at the halfway point", w)
+		halfSubmitted = append(halfSubmitted, submitted[w][:half]...)
+	}
+	midway, err := s.ReadCategory(ctx, "stream", 0, 0)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, halfSubmitted, ids(midway), "category at the halfway point")
+
+	for r := range numWriters {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			stream := fmt.Sprintf("stream-%d", r)
+			seen := half
+			for n := 1; ; n++ {
+				got, err := s.ReadStream(ctx, stream, 1, 0)
+				assert.NoError(t, err)
+				assert.GreaterOrEqual(t, len(got), seen, "stream-%d shrank between reads", r)
+				seen = len(got)
+				if n < eventsPerWrite {
+					continue
+				}
+				select {
+				case <-done:
+					return
+				default:
+				}
+			}
+		}()
+	}
+	readers.Add(1)
+	go func() {
+		defer readers.Done()
+		seen := numWriters * half
+		for n := 1; ; n++ {
+			got, err := s.ReadCategory(ctx, "stream", 0, 0)
+			assert.NoError(t, err)
+			assert.GreaterOrEqual(t, len(got), seen, "category shrank between reads")
+			seen = len(got)
+			if n < numWriters*eventsPerWrite {
+				continue
+			}
+			select {
+			case <-done:
+				return
+			default:
+			}
+		}
+	}()
+	releaseWriters()
+	writers.Wait()
+	stopReaders()
+	readers.Wait()
+
+	streamOf := make(map[string]string, len(allSubmitted))
+	for w := range numWriters {
+		stream := fmt.Sprintf("stream-%d", w)
+		got, err := s.ReadStream(ctx, stream, 1, 0)
+		require.NoError(t, err)
+		assert.Equal(t, submitted[w], ids(got), "stream-%d", w)
+		for _, id := range submitted[w] {
+			streamOf[id] = stream
+		}
+	}
+	all, err := s.ReadCategory(ctx, "stream", 0, 0)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, allSubmitted, ids(all))
+	for _, e := range all {
+		assert.Equal(t, streamOf[e.ID], e.Stream, "event %s", e.ID)
+	}
+}
+
+func TestMemoryEventStore_ConcurrentUse(t *testing.T) {
+	testConcurrentUse(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_ConcurrentUse(t *testing.T) {
+	testConcurrentUse(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
 }

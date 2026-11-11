@@ -780,3 +780,84 @@ func TestMemoryEventStore_CategoryReads(t *testing.T) {
 func TestPostgresEventStore_CategoryReads(t *testing.T) {
 	testCategoryReads(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
 }
+
+// testAppendRefusals checks the inputs an EventStore's Append refuses before writing.
+func testAppendRefusals(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	valid := []NewEvent{{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)}}
+
+	t.Run("the unedited batch is accepted", func(t *testing.T) {
+		s := newStore(t)
+
+		require.NoError(t, s.Append(ctx, "order-abc", 0, valid))
+
+		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, "00000000-0000-0000-0000-000000000001", got[0].ID)
+	})
+
+	for _, stream := range []string{"", "singleton", "-abc", "order-"} {
+		t.Run(fmt.Sprintf("stream name %q is refused", stream), func(t *testing.T) {
+			s := newStore(t)
+
+			err := s.Append(ctx, stream, 0, valid)
+
+			require.ErrorIs(t, err, ErrInvalidStreamName)
+		})
+	}
+
+	t.Run("an empty batch is refused", func(t *testing.T) {
+		s := newStore(t)
+
+		require.ErrorIs(t, s.Append(ctx, "order-abc", 0, []NewEvent{}), ErrEmptyAppend)
+	})
+
+	t.Run("a nil batch is refused", func(t *testing.T) {
+		s := newStore(t)
+
+		require.ErrorIs(t, s.Append(ctx, "order-abc", 0, nil), ErrEmptyAppend)
+	})
+
+	for _, tc := range []struct {
+		name  string
+		event NewEvent
+		want  string
+	}{
+		{"an empty ID", NewEvent{ID: "", Type: "OrderCreated", Payload: json.RawMessage(`{}`)}, "empty ID"},
+		{"an empty Type", NewEvent{ID: "00000000-0000-0000-0000-000000000001", Type: "", Payload: json.RawMessage(`{}`)}, "empty Type"},
+		{"a nil Payload", NewEvent{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated"}, "nil Payload"},
+	} {
+		t.Run(tc.name+" is refused", func(t *testing.T) {
+			s := newStore(t)
+
+			err := s.Append(ctx, "order-abc", 0, []NewEvent{tc.event})
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
+
+	t.Run("a later event's refusal names it and writes nothing", func(t *testing.T) {
+		s := newStore(t)
+
+		err := s.Append(ctx, "order-abc", 0, []NewEvent{
+			{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+			{ID: "00000000-0000-0000-0000-000000000002", Type: "", Payload: json.RawMessage(`{}`)},
+		})
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "index 1")
+		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+}
+
+func TestMemoryEventStore_AppendRefusals(t *testing.T) {
+	testAppendRefusals(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_AppendRefusals(t *testing.T) {
+	testAppendRefusals(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}

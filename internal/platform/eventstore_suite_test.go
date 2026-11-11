@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -862,4 +863,70 @@ func TestMemoryEventStore_AppendRefusals(t *testing.T) {
 
 func TestPostgresEventStore_AppendRefusals(t *testing.T) {
 	testAppendRefusals(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}
+
+// testConcurrentUse checks that concurrent appends and reads lose no events.
+func testConcurrentUse(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	const (
+		numWriters     = 10
+		eventsPerWrite = 5
+	)
+	s := newStore(t)
+
+	var wg sync.WaitGroup
+	for w := range numWriters {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			stream := fmt.Sprintf("stream-%d", w)
+			for i := range eventsPerWrite {
+				err := s.Append(ctx, stream, -1, []NewEvent{{
+					ID:   fmt.Sprintf("00000000-0000-0000-%04d-%012d", w, i),
+					Type: "TestEvent", Payload: json.RawMessage(`{}`),
+				}})
+				assert.NoError(t, err)
+			}
+		}()
+	}
+	for r := range numWriters {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			stream := fmt.Sprintf("stream-%d", r)
+			for range eventsPerWrite {
+				_, err := s.ReadStream(ctx, stream, 1, 0)
+				assert.NoError(t, err)
+			}
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range numWriters * eventsPerWrite {
+			_, err := s.ReadCategory(ctx, "stream", 0, 0)
+			assert.NoError(t, err)
+		}
+	}()
+	wg.Wait()
+
+	total := 0
+	for w := range numWriters {
+		got, err := s.ReadStream(ctx, fmt.Sprintf("stream-%d", w), 1, 0)
+		require.NoError(t, err)
+		assert.Len(t, got, eventsPerWrite, "stream-%d", w)
+		total += len(got)
+	}
+	assert.Equal(t, numWriters*eventsPerWrite, total)
+	all, err := s.ReadCategory(ctx, "stream", 0, 0)
+	require.NoError(t, err)
+	assert.Len(t, all, numWriters*eventsPerWrite)
+}
+
+func TestMemoryEventStore_ConcurrentUse(t *testing.T) {
+	testConcurrentUse(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_ConcurrentUse(t *testing.T) {
+	testConcurrentUse(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
 }

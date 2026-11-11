@@ -575,3 +575,37 @@ the first four new tests for HEU-890's `nextTarget` did. Copy the base commit
 outside the worktree, put the new test file in it, and run it. Then put back
 only the parts of the change the test is not about, and run it again. The test
 that pins the change is the one that fails only there.
+
+## An ordering fixture whose orders agree tests none of them
+
+2026-11-11.
+
+A test that checks results come back in append order passes on a store that
+sorts by name or by ID, if the fixture appends in name order with IDs
+ascending. The three orders are one sequence, so the test cannot tell them
+apart.
+
+A fixture for "returns in append order" appends in an order that differs from
+every other sortable key. Write one record twice, with another in between.
+Put a record the query should exclude first, so a limit applied before the
+filter fails too. Each ordered query path gets its own such fixture. A path
+that only runs with a limit is a separate path.
+
+## Relaxing an absolute assertion keeps the relation it encoded
+
+2026-11-11.
+
+An assertion on exact values often says more than the values. Two exact
+positions with a gap between them, around a record from another group, also
+say that record took the position in the gap. That means positions count
+across groups. Replace the values
+with "positive and increasing" and that property goes unchecked. A store that
+numbers each group separately then passes.
+
+When an absolute value is ruled out, write down every relation the old values
+implied. Keep each one as a relative check. A between-ness check, where the
+other record's position is above the first and below the second, holds even
+when the sequence has gaps.
+
+A count after concurrent writes has the same blind spot. One record repeated
+in place of a missing one keeps the count. Compare the sets of IDs instead.

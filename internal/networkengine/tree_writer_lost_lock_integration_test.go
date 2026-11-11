@@ -137,7 +137,7 @@ func (e *parkedRemovalEngine) RemoveNode(ctx context.Context, structure, userID 
 	return moved, err
 }
 
-func TestTreeWriter_ACatchUpBehindALateProjectionAppendsNothing(t *testing.T) {
+func TestTreeWriter_ACatchUpBehindALateProjectionOfTheSameEventConvergesAndAppends(t *testing.T) {
 	it := newWriterIntegration(t)
 	ctx := context.Background()
 	tree, root, a, b, c := testTreeUUID(310), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4)
@@ -170,24 +170,26 @@ func TestTreeWriter_ACatchUpBehindALateProjectionAppendsNothing(t *testing.T) {
 	parked.open()
 	got := receive(t, second, 30*time.Second)
 
-	assert.Equal(t, map[string]string{root: root, a: root, c: a}, activeSponsors(t, it.store, tree))
-	assert.NotEmpty(t, first.EventID, "the first writer reported no appended event")
+	require.NoError(t, got.err)
+	assert.Equal(t, map[string]string{root: root, c: root}, activeSponsors(t, it.store, tree))
 	assert.Equal(t, int64(5), first.Version)
 	assert.NoError(t, first.ProjectionErr)
 	assert.ErrorContains(t, first.ReleaseErr, "the pg_advisory_unlock query for tree "+tree+" failed")
-	assert.Empty(t, got.res.EventID, "the second writer reported an appended event")
-	assert.Nil(t, got.res.CaughtUp, "the second writer reported a caught-up event")
+	require.NotNil(t, got.res.CaughtUp, "the second writer reported no caught-up event")
+	assert.Equal(t, first.EventID, got.res.CaughtUp.EventID)
+	assert.Equal(t, int64(6), got.res.Version)
+	assert.NoError(t, got.res.ProjectionErr)
 	assert.NoError(t, got.res.ReleaseErr)
 	stored, err := it.events.ReadStream(ctx, TreeStreamName(tree), 1, 0)
 	require.NoError(t, err)
-	if assert.Len(t, stored, 5) {
+	if assert.Len(t, stored, 6) {
 		assert.Equal(t, first.EventID, stored[4].ID)
+		assert.Equal(t, got.res.EventID, stored[5].ID)
 	}
-	var catchUp *CatchUpFailedError
-	if assert.ErrorAs(t, got.err, &catchUp) {
-		assert.Equal(t, first.EventID, catchUp.EventID)
-	}
-	assert.ErrorContains(t, got.err, "tombstoning removed users ["+b+"] in tree "+tree+" matched 0 of 1 active rows")
+	projected, found, err := it.store.ProjectedVersion(ctx, tree)
+	require.NoError(t, err)
+	assert.True(t, found, "the tree has no projection row")
+	assert.Equal(t, int64(6), projected)
 }
 
 // TestTreeWriter_APlacementProjectedAfterItsLockWasLostIsRefused pins the
@@ -376,7 +378,7 @@ func TestTreeWriter_APlacementAfterALockLostBeforeItsAppendLeavesTheTreeWritable
 	assert.NoError(t, next.ProjectionErr)
 }
 
-func TestTreeWriter_ARemovalProjectedAtTheVersionAnotherWriterReachedReportsWhatItObserved(t *testing.T) {
+func TestTreeWriter_ARemovalProjectedAtTheVersionAnotherWriterReachedConverges(t *testing.T) {
 	it := newWriterIntegration(t)
 	ctx := context.Background()
 	tree, root, a, b, c := testTreeUUID(315), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4)
@@ -396,10 +398,8 @@ func TestTreeWriter_ARemovalProjectedAtTheVersionAnotherWriterReachedReportsWhat
 	assert.Equal(t, first.EventID, load.CaughtUp.EventID)
 	assert.Equal(t, &ProjectionObservation{Version: 5, Found: true}, load.ProjectedAfter)
 	assert.Equal(t, int64(5), first.Version)
-	var refused *ProjectionRefusedError
-	assert.False(t, errors.As(first.ProjectionErr, &refused), "the first writer's projection returned %v", first.ProjectionErr)
-	assert.ErrorContains(t, first.ProjectionErr, "tombstoning removed users ["+b+"] in tree "+tree+" matched 0 of 1 active rows")
-	assert.Equal(t, &ProjectionObservation{Version: 5, Found: true}, first.Observed)
+	assert.NoError(t, first.ProjectionErr)
+	assert.Nil(t, first.Observed, "the first writer re-read the projected version after a projection that returned no error")
 	assert.Equal(t, map[string]string{root: root, a: root, c: a}, activeSponsors(t, it.store, tree))
 }
 

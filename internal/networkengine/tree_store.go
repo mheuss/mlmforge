@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -117,6 +118,25 @@ func checkEventVersion(treeID string, eventVersion int64) error {
 		return fmt.Errorf("tree %s was given event version %d, below 1; nothing was written", treeID, eventVersion)
 	}
 	return nil
+}
+
+// stampsCoverExactly reports whether the users on stamped are users, each once,
+// compared by uuid value.
+func stampsCoverExactly(stamped []TreeNodeRow, users []string) bool {
+	if len(stamped) != len(users) {
+		return false
+	}
+	got := make([]string, len(stamped))
+	for i, row := range stamped {
+		got[i] = uuidKey(row.UserID)
+	}
+	want := make([]string, len(users))
+	for i, u := range users {
+		want[i] = uuidKey(u)
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	return slices.Equal(got, want)
 }
 
 // The conditions an insert can be refused for, and one the consumer raises

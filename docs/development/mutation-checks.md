@@ -65,6 +65,11 @@ mise exec -- go build ./... || { echo BUILD_FAILED; return; }
 Neuter a branch with `&& false` rather than deleting it, so the variables stay
 used.
 
+To replace a whole function's result, put the mutation as an early `return` at
+the top of the body. The code after it becomes unreachable, and that compiles.
+Deleting the body instead can orphan an import, and the build fails. That
+failure reads as a harness failure, not as a caught mutation.
+
 `go build` passing is not enough. `go test` also runs part of `go vet`,
 including its printf check. Drop an argument from a `Sprintf` but keep its
 verb, and `go build` exits 0 while `go test` reports `[build failed]` with no

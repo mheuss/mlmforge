@@ -120,8 +120,8 @@ func checkEventVersion(treeID string, eventVersion int64) error {
 	return nil
 }
 
-// stampsCoverExactly reports whether the users on stamped are users, each once,
-// compared by uuid value.
+// stampsCoverExactly reports whether the users on stamped and users are the
+// same multiset, compared by uuid value.
 func stampsCoverExactly(stamped []TreeNodeRow, users []string) bool {
 	if len(stamped) != len(users) {
 		return false

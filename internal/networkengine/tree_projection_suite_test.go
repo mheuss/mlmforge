@@ -477,6 +477,22 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		assert.Equal(t, before, readProjectionState(t, s, tree, root, child))
 	})
 
+	t.Run("a removal of two users at the version converges with its users in another order", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		removal := testNodeUUID(9)
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		require.NoError(t, s.ProjectInsert(ctx, recruitRow, 3))
+		require.NoError(t, s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{child, recruit}}, removal, 4))
+		before := readProjectionState(t, s, tree, root, child, recruit)
+
+		err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{recruit, child}}, removal, 4)
+
+		require.NoError(t, err)
+		assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit))
+	})
+
 	t.Run("a write refused for another reason leaves the version where it was", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

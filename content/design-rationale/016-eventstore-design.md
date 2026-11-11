@@ -82,7 +82,7 @@ The project is committed to PostgreSQL (see ADR-005 in DEVELOPMENT.md). There is
 
 The in-memory implementation uses a mutex-protected map and slice. It provides the same behavioral guarantees as PostgreSQL: atomic multi-event appends, version-based concurrency, category matching via first-hyphen extraction.
 
-Each behaviour of the store runs through one test body that both implementations share. The PostgreSQL run needs a test container. Outside CI it skips when no container starts. In CI a failed start fails the run.
+Every behaviour test for the store runs through one body that both implementations share. The PostgreSQL run needs a test container. Outside CI it skips when no container starts. In CI a failed start fails the run.
 
 ## What We Considered
 

@@ -903,9 +903,18 @@ func testConcurrentUse(t *testing.T, newStore func(t *testing.T) EventStore) {
 	reachedHalf := make(chan struct{}, numWriters)
 	release := make(chan struct{})
 	releaseWriters := sync.OnceFunc(func() { close(release) })
-	defer releaseWriters()
+	done := make(chan struct{})
+	stopReaders := sync.OnceFunc(func() { close(done) })
+	var writers, readers sync.WaitGroup
+	// A failed require must still release and join every goroutine, or they
+	// block on release or call t after the test returns.
+	defer func() {
+		releaseWriters()
+		writers.Wait()
+		stopReaders()
+		readers.Wait()
+	}()
 
-	var writers sync.WaitGroup
 	for w := range numWriters {
 		writers.Add(1)
 		go func() {
@@ -939,8 +948,6 @@ func testConcurrentUse(t *testing.T, newStore func(t *testing.T) EventStore) {
 		}()
 	}
 
-	// Each writer now waits on release with half its events written, so these
-	// reads see the store mid-run whatever the scheduler does.
 	for range numWriters {
 		<-reachedHalf
 	}
@@ -955,21 +962,20 @@ func testConcurrentUse(t *testing.T, newStore func(t *testing.T) EventStore) {
 	require.NoError(t, err)
 	assert.ElementsMatch(t, halfSubmitted, ids(midway), "category at the halfway point")
 
-	done := make(chan struct{})
-	stopReaders := sync.OnceFunc(func() { close(done) })
-	defer stopReaders()
-	var readers sync.WaitGroup
 	for r := range numWriters {
 		readers.Add(1)
 		go func() {
 			defer readers.Done()
 			stream := fmt.Sprintf("stream-%d", r)
 			seen := half
-			for {
+			for n := 1; ; n++ {
 				got, err := s.ReadStream(ctx, stream, 1, 0)
 				assert.NoError(t, err)
 				assert.GreaterOrEqual(t, len(got), seen, "stream-%d shrank between reads", r)
 				seen = len(got)
+				if n < eventsPerWrite {
+					continue
+				}
 				select {
 				case <-done:
 					return
@@ -982,11 +988,14 @@ func testConcurrentUse(t *testing.T, newStore func(t *testing.T) EventStore) {
 	go func() {
 		defer readers.Done()
 		seen := numWriters * half
-		for {
+		for n := 1; ; n++ {
 			got, err := s.ReadCategory(ctx, "stream", 0, 0)
 			assert.NoError(t, err)
 			assert.GreaterOrEqual(t, len(got), seen, "category shrank between reads")
 			seen = len(got)
+			if n < numWriters*eventsPerWrite {
+				continue
+			}
 			select {
 			case <-done:
 				return

@@ -82,7 +82,7 @@ The project is committed to PostgreSQL (see ADR-005 in DEVELOPMENT.md). There is
 
 The in-memory implementation uses a mutex-protected map and slice. It provides the same behavioral guarantees as PostgreSQL: atomic multi-event appends, version-based concurrency, category matching via first-hyphen extraction.
 
-Unit tests run against the in-memory implementation. Integration tests run against PostgreSQL when a connection string is available. Both implementations are tested against the same behavioral expectations.
+Each behaviour of the store runs through one test body that both implementations share. The PostgreSQL run needs a test container. Outside CI it skips when no container starts. In CI a failed start fails the run.
 
 ## What We Considered
 

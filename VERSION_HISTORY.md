@@ -131,6 +131,7 @@
 - Postgres compares `qualification_history.period_id` in byte order on every server. Ranges and order now match the memory twin. Migration 000012 sets the column to `COLLATE "C"`. On a linguistic database default, the two twins used to disagree on which periods fell in a range and in what order they came back. (HEU-947)
 - `migrate reset-dirty --after-failed-down` writes the version the failed-down and dirty-record texts print as next. Both now come from one function. A failed release of the down file's reader no longer refuses the reset. A failed `First` or `Prev` read of the migrations directory now does. (HEU-890)
 - A file in `migrations/` that golang-migrate runs as a migration fails the tests unless its extension is exactly `sql`. The partial-apply and pairing guards used to read only `.sql` files, so a `.txt` pair could run with both green. (HEU-891)
+- The Go toolchain moves to go1.27.4 in `go.mod`, `mise.toml` and CI. govulncheck flags GO-2026-6859 in `net/http` at go1.27.3. It failed the Go vulnerability check on PR #222's CI run at `f9a87f9b`. (HEU-1051)
 
 ### Removed
 - `TreeLoader`, `NewTreeLoader`, `LoadTree`, `WithMatrixParams` and `TreeLoadIncompleteError`. Every tree load has built from the event stream since HEU-297, so the adjacency replay ran on no production path. Preflight stays and runs inside `TreeWriter.Load`. (HEU-912)

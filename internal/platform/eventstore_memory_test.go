@@ -11,93 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMemoryEventStore_ReadCategoryMatchesPrefix(t *testing.T) {
-	store := NewMemoryEventStore()
-	ctx := context.Background()
-
-	_ = store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-	})
-	_ = store.Append(ctx, "order-def", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-	})
-	_ = store.Append(ctx, "autoship-xyz", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000003", Type: "AutoshipCreated", Payload: json.RawMessage(`{}`)},
-	})
-
-	got, err := store.ReadCategory(ctx, "order", 0, 0)
-	require.NoError(t, err)
-	require.Len(t, got, 2)
-	assert.Equal(t, "00000000-0000-0000-0000-000000000001", got[0].ID)
-	assert.Equal(t, "00000000-0000-0000-0000-000000000002", got[1].ID)
-}
-
-func TestMemoryEventStore_ReadCategoryAfterPosition(t *testing.T) {
-	store := NewMemoryEventStore()
-	ctx := context.Background()
-
-	_ = store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-	})
-	_ = store.Append(ctx, "order-def", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-	})
-
-	got, err := store.ReadCategory(ctx, "order", 1, 0)
-	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.Equal(t, "00000000-0000-0000-0000-000000000002", got[0].ID)
-}
-
-func TestMemoryEventStore_ReadCategoryEmpty(t *testing.T) {
-	store := NewMemoryEventStore()
-	ctx := context.Background()
-
-	got, err := store.ReadCategory(ctx, "nonexistent", 0, 0)
-	require.NoError(t, err)
-	assert.Empty(t, got)
-}
-
-func TestMemoryEventStore_ReadCategoryGlobalOrder(t *testing.T) {
-	store := NewMemoryEventStore()
-	ctx := context.Background()
-
-	_ = store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-	})
-	_ = store.Append(ctx, "autoship-xyz", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000002", Type: "AutoshipCreated", Payload: json.RawMessage(`{}`)},
-	})
-	_ = store.Append(ctx, "order-def", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000003", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-	})
-
-	got, err := store.ReadCategory(ctx, "order", 0, 0)
-	require.NoError(t, err)
-	require.Len(t, got, 2)
-
-	assert.Equal(t, int64(1), got[0].GlobalPosition)
-	assert.Equal(t, int64(3), got[1].GlobalPosition)
-}
-
-func TestMemoryEventStore_ReadCategoryMultiHyphenStream(t *testing.T) {
-	store := NewMemoryEventStore()
-	ctx := context.Background()
-
-	// "commission-period-2026-01" has category "commission" (before first hyphen).
-	_ = store.Append(ctx, "commission-period-2026-01", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000001", Type: "PeriodOpened", Payload: json.RawMessage(`{}`)},
-	})
-	_ = store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-	})
-
-	got, err := store.ReadCategory(ctx, "commission", 0, 0)
-	require.NoError(t, err)
-	require.Len(t, got, 1)
-	assert.Equal(t, "00000000-0000-0000-0000-000000000001", got[0].ID)
-}
-
 func TestMemoryEventStore_AppendRejectsStreamWithoutHyphen(t *testing.T) {
 	store := NewMemoryEventStore()
 	ctx := context.Background()
@@ -109,34 +22,6 @@ func TestMemoryEventStore_AppendRejectsStreamWithoutHyphen(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrInvalidStreamName)
-}
-
-func TestMemoryEventStore_ReadCategory_WithLimit(t *testing.T) {
-	store := NewMemoryEventStore()
-	ctx := context.Background()
-
-	_ = store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-	})
-	_ = store.Append(ctx, "order-def", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-	})
-	_ = store.Append(ctx, "order-ghi", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000003", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-	})
-	_ = store.Append(ctx, "order-jkl", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000004", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-	})
-	_ = store.Append(ctx, "order-mno", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000005", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-	})
-
-	got, err := store.ReadCategory(ctx, "order", 0, 3)
-	require.NoError(t, err)
-	require.Len(t, got, 3)
-	assert.Equal(t, "00000000-0000-0000-0000-000000000001", got[0].ID)
-	assert.Equal(t, "00000000-0000-0000-0000-000000000002", got[1].ID)
-	assert.Equal(t, "00000000-0000-0000-0000-000000000003", got[2].ID)
 }
 
 func TestMemoryEventStore_AppendRejectsEmptyStreamName(t *testing.T) {

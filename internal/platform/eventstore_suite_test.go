@@ -616,3 +616,134 @@ func TestMemoryEventStore_ReadStream(t *testing.T) {
 func TestPostgresEventStore_ReadStream(t *testing.T) {
 	testReadStream(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
 }
+
+// testCategoryReads checks what an EventStore's ReadCategory returns.
+func testCategoryReads(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	appendTo := func(t *testing.T, s EventStore, stream, id string) {
+		t.Helper()
+		require.NoError(t, s.Append(ctx, stream, 0, []NewEvent{{
+			ID: id, Type: "Created", Payload: json.RawMessage(`{}`),
+		}}))
+	}
+	ids := func(events []Event) []string {
+		out := make([]string, len(events))
+		for i, e := range events {
+			out[i] = e.ID
+		}
+		return out
+	}
+	requireIncreasing := func(t *testing.T, events []Event) {
+		t.Helper()
+		for i := range events {
+			require.Positive(t, events[i].GlobalPosition, "event %d", i)
+			if i > 0 {
+				require.Greater(t, events[i].GlobalPosition, events[i-1].GlobalPosition, "event %d", i)
+			}
+		}
+	}
+
+	t.Run("a category returns its streams' events in append order", func(t *testing.T) {
+		s := newStore(t)
+		appendTo(t, s, "order-abc", "00000000-0000-0000-0000-000000000001")
+		appendTo(t, s, "order-def", "00000000-0000-0000-0000-000000000002")
+		appendTo(t, s, "autoship-xyz", "00000000-0000-0000-0000-000000000003")
+
+		got, err := s.ReadCategory(ctx, "order", 0, 0)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"}, ids(got))
+		requireIncreasing(t, got)
+	})
+
+	t.Run("events from other categories between them keep the order", func(t *testing.T) {
+		s := newStore(t)
+		appendTo(t, s, "order-abc", "00000000-0000-0000-0000-000000000001")
+		appendTo(t, s, "autoship-xyz", "00000000-0000-0000-0000-000000000002")
+		appendTo(t, s, "order-def", "00000000-0000-0000-0000-000000000003")
+
+		got, err := s.ReadCategory(ctx, "order", 0, 0)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000003"}, ids(got))
+		requireIncreasing(t, got)
+	})
+
+	t.Run("afterPosition returns only later events", func(t *testing.T) {
+		s := newStore(t)
+		appendTo(t, s, "order-abc", "00000000-0000-0000-0000-000000000001")
+		appendTo(t, s, "order-def", "00000000-0000-0000-0000-000000000002")
+		all, err := s.ReadCategory(ctx, "order", 0, 0)
+		require.NoError(t, err)
+		require.Len(t, all, 2)
+
+		got, err := s.ReadCategory(ctx, "order", all[0].GlobalPosition, 0)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{"00000000-0000-0000-0000-000000000002"}, ids(got))
+	})
+
+	t.Run("an empty category returns none", func(t *testing.T) {
+		s := newStore(t)
+
+		got, err := s.ReadCategory(ctx, "nonexistent", 0, 0)
+
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("the category is the part before the first hyphen", func(t *testing.T) {
+		s := newStore(t)
+		appendTo(t, s, "commission-period-2026-01", "00000000-0000-0000-0000-000000000001")
+		appendTo(t, s, "order-abc", "00000000-0000-0000-0000-000000000002")
+
+		got, err := s.ReadCategory(ctx, "commission", 0, 0)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{"00000000-0000-0000-0000-000000000001"}, ids(got))
+	})
+
+	t.Run("a limit returns the first events in append order", func(t *testing.T) {
+		s := newStore(t)
+		for i, stream := range []string{"order-abc", "order-def", "order-ghi", "order-jkl", "order-mno"} {
+			appendTo(t, s, stream, fmt.Sprintf("00000000-0000-0000-0000-%012d", i+1))
+		}
+
+		got, err := s.ReadCategory(ctx, "order", 0, 3)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{
+			"00000000-0000-0000-0000-000000000001",
+			"00000000-0000-0000-0000-000000000002",
+			"00000000-0000-0000-0000-000000000003",
+		}, ids(got))
+	})
+
+	t.Run("a refused append between two appends keeps the order and afterPosition", func(t *testing.T) {
+		s := newStore(t)
+		appendTo(t, s, "order-abc", "00000000-0000-0000-0000-000000000001")
+		require.Error(t, s.Append(ctx, "order-def", 0, []NewEvent{{
+			ID: "00000000-0000-0000-0000-000000000001", Type: "Created", Payload: json.RawMessage(`{}`),
+		}}))
+		appendTo(t, s, "order-ghi", "00000000-0000-0000-0000-000000000002")
+
+		got, err := s.ReadCategory(ctx, "order", 0, 0)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"}, ids(got))
+		requireIncreasing(t, got)
+		t.Logf("positions after a refused append: %d, %d", got[0].GlobalPosition, got[1].GlobalPosition)
+
+		after, err := s.ReadCategory(ctx, "order", got[0].GlobalPosition, 0)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{"00000000-0000-0000-0000-000000000002"}, ids(after))
+	})
+}
+
+func TestMemoryEventStore_CategoryReads(t *testing.T) {
+	testCategoryReads(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_CategoryReads(t *testing.T) {
+	testCategoryReads(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}

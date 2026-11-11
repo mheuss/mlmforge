@@ -338,6 +338,9 @@ func (s *MemoryTreeStore) stageRemoval(treeID, given string, r RemovalProjection
 			tombstoned[i] = true
 		}
 	}
+	if len(tombstoned) == 0 && stampsCoverExactly(stampedBy(rows, treeID, removalEventID), r.Users) {
+		return rows, nil
+	}
 	if len(tombstoned) != len(r.Users) {
 		return nil, fmt.Errorf("tombstoning removed users %v in tree %s matched %d of %d active rows",
 			r.Users, given, len(tombstoned), len(r.Users))
@@ -426,6 +429,17 @@ func uuidKeyPtr(id *string) *string {
 	}
 	key := uuidKey(*id)
 	return &key
+}
+
+// stampedBy returns the rows of treeID that carry removalEventID's stamp.
+func stampedBy(rows []TreeNodeRow, treeID, removalEventID string) []TreeNodeRow {
+	var out []TreeNodeRow
+	for _, row := range rows {
+		if row.TreeID == treeID && row.RemovedByEventID != nil && *row.RemovedByEventID == removalEventID {
+			out = append(out, row)
+		}
+	}
+	return out
 }
 
 // idField is one id to check before a write, with the name a refusal reports.

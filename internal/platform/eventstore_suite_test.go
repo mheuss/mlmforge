@@ -835,6 +835,9 @@ func testAppendRefusals(t *testing.T, newStore func(t *testing.T) EventStore) {
 
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.want)
+			got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+			require.NoError(t, err)
+			assert.Empty(t, got)
 		})
 	}
 
@@ -846,8 +849,7 @@ func testAppendRefusals(t *testing.T, newStore func(t *testing.T) EventStore) {
 			{ID: "00000000-0000-0000-0000-000000000002", Type: "", Payload: json.RawMessage(`{}`)},
 		})
 
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "index 1")
+		require.ErrorContains(t, err, "index 1 has empty Type")
 		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
 		require.NoError(t, err)
 		assert.Empty(t, got)

@@ -477,6 +477,42 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		assert.Equal(t, before, readProjectionState(t, s, tree, root, child))
 	})
 
+	t.Run("a removal at the version does not converge for a user its event never stamped", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		removal := testNodeUUID(9)
+		absent := testUserUUID(5)
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		require.NoError(t, s.ProjectRemoval(ctx, tree, onlyChild, removal, 3))
+		before := readProjectionState(t, s, tree, root, child, absent)
+
+		err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{absent}}, removal, 3)
+
+		require.ErrorContains(t, err, "tombstoning removed users ["+absent+"] in tree "+tree+" matched 0 of 1 active rows")
+		assert.Equal(t, before, readProjectionState(t, s, tree, root, child, absent))
+	})
+
+	t.Run("a removal at the version refuses an id or an integer the store would refuse, when its stamps match", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		removal := testNodeUUID(9)
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		require.NoError(t, s.ProjectRemoval(ctx, tree, onlyChild, removal, 3))
+		before := readProjectionState(t, s, tree, root, child)
+
+		err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{child},
+			Responsored: []Responsored{{UserID: notAUUID, NewSponsorID: root}}}, removal, 3)
+		require.ErrorContains(t, err, "re-sponsored user_id \""+notAUUID+"\" is not a UUID; nothing was written")
+
+		err = s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{child},
+			Relocated: []Relocation{{UserID: root, ParentID: root, Position: math.MaxInt32 + 1, Depth: 1}}}, removal, 3)
+		require.ErrorContains(t, err, "relocated position 2147483648 is outside the int4 range; nothing was written")
+
+		assert.Equal(t, before, readProjectionState(t, s, tree, root, child))
+	})
+
 	t.Run("a removal of two users at the version converges with its users in another order", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

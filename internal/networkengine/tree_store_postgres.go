@@ -307,7 +307,10 @@ func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProj
 			return err
 		}
 		if held {
-			return nil
+			if err := refuseNonUUID("project removal", treeID, removalIDFields(r, removalEventID)...); err != nil {
+				return err
+			}
+			return refuseNonInt4("project removal", treeID, relocationIntFields(r)...)
 		}
 	}
 	if tag.RowsAffected() != int64(len(r.Users)) {

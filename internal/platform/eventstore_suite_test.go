@@ -899,13 +899,30 @@ func testConcurrentUse(t *testing.T, newStore func(t *testing.T) EventStore) {
 		return out
 	}
 
-	var wg sync.WaitGroup
+	const half = 2
+	reachedHalf := make(chan struct{}, numWriters)
+	release := make(chan struct{})
+	releaseWriters := sync.OnceFunc(func() { close(release) })
+	defer releaseWriters()
+
+	var writers sync.WaitGroup
 	for w := range numWriters {
-		wg.Add(1)
+		writers.Add(1)
 		go func() {
-			defer wg.Done()
+			defer writers.Done()
+			signalled := false
+			defer func() {
+				if !signalled {
+					reachedHalf <- struct{}{}
+				}
+			}()
 			stream := fmt.Sprintf("stream-%d", w)
 			for i, id := range submitted[w] {
+				if i == half {
+					signalled = true
+					reachedHalf <- struct{}{}
+					<-release
+				}
 				if !assert.NoError(t, s.Append(ctx, stream, -1, []NewEvent{{
 					ID: id, Type: "TestEvent", Payload: json.RawMessage(`{}`),
 				}})) {
@@ -921,41 +938,83 @@ func testConcurrentUse(t *testing.T, newStore func(t *testing.T) EventStore) {
 			}
 		}()
 	}
+
+	// Each writer now waits on release with half its events written, so these
+	// reads see the store mid-run whatever the scheduler does.
+	for range numWriters {
+		<-reachedHalf
+	}
+	var halfSubmitted []string
+	for w := range numWriters {
+		got, err := s.ReadStream(ctx, fmt.Sprintf("stream-%d", w), 1, 0)
+		require.NoError(t, err)
+		assert.Equal(t, submitted[w][:half], ids(got), "stream-%d at the halfway point", w)
+		halfSubmitted = append(halfSubmitted, submitted[w][:half]...)
+	}
+	midway, err := s.ReadCategory(ctx, "stream", 0, 0)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, halfSubmitted, ids(midway), "category at the halfway point")
+
+	done := make(chan struct{})
+	stopReaders := sync.OnceFunc(func() { close(done) })
+	defer stopReaders()
+	var readers sync.WaitGroup
 	for r := range numWriters {
-		wg.Add(1)
+		readers.Add(1)
 		go func() {
-			defer wg.Done()
+			defer readers.Done()
 			stream := fmt.Sprintf("stream-%d", r)
-			seen := 0
-			for range eventsPerWrite {
+			seen := half
+			for {
 				got, err := s.ReadStream(ctx, stream, 1, 0)
 				assert.NoError(t, err)
 				assert.GreaterOrEqual(t, len(got), seen, "stream-%d shrank between reads", r)
 				seen = len(got)
+				select {
+				case <-done:
+					return
+				default:
+				}
 			}
 		}()
 	}
-	wg.Add(1)
+	readers.Add(1)
 	go func() {
-		defer wg.Done()
-		seen := 0
-		for range numWriters * eventsPerWrite {
+		defer readers.Done()
+		seen := numWriters * half
+		for {
 			got, err := s.ReadCategory(ctx, "stream", 0, 0)
 			assert.NoError(t, err)
 			assert.GreaterOrEqual(t, len(got), seen, "category shrank between reads")
 			seen = len(got)
+			select {
+			case <-done:
+				return
+			default:
+			}
 		}
 	}()
-	wg.Wait()
+	releaseWriters()
+	writers.Wait()
+	stopReaders()
+	readers.Wait()
 
+	streamOf := make(map[string]string, len(allSubmitted))
 	for w := range numWriters {
-		got, err := s.ReadStream(ctx, fmt.Sprintf("stream-%d", w), 1, 0)
+		stream := fmt.Sprintf("stream-%d", w)
+		got, err := s.ReadStream(ctx, stream, 1, 0)
 		require.NoError(t, err)
 		assert.Equal(t, submitted[w], ids(got), "stream-%d", w)
+		for _, id := range submitted[w] {
+			streamOf[id] = stream
+		}
 	}
 	all, err := s.ReadCategory(ctx, "stream", 0, 0)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, allSubmitted, ids(all))
+	for _, e := range all {
+		assert.Equal(t, streamOf[e.ID], e.Stream, "event %s", e.ID)
+	}
 }
 
 func TestMemoryEventStore_ConcurrentUse(t *testing.T) {

@@ -18,44 +18,6 @@ func newTestPostgresStore(t *testing.T) *PostgresEventStore {
 	return NewPostgresEventStore(pool)
 }
 
-func TestPostgresEventStore_ConcurrencyConflict(t *testing.T) {
-	store := newTestPostgresStore(t)
-	ctx := context.Background()
-
-	err := store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-	})
-	require.NoError(t, err)
-
-	err = store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
-	})
-	require.Error(t, err)
-
-	var concErr *ConcurrencyError
-	require.ErrorAs(t, err, &concErr)
-	assert.Equal(t, "order-abc", concErr.Stream)
-}
-
-func TestPostgresEventStore_SkipVersionCheck(t *testing.T) {
-	store := newTestPostgresStore(t)
-	ctx := context.Background()
-
-	err := store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-	})
-	require.NoError(t, err)
-
-	err = store.Append(ctx, "order-abc", -1, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
-	})
-	require.NoError(t, err)
-
-	got, err := store.ReadStream(ctx, "order-abc", 1, 0)
-	require.NoError(t, err)
-	assert.Len(t, got, 2)
-}
-
 func TestPostgresEventStore_ReadCategory(t *testing.T) {
 	store := newTestPostgresStore(t)
 	ctx := context.Background()

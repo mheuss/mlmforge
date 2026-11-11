@@ -434,3 +434,95 @@ func TestMemoryEventStore_AppendAndRead(t *testing.T) {
 func TestPostgresEventStore_AppendAndRead(t *testing.T) {
 	testAppendAndRead(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
 }
+
+// testOptimisticConcurrency checks an EventStore's expected-version rules.
+func testOptimisticConcurrency(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	event := func(id, typ string) []NewEvent {
+		return []NewEvent{{ID: id, Type: typ, Payload: json.RawMessage(`{}`)}}
+	}
+
+	t.Run("a stale expected version is refused with its versions", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-abc", 0, event("00000000-0000-0000-0000-000000000001", "OrderCreated")))
+
+		err := s.Append(ctx, "order-abc", 0, event("00000000-0000-0000-0000-000000000002", "OrderCompleted"))
+
+		var concErr *ConcurrencyError
+		require.ErrorAs(t, err, &concErr)
+		assert.Equal(t, "order-abc", concErr.Stream)
+		assert.Equal(t, int64(0), concErr.ExpectedVersion)
+		assert.Equal(t, int64(1), concErr.ActualVersion)
+	})
+
+	t.Run("a refused append leaves the stream unchanged", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-abc", 0, event("00000000-0000-0000-0000-000000000001", "OrderCreated")))
+		require.Error(t, s.Append(ctx, "order-abc", 0, event("00000000-0000-0000-0000-000000000002", "OrderCompleted")))
+
+		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+
+		require.NoError(t, err)
+		assert.Len(t, got, 1)
+	})
+
+	t.Run("expected version 0 creates a new stream", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-new", 0, event("00000000-0000-0000-0000-000000000001", "OrderCreated")))
+
+		got, err := s.ReadStream(ctx, "order-new", 1, 0)
+
+		require.NoError(t, err)
+		assert.Len(t, got, 1)
+	})
+
+	t.Run("the current version as expected version appends", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-abc", 0, event("00000000-0000-0000-0000-000000000001", "OrderCreated")))
+		require.NoError(t, s.Append(ctx, "order-abc", 1, event("00000000-0000-0000-0000-000000000002", "OrderCompleted")))
+
+		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+
+		require.NoError(t, err)
+		assert.Len(t, got, 2)
+	})
+
+	t.Run("expected version -1 skips the check", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-abc", 0, event("00000000-0000-0000-0000-000000000001", "OrderCreated")))
+		require.NoError(t, s.Append(ctx, "order-abc", -1, event("00000000-0000-0000-0000-000000000002", "OrderCompleted")))
+
+		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+
+		require.NoError(t, err)
+		assert.Len(t, got, 2)
+	})
+
+	t.Run("versions count per stream", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-abc", 0, []NewEvent{
+			{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+			{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
+		}))
+		require.NoError(t, s.Append(ctx, "order-def", 0, event("00000000-0000-0000-0000-000000000003", "OrderCreated")))
+
+		abc, err := s.ReadStream(ctx, "order-abc", 1, 0)
+		require.NoError(t, err)
+		def, err := s.ReadStream(ctx, "order-def", 1, 0)
+		require.NoError(t, err)
+
+		require.Len(t, abc, 2)
+		assert.Equal(t, int64(1), abc[0].Version)
+		assert.Equal(t, int64(2), abc[1].Version)
+		require.Len(t, def, 1)
+		assert.Equal(t, int64(1), def[0].Version)
+	})
+}
+
+func TestMemoryEventStore_OptimisticConcurrency(t *testing.T) {
+	testOptimisticConcurrency(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_OptimisticConcurrency(t *testing.T) {
+	testOptimisticConcurrency(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}

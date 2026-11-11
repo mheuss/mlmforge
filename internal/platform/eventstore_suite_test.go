@@ -719,6 +719,7 @@ func testCategoryReads(t *testing.T, newStore func(t *testing.T) EventStore) {
 		appendTo(t, s, "commissionfee-1", "00000000-0000-0000-0000-000000000003")
 
 		got, err := s.ReadCategory(ctx, "commission", 0, 0)
+
 		require.NoError(t, err)
 		assert.Equal(t, []string{"00000000-0000-0000-0000-000000000001"}, ids(got))
 
@@ -730,17 +731,21 @@ func testCategoryReads(t *testing.T, newStore func(t *testing.T) EventStore) {
 
 	t.Run("a limit returns the first events in append order", func(t *testing.T) {
 		s := newStore(t)
-		for i, stream := range []string{"order-mno", "order-jkl", "order-ghi", "order-def", "order-abc"} {
-			appendTo(t, s, stream, fmt.Sprintf("00000000-0000-0000-0000-%012d", 5-i))
-		}
+		appendTo(t, s, "autoship-xyz", "00000000-0000-0000-0000-000000000008")
+		appendTo(t, s, "order-zzz", "00000000-0000-0000-0000-000000000009")
+		appendTo(t, s, "order-aaa", "00000000-0000-0000-0000-000000000001")
+		require.NoError(t, s.Append(ctx, "order-zzz", 1, []NewEvent{{
+			ID: "00000000-0000-0000-0000-000000000005", Type: "Created", Payload: json.RawMessage(`{}`),
+		}}))
+		appendTo(t, s, "order-mmm", "00000000-0000-0000-0000-000000000003")
 
 		got, err := s.ReadCategory(ctx, "order", 0, 3)
 
 		require.NoError(t, err)
 		assert.Equal(t, []string{
+			"00000000-0000-0000-0000-000000000009",
+			"00000000-0000-0000-0000-000000000001",
 			"00000000-0000-0000-0000-000000000005",
-			"00000000-0000-0000-0000-000000000004",
-			"00000000-0000-0000-0000-000000000003",
 		}, ids(got))
 	})
 

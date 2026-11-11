@@ -34,7 +34,7 @@ func newTreeRejectEventCmd(resolve flagResolver, open depsOpener, writer writerF
 			req := networkengine.RejectRequest{TreeID: treeID, EventID: eventID, Reason: reason}
 			return runTreeCommand(cmd, resolve, open, func(ctx context.Context, deps *treeDeps) error {
 				res, err := writer(deps).Reject(ctx, req)
-				return reportReject(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), res, err)
+				return reportReject(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), annotateReject(res, deps.timeouts, err), err)
 			})
 		},
 	}

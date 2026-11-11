@@ -14,8 +14,32 @@ import (
 	"time"
 
 	"github.com/mlmforge/mlmforge/internal/networkengine"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTreeHelp_NamesTheSessionTimeoutEnvVars(t *testing.T) {
+	cmd := newTreeCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--help"})
+
+	require.NoError(t, cmd.Execute())
+
+	assert.Contains(t, out.String(), statementTimeoutEnv)
+	assert.Contains(t, out.String(), lockTimeoutEnv)
+	assert.Contains(t, out.String(), "PGOPTIONS")
+	assert.Contains(t, out.String(), defaultStatementTimeout+" and "+defaultLockTimeout)
+
+	help := out.String()
+	client := strings.Index(help, "PGOPTIONS")
+	env := strings.Index(help, statementTimeoutEnv)
+	server := strings.Index(help, "server setting")
+	def := strings.Index(help, defaultStatementTimeout+" and ")
+	assert.True(t, client < env && env < server && server < def,
+		"want PGOPTIONS < env var < server setting < default; got offsets %d, %d, %d, %d (-1 = absent)", client, env, server, def)
+	assert.Contains(t, help, "non-empty "+statementTimeoutEnv)
+}
 
 func TestNewTreeCmd_RegistersTheLoadSubcommand(t *testing.T) {
 	names := map[string]bool{}

@@ -30,8 +30,13 @@ func newTreeCmdWith(open depsOpener, loader loadWriterFor, writer writerFor) *co
 	treeCmd := &cobra.Command{
 		Use:   "tree",
 		Short: "Tree persistence commands",
-		Long:  "Commands that reach the tree persistence layer.",
-		Args:  cobra.NoArgs,
+		Long: "Commands that reach the tree persistence layer.\n\n" +
+			"Each session in the tree commands' pool gets a statement_timeout and a lock_timeout. " +
+			"A value in the URL, PGOPTIONS or a service file is kept. " +
+			"Otherwise a non-empty " + statementTimeoutEnv + " or " + lockTimeoutEnv + " sets its timeout, in any form Postgres accepts. " +
+			"Otherwise a role, database or server setting is kept. Otherwise mlmforge applies " +
+			defaultStatementTimeout + " and " + defaultLockTimeout + ". A value of 0 turns a timeout off.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},

@@ -147,7 +147,7 @@ func newTreeAddRootCmd(resolve flagResolver, open depsOpener, writer writerFor) 
 			}
 			return runTreeCommand(cmd, resolve, open, func(ctx context.Context, deps *treeDeps) error {
 				res, err := writer(deps).AddRoot(ctx, req)
-				return reportWrite(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), res, err)
+				return reportWrite(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), annotateWrite(res, deps.timeouts), err)
 			})
 		},
 	}
@@ -190,7 +190,7 @@ func newTreePlaceCmd(resolve flagResolver, open depsOpener, writer writerFor) *c
 			}
 			return runTreeCommand(cmd, resolve, open, func(ctx context.Context, deps *treeDeps) error {
 				res, err := writer(deps).Place(ctx, req)
-				return reportWrite(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), res, err)
+				return reportWrite(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), annotateWrite(res, deps.timeouts), err)
 			})
 		},
 	}
@@ -227,7 +227,7 @@ func newTreeRemoveCmd(resolve flagResolver, open depsOpener, writer writerFor) *
 				PruningMode: networkengine.PruningMode(pruningMode)}
 			return runTreeCommand(cmd, resolve, open, func(ctx context.Context, deps *treeDeps) error {
 				res, err := writer(deps).Remove(ctx, req)
-				return reportWrite(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), res, err)
+				return reportWrite(ctx, cmd.OutOrStdout(), cmd.ErrOrStderr(), annotateWrite(res, deps.timeouts), err)
 			})
 		},
 	}

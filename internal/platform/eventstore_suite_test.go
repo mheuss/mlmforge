@@ -357,3 +357,80 @@ func TestMemoryEventStore_EventIDForms(t *testing.T) {
 func TestPostgresEventStore_EventIDForms(t *testing.T) {
 	testEventIDForms(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
 }
+
+// testAppendAndRead checks what an EventStore stores on append and returns on read.
+func testAppendAndRead(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+
+	t.Run("one event reads back with the fields the store assigns", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-abc", 0, []NewEvent{{
+			ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCompleted",
+			Payload: json.RawMessage(`{"order_id":"abc"}`),
+		}}))
+
+		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, "00000000-0000-0000-0000-000000000001", got[0].ID)
+		assert.Equal(t, "order-abc", got[0].Stream)
+		assert.Equal(t, "OrderCompleted", got[0].Type)
+		assert.Equal(t, int64(1), got[0].Version)
+		assert.Positive(t, got[0].GlobalPosition)
+		assert.JSONEq(t, `{"order_id":"abc"}`, string(got[0].Payload))
+		assert.False(t, got[0].Timestamp.IsZero())
+	})
+
+	t.Run("several events in one append get consecutive versions and increasing positions", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-abc", 0, []NewEvent{
+			{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
+			{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
+		}))
+
+		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+
+		require.NoError(t, err)
+		require.Len(t, got, 2)
+		assert.Equal(t, int64(1), got[0].Version)
+		assert.Equal(t, int64(2), got[1].Version)
+		assert.Positive(t, got[0].GlobalPosition)
+		assert.Greater(t, got[1].GlobalPosition, got[0].GlobalPosition)
+	})
+
+	t.Run("metadata reads back", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-abc", 0, []NewEvent{{
+			ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCompleted",
+			Payload: json.RawMessage(`{}`), Metadata: json.RawMessage(`{"actor":"user-123"}`),
+		}}))
+
+		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.JSONEq(t, `{"actor":"user-123"}`, string(got[0].Metadata))
+	})
+
+	t.Run("nil metadata reads back as nil", func(t *testing.T) {
+		s := newStore(t)
+		require.NoError(t, s.Append(ctx, "order-abc", 0, []NewEvent{{
+			ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCompleted", Payload: json.RawMessage(`{}`),
+		}}))
+
+		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Nil(t, got[0].Metadata)
+	})
+}
+
+func TestMemoryEventStore_AppendAndRead(t *testing.T) {
+	testAppendAndRead(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_AppendAndRead(t *testing.T) {
+	testAppendAndRead(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}

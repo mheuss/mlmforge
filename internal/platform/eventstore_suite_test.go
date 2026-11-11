@@ -458,12 +458,14 @@ func testOptimisticConcurrency(t *testing.T, newStore func(t *testing.T) EventSt
 	t.Run("a refused append leaves the stream unchanged", func(t *testing.T) {
 		s := newStore(t)
 		require.NoError(t, s.Append(ctx, "order-abc", 0, event("00000000-0000-0000-0000-000000000001", "OrderCreated")))
-		require.Error(t, s.Append(ctx, "order-abc", 0, event("00000000-0000-0000-0000-000000000002", "OrderCompleted")))
+		var concErr *ConcurrencyError
+		require.ErrorAs(t, s.Append(ctx, "order-abc", 0, event("00000000-0000-0000-0000-000000000002", "OrderCompleted")), &concErr)
 
 		got, err := s.ReadStream(ctx, "order-abc", 1, 0)
 
 		require.NoError(t, err)
-		assert.Len(t, got, 1)
+		require.Len(t, got, 1)
+		assert.Equal(t, "00000000-0000-0000-0000-000000000001", got[0].ID)
 	})
 
 	t.Run("expected version 0 creates a new stream", func(t *testing.T) {

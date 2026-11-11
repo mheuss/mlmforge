@@ -882,6 +882,22 @@ func testConcurrentUse(t *testing.T, newStore func(t *testing.T) EventStore) {
 		eventsPerWrite = 5
 	)
 	s := newStore(t)
+	submitted := make([][]string, numWriters)
+	var allSubmitted []string
+	for w := range numWriters {
+		for i := range eventsPerWrite {
+			id := fmt.Sprintf("00000000-0000-0000-%04d-%012d", w, i)
+			submitted[w] = append(submitted[w], id)
+			allSubmitted = append(allSubmitted, id)
+		}
+	}
+	ids := func(events []Event) []string {
+		out := make([]string, len(events))
+		for i, e := range events {
+			out[i] = e.ID
+		}
+		return out
+	}
 
 	var wg sync.WaitGroup
 	for w := range numWriters {
@@ -889,12 +905,19 @@ func testConcurrentUse(t *testing.T, newStore func(t *testing.T) EventStore) {
 		go func() {
 			defer wg.Done()
 			stream := fmt.Sprintf("stream-%d", w)
-			for i := range eventsPerWrite {
-				err := s.Append(ctx, stream, -1, []NewEvent{{
-					ID:   fmt.Sprintf("00000000-0000-0000-%04d-%012d", w, i),
-					Type: "TestEvent", Payload: json.RawMessage(`{}`),
-				}})
+			for i, id := range submitted[w] {
+				if !assert.NoError(t, s.Append(ctx, stream, -1, []NewEvent{{
+					ID: id, Type: "TestEvent", Payload: json.RawMessage(`{}`),
+				}})) {
+					return
+				}
+
+				own, err := s.ReadStream(ctx, stream, 1, 0)
 				assert.NoError(t, err)
+				assert.Equal(t, submitted[w][:i+1], ids(own), "stream-%d after append %d", w, i)
+				category, err := s.ReadCategory(ctx, "stream", 0, 0)
+				assert.NoError(t, err)
+				assert.Contains(t, ids(category), id, "stream-%d after append %d", w, i)
 			}
 		}()
 	}
@@ -903,40 +926,36 @@ func testConcurrentUse(t *testing.T, newStore func(t *testing.T) EventStore) {
 		go func() {
 			defer wg.Done()
 			stream := fmt.Sprintf("stream-%d", r)
+			seen := 0
 			for range eventsPerWrite {
-				_, err := s.ReadStream(ctx, stream, 1, 0)
+				got, err := s.ReadStream(ctx, stream, 1, 0)
 				assert.NoError(t, err)
+				assert.GreaterOrEqual(t, len(got), seen, "stream-%d shrank between reads", r)
+				seen = len(got)
 			}
 		}()
 	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		seen := 0
 		for range numWriters * eventsPerWrite {
-			_, err := s.ReadCategory(ctx, "stream", 0, 0)
+			got, err := s.ReadCategory(ctx, "stream", 0, 0)
 			assert.NoError(t, err)
+			assert.GreaterOrEqual(t, len(got), seen, "category shrank between reads")
+			seen = len(got)
 		}
 	}()
 	wg.Wait()
 
-	var streamIDs []string
 	for w := range numWriters {
 		got, err := s.ReadStream(ctx, fmt.Sprintf("stream-%d", w), 1, 0)
 		require.NoError(t, err)
-		assert.Len(t, got, eventsPerWrite, "stream-%d", w)
-		for _, e := range got {
-			streamIDs = append(streamIDs, e.ID)
-		}
+		assert.Equal(t, submitted[w], ids(got), "stream-%d", w)
 	}
-	assert.Len(t, streamIDs, numWriters*eventsPerWrite)
 	all, err := s.ReadCategory(ctx, "stream", 0, 0)
 	require.NoError(t, err)
-	assert.Len(t, all, numWriters*eventsPerWrite)
-	categoryIDs := make([]string, len(all))
-	for i, e := range all {
-		categoryIDs[i] = e.ID
-	}
-	assert.ElementsMatch(t, streamIDs, categoryIDs)
+	assert.ElementsMatch(t, allSubmitted, ids(all))
 }
 
 func TestMemoryEventStore_ConcurrentUse(t *testing.T) {

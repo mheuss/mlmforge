@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,23 +34,6 @@ func TestPostgresEventStore_ReadCategory(t *testing.T) {
 	got, err := store.ReadCategory(ctx, "order", 0, 0)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
-}
-
-func TestPostgresEventStore_ReadStreamFromVersion(t *testing.T) {
-	store := newTestPostgresStore(t)
-	ctx := context.Background()
-
-	_ = store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderUpdated", Payload: json.RawMessage(`{}`)},
-		{ID: "00000000-0000-0000-0000-000000000003", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
-	})
-
-	got, err := store.ReadStream(ctx, "order-abc", 2, 0)
-	require.NoError(t, err)
-	require.Len(t, got, 2)
-	assert.Equal(t, int64(2), got[0].Version)
-	assert.Equal(t, int64(3), got[1].Version)
 }
 
 func TestMigrateUpIdempotent(t *testing.T) {

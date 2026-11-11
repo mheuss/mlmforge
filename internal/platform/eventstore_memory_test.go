@@ -11,33 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMemoryEventStore_ReadStreamEmpty(t *testing.T) {
-	store := NewMemoryEventStore()
-	ctx := context.Background()
-
-	got, err := store.ReadStream(ctx, "nonexistent-stream", 1, 0)
-	require.NoError(t, err)
-	assert.Empty(t, got)
-}
-
-func TestMemoryEventStore_ReadStreamFromVersion(t *testing.T) {
-	store := NewMemoryEventStore()
-	ctx := context.Background()
-
-	err := store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderUpdated", Payload: json.RawMessage(`{}`)},
-		{ID: "00000000-0000-0000-0000-000000000003", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
-	})
-	require.NoError(t, err)
-
-	got, err := store.ReadStream(ctx, "order-abc", 2, 0)
-	require.NoError(t, err)
-	require.Len(t, got, 2)
-	assert.Equal(t, int64(2), got[0].Version)
-	assert.Equal(t, int64(3), got[1].Version)
-}
-
 func TestMemoryEventStore_ReadCategoryMatchesPrefix(t *testing.T) {
 	store := NewMemoryEventStore()
 	ctx := context.Background()
@@ -138,27 +111,6 @@ func TestMemoryEventStore_AppendRejectsStreamWithoutHyphen(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidStreamName)
 }
 
-func TestMemoryEventStore_ReadStream_WithLimit(t *testing.T) {
-	store := NewMemoryEventStore()
-	ctx := context.Background()
-
-	err := store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderUpdated", Payload: json.RawMessage(`{}`)},
-		{ID: "00000000-0000-0000-0000-000000000003", Type: "OrderShipped", Payload: json.RawMessage(`{}`)},
-		{ID: "00000000-0000-0000-0000-000000000004", Type: "OrderDelivered", Payload: json.RawMessage(`{}`)},
-		{ID: "00000000-0000-0000-0000-000000000005", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
-	})
-	require.NoError(t, err)
-
-	got, err := store.ReadStream(ctx, "order-abc", 1, 3)
-	require.NoError(t, err)
-	require.Len(t, got, 3)
-	assert.Equal(t, "00000000-0000-0000-0000-000000000001", got[0].ID)
-	assert.Equal(t, "00000000-0000-0000-0000-000000000002", got[1].ID)
-	assert.Equal(t, "00000000-0000-0000-0000-000000000003", got[2].ID)
-}
-
 func TestMemoryEventStore_ReadCategory_WithLimit(t *testing.T) {
 	store := NewMemoryEventStore()
 	ctx := context.Background()
@@ -185,24 +137,6 @@ func TestMemoryEventStore_ReadCategory_WithLimit(t *testing.T) {
 	assert.Equal(t, "00000000-0000-0000-0000-000000000001", got[0].ID)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000002", got[1].ID)
 	assert.Equal(t, "00000000-0000-0000-0000-000000000003", got[2].ID)
-}
-
-func TestMemoryEventStore_ReadStream_FromVersionZero(t *testing.T) {
-	store := NewMemoryEventStore()
-	ctx := context.Background()
-
-	err := store.Append(ctx, "order-abc", 0, []NewEvent{
-		{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)},
-		{ID: "00000000-0000-0000-0000-000000000002", Type: "OrderCompleted", Payload: json.RawMessage(`{}`)},
-	})
-	require.NoError(t, err)
-
-	// fromVersion=0 should be clamped to 1 and return all events.
-	got, err := store.ReadStream(ctx, "order-abc", 0, 0)
-	require.NoError(t, err)
-	require.Len(t, got, 2)
-	assert.Equal(t, int64(1), got[0].Version)
-	assert.Equal(t, int64(2), got[1].Version)
 }
 
 func TestMemoryEventStore_AppendRejectsEmptyStreamName(t *testing.T) {
@@ -391,16 +325,6 @@ func TestValidateStreamName(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestMemoryEventStore_ReadStreamRejectsInvalidStreamName(t *testing.T) {
-	store := NewMemoryEventStore()
-	ctx := context.Background()
-
-	got, err := store.ReadStream(ctx, "nohyphen", 1, 0)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrInvalidStreamName)
-	assert.Nil(t, got)
 }
 
 func TestMemoryEventStore_AppendRejectsEmptyID_StreamName(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -527,4 +528,91 @@ func TestMemoryEventStore_OptimisticConcurrency(t *testing.T) {
 
 func TestPostgresEventStore_OptimisticConcurrency(t *testing.T) {
 	testOptimisticConcurrency(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}
+
+// testReadStream checks what an EventStore's ReadStream returns.
+func testReadStream(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	appendN := func(t *testing.T, s EventStore, n int) {
+		t.Helper()
+		events := make([]NewEvent, n)
+		for i := range events {
+			events[i] = NewEvent{
+				ID:   fmt.Sprintf("00000000-0000-0000-0000-%012d", i+1),
+				Type: "OrderStep", Payload: json.RawMessage(`{}`),
+			}
+		}
+		require.NoError(t, s.Append(ctx, "order-abc", 0, events))
+	}
+	ids := func(events []Event) []string {
+		out := make([]string, len(events))
+		for i, e := range events {
+			out[i] = e.ID
+		}
+		return out
+	}
+
+	t.Run("a stream with no events returns none", func(t *testing.T) {
+		s := newStore(t)
+
+		got, err := s.ReadStream(ctx, "nonexistent-stream", 1, 0)
+
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("reading from a version returns that version onward", func(t *testing.T) {
+		s := newStore(t)
+		appendN(t, s, 3)
+
+		got, err := s.ReadStream(ctx, "order-abc", 2, 0)
+
+		require.NoError(t, err)
+		require.Len(t, got, 2)
+		assert.Equal(t, int64(2), got[0].Version)
+		assert.Equal(t, int64(3), got[1].Version)
+	})
+
+	t.Run("reading from version 0 reads from version 1", func(t *testing.T) {
+		s := newStore(t)
+		appendN(t, s, 2)
+
+		got, err := s.ReadStream(ctx, "order-abc", 0, 0)
+
+		require.NoError(t, err)
+		require.Len(t, got, 2)
+		assert.Equal(t, int64(1), got[0].Version)
+		assert.Equal(t, int64(2), got[1].Version)
+	})
+
+	t.Run("a limit returns the first events in version order", func(t *testing.T) {
+		s := newStore(t)
+		appendN(t, s, 5)
+
+		got, err := s.ReadStream(ctx, "order-abc", 1, 3)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{
+			"00000000-0000-0000-0000-000000000001",
+			"00000000-0000-0000-0000-000000000002",
+			"00000000-0000-0000-0000-000000000003",
+		}, ids(got))
+	})
+
+	t.Run("an invalid stream name is refused", func(t *testing.T) {
+		s := newStore(t)
+
+		got, err := s.ReadStream(ctx, "nohyphen", 1, 0)
+
+		require.ErrorIs(t, err, ErrInvalidStreamName)
+		assert.Nil(t, got)
+	})
+}
+
+func TestMemoryEventStore_ReadStream(t *testing.T) {
+	testReadStream(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_ReadStream(t *testing.T) {
+	testReadStream(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
 }

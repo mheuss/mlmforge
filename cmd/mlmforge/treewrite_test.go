@@ -293,9 +293,9 @@ func TestTreePlaceCmd_ExitsZeroForAStoreObservedPastARefusedEvent(t *testing.T) 
 		"the event at version 2 was not projected. The tree's projected version is 3.\n", out.stderr.String())
 }
 
-// The result a removal reports when another writer's catch-up projected its
-// event first.
-func TestTreeRemoveCmd_PromisesNoRedeliveryForAnEventAnotherWriterProjected(t *testing.T) {
+// A removal whose projection returned an error, with the store observed at the
+// event's version.
+func TestTreeRemoveCmd_PromisesNoRedeliveryForAProjectionErrorAtTheEventsVersion(t *testing.T) {
 	w := &recordingWriter{result: networkengine.WriteResult{
 		Stream: "tree-t", EventID: "e5", Version: 5,
 		ProjectionErr: errors.New("project event e5 at version 5 in stream tree-t: remove node and re-sponsor recruits: " +

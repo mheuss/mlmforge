@@ -55,8 +55,8 @@ against Postgres cover what the memory twin cannot promise. They are not for a
 behaviour that is merely awkward to share.
 
 Some existing pairs are not under the rule yet. The tree lockers have no shared
-body. HEU-939 adds one. The event store shares bodies for some behaviours and
-tests the rest per twin. HEU-941 moves the rest into shared bodies.
+body. HEU-939 adds one. Every event store behaviour test runs through a shared
+body. HEU-941 moved the last per-twin tests into them.
 
 ### A table of refused writes needs a control for each kind of write
 

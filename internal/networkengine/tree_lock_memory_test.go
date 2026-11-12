@@ -10,20 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type lockResult struct {
-	unlock func() error
-	err    error
-}
-
-func lockInBackground(ctx context.Context, locker TreeLocker, tree uuid.UUID) <-chan lockResult {
-	out := make(chan lockResult, 1)
-	go func() {
-		unlock, err := locker.Lock(ctx, tree)
-		out <- lockResult{unlock, err}
-	}()
-	return out
-}
-
 func TestMemoryTreeLocker_ExcludesASecondHolderUntilRelease(t *testing.T) {
 	locker := NewMemoryTreeLocker()
 	tree := uuid.MustParse(testTreeUUID(1))
@@ -117,4 +103,10 @@ func TestMemoryTreeLocker_ASecondUnlockReportsItself(t *testing.T) {
 	require.NoError(t, unlock())
 	assert.EqualError(t, unlock(),
 		"unlock of tree "+tree.String()+" was called after the lock was released")
+}
+
+func TestMemoryTreeLocker_SharedBehaviour(t *testing.T) {
+	runTreeLockerSuite(t, func(t *testing.T) TreeLocker {
+		return NewMemoryTreeLocker()
+	})
 }

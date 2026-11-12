@@ -32,6 +32,13 @@ func requireLockDatabase(t *testing.T) string {
 	return pgContainer.DSN
 }
 
+func TestPostgresTreeLocker_SharedBehaviour(t *testing.T) {
+	dsn := requireLockDatabase(t)
+	runTreeLockerSuite(t, func(t *testing.T) TreeLocker {
+		return NewPostgresTreeLocker(dsn)
+	})
+}
+
 func TestPostgresTreeLocker_ExcludesASecondHolderUntilRelease(t *testing.T) {
 	dsn := requireLockDatabase(t)
 	tree := uuid.MustParse(testTreeUUID(1))

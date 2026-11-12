@@ -510,3 +510,13 @@ It needs no read before or after.
 `PostgresSnapshotStore.Put` returns `tag.RowsAffected() == 1`. The snapshot store
 suite pins all three outcomes on the Postgres twin: a first put, a higher put,
 and an equal or lower put.
+
+## An early return can skip the only check a Postgres twin makes
+
+Some inputs reach no Go check in a Postgres twin. A SQL cast in a later
+statement is what refuses them. Any early return before that statement skips
+the check. The memory twin checks up front, so the twins diverge on that path
+alone.
+
+Validate in Go before any early return. Have the shared suite feed malformed
+input down every return path, not only the main one.

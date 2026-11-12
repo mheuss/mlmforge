@@ -89,8 +89,10 @@ const getNodeIncludingRemovedSQL = `SELECT ` + treeNodeSelectColumns +
 	` FROM tree_nodes WHERE tree_id = $1 AND user_id = $2
 	  ORDER BY removed_at DESC NULLS FIRST, id DESC LIMIT 1`
 
-const getNodeByRemovalEventSQL = `SELECT ` + treeNodeSelectColumns +
-	` FROM tree_nodes WHERE tree_id = $1 AND removed_by_event_id = $2
+const rowsByRemovalEventSQL = `SELECT ` + treeNodeSelectColumns +
+	` FROM tree_nodes WHERE tree_id = $1 AND removed_by_event_id = $2`
+
+const getNodeByRemovalEventSQL = rowsByRemovalEventSQL + `
 	  ORDER BY removed_at DESC, id DESC LIMIT 1`
 
 func NewPostgresTreeStore(pool *pgxpool.Pool) *PostgresTreeStore {
@@ -299,6 +301,18 @@ func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProj
 	if err != nil {
 		return fmt.Errorf("tombstone removed users in tree %s: %w", treeID, err)
 	}
+	if tag.RowsAffected() == 0 {
+		held, err := removalAlreadyHeld(ctx, tx, treeID, r.Users, removalEventID)
+		if err != nil {
+			return err
+		}
+		if held {
+			if err := refuseNonUUID("project removal", treeID, removalIDFields(r, removalEventID)...); err != nil {
+				return err
+			}
+			return refuseNonInt4("project removal", treeID, relocationIntFields(r)...)
+		}
+	}
 	if tag.RowsAffected() != int64(len(r.Users)) {
 		return fmt.Errorf("tombstoning removed users %v in tree %s matched %d of %d active rows",
 			r.Users, treeID, tag.RowsAffected(), len(r.Users))
@@ -341,6 +355,21 @@ func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProj
 		}
 	}
 	return nil
+}
+
+// removalAlreadyHeld reports whether the rows removalEventID stamped in treeID
+// are exactly users.
+func removalAlreadyHeld(ctx context.Context, tx pgx.Tx, treeID string, users []string, removalEventID string) (bool, error) {
+	rows, err := tx.Query(ctx, rowsByRemovalEventSQL, treeID, removalEventID)
+	if err != nil {
+		return false, fmt.Errorf("read the rows removal event %s stamped in tree %s: %w", removalEventID, treeID, err)
+	}
+	stamped, err := scanTreeNodes(rows)
+	rows.Close()
+	if err != nil {
+		return false, fmt.Errorf("read the rows removal event %s stamped in tree %s: %w", removalEventID, treeID, err)
+	}
+	return stampsCoverExactly(stamped, users), nil
 }
 
 const softDeleteRejectedSQL = `UPDATE tree_nodes SET removed_at = $3, updated_at = $3

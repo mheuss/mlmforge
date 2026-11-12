@@ -141,18 +141,19 @@ func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
 		ended, cancelEnded := context.WithCancel(context.Background())
 		cancelEnded()
 
-		for attempt := 1; attempt <= 20; attempt++ {
+		const attempts = 20
+		for attempt := 1; attempt <= attempts; attempt++ {
 			refused, err := locker.Lock(ended, tree)
 			if err == nil {
 				releaseAtCleanup(t, refused)
 			}
-			require.ErrorIs(t, err, context.Canceled, "attempt %d of 20 with an ended context", attempt)
+			require.ErrorIs(t, err, context.Canceled, "attempt %d of %d with an ended context", attempt, attempts)
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		next, err := locker.Lock(ctx, tree)
-		require.NoError(t, err, "a Lock after the refused call returned an error")
+		require.NoError(t, err, "a Lock after the refused calls returned an error")
 		releaseAtCleanup(t, next)
 		require.NoError(t, next())
 	})

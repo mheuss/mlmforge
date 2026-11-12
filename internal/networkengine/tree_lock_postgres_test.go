@@ -71,6 +71,7 @@ func TestPostgresTreeLocker_TreesWhoseKeysCollideExcludeEachOther(t *testing.T) 
 
 	unlock, err := locker.Lock(context.Background(), held)
 	require.NoError(t, err)
+	releaseAtCleanup(t, unlock)
 	requireLockTimesOut(t, locker, colliding,
 		"a Lock on a tree whose key equals the held tree's key did not time out")
 

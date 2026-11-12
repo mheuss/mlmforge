@@ -614,3 +614,39 @@ when the sequence has gaps.
 
 A count after concurrent writes has the same blind spot. One record repeated
 in place of a missing one keeps the count. Compare the sets of IDs instead.
+
+## A mutation written before a retry loop can deadlock
+
+2026-11-12.
+
+A mutation that sends on a channel or takes a lock can block the second time
+the test calls the code. A test that gains a retry loop after the mutation was
+written calls it again. The run then ends at go test's timeout, not at the
+assertion the mutation targets. That reads as a catch, and it is not the catch
+you meant to prove.
+
+Write a mutation's side effect in a form that cannot block, such as a select
+with a default. When a test changes shape, re-run every mutation row that
+targets it, and check the failure message again.
+
+HEU-939 hit this. A mutation that leaked a lock slot blocked on the second of
+twenty ended-context attempts.
+
+## A timeout assertion needs a floor, and a hold longer than the cap
+
+2026-11-12.
+
+A test that expects a call to time out passes on code that fails at once. Both
+return the deadline error. Require the call to have waited at least its
+context's duration, measured from just before the context was made.
+
+A test that expects a call to keep waiting passes on code that gives up on its
+own fixed timer, if the test releases before that timer fires. Hold the
+resource for longer than the longest cap you need to rule out.
+
+Any finite hold leaves a cap just past it. The hold is a choice, not a proof.
+Say which caps it rules out.
+
+HEU-939 hit both. A lock that failed at once passed the timeout case, and a
+lock that gave up after one second passed while the test held the tree for
+300ms.

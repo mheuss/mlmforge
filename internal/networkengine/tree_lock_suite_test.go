@@ -14,12 +14,28 @@ type lockResult struct {
 	err    error
 }
 
-func lockInBackground(ctx context.Context, locker TreeLocker, tree uuid.UUID) <-chan lockResult {
+// lockInBackground runs Lock in a goroutine and, at test cleanup, releases a
+// lock the caller never received.
+func lockInBackground(t *testing.T, ctx context.Context, locker TreeLocker, tree uuid.UUID) <-chan lockResult {
+	t.Helper()
 	out := make(chan lockResult, 1)
 	go func() {
 		unlock, err := locker.Lock(ctx, tree)
 		out <- lockResult{unlock, err}
 	}()
+	// A blocking receive here would wait on a tree that a later cleanup has
+	// not released yet.
+	t.Cleanup(func() {
+		go func() {
+			select {
+			case r := <-out:
+				if r.err == nil {
+					_ = r.unlock()
+				}
+			case <-time.After(15 * time.Second):
+			}
+		}()
+	})
 	return out
 }
 
@@ -38,7 +54,7 @@ func requireLockTimesOut(t *testing.T, locker TreeLocker, tree uuid.UUID, msg st
 	defer cancel()
 	var got lockResult
 	select {
-	case got = <-lockInBackground(ctx, locker, tree):
+	case got = <-lockInBackground(t, ctx, locker, tree):
 	case <-time.After(lockTimeout + 2*time.Second):
 		t.Fatal("a waiting Lock did not return within 2s of its context ending")
 	}
@@ -82,7 +98,7 @@ func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		waiting := lockInBackground(ctx, locker, tree)
+		waiting := lockInBackground(t, ctx, locker, tree)
 		select {
 		case got := <-waiting:
 			if got.err == nil {
@@ -146,6 +162,36 @@ func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
 		holdTree(t, locker, tree)
 
 		requireLockTimesOut(t, locker, tree, "a Lock waiting on a held tree did not end with DeadlineExceeded")
+	})
+
+	t.Run("a waiting Lock gives up when its context is cancelled", func(t *testing.T) {
+		locker := newLocker(t)
+		tree := uuid.MustParse(testTreeUUID(18))
+		holdTree(t, locker, tree)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		waiting := lockInBackground(t, ctx, locker, tree)
+		select {
+		case got := <-waiting:
+			if got.err == nil {
+				releaseAtCleanup(t, got.unlock)
+			}
+			t.Fatal("a waiting Lock on a held tree returned before its context was cancelled")
+		case <-time.After(lockTimeout):
+		}
+
+		cancel()
+		var got lockResult
+		select {
+		case got = <-waiting:
+		case <-time.After(2 * time.Second):
+			t.Fatal("a waiting Lock did not return within 2s of its context being cancelled")
+		}
+		if got.err == nil {
+			_ = got.unlock()
+		}
+		require.ErrorIs(t, got.err, context.Canceled)
 	})
 
 	t.Run("an ended context is refused on a free tree and takes no slot", func(t *testing.T) {

@@ -31,15 +31,26 @@ func requireLockTimesOut(t *testing.T, locker TreeLocker, tree uuid.UUID, msg st
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), lockTimeout)
 	defer cancel()
-	unlock, err := locker.Lock(ctx, tree)
-	if err == nil {
-		_ = unlock()
+	var got lockResult
+	select {
+	case got = <-lockInBackground(ctx, locker, tree):
+	case <-time.After(lockTimeout + 2*time.Second):
+		t.Fatal("a waiting Lock did not return within 2s of its context ending")
 	}
-	require.ErrorIs(t, err, context.DeadlineExceeded, msg)
+	if got.err == nil {
+		_ = got.unlock()
+	}
+	require.ErrorIs(t, got.err, context.DeadlineExceeded, msg)
 }
 
-// runTreeLockerSuite is the behavioural contract both tree lockers share.
-// newLocker must return a fresh locker on each call.
+// releaseAtCleanup releases a held tree when the test ends.
+func releaseAtCleanup(t *testing.T, unlock func() error) {
+	t.Helper()
+	t.Cleanup(func() { _ = unlock() })
+}
+
+// runTreeLockerSuite runs the behaviour every TreeLocker promises against the
+// lockers newLocker returns.
 func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
 	t.Helper()
 
@@ -48,6 +59,7 @@ func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
 		tree := uuid.MustParse(testTreeUUID(11))
 		unlock, err := locker.Lock(context.Background(), tree)
 		require.NoError(t, err)
+		releaseAtCleanup(t, unlock)
 
 		requireLockTimesOut(t, locker, tree, "a second Lock on a held tree did not time out")
 
@@ -55,7 +67,10 @@ func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
 		defer cancel()
 		waiting := lockInBackground(ctx, locker, tree)
 		select {
-		case <-waiting:
+		case got := <-waiting:
+			if got.err == nil {
+				releaseAtCleanup(t, got.unlock)
+			}
 			t.Fatal("a waiting Lock on a held tree returned before the release")
 		case <-time.After(lockTimeout):
 		}
@@ -68,7 +83,8 @@ func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
 			t.Fatal("the waiting Lock did not return within 2s of the release")
 		}
 		require.NoError(t, got.err)
-		requireLockTimesOut(t, locker, tree, "a Lock took the tree while the waiting Lock held it")
+		releaseAtCleanup(t, got.unlock)
+		requireLockTimesOut(t, locker, tree, "a Lock did not end with DeadlineExceeded while the waiting Lock held the tree")
 		require.NoError(t, got.unlock())
 	})
 
@@ -80,12 +96,13 @@ func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
 
 		unlock, err := locker.Lock(context.Background(), held)
 		require.NoError(t, err)
-		defer func() { _ = unlock() }()
+		releaseAtCleanup(t, unlock)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		otherUnlock, err := locker.Lock(ctx, other)
-		require.NoError(t, err, "a Lock on a second tree did not return within 2s while the first tree was held")
+		require.NoError(t, err, "a Lock on the second tree returned an error while the first tree was held")
+		releaseAtCleanup(t, otherUnlock)
 		require.NoError(t, otherUnlock())
 	})
 
@@ -97,13 +114,14 @@ func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
 
 		first, err := locker.Lock(ctx, tree)
 		require.NoError(t, err)
+		releaseAtCleanup(t, first)
 		require.NoError(t, first())
 		second, err := locker.Lock(ctx, tree)
 		require.NoError(t, err)
-		defer func() { _ = second() }()
+		releaseAtCleanup(t, second)
 
 		staleErr := first()
-		requireLockTimesOut(t, locker, tree, "a third Lock took the tree while the second holder held it")
+		requireLockTimesOut(t, locker, tree, "a third Lock did not end with DeadlineExceeded while the second holder held the tree")
 		require.Error(t, staleErr, "the first holder's second unlock returned nil")
 	})
 
@@ -112,21 +130,9 @@ func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
 		tree := uuid.MustParse(testTreeUUID(15))
 		unlock, err := locker.Lock(context.Background(), tree)
 		require.NoError(t, err)
-		defer func() { _ = unlock() }()
+		releaseAtCleanup(t, unlock)
 
-		ctx, cancel := context.WithTimeout(context.Background(), lockTimeout)
-		defer cancel()
-		waiting := lockInBackground(ctx, locker, tree)
-		var got lockResult
-		select {
-		case got = <-waiting:
-		case <-time.After(lockTimeout + 2*time.Second):
-			t.Fatal("a waiting Lock did not return within 2s of its context ending")
-		}
-		if got.err == nil {
-			_ = got.unlock()
-		}
-		require.ErrorIs(t, got.err, context.DeadlineExceeded)
+		requireLockTimesOut(t, locker, tree, "a Lock waiting on a held tree did not end with DeadlineExceeded")
 	})
 
 	t.Run("an ended context is refused on a free tree and takes no slot", func(t *testing.T) {
@@ -135,13 +141,17 @@ func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
 		ended, cancelEnded := context.WithCancel(context.Background())
 		cancelEnded()
 
-		_, err := locker.Lock(ended, tree)
+		refused, err := locker.Lock(ended, tree)
+		if err == nil {
+			releaseAtCleanup(t, refused)
+		}
 		require.ErrorIs(t, err, context.Canceled)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		next, err := locker.Lock(ctx, tree)
-		require.NoError(t, err, "a Lock after the refused call did not take the free tree within 2s")
+		require.NoError(t, err, "a Lock after the refused call returned an error")
+		releaseAtCleanup(t, next)
 		require.NoError(t, next())
 	})
 
@@ -150,6 +160,7 @@ func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
 		tree := uuid.MustParse(testTreeUUID(17))
 		unlock, err := locker.Lock(context.Background(), tree)
 		require.NoError(t, err)
+		releaseAtCleanup(t, unlock)
 
 		require.NoError(t, unlock())
 		require.EqualError(t, unlock(),

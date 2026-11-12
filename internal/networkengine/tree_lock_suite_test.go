@@ -121,7 +121,7 @@ func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
 		releaseAtCleanup(t, second)
 
 		staleErr := first()
-		requireLockTimesOut(t, locker, tree, "a third Lock did not end with DeadlineExceeded while the second holder held the tree")
+		requireLockTimesOut(t, locker, tree, "a third Lock did not end with DeadlineExceeded after the first holder's stale unlock")
 		require.Error(t, staleErr, "the first holder's second unlock returned nil")
 	})
 

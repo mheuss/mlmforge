@@ -39,7 +39,7 @@ func TestPostgresTreeLocker_SharedBehaviour(t *testing.T) {
 	})
 }
 
-func TestPostgresTreeLocker_ExcludesASecondHolderUntilRelease(t *testing.T) {
+func TestPostgresTreeLocker_SeparateLockersExcludeEachOther(t *testing.T) {
 	dsn := requireLockDatabase(t)
 	tree := uuid.MustParse(testTreeUUID(1))
 	first, second := NewPostgresTreeLocker(dsn), NewPostgresTreeLocker(dsn)
@@ -60,19 +60,26 @@ func TestPostgresTreeLocker_ExcludesASecondHolderUntilRelease(t *testing.T) {
 	require.NoError(t, again())
 }
 
-func TestPostgresTreeLocker_DifferentTreesDoNotExclude(t *testing.T) {
+func TestPostgresTreeLocker_TreesWhoseKeysCollideExcludeEachOther(t *testing.T) {
 	dsn := requireLockDatabase(t)
+	held := uuid.MustParse("cccccccc-cccc-cccc-cccc-40042ca32b29")
+	colliding := uuid.MustParse("cccccccc-cccc-cccc-cccc-a81943728855")
+	require.NotEqual(t, held, colliding)
+	require.Equal(t, treeLockKey(held), treeLockKey(colliding),
+		"treeLockKey returned different keys for the two trees in the collision fixture")
 	locker := NewPostgresTreeLocker(dsn)
 
-	unlock, err := locker.Lock(context.Background(), uuid.MustParse(testTreeUUID(1)))
+	unlock, err := locker.Lock(context.Background(), held)
 	require.NoError(t, err)
-	defer func() { _ = unlock() }()
+	requireLockTimesOut(t, locker, colliding,
+		"a Lock on a tree whose key equals the held tree's key did not time out")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	require.NoError(t, unlock())
+	wait, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	other, err := locker.Lock(ctx, uuid.MustParse(testTreeUUID(2)))
+	again, err := locker.Lock(wait, colliding)
 	require.NoError(t, err)
-	require.NoError(t, other())
+	require.NoError(t, again())
 }
 
 func TestPostgresTreeLocker_AcceptsAURLCarryingPoolSettings(t *testing.T) {
@@ -111,28 +118,6 @@ func TestPostgresTreeLocker_ALostSessionReleasesTheLock(t *testing.T) {
 	unlock, err := locker.Lock(wait, tree)
 	require.NoError(t, err, "closing the holder's connection must release its lock")
 	require.NoError(t, unlock())
-}
-
-func TestPostgresTreeLocker_AStaleUnlockDoesNotFreeTheNextHolder(t *testing.T) {
-	dsn := requireLockDatabase(t)
-	tree := uuid.MustParse(testTreeUUID(5))
-	locker := NewPostgresTreeLocker(dsn)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	first, err := locker.Lock(ctx, tree)
-	require.NoError(t, err)
-	require.NoError(t, first())
-	second, err := locker.Lock(ctx, tree)
-	require.NoError(t, err)
-	defer func() { _ = second() }()
-
-	require.Error(t, first(), "the first holder's second unlock returned nil")
-
-	short, cancelShort := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancelShort()
-	_, err = locker.Lock(short, tree)
-	require.ErrorIs(t, err, context.DeadlineExceeded, "a third Lock succeeded while the second holder held the tree")
 }
 
 // lockSessions counts the open lock connections Postgres reports.

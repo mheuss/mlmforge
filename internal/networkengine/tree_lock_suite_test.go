@@ -48,7 +48,7 @@ func requireLockTimesOut(t *testing.T, locker TreeLocker, tree uuid.UUID, msg st
 	}
 	require.ErrorIs(t, got.err, context.DeadlineExceeded, msg)
 	require.GreaterOrEqual(t, elapsed, lockTimeout,
-		"a Lock on a held tree returned %v after its %v context was made", elapsed, lockTimeout)
+		"a Lock on tree %s returned %v after its %v context was made", tree, elapsed, lockTimeout)
 }
 
 // releaseAtCleanup releases a held tree when the test ends.
@@ -63,7 +63,7 @@ func holdTree(t *testing.T, locker TreeLocker, tree uuid.UUID) func() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	unlock, err := locker.Lock(ctx, tree)
-	require.NoError(t, err, "a Lock on a free tree returned an error within 5s")
+	require.NoError(t, err, "a Lock on tree %s returned an error under a 5s context", tree)
 	releaseAtCleanup(t, unlock)
 	return unlock
 }

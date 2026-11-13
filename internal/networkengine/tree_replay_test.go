@@ -368,6 +368,7 @@ func TestReplayStream_ReportsAnEngineRefusalBeforeTheLastEvent(t *testing.T) {
 	require.ErrorAs(t, err, &replay)
 	assert.Equal(t, int64(2), replay.FailedVersion)
 	assert.Equal(t, int64(1), replay.ReachedVersion)
+	assert.True(t, isEngineCode(err, "SPONSOR_NOT_FOUND"), "got %v", err)
 	assert.NotContains(t, env.users(), writerOther)
 }
 
@@ -396,6 +397,7 @@ func TestReplayStream_ReportsReachedFromAPartWayStart(t *testing.T) {
 	require.ErrorAs(t, err, &replay)
 	assert.Equal(t, int64(2), replay.ReachedVersion)
 	assert.Equal(t, int64(3), replay.FailedVersion)
+	assert.True(t, isEngineCode(err, "SPONSOR_NOT_FOUND"), "got %v", err)
 }
 
 func TestReplayStream_LeavesNoRootWhenTheRootIsRejected(t *testing.T) {
@@ -428,6 +430,7 @@ func TestReplayStream_ReportsTheStartWhenTheFirstEventFails(t *testing.T) {
 	require.ErrorAs(t, err, &replay)
 	assert.Equal(t, int64(1), replay.ReachedVersion)
 	assert.Equal(t, int64(2), replay.FailedVersion)
+	assert.True(t, isEngineCode(err, "SPONSOR_NOT_FOUND"), "got %v", err)
 }
 
 func TestReplayStream_RefusesAPayloadForAnotherTree(t *testing.T) {
@@ -478,7 +481,8 @@ func TestReplayStream_ReportsTheEventAnEngineRefused(t *testing.T) {
 	placed := streamEvents(t, env.events, TreeStreamName(writerTree))[1]
 	assert.True(t, sameUUID(placed.ID, replay.FailedEventID), "replay named event %q, not %s", replay.FailedEventID, placed.ID)
 	var engineErr *EngineError
-	assert.True(t, errors.As(err, &engineErr), "the engine's refusal is not reachable through errors.As")
+	require.True(t, errors.As(err, &engineErr), "the engine's refusal is not reachable through errors.As")
+	assert.Equal(t, "SPONSOR_NOT_FOUND", engineErr.Code)
 }
 
 func TestReplayStream_LeavesNoRootAfterTheRootIsRemoved(t *testing.T) {

@@ -14,8 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// absentSponsorPlacement places writerChild under writerRoot, sponsored by
-// writerOther. A caller that places writerOther first gets no refusal.
+// absentSponsorPlacement is a placement of writerChild under writerRoot, for a
+// tree that does not hold its sponsor, writerOther.
 func absentSponsorPlacement() NodePlacedPayload {
 	return NodePlacedPayload{
 		TreeID: writerTree, UserID: writerChild, ParentID: writerRoot, SponsorID: writerOther,

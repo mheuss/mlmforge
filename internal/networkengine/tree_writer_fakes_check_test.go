@@ -70,15 +70,25 @@ func TestFakeWriterEngine_RefusesAnAbsentParentBeforeAnAbsentSponsor(t *testing.
 }
 
 func TestFakeWriterEngine_RefusesAHeldUserBeforeAnAbsentParentOrSponsor(t *testing.T) {
-	for name, check := range map[string]Mutation{
-		"add_node":    CheckAddNode(writerRoot, writerOther, writerAbsentSponsor, writeTime.Unix()),
-		"add_node_at": CheckAddNodeAt(writerRoot, writerOther, writerAbsentSponsor, 0, writeTime.Unix()),
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		check Mutation
+		apply func(*fakeWriterEngine) error
+	}{
+		"add_node": {CheckAddNode(writerRoot, writerOther, writerAbsentSponsor, writeTime.Unix()),
+			func(e *fakeWriterEngine) error {
+				return e.AddNode(ctx, writerTree, writerRoot, writerOther, writerAbsentSponsor, writeTime.Unix())
+			}},
+		"add_node_at": {CheckAddNodeAt(writerRoot, writerOther, writerAbsentSponsor, 0, writeTime.Unix()),
+			func(e *fakeWriterEngine) error {
+				return e.AddNodeAt(ctx, writerTree, writerRoot, writerOther, writerAbsentSponsor, 0, writeTime.Unix())
+			}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			engine := newRootedFakeEngine(t)
 
-			applyErr := engine.AddNode(context.Background(), writerTree, writerRoot, writerOther, writerAbsentSponsor, writeTime.Unix())
-			checkErr := engine.CheckMutation(context.Background(), writerTree, check)
+			applyErr := tc.apply(engine)
+			checkErr := engine.CheckMutation(ctx, writerTree, tc.check)
 
 			requireEngineRefusal(t, applyErr, engineCodeUserAlreadyExists, "user "+writerRoot+" already exists in tree")
 			requireEngineRefusal(t, checkErr, engineCodeUserAlreadyExists, "user "+writerRoot+" already exists in tree")

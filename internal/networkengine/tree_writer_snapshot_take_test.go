@@ -47,7 +47,7 @@ func TestTreeWriterSnapshot_StoresNothingWhenTheProjectionFails(t *testing.T) {
 	placeUnderRoot(t, env, 10, snapshotInterval-2)
 	w, engine := env.writer()
 	user := testUserUUID(9000)
-	engine.failAdd[user] = fakeEngineError("INVALID_PARAMS", "refused by the test")
+	engine.failAdd[user] = fakeHandlerPanic()
 
 	res, err := w.Place(context.Background(), placeRequest(user, nil))
 

@@ -134,20 +134,25 @@ removal or undo calls at all.
 ## Script only replies the worker gives for the payload
 
 A scripted engine reply must be one the worker gives for that payload. A reply
-it cannot give describes a refusal that never happens. A broken refusal
-path in the worker then passes the test.
+it cannot give describes a refusal that never happens. A scripted reply fires
+whether or not the payload would provoke it. The test then cannot show that the
+payload provokes the refusal.
 
-When a test needs a particular refusal, give the payload what provokes it, and
-let the fake refuse. When it needs any engine error for a valid payload, use
-`INTERNAL_ERROR` with the message "handler panicked unexpectedly". Read from the
-worker on 2026-11-13, its dispatch loop gives that reply for any request whose
-handler panics.
+When a test needs a particular refusal, give the payload what provokes it. Let
+the fake refuse. When the fake does not model that refusal, add the check to the
+fake first. Put it in the worker's order. When a test needs any engine error for
+a valid payload, use `INTERNAL_ERROR` with the message "handler panicked
+unexpectedly". Check the worker's panic reply before copying the message.
+
+Read from the worker for HEU-949 on 2026-11-13. Its dispatch loop gives that
+reply for any request whose handler panics.
 
 Dated examples, from HEU-948 on 2026-10-19:
 
 - `TestTreeWriterReject_RejectsAPlacementTheEngineRefusesOnItsFirstDelivery`
   scripted `SPONSOR_NOT_FOUND` for a placement whose sponsor was the root. The
-  worker accepts that placement. The test's payload was changed to name a
+  worker accepted that placement. The test's payload was changed to name a
   sponsor the tree does not hold.
-- The `stuckPlacement` fixture and the failed-append test were changed the same
-  day to give the reply the worker gives for an absent sponsor.
+- The `stuckPlacement` fixture and
+  `TestTreeWriterReject_AFailedAppendLeavesTheOutcomeEmpty` were changed the
+  same day to give the reply the worker gives for an absent sponsor.

@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+
 jobs:
   go:
     name: Go
@@ -44,7 +48,7 @@ jobs:
         run: |
           RUSTUP_AUTO_INSTALL=0 rustup --version
           rustup toolchain install --no-self-update
-          rustup show active-toolchain | grep -F "$PWD/rust-toolchain.toml"
+          rustup show active-toolchain | grep -F "$(pwd -P)/rust-toolchain.toml"
           rustc --version
 
       - name: Build worker
@@ -167,7 +171,7 @@ jobs:
         run: |
           RUSTUP_AUTO_INSTALL=0 rustup --version
           rustup toolchain install --no-self-update
-          rustup show active-toolchain | grep -F "$PWD/rust-toolchain.toml"
+          rustup show active-toolchain | grep -F "$(pwd -P)/rust-toolchain.toml"
           rustc --version
 
       - name: Build

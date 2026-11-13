@@ -1395,6 +1395,17 @@ and the same fault was reproduced in a new guard about two hours later on the
 same branch, caught by reading rather than by any gate. Write the nested `if`.
 HEU-745 holds the fix.
 
+## Probing rustup Can Install Toolchains
+
+`engine/rust-toolchain.toml` names a toolchain. When that toolchain is missing,
+`rustup show active-toolchain` and `rustup toolchain list` can each install it.
+Both were seen doing so on rustup 1.29. A scratch rustup home that one of them
+filled measured 624M.
+
+rustup's changelog says `RUSTUP_AUTO_INSTALL=0` turns automatic install off
+from 1.28.1 on. Set it for a probe. To probe from a clean state, give the probe
+its own `RUSTUP_HOME` and `CARGO_HOME` under `engine/target/`.
+
 ## A Reviewer Pointed At A Worktree Reports On The Worktree
 
 A long-lived branch drifts behind its base. A file the branch never touches can

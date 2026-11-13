@@ -77,6 +77,10 @@ func fakeEngineError(code, format string, args ...any) error {
 	return &EngineError{Code: code, Message: fmt.Sprintf(format, args...)}
 }
 
+func fakeHandlerPanic() error {
+	return fakeEngineError("INTERNAL_ERROR", "handler panicked unexpectedly")
+}
+
 func (f *fakeWriterEngine) tree(structure string) (*fakeEngineTree, error) {
 	t, ok := f.trees[structure]
 	if !ok {

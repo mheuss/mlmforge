@@ -53,6 +53,8 @@ func TestTreeWriterSnapshot_StoresNothingWhenTheProjectionFails(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Error(t, res.ProjectionErr)
+	assert.ErrorContains(t, res.ProjectionErr, "failed after")
+	assert.True(t, isEngineCode(res.ProjectionErr, "INTERNAL_ERROR"), "got %v", res.ProjectionErr)
 	assert.NotContains(t, engine.calls, "take_snapshot")
 	_, found, err := env.snapshots.Get(context.Background(), writerTree)
 	require.NoError(t, err)

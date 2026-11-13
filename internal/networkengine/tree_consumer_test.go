@@ -416,11 +416,15 @@ func TestTreeConsumer_NodePlacedGateRejections(t *testing.T) {
 		name    string
 		mutate  func(*NodePlacedPayload)
 		stream  string // non-empty overrides the event's stream
+		shape   string // non-empty is the tree type the stream records
 		wantErr string
 	}{
-		{name: "missing tree_type", mutate: func(p *NodePlacedPayload) { p.TreeType = "" }, wantErr: `unsupported tree_type ""`},
-		{name: "unknown tree_type", mutate: func(p *NodePlacedPayload) { p.TreeType = "boardplan" }, wantErr: `unsupported tree_type "boardplan"`},
-		{name: "wrong-case tree_type", mutate: func(p *NodePlacedPayload) { p.TreeType = "Matrix" }, wantErr: `unsupported tree_type "Matrix"`},
+		{name: "missing tree_type", mutate: func(p *NodePlacedPayload) { p.TreeType = "" }, shape: treeTypeMatrix,
+			wantErr: `has tree_type "", and the stream records tree type matrix`},
+		{name: "unknown tree_type", mutate: func(p *NodePlacedPayload) { p.TreeType = "boardplan" }, shape: treeTypeMatrix,
+			wantErr: `has tree_type "boardplan", and the stream records tree type matrix`},
+		{name: "wrong-case tree_type", mutate: func(p *NodePlacedPayload) { p.TreeType = "Matrix" }, shape: treeTypeMatrix,
+			wantErr: `has tree_type "Matrix", and the stream records tree type matrix`},
 		{name: "matrix nil position", mutate: func(p *NodePlacedPayload) { p.Position = nil }, wantErr: "has no position"},
 		{name: "matrix negative position", mutate: func(p *NodePlacedPayload) { p.Position = &neg }, wantErr: "negative position -1"},
 		{name: "matrix position above u8 ceiling", mutate: func(p *NodePlacedPayload) { p.Position = &big }, wantErr: "above the 255 slot ceiling"},
@@ -446,7 +450,12 @@ func TestTreeConsumer_NodePlacedGateRejections(t *testing.T) {
 				event.Stream = tc.stream
 			}
 
-			err := deliver(context.Background(), consumer, event)
+			var err error
+			if tc.shape != "" {
+				err = consumer.HandleEvent(context.Background(), treeShape{treeType: tc.shape}, event)
+			} else {
+				err = deliver(context.Background(), consumer, event)
+			}
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.wantErr)
 			assert.Contains(t, err.Error(), payload.UserID, "error names the node")

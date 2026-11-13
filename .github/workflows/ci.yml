@@ -46,7 +46,7 @@ jobs:
       - name: Install Rust toolchain
         working-directory: engine
         run: |
-          RUSTUP_AUTO_INSTALL=0 rustup --version
+          RUSTUP_AUTO_INSTALL=0 rustup --version 2>&1 | sed -n 1p
           rustup toolchain install --no-self-update
           rustup show active-toolchain | grep -F "$(pwd -P)/rust-toolchain.toml"
           rustc --version
@@ -169,7 +169,7 @@ jobs:
 
       - name: Install Rust toolchain
         run: |
-          RUSTUP_AUTO_INSTALL=0 rustup --version
+          RUSTUP_AUTO_INSTALL=0 rustup --version 2>&1 | sed -n 1p
           rustup toolchain install --no-self-update
           rustup show active-toolchain | grep -F "$(pwd -P)/rust-toolchain.toml"
           rustc --version

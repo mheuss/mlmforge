@@ -32,6 +32,13 @@ func (e *replayEnv) place(t *testing.T, user string) platform.Event {
 	return appendDirect(t, e.events, EventTypeNodePlaced, childPlacedPayload(user))
 }
 
+func (e *replayEnv) placeSponsoredBy(t *testing.T, user, sponsor string) platform.Event {
+	t.Helper()
+	payload := childPlacedPayload(user)
+	payload.SponsorID = sponsor
+	return appendDirect(t, e.events, EventTypeNodePlaced, payload)
+}
+
 func (e *replayEnv) reject(t *testing.T, target platform.Event) platform.Event {
 	t.Helper()
 	return appendDirect(t, e.events, EventTypeEventRejected, EventRejectedPayload{
@@ -352,9 +359,8 @@ func TestReplayStream_RefusesAnEventPastTo(t *testing.T) {
 
 func TestReplayStream_ReportsAnEngineRefusalBeforeTheLastEvent(t *testing.T) {
 	env := newReplayEnv(t)
-	env.place(t, writerChild)
+	env.placeSponsoredBy(t, writerChild, writerAbsentSponsor)
 	env.place(t, writerOther)
-	env.engine.failAdd[writerChild] = fakeEngineError("SPONSOR_NOT_FOUND", "refused")
 
 	_, err := env.replay(1, 3)
 
@@ -381,9 +387,8 @@ func TestReplayStream_StartsPartWayThroughAStream(t *testing.T) {
 func TestReplayStream_ReportsReachedFromAPartWayStart(t *testing.T) {
 	env := newReplayEnv(t)
 	env.place(t, writerChild)
-	env.place(t, writerOther)
+	env.placeSponsoredBy(t, writerOther, writerAbsentSponsor)
 	require.NoError(t, env.engine.AddRoot(context.Background(), writerTree, writerRoot, writeTime.Unix()))
-	env.engine.failAdd[writerOther] = fakeEngineError("SPONSOR_NOT_FOUND", "refused")
 
 	_, err := env.replay(2, 3)
 
@@ -413,10 +418,9 @@ func TestReplayStream_LeavesNoRootWhenTheRootIsRejected(t *testing.T) {
 
 func TestReplayStream_ReportsTheStartWhenTheFirstEventFails(t *testing.T) {
 	env := newReplayEnv(t)
-	env.place(t, writerChild)
+	env.placeSponsoredBy(t, writerChild, writerAbsentSponsor)
 	env.place(t, writerOther)
 	require.NoError(t, env.engine.AddRoot(context.Background(), writerTree, writerRoot, writeTime.Unix()))
-	env.engine.failAdd[writerChild] = fakeEngineError("SPONSOR_NOT_FOUND", "refused")
 
 	_, err := env.replay(2, 3)
 
@@ -463,9 +467,7 @@ func TestReplayStream_RefusesAnUnknownEventType(t *testing.T) {
 
 func TestReplayStream_ReportsTheEventAnEngineRefused(t *testing.T) {
 	env := newReplayEnv(t)
-	env.place(t, writerChild)
-	refusal := fakeEngineError("SPONSOR_NOT_FOUND", "refused")
-	env.engine.failAdd[writerChild] = refusal
+	env.placeSponsoredBy(t, writerChild, writerAbsentSponsor)
 
 	_, err := env.replay(1, 2)
 

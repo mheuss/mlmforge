@@ -1381,10 +1381,11 @@ carries the attribute, or you are counting two things and reporting one.
 
 ## The MSRV Is Not Enforced, And Knowing That Does Not Protect You
 
-`rust-version = "1.85.0"` is declared in both engine crates. CI installs
-`dtolnay/rust-toolchain@stable`. Nothing compiles the workspace against the
-declared version, so a syntax feature newer than 1.85 reaches a commit and
-passes every gate. `clippy::incompatible_msrv` covers std APIs, not syntax.
+`rust-version = "1.85.0"` is declared in both engine crates. CI and local runs
+build with the version `engine/rust-toolchain.toml` pins. Nothing compiles the
+workspace against the declared version, so a syntax feature newer than 1.85
+reaches a commit and passes every gate. `clippy::incompatible_msrv` covers std
+APIs, not syntax.
 
 Let-chains, `if let Some(x) = y && cond`, are the ones that keep landing. They
 need 1.88.
@@ -1393,6 +1394,17 @@ Awareness is not the mitigation. The ticket documenting this gap was written,
 and the same fault was reproduced in a new guard about two hours later on the
 same branch, caught by reading rather than by any gate. Write the nested `if`.
 HEU-745 holds the fix.
+
+## Probing rustup Can Install Toolchains
+
+`engine/rust-toolchain.toml` names a toolchain. When that toolchain is missing,
+`rustup show active-toolchain` and `rustup toolchain list` can each install it.
+Both were seen doing so on rustup 1.29. A scratch rustup home that one of them
+filled measured 624M.
+
+rustup's changelog says `RUSTUP_AUTO_INSTALL=0` turns automatic install off
+from 1.28.1 on. Set it for a probe. To probe from a clean state, give the probe
+its own `RUSTUP_HOME` and `CARGO_HOME` under `engine/target/`.
 
 ## A Reviewer Pointed At A Worktree Reports On The Worktree
 

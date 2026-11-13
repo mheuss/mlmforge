@@ -2105,9 +2105,15 @@ mod tests {
         // going through add_member (which would trigger cycling).
         // This simulates a full board for fallback testing.
         let board = engine.boards.get_mut(&sponsor_board).unwrap();
-        for i in 1..engine.total_positions {
+        for (i, slot) in board
+            .positions
+            .iter_mut()
+            .enumerate()
+            .take(engine.total_positions)
+            .skip(1)
+        {
             let filler = test_uuid(50 + i as u8);
-            board.positions[i] = Some(filler);
+            *slot = Some(filler);
             engine.member_boards.insert(filler, sponsor_board);
             engine.sponsor_map.insert(filler, sponsor);
         }

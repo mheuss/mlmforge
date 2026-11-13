@@ -438,18 +438,18 @@ Amended 2026-10-14 by HEU-297: startup no longer bulk-loads the adjacency table.
 
 **Status:** Accepted
 
-**Context:** CI installed Rust with `dtolnay/rust-toolchain@stable` in two jobs, so each run built with whatever stable was current that day. The clippy step runs with `-D warnings`. On 2026-11-12, rust 1.100.0 raised three `clippy::needless_range_loop` errors. PR #224 failed its Rust job on code it did not touch. Local runs used each developer's default toolchain, and 1.98.0 passed (HEU-639).
+**Context:** CI installed Rust with `dtolnay/rust-toolchain@stable` in two jobs, so each run built with whatever stable was current that day. The clippy step runs with `-D warnings`. On 2026-11-12, rust 1.100.0 raised three `clippy::needless_range_loop` errors. PR #224 failed its Rust job on code it did not touch. Local runs used each developer's default toolchain. Locally, rustc 1.98.0 passed (HEU-639).
 
 **Decision:** Pin the Rust toolchain in `engine/rust-toolchain.toml` with an exact three-part version. CI installs it with `rustup toolchain install --no-self-update` run in `engine/`. Each CI job fails when `rustup show active-toolchain` does not name that file. No workflow or other config file repeats the version. Rust is not added to `mise.toml`.
 
 **Consequences:**
 - Raising the toolchain is a commit that edits the file. New clippy lints fail on that branch, not on an unrelated one. Fix them in the same commit.
 - `cargo +<toolchain>`, `RUSTUP_TOOLCHAIN` and a `rustup override` all take precedence over the file. A shell with one of them set does not build with the pin. `rustup show active-toolchain` run in `engine/` names the file when the file is in charge.
-- rustup's changelog says 1.28.0 stopped installing a missing active toolchain on use. Its 1.28.2 entry says the `RUSTUP_AUTO_INSTALL` variable arrived in 1.28.1. rustup's environment-variable docs give that variable a default of 1, which installs on use. `rustup toolchain install` with no arguments, run in `engine/`, installs the pin and its components. That command is also in the 1.28.0 changelog.
+- rustup's changelog says 1.28.0 stopped installing a missing active toolchain on use. Its 1.28.2 entry says the `RUSTUP_AUTO_INSTALL` variable arrived in 1.28.1. rustup's environment-variable docs give that variable a default of 1, which installs on use. Run `rustup toolchain install` with no arguments in `engine/`. It installs the pin and its components. That command is also in the 1.28.0 changelog.
 - `rustup toolchain install` also updates rustup itself unless given `--no-self-update`.
 - Components belong to one toolchain. The pin installs the minimal profile plus `clippy` and `rustfmt`. rustup's `rust-analyzer` proxy therefore fails in `engine/` until the editor components are added to the pinned toolchain. Run `rustup component add rust-src rust-analyzer` in `engine/` after each bump. They stay out of the toolchain file because CI does not need them.
 - The `rust-version` fields in the crate manifests are the MSRV floor. The pin is the version builds use. Nothing enforces the floor. HEU-745 holds that.
-- Rust stays out of `mise.toml`. rustup reads the toolchain file on its own, and a `mise.toml` entry would be a second copy of the version.
+- Rust stays out of `mise.toml`. rustup reads the toolchain file on its own. A `mise.toml` entry would be a second copy of the version.
 
 ---
 

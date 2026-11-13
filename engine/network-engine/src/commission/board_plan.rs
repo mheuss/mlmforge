@@ -149,17 +149,17 @@ mod tests {
         assert_eq!(result.earnings.len(), 5);
 
         // First 3 are paid.
-        for i in 0..3 {
-            assert_d!(result.earnings[i].dollar_amount, 500.0);
-            assert!(!result.earnings[i].capped);
-            assert_eq!(result.earnings[i].cycle_number, (i + 1) as u32);
+        for (i, earning) in result.earnings.iter().enumerate().take(3) {
+            assert_d!(earning.dollar_amount, 500.0);
+            assert!(!earning.capped);
+            assert_eq!(earning.cycle_number, (i + 1) as u32);
         }
 
         // Last 2 are capped.
-        for i in 3..5 {
-            assert_d!(result.earnings[i].dollar_amount, 0.0);
-            assert!(result.earnings[i].capped);
-            assert_eq!(result.earnings[i].cycle_number, (i + 1) as u32);
+        for (i, earning) in result.earnings.iter().enumerate().skip(3) {
+            assert_d!(earning.dollar_amount, 0.0);
+            assert!(earning.capped);
+            assert_eq!(earning.cycle_number, (i + 1) as u32);
         }
 
         assert_eq!(*result.updated_cycle_counts.get(&member).unwrap(), 5);

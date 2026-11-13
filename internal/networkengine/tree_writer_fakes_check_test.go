@@ -8,10 +8,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newRootedFakeEngine(t *testing.T) *fakeWriterEngine {
+func newRootedFakeEngine(t *testing.T, treeType string) *fakeWriterEngine {
 	t.Helper()
 	engine := newFakeWriterEngine()
-	require.NoError(t, engine.CreateTree(context.Background(), writerTree, treeTypeUnilevel))
+	if treeType == treeTypeMatrix {
+		require.NoError(t, engine.CreateMatrixTree(context.Background(), writerTree, 3, "breadth_first"))
+	} else {
+		require.NoError(t, engine.CreateTree(context.Background(), writerTree, treeType))
+	}
 	require.NoError(t, engine.AddRoot(context.Background(), writerTree, writerRoot, writeTime.Unix()))
 	return engine
 }
@@ -26,7 +30,7 @@ func requireEngineRefusal(t *testing.T, err error, code, message string) {
 }
 
 func TestFakeWriterEngine_RefusesAPlacementWithAnAbsentSponsor(t *testing.T) {
-	engine := newRootedFakeEngine(t)
+	engine := newRootedFakeEngine(t, treeTypeUnilevel)
 
 	err := engine.AddNode(context.Background(), writerTree, writerChild, writerRoot, writerAbsentSponsor, writeTime.Unix())
 
@@ -35,7 +39,7 @@ func TestFakeWriterEngine_RefusesAPlacementWithAnAbsentSponsor(t *testing.T) {
 }
 
 func TestFakeWriterEngine_RefusesAPlacementAtAPositionWithAnAbsentSponsor(t *testing.T) {
-	engine := newRootedFakeEngine(t)
+	engine := newRootedFakeEngine(t, treeTypeMatrix)
 
 	err := engine.AddNodeAt(context.Background(), writerTree, writerChild, writerRoot, writerAbsentSponsor, 0, writeTime.Unix())
 
@@ -44,14 +48,17 @@ func TestFakeWriterEngine_RefusesAPlacementAtAPositionWithAnAbsentSponsor(t *tes
 }
 
 func TestFakeWriterEngine_RefusesAPlacementCheckWithAnAbsentSponsor(t *testing.T) {
-	for name, check := range map[string]Mutation{
-		"add_node":    CheckAddNode(writerChild, writerRoot, writerAbsentSponsor, writeTime.Unix()),
-		"add_node_at": CheckAddNodeAt(writerChild, writerRoot, writerAbsentSponsor, 0, writeTime.Unix()),
+	for name, tc := range map[string]struct {
+		treeType string
+		check    Mutation
+	}{
+		"add_node":    {treeTypeUnilevel, CheckAddNode(writerChild, writerRoot, writerAbsentSponsor, writeTime.Unix())},
+		"add_node_at": {treeTypeMatrix, CheckAddNodeAt(writerChild, writerRoot, writerAbsentSponsor, 0, writeTime.Unix())},
 	} {
 		t.Run(name, func(t *testing.T) {
-			engine := newRootedFakeEngine(t)
+			engine := newRootedFakeEngine(t, tc.treeType)
 
-			err := engine.CheckMutation(context.Background(), writerTree, check)
+			err := engine.CheckMutation(context.Background(), writerTree, tc.check)
 
 			requireEngineRefusal(t, err, "SPONSOR_NOT_FOUND", "sponsor "+writerAbsentSponsor+" not found in tree")
 		})
@@ -59,7 +66,7 @@ func TestFakeWriterEngine_RefusesAPlacementCheckWithAnAbsentSponsor(t *testing.T
 }
 
 func TestFakeWriterEngine_RefusesAnAbsentParentBeforeAnAbsentSponsor(t *testing.T) {
-	engine := newRootedFakeEngine(t)
+	engine := newRootedFakeEngine(t, treeTypeUnilevel)
 
 	applyErr := engine.AddNode(context.Background(), writerTree, writerChild, writerOther, writerAbsentSponsor, writeTime.Unix())
 	checkErr := engine.CheckMutation(context.Background(), writerTree,
@@ -72,20 +79,21 @@ func TestFakeWriterEngine_RefusesAnAbsentParentBeforeAnAbsentSponsor(t *testing.
 func TestFakeWriterEngine_RefusesAHeldUserBeforeAnAbsentParentOrSponsor(t *testing.T) {
 	ctx := context.Background()
 	for name, tc := range map[string]struct {
-		check Mutation
-		apply func(*fakeWriterEngine) error
+		treeType string
+		check    Mutation
+		apply    func(*fakeWriterEngine) error
 	}{
-		"add_node": {CheckAddNode(writerRoot, writerOther, writerAbsentSponsor, writeTime.Unix()),
+		"add_node": {treeTypeUnilevel, CheckAddNode(writerRoot, writerOther, writerAbsentSponsor, writeTime.Unix()),
 			func(e *fakeWriterEngine) error {
 				return e.AddNode(ctx, writerTree, writerRoot, writerOther, writerAbsentSponsor, writeTime.Unix())
 			}},
-		"add_node_at": {CheckAddNodeAt(writerRoot, writerOther, writerAbsentSponsor, 0, writeTime.Unix()),
+		"add_node_at": {treeTypeMatrix, CheckAddNodeAt(writerRoot, writerOther, writerAbsentSponsor, 0, writeTime.Unix()),
 			func(e *fakeWriterEngine) error {
 				return e.AddNodeAt(ctx, writerTree, writerRoot, writerOther, writerAbsentSponsor, 0, writeTime.Unix())
 			}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			engine := newRootedFakeEngine(t)
+			engine := newRootedFakeEngine(t, tc.treeType)
 
 			applyErr := tc.apply(engine)
 			checkErr := engine.CheckMutation(ctx, writerTree, tc.check)
@@ -97,7 +105,7 @@ func TestFakeWriterEngine_RefusesAHeldUserBeforeAnAbsentParentOrSponsor(t *testi
 }
 
 func TestFakeWriterEngine_AcceptsAPlacementWhoseSponsorIsHeld(t *testing.T) {
-	engine := newRootedFakeEngine(t)
+	engine := newRootedFakeEngine(t, treeTypeUnilevel)
 
 	require.NoError(t, engine.CheckMutation(context.Background(), writerTree,
 		CheckAddNode(writerChild, writerRoot, writerRoot, writeTime.Unix())))

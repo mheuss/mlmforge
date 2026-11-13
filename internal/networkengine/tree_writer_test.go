@@ -852,7 +852,7 @@ func TestTreeWriterCatchUp_LeavesTheRowOfAnEventTheEngineRefused(t *testing.T) {
 	var failed *CatchUpFailedError
 	require.ErrorAs(t, err, &failed)
 	assert.Equal(t, refused.ID, failed.EventID)
-	assert.ErrorContains(t, err, "SPONSOR_NOT_FOUND")
+	assert.True(t, isEngineCode(err, "SPONSOR_NOT_FOUND"), "got %v", err)
 	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
 	row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
 	require.NoError(t, err)

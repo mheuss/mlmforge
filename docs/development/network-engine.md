@@ -1381,10 +1381,11 @@ carries the attribute, or you are counting two things and reporting one.
 
 ## The MSRV Is Not Enforced, And Knowing That Does Not Protect You
 
-`rust-version = "1.85.0"` is declared in both engine crates. CI installs
-`dtolnay/rust-toolchain@stable`. Nothing compiles the workspace against the
-declared version, so a syntax feature newer than 1.85 reaches a commit and
-passes every gate. `clippy::incompatible_msrv` covers std APIs, not syntax.
+`rust-version = "1.85.0"` is declared in both engine crates. CI and local runs
+build with the version `engine/rust-toolchain.toml` pins. Nothing compiles the
+workspace against the declared version, so a syntax feature newer than 1.85
+reaches a commit and passes every gate. `clippy::incompatible_msrv` covers std
+APIs, not syntax.
 
 Let-chains, `if let Some(x) = y && cond`, are the ones that keep landing. They
 need 1.88.

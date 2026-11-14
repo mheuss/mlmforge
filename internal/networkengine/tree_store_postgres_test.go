@@ -117,12 +117,15 @@ func TestPostgresTreeStore_ConflictNamesTheAttemptedInsert(t *testing.T) {
 		user     string
 		depth    int
 		parent   *string
+		sponsor  *string
 		position *int
 		want     error
 	}{
-		{"the active user", testTreeUUID(1), testUserUUID(2), 1, ptr(testUserUUID(1)), intPtr(1), ErrActiveUserConflict},
-		{"the slot", testTreeUUID(2), testUserUUID(3), 1, ptr(testUserUUID(1)), intPtr(0), ErrSlotConflict},
-		{"the root", testTreeUUID(3), testUserUUID(3), 0, nil, nil, ErrRootConflict},
+		{name: "the active user", tree: testTreeUUID(1), user: testUserUUID(2), depth: 1,
+			parent: ptr(testUserUUID(1)), sponsor: ptr(testUserUUID(1)), position: intPtr(1), want: ErrActiveUserConflict},
+		{name: "the slot", tree: testTreeUUID(2), user: testUserUUID(3), depth: 1,
+			parent: ptr(testUserUUID(1)), sponsor: ptr(testUserUUID(1)), position: intPtr(0), want: ErrSlotConflict},
+		{name: "the root", tree: testTreeUUID(3), user: testUserUUID(3), depth: 0, want: ErrRootConflict},
 	}
 	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -134,7 +137,7 @@ func TestPostgresTreeStore_ConflictNamesTheAttemptedInsert(t *testing.T) {
 				makeUUIDNode(testNodeUUID(base+2), c.tree, testUserUUID(2), 1, ptr(testUserUUID(1)), ptr(testUserUUID(1)), intPtr(0))))
 
 			err := insertNode(ctx, store.pool,
-				makeUUIDNode(attempted, c.tree, c.user, c.depth, c.parent, ptr(testUserUUID(1)), c.position))
+				makeUUIDNode(attempted, c.tree, c.user, c.depth, c.parent, c.sponsor, c.position))
 
 			require.ErrorIs(t, err, c.want)
 			assert.EqualError(t, err, c.want.Error()+": this insert was for tree="+c.tree+

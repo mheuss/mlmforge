@@ -920,11 +920,12 @@ func TestWithRetry_UnrecognisedOutcomeStopsAndFails(t *testing.T) {
 	err := c.withRetry(context.Background(), "add_node", "tree-42", "user-99",
 		func() error { attempts++; return engineErr },
 		func(context.Context, error) (reconcileOutcome, error) {
-			return reconcileOutcome(99), nil
+			return reconcileOutcome(99), errors.New("closure reason")
 		})
 
 	require.ErrorIs(t, err, engineErr)
 	assert.Contains(t, err.Error(), "unrecognised outcome 99")
+	assert.Contains(t, err.Error(), "closure reason", "the closure's own error is kept")
 	assert.Equal(t, 1, attempts, "an unrecognised outcome is not retried")
 }
 
@@ -1473,7 +1474,7 @@ func (r *reconcileTransport) Call(_ context.Context, op string, params json.RawM
 		if r.positionErr != nil {
 			return nil, r.positionErr
 		}
-		if r.position == nil || r.position.UserID != q.UserID {
+		if r.position == nil || !sameUUID(r.position.UserID, q.UserID) {
 			return nil, &EngineError{Code: engineCodeUserNotFound, Message: q.UserID}
 		}
 		return json.Marshal(r.position)
@@ -1603,8 +1604,8 @@ func TestHandleNodePlaced_ReconcileDivergesWhenThePositionLookupFindsNoUser(t *t
 	require.Error(t, err)
 	assert.Len(t, tr.mutationOps, 1, "a not-found answer is not retried")
 	assert.Equal(t, 1, tr.positionOps)
-	assert.True(t, isEngineCode(err, engineCodeUserNotFound), "the lookup's answer is carried")
-	assert.Contains(t, err.Error(), engineCodeUserAlreadyExists, "and so is the refusal it contradicts")
+	assert.True(t, isEngineCode(err, engineCodeUserAlreadyExists), "the refused mutation is the error carried")
+	assert.Contains(t, err.Error(), engineCodeUserNotFound, "and the lookup's answer is named")
 }
 
 // Any other engine failure is not reconcile's business, and inspecting it

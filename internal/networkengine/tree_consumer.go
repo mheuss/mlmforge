@@ -274,11 +274,11 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, shape treeShap
 		}
 		pos, perr := c.engine.GetPosition(ctx, payload.TreeID, payload.UserID)
 		// USER_NOT_FOUND is an answer, not a failed inspection. A retry could
-		// place a user removed between the two calls.
+		// place a user the engine no longer holds.
 		if isEngineCode(perr, engineCodeUserNotFound) {
 			return reconcileDiverged, fmt.Errorf(
-				"engine refused the add of %s in tree %s with USER_ALREADY_EXISTS, then get_position reported USER_NOT_FOUND; event %s: %w",
-				payload.UserID, payload.TreeID, event.ID, perr)
+				"engine refused the add of %s in tree %s with USER_ALREADY_EXISTS, then get_position reported USER_NOT_FOUND; event %s, get_position error: %v, engine error: %w",
+				payload.UserID, payload.TreeID, event.ID, perr, err)
 		}
 		if perr != nil {
 			return reconcileInconclusive, perr
@@ -607,11 +607,11 @@ func (c *TreeEventConsumer) withRetry(
 					log.Printf("ERROR tree consumer: reconcile inspection failed op=%s tree_id=%s user_id=%s err=%v",
 						op, treeID, userID, rerr)
 				default:
-					// Stops rather than retries, so an outcome added without a
-					// case here fails its first delivery instead of looping.
+					// Stops rather than retries, so an outcome with no case
+					// here cannot pass on a later attempt.
 					return fmt.Errorf(
-						"engine %s: reconcile returned an unrecognised outcome %d, tree_id=%s user_id=%s, engine error: %w",
-						op, outcome, treeID, userID, err)
+						"engine %s: reconcile returned an unrecognised outcome %d, tree_id=%s user_id=%s, reconcile error: %v, engine error: %w",
+						op, outcome, treeID, userID, rerr, err)
 				}
 			}
 

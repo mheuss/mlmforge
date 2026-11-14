@@ -442,7 +442,7 @@ HEU-867 used this to show `RequireNoDriverParseError` failing on all 10 pgx case
 
 Mutate the classifier, not only the wrapper. Add the code to the set it checks, and the test named for that code must go red. If it stays green, it no longer guards its case.
 
-HEU-815, 2026-11-14. A new divergence error wrapped the position lookup's `USER_NOT_FOUND` where the old retry error had wrapped the add's `USER_ALREADY_EXISTS`. The reject-evidence subtest for `USER_ALREADY_EXISTS` stayed green. With that code added to the refusal set, the subtest failed at the base and passed on the branch. Wrapping the add's error again made it fail under the mutation once more.
+HEU-815, 2026-11-14. A first draft of a new divergence error wrapped the position lookup's `USER_NOT_FOUND` where the old retry error had wrapped the add's `USER_ALREADY_EXISTS`. The reject-evidence subtest for `USER_ALREADY_EXISTS` stayed green. With that code added to the refusal set, the subtest failed at the base and passed on the branch. Wrapping the add's error again made it fail under the mutation once more.
 
 ## Count what a table test selects, not what completes
 

@@ -99,6 +99,36 @@ func TestRejectionEvidence_CountsALoadStoppedOnlyByTheStuckRow(t *testing.T) {
 	assert.True(t, got)
 }
 
+func TestRejectionEvidence_RefusesADropStageFailureAroundEvidence(t *testing.T) {
+	env := newWriterEnv()
+	stuck := stuckPlacement(t, env)
+	w, _ := env.writer()
+	_, loadErr := w.Place(context.Background(), placeRequest(testUserUUID(4), nil))
+	var rejected *TreeLoadRejectedError
+	require.ErrorAs(t, loadErr, &rejected)
+	require.Equal(t, TreeLoadDataInvalid, rejected.Kind)
+	dropped := func(err error) error {
+		return &TreeReplayError{TreeID: writerTree, Stage: TreeReplayStageDrop, Err: err}
+	}
+	cases := map[string]error{
+		"a load stopped only by the stuck row": loadErr,
+		"a catch-up failure of the stuck event": caughtUpFailure(stuck,
+			fmt.Errorf("store placed node: %w", ErrReplayedPlacement)),
+	}
+	for name, err := range cases {
+		t.Run(name, func(t *testing.T) {
+			unwrapped, uerr := w.rejectionEvidence(context.Background(), writerTree, unilevelShape, stuck, err)
+			require.NoError(t, uerr)
+			require.True(t, unwrapped, "without the drop-stage wrapper, rejectionEvidence returned false")
+
+			got, gerr := w.rejectionEvidence(context.Background(), writerTree, unilevelShape, stuck, dropped(err))
+
+			require.NoError(t, gerr)
+			assert.False(t, got)
+		})
+	}
+}
+
 // orphanRow is an active row naming a sponsor the tree does not hold.
 func orphanRow() TreeNodeRow {
 	sponsor := testUserUUID(6)

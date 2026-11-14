@@ -436,6 +436,14 @@ fmt.Errorf("open database pool: %w%.0w", replacement, original)
 
 HEU-867 used this to show `RequireNoDriverParseError` failing on all 10 pgx cases with no password window reported.
 
+## Changing what an error wraps changes what its classifiers see
+
+`errors.As` returns the first match in the chain. Wrap a different error with `%w` and every classifier downstream reads a different code. Nothing fails. A test written for one code keeps passing, but it now runs a different branch.
+
+Mutate the classifier, not only the wrapper. Add the code to the set it checks, and the test named for that code must go red. If it stays green, it no longer guards its case.
+
+HEU-815, 2026-11-14. A new divergence error wrapped the position lookup's `USER_NOT_FOUND` where the old retry error had wrapped the add's `USER_ALREADY_EXISTS`. The reject-evidence subtest for `USER_ALREADY_EXISTS` stayed green. With that code added to the refusal set, the subtest failed at the base and passed on the branch. Wrapping the add's error again made it fail under the mutation once more.
+
 ## Count what a table test selects, not what completes
 
 A table test that filters its cases can pass on zero of them. Rename a case, or change the field the filter reads, and nothing runs. The test is still green. Assert the count after the loop.

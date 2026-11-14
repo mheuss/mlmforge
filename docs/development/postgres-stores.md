@@ -232,10 +232,10 @@ replacement run's `started_at` landed 1.95s *before* the run it superseded was
 voided, making the lifecycle read backwards.
 
 One exception, decided on HEU-849: `tree_nodes` keeps `DEFAULT now()` on its
-audit columns at insert. `now()` gives an inserted row's `created_at` and
-`updated_at` the same value. The suite pins that equality. Two
-`clock_timestamp()` defaults could differ. No production code uses either
-value.
+audit columns at insert. The cost is that an inserted row's stamps can predate a
+removal that committed before it. Binding one `clock_timestamp()` reading to
+both columns would fix that and keep `created_at` equal to `updated_at`. HEU-849
+left that out of scope. Revisit it before anything orders rows by these columns.
 
 A memory twin of a `now()` default takes one clock reading per transaction, not
 one per row. Every row a Postgres transaction inserts carries the same instant.

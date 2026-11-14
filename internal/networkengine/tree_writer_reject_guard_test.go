@@ -22,8 +22,7 @@ var rejectionTypeNames = map[string]bool{"EventTypeEventRejected": true}
 // rejectionPayloadName is the type name of a rejection's payload.
 const rejectionPayloadName = "EventRejectedPayload"
 
-// isRejectionType reports whether e names the rejection event type, by
-// constant or by its literal value.
+// isRejectionType reports whether e names the rejection event type.
 func isRejectionType(e ast.Expr) bool {
 	switch e := e.(type) {
 	case *ast.Ident:
@@ -63,8 +62,7 @@ func isWriterReject(d *ast.FuncDecl) bool {
 
 // findRejectionProducers returns "path:line: what" for each place a non-test
 // Go file under root builds a tree.event_rejected event or its payload,
-// other than inside the Reject method on *TreeWriter. It skips directories
-// whose names start with a dot or an underscore, and testdata.
+// other than inside the Reject method on *TreeWriter.
 func findRejectionProducers(root string) ([]string, error) {
 	var found []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -177,5 +175,5 @@ func TestNoProductionCodeBuildsARejectionOutsideTheWritersReject(t *testing.T) {
 	found, err := findRejectionProducers(moduleRoot(t))
 
 	require.NoError(t, err)
-	assert.Empty(t, found, "code that builds a tree.event_rejected event outside (*TreeWriter).Reject, in non-test Go files")
+	assert.Empty(t, found, "expected no non-test code to build tree.event_rejected outside (*TreeWriter).Reject; found the sites listed")
 }

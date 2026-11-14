@@ -658,3 +658,19 @@ Say which caps it rules out.
 HEU-939 hit both. A lock that failed at once passed the timeout case, and a
 lock that gave up after one second passed while the test held the tree for
 300ms.
+
+## A mutation copy inside the checkout is source to a module-wide guard
+
+2026-11-14.
+
+A guard that walks from the module root reads every Go file under it, ignored
+by git or not. A reviewer's mutation copy of the module under the checkout
+becomes the guard's input. The next mutated copy there turns `go test ./...` red
+on that machine, and CI never sees it.
+
+Stop the walk where the go tool stops. Skip any directory below the root that
+holds its own `go.mod`, any name that starts with a dot or an underscore, and
+`testdata`.
+
+HEU-884 hit this. When the review measured it, the main checkout's
+`docs/plans` held 1558 non-test Go files under 17 nested `go.mod` files.

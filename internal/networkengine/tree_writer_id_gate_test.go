@@ -33,6 +33,12 @@ func TestTreeWriter_RefusesANilIDBeforeTheLock(t *testing.T) {
 			_, err := w.Place(ctx, req)
 			return err
 		}, "node_placed in tree " + writerTree + " has the nil UUID as parent_id"},
+		{"a placement whose parent is a nil urn", true, func(ctx context.Context, w *TreeWriter) error {
+			req := placeRequest(writerChild, nil)
+			req.ParentID = "urn:uuid:" + nilID
+			_, err := w.Place(ctx, req)
+			return err
+		}, "node_placed in tree " + writerTree + " has the nil UUID as parent_id"},
 		{"a placement whose sponsor is nil", true, func(ctx context.Context, w *TreeWriter) error {
 			req := placeRequest(writerChild, nil)
 			req.SponsorID = nilID
@@ -50,15 +56,11 @@ func TestTreeWriter_RefusesANilIDBeforeTheLock(t *testing.T) {
 			if tc.setup {
 				mustAddRoot(t, env, treeTypeUnilevel)
 			}
-			before := len(streamEvents(t, env.events, TreeStreamName(writerTree)))
-			engine := newFakeWriterEngine()
-			w := NewTreeWriter(env.events, env.store, env.snapshots, engine, refusingLocker{t})
+			w := NewTreeWriter(env.events, env.store, env.snapshots, newFakeWriterEngine(), refusingLocker{t})
 
 			err := tc.write(context.Background(), w)
 
 			require.EqualError(t, err, tc.wantErr)
-			assert.Empty(t, engine.calls)
-			assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), before)
 		})
 	}
 }

@@ -162,7 +162,8 @@ func (w *TreeWriter) AddRoot(ctx context.Context, r AddRootRequest) (WriteResult
 	}
 	tree := treeID.String()
 	stream := TreeStreamName(tree)
-	if err := checkRootAddedIDs(RootAddedPayload{TreeID: tree, UserID: userID.String(), SponsorID: sponsorID.String()}); err != nil {
+	base := RootAddedPayload{TreeID: tree, UserID: userID.String(), SponsorID: sponsorID.String(), EnrolledAt: r.EnrolledAt}
+	if err := checkRootAddedIDs(base); err != nil {
 		return WriteResult{}, err
 	}
 
@@ -186,19 +187,14 @@ func (w *TreeWriter) AddRoot(ctx context.Context, r AddRootRequest) (WriteResult
 		treeID: treeID,
 		shape:  shape,
 		build: func(shape treeShape) (platform.NewEvent, Mutation, error) {
-			payload := RootAddedPayload{
-				TreeID:     tree,
-				UserID:     userID.String(),
-				SponsorID:  sponsorID.String(),
-				EnrolledAt: r.EnrolledAt,
-				TreeType:   shape.treeType,
-			}
+			payload := base
+			payload.TreeType = shape.treeType
 			if shape.treeType == treeTypeMatrix {
 				width, spillover := shape.width, shape.spillover
 				payload.MatrixWidth, payload.MatrixSpillover = &width, &spillover
 			}
 			event, err := newTreeEvent(EventTypeRootAdded, payload)
-			return event, CheckAddRoot(userID.String(), r.EnrolledAt.Unix()), err
+			return event, CheckAddRoot(payload.UserID, payload.EnrolledAt.Unix()), err
 		},
 	}
 	if !found {

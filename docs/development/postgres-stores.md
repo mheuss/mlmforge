@@ -231,6 +231,11 @@ For an audit column, use `clock_timestamp()`. Measured on HEU-555: a
 replacement run's `started_at` landed 1.95s *before* the run it superseded was
 voided, making the lifecycle read backwards.
 
+One exception, decided on HEU-849: `tree_nodes` keeps `DEFAULT now()` on its
+audit columns at insert. A batch insert stamps every row with one instant, and
+an inserted row's `created_at` equals its `updated_at`. The suite pins both, and
+nothing reads either column.
+
 A memory twin of a `now()` default takes one clock reading per transaction, not
 one per row. Every row a Postgres transaction inserts carries the same instant.
 A twin that reads the clock per row passes every single-row test and disagrees

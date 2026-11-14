@@ -912,6 +912,22 @@ func TestWithRetry_DivergedWithoutAnErrorStillFails(t *testing.T) {
 	assert.Contains(t, err.Error(), "user-99")
 }
 
+func TestWithRetry_UnrecognisedOutcomeStopsAndFails(t *testing.T) {
+	c := newRetryTestConsumer()
+	attempts := 0
+	engineErr := errors.New("USER_ALREADY_EXISTS")
+
+	err := c.withRetry(context.Background(), "add_node", "tree-42", "user-99",
+		func() error { attempts++; return engineErr },
+		func(context.Context, error) (reconcileOutcome, error) {
+			return reconcileOutcome(99), nil
+		})
+
+	require.ErrorIs(t, err, engineErr)
+	assert.Contains(t, err.Error(), "unrecognised outcome 99")
+	assert.Equal(t, 1, attempts, "an unrecognised outcome is not retried")
+}
+
 func TestWithRetry_NotApplicableRetriesAndReportsTheEngineError(t *testing.T) {
 	c := newRetryTestConsumer()
 	attempts := 0

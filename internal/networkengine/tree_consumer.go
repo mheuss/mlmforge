@@ -608,8 +608,11 @@ func (c *TreeEventConsumer) withRetry(
 					log.Printf("ERROR tree consumer: reconcile inspection failed op=%s tree_id=%s user_id=%s err=%v",
 						op, treeID, userID, rerr)
 				default:
-					log.Printf("ERROR tree consumer: reconcile returned an unrecognised outcome %d, retrying op=%s tree_id=%s user_id=%s",
-						outcome, op, treeID, userID)
+					// Stops rather than retries, so an outcome added without a
+					// case here fails its first delivery instead of looping.
+					return fmt.Errorf(
+						"engine %s: reconcile returned an unrecognised outcome %d, tree_id=%s user_id=%s, engine error: %w",
+						op, outcome, treeID, userID, err)
 				}
 			}
 

@@ -108,6 +108,44 @@ func TestPostgresTreeStore_DuplicateActiveSlotRejected(t *testing.T) {
 		makeUUIDNode(testNodeUUID(6), treeID2, testUserUUID(6), 1, nil, ptr(testUserUUID(6)), intPtr(0))))
 }
 
+func TestPostgresTreeStore_ConflictNamesTheAttemptedInsert(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	ctx := context.Background()
+	cases := []struct {
+		name     string
+		tree     string
+		user     string
+		depth    int
+		parent   *string
+		sponsor  *string
+		position *int
+		want     error
+	}{
+		{name: "the active user", tree: testTreeUUID(1), user: testUserUUID(2), depth: 1,
+			parent: ptr(testUserUUID(1)), sponsor: ptr(testUserUUID(1)), position: intPtr(1), want: ErrActiveUserConflict},
+		{name: "the slot", tree: testTreeUUID(2), user: testUserUUID(3), depth: 1,
+			parent: ptr(testUserUUID(1)), sponsor: ptr(testUserUUID(1)), position: intPtr(0), want: ErrSlotConflict},
+		{name: "the root", tree: testTreeUUID(3), user: testUserUUID(3), depth: 0, want: ErrRootConflict},
+	}
+	for i, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			base := 10 * (i + 1)
+			attempted := testNodeUUID(base + 3)
+			require.NoError(t, insertNode(ctx, store.pool,
+				makeUUIDNode(testNodeUUID(base+1), c.tree, testUserUUID(1), 0, nil, nil, nil)))
+			require.NoError(t, insertNode(ctx, store.pool,
+				makeUUIDNode(testNodeUUID(base+2), c.tree, testUserUUID(2), 1, ptr(testUserUUID(1)), ptr(testUserUUID(1)), intPtr(0))))
+
+			err := insertNode(ctx, store.pool,
+				makeUUIDNode(attempted, c.tree, c.user, c.depth, c.parent, c.sponsor, c.position))
+
+			require.ErrorIs(t, err, c.want)
+			assert.EqualError(t, err, c.want.Error()+": this insert was for tree="+c.tree+
+				" user="+c.user+" id="+attempted)
+		})
+	}
+}
+
 func TestPostgresTreeStore_SecondRootRejected(t *testing.T) {
 	store := newTestPostgresTreeStore(t)
 	ctx := context.Background()

@@ -71,7 +71,7 @@ func (c *TreeEventConsumer) checkReplayedInsert(
 	}
 	// Only this event's own active row continues. Under anything else the
 	// engine call would add a user this event holds no active row for.
-	if existing != nil && existing.ID == eventID && existing.RemovedAt == nil {
+	if existing != nil && sameUUID(existing.ID, eventID) && existing.RemovedAt == nil {
 		return nil
 	}
 	return fmt.Errorf("%w: the read for %s in tree %s returned %s (%w)",
@@ -273,6 +273,13 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, shape treeShap
 				payload.UserID, payload.TreeID, event.ID)
 		}
 		pos, perr := c.engine.GetPosition(ctx, payload.TreeID, payload.UserID)
+		// USER_NOT_FOUND is an answer, not a failed inspection. A retry could
+		// place a user the engine no longer holds.
+		if isEngineCode(perr, engineCodeUserNotFound) {
+			return reconcileDiverged, fmt.Errorf(
+				"engine refused the add of %s in tree %s with USER_ALREADY_EXISTS, then get_position reported USER_NOT_FOUND; event %s, get_position error: %v, engine error: %w",
+				payload.UserID, payload.TreeID, event.ID, perr, err)
+		}
 		if perr != nil {
 			return reconcileInconclusive, perr
 		}
@@ -600,8 +607,11 @@ func (c *TreeEventConsumer) withRetry(
 					log.Printf("ERROR tree consumer: reconcile inspection failed op=%s tree_id=%s user_id=%s err=%v",
 						op, treeID, userID, rerr)
 				default:
-					log.Printf("ERROR tree consumer: reconcile returned an unrecognised outcome %d, retrying op=%s tree_id=%s user_id=%s",
-						outcome, op, treeID, userID)
+					// Stops rather than retries, so an outcome with no case
+					// here cannot pass on a later attempt.
+					return fmt.Errorf(
+						"engine %s: reconcile returned an unrecognised outcome %d, tree_id=%s user_id=%s, reconcile error: %v, engine error: %w",
+						op, outcome, treeID, userID, rerr, err)
 				}
 			}
 

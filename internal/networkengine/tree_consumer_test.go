@@ -912,6 +912,23 @@ func TestWithRetry_DivergedWithoutAnErrorStillFails(t *testing.T) {
 	assert.Contains(t, err.Error(), "user-99")
 }
 
+func TestWithRetry_UnrecognisedOutcomeStopsAndFails(t *testing.T) {
+	c := newRetryTestConsumer()
+	attempts := 0
+	engineErr := errors.New("USER_ALREADY_EXISTS")
+
+	err := c.withRetry(context.Background(), "add_node", "tree-42", "user-99",
+		func() error { attempts++; return engineErr },
+		func(context.Context, error) (reconcileOutcome, error) {
+			return reconcileOutcome(99), errors.New("closure reason")
+		})
+
+	require.ErrorIs(t, err, engineErr)
+	assert.Contains(t, err.Error(), "unrecognised outcome 99")
+	assert.Contains(t, err.Error(), "closure reason", "the closure's own error is kept")
+	assert.Equal(t, 1, attempts, "an unrecognised outcome is not retried")
+}
+
 func TestWithRetry_NotApplicableRetriesAndReportsTheEngineError(t *testing.T) {
 	c := newRetryTestConsumer()
 	attempts := 0
@@ -1457,7 +1474,7 @@ func (r *reconcileTransport) Call(_ context.Context, op string, params json.RawM
 		if r.positionErr != nil {
 			return nil, r.positionErr
 		}
-		if r.position == nil || r.position.UserID != q.UserID {
+		if r.position == nil || !sameUUID(r.position.UserID, q.UserID) {
 			return nil, &EngineError{Code: engineCodeUserNotFound, Message: q.UserID}
 		}
 		return json.Marshal(r.position)
@@ -1576,6 +1593,22 @@ func TestHandleNodePlaced_ReconcileInconclusiveRetries(t *testing.T) {
 	assert.Len(t, tr.mutationOps, c.maxRetries+1, "an inconclusive inspection retries")
 	assert.Contains(t, err.Error(), engineCodeUserAlreadyExists, "the mutation that failed")
 	assert.NotContains(t, err.Error(), "timed out", "not the inspection that could not check it")
+}
+
+func TestHandleNodePlaced_ReconcileDivergesWhenThePositionLookupFindsNoUser(t *testing.T) {
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: engineCodeUserAlreadyExists},
+		positionErr: &EngineError{Code: engineCodeUserNotFound, Message: "lookup-marker"},
+	}
+	c, _ := newReconcileConsumer(t, tr)
+
+	err := deliver(context.Background(), c, makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
+
+	require.Error(t, err)
+	assert.Len(t, tr.mutationOps, 1, "a not-found answer is not retried")
+	assert.Equal(t, 1, tr.positionOps)
+	assert.True(t, isEngineCode(err, engineCodeUserAlreadyExists), "the refused mutation is the error carried")
+	assert.Contains(t, err.Error(), "lookup-marker", "and the lookup's own error is kept")
 }
 
 // Any other engine failure is not reconcile's business, and inspecting it
@@ -2415,6 +2448,39 @@ func TestHandleNodePlaced_SkippedInsertOfThisEventsActiveRowReachesTheEngine(t *
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{"add_node"}, tr.mutationOps, "the lost-reply case still reaches the engine")
+}
+
+func TestHandleNodePlaced_SkippedInsertMatchesAnUppercaseEventID(t *testing.T) {
+	tr := &reconcileTransport{}
+	c, store := newReconcileConsumer(t, tr)
+	ev := makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1)))
+	seedRow(t, store, ev.ID, posUser, nil)
+	ev.ID = strings.ToUpper(ev.ID)
+
+	err := deliver(context.Background(), c, ev)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"add_node"}, tr.mutationOps)
+}
+
+func TestHandleRootAdded_SkippedInsertMatchesAnUppercaseEventID(t *testing.T) {
+	tr := &reconcileTransport{}
+	c, store := newRootConsumer(tr)
+	ev := makeEvent(EventTypeRootAdded, rootPayload())
+	require.NoError(t, store.insertNode(context.Background(), TreeNodeRow{
+		ID:         ev.ID,
+		TreeID:     consumerTree,
+		UserID:     posUser,
+		SponsorID:  ptr(posUser),
+		Depth:      0,
+		EnrolledAt: posEnrolled,
+	}))
+	ev.ID = strings.ToUpper(ev.ID)
+
+	err := deliver(context.Background(), c, ev)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"add_root"}, tr.mutationOps)
 }
 
 // The colliding event ID belongs to another user, so the read for this tree

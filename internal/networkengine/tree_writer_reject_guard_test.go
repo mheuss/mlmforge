@@ -54,6 +54,24 @@ func isRejectionPayload(e ast.Expr) bool {
 	return false
 }
 
+// collectionElem returns the element type of an array, slice or map type,
+// without a pointer, or nil for any other expression.
+func collectionElem(e ast.Expr) ast.Expr {
+	var elem ast.Expr
+	switch e := e.(type) {
+	case *ast.ArrayType:
+		elem = e.Elt
+	case *ast.MapType:
+		elem = e.Value
+	default:
+		return nil
+	}
+	if star, ok := elem.(*ast.StarExpr); ok {
+		return star.X
+	}
+	return elem
+}
+
 // isWriterReject reports whether d is the Reject method on *TreeWriter.
 func isWriterReject(d *ast.FuncDecl) bool {
 	if d.Name.Name != "Reject" || d.Recv == nil || len(d.Recv.List) != 1 {
@@ -172,6 +190,16 @@ func findRejectionProducers(root string) (rejectionScan, error) {
 					if isRejectionPayload(n.Type) && len(n.Elts) > 0 {
 						sawPayload(n.Pos(), "rejection payload built")
 					}
+					if elem := collectionElem(n.Type); elem != nil && isRejectionPayload(elem) {
+						for _, elt := range n.Elts {
+							if kv, ok := elt.(*ast.KeyValueExpr); ok {
+								elt = kv.Value
+							}
+							if lit, ok := elt.(*ast.CompositeLit); ok && lit.Type == nil && len(lit.Elts) > 0 {
+								sawPayload(lit.Pos(), "rejection payload built")
+							}
+						}
+					}
 					for _, elt := range n.Elts {
 						if _, keyed := elt.(*ast.KeyValueExpr); !keyed && isRejectionType(elt) {
 							sawType(elt.Pos(), "rejection type in an unkeyed literal")
@@ -232,6 +260,13 @@ func main() {
 }
 
 func (w *TreeWriter) Reject() { _ = platform.NewEvent{Type: networkengine.EventTypeEventRejected} }
+
+var payloads = []networkengine.EventRejectedPayload{{Reason: "r"}}
+var byID = map[string]networkengine.EventRejectedPayload{"a": {Reason: "r"}}
+var ptrs = []*networkengine.EventRejectedPayload{{Reason: "r"}}
+var none = []networkengine.EventRejectedPayload{{}}
+var events = []platform.NewEvent{{Type: networkengine.EventTypeEventRejected}}
+var empty = []networkengine.EventRejectedPayload{}
 `)
 	producer := "package x\n\nfunc f() { g(EventTypeEventRejected) }\n"
 	write("cmd/tool/main_test.go", producer)
@@ -250,6 +285,10 @@ func (w *TreeWriter) Reject() { _ = platform.NewEvent{Type: networkengine.EventT
 		"cmd/tool/main.go:4: rejection type set as an event's Type",
 		"cmd/tool/main.go:5: rejection payload built",
 		"cmd/tool/main.go:8: rejection type set as an event's Type",
+		"cmd/tool/main.go:10: rejection payload built",
+		"cmd/tool/main.go:11: rejection payload built",
+		"cmd/tool/main.go:12: rejection payload built",
+		"cmd/tool/main.go:14: rejection type set as an event's Type",
 		"internal/networkengine/writer.go:6: rejection type passed to a call",
 		"internal/networkengine/writer.go:7: rejection payload built",
 		"internal/networkengine/writer.go:9: rejection type assigned",

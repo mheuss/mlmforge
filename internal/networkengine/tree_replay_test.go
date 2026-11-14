@@ -591,7 +591,7 @@ func TestReplayStream_RefusesANodeRemovedItsStreamDisagreesWith(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			events, engine, shape := removalStream(t, tc.stream)
-			appendDirect(t, events, EventTypeNodeRemoved, NodeRemovedPayload{TreeID: writerTree, UserID: writerChild,
+			removed := appendDirect(t, events, EventTypeNodeRemoved, NodeRemovedPayload{TreeID: writerTree, UserID: writerChild,
 				RemovedAt: writeTime, TreeType: tc.treeType, PruningMode: tc.mode})
 
 			_, err := replayStream(context.Background(), events, engine, writerTree, shape, 1, 3)
@@ -600,7 +600,7 @@ func TestReplayStream_RefusesANodeRemovedItsStreamDisagreesWith(t *testing.T) {
 			require.ErrorAs(t, err, &replayErr)
 			assert.Equal(t, TreeReplayStageReplay, replayErr.Stage)
 			assert.Equal(t, int64(3), replayErr.FailedVersion)
-			assert.ErrorContains(t, err, "event at version 3 of type "+EventTypeNodeRemoved+" failed")
+			assert.ErrorContains(t, err, "event "+removed.ID+" at version 3 of type "+EventTypeNodeRemoved+" failed")
 			assert.ErrorContains(t, err, tc.want)
 		})
 	}

@@ -36,7 +36,9 @@ func (e *TreeReplayError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "build tree %s at stage %s: reached version %d of projected version %d",
 		e.TreeID, e.Stage, e.ReachedVersion, e.ProjectedVersion)
-	if e.FailedVersion > 0 {
+	if e.FailedVersion > 0 && e.FailedEventID != "" {
+		fmt.Fprintf(&b, "; event %s at version %d of type %s failed", e.FailedEventID, e.FailedVersion, e.FailedType)
+	} else if e.FailedVersion > 0 {
 		fmt.Fprintf(&b, "; event at version %d of type %s failed", e.FailedVersion, e.FailedType)
 	}
 	if e.Expected != "" {

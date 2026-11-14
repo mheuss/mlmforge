@@ -243,9 +243,9 @@ func TestTreeWriter_RefusesAnAppliedRejectionThatNamesTheWrongEvent(t *testing.T
 			want := fmt.Sprintf("rejection %s at version 3 of stream %s names event %s (%s), and version 2 holds event %s (%s); nothing was appended",
 				bad.ID, TreeStreamName(writerTree), p.RejectedEventID, p.RejectedType, placed.ID, EventTypeNodePlaced) +
 				fmt.Sprintf("; the build had also failed: load tree %s; nothing was appended: build tree %s at stage replay: "+
-					"reached version 1 of projected version 3; event at version 3 of type %s failed; "+
+					"reached version 1 of projected version 3; event %s at version 3 of type %s failed; "+
 					"expected event %s (%s) at version 2; observed event %s (%s) at version 2",
-					writerTree, writerTree, EventTypeEventRejected, placed.ID, EventTypeNodePlaced, p.RejectedEventID, p.RejectedType)
+					writerTree, writerTree, bad.ID, EventTypeEventRejected, placed.ID, EventTypeNodePlaced, p.RejectedEventID, p.RejectedType)
 
 			w, _ := env.writer()
 			_, writeErr := w.Place(context.Background(), placeRequest(writerOther, nil))
@@ -399,9 +399,9 @@ func TestTreeWriter_RefusesAnAppliedRejectionWithATamperedVersion(t *testing.T) 
 	require.NoError(t, env.store.ProjectRejection(context.Background(), writerTree, testNodeUUID(77), 3))
 	want := fmt.Sprintf("rejection %s at version 3 of stream %s names rejected version 1, not 2; nothing was appended", bad.ID, stream) +
 		fmt.Sprintf("; the build had also failed: load tree %s; nothing was appended: build tree %s at stage replay: "+
-			"reached version 1 of projected version 3; event at version 3 of type %s failed; "+
+			"reached version 1 of projected version 3; event %s at version 3 of type %s failed; "+
 			"expected event %s (%s) at version 2; observed event %s (%s) at version 1",
-			writerTree, writerTree, EventTypeEventRejected, placed.ID, EventTypeNodePlaced, placed.ID, EventTypeNodePlaced)
+			writerTree, writerTree, bad.ID, EventTypeEventRejected, placed.ID, EventTypeNodePlaced, placed.ID, EventTypeNodePlaced)
 
 	w, _ := env.writer()
 	_, writeErr := w.Place(context.Background(), placeRequest(writerOther, nil))

@@ -266,10 +266,10 @@ func (s *PostgresTreeStore) ProjectInsert(ctx context.Context, node TreeNodeRow,
 const (
 	tombstoneRemovedSQL = `UPDATE tree_nodes SET removed_at = $4, updated_at = $4, removed_by_event_id = $3
 		 WHERE tree_id = $1 AND user_id = ANY($2::text[]::uuid[]) AND removed_at IS NULL`
-	responsorRemovedSQL = `UPDATE tree_nodes AS n SET sponsor_id = m.new_sponsor_id, updated_at = now()
+	responsorRemovedSQL = `UPDATE tree_nodes AS n SET sponsor_id = m.new_sponsor_id, updated_at = $4
 		 FROM unnest($2::text[]::uuid[], $3::text[]::uuid[]) AS m(user_id, new_sponsor_id)
 		 WHERE n.tree_id = $1 AND n.user_id = m.user_id AND n.removed_at IS NULL`
-	relocateSurvivorsSQL = `UPDATE tree_nodes AS n SET parent_id = r.parent_id, position = r.position, depth = r.depth, updated_at = now()
+	relocateSurvivorsSQL = `UPDATE tree_nodes AS n SET parent_id = r.parent_id, position = r.position, depth = r.depth, updated_at = $6
 		 FROM unnest($2::text[]::uuid[], $3::text[]::uuid[], $4::int[], $5::int[]) AS r(user_id, parent_id, position, depth)
 		 WHERE n.tree_id = $1 AND n.user_id = r.user_id AND n.removed_at IS NULL`
 )
@@ -324,7 +324,7 @@ func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProj
 		for i, m := range r.Responsored {
 			users[i], sponsors[i] = m.UserID, m.NewSponsorID
 		}
-		tag, err := tx.Exec(ctx, responsorRemovedSQL, treeID, users, sponsors)
+		tag, err := tx.Exec(ctx, responsorRemovedSQL, treeID, users, sponsors, at)
 		if err != nil {
 			return fmt.Errorf("re-sponsor recruits in tree %s: %w", treeID, err)
 		}
@@ -342,7 +342,7 @@ func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProj
 		for i, m := range r.Relocated {
 			users[i], parents[i], positions[i], depths[i] = m.UserID, m.ParentID, m.Position, m.Depth
 		}
-		tag, err := tx.Exec(ctx, relocateSurvivorsSQL, treeID, users, parents, positions, depths)
+		tag, err := tx.Exec(ctx, relocateSurvivorsSQL, treeID, users, parents, positions, depths, at)
 		if err != nil {
 			if c := conflictError(err); c != nil {
 				return fmt.Errorf("relocate survivors in tree %s: %w: %w", treeID, c, err)

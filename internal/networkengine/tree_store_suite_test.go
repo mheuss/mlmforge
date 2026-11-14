@@ -949,7 +949,7 @@ func runTreeStoreSuite(
 		assert.Equal(t, removalEvent, *got.RemovedByEventID)
 	})
 
-	t.Run("a removal moves UpdatedAt forward on the removed row and the recruit", func(t *testing.T) {
+	t.Run("a removal stamps every row it writes with the tombstone instant", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
 
@@ -957,6 +957,7 @@ func runTreeStoreSuite(
 		rootUser := testUserUUID(1)
 		removedUser := testUserUUID(2)
 		recruit := testUserUUID(3)
+		survivor := testUserUUID(4)
 		stale := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 		require.NoError(t, insertRow(ctx, s, makeUUIDNode(testNodeUUID(1), tree, rootUser, 0, nil, nil, nil)))
@@ -964,9 +965,11 @@ func runTreeStoreSuite(
 			makeUUIDNode(testNodeUUID(2), tree, removedUser, 1, ptr(rootUser), ptr(rootUser), intPtr(0))))
 		require.NoError(t, insertRow(ctx, s,
 			makeUUIDNode(testNodeUUID(3), tree, recruit, 2, ptr(removedUser), ptr(removedUser), intPtr(0))))
-		setUpdatedAt(t, s, testNodeUUID(2), stale)
-		setUpdatedAt(t, s, testNodeUUID(3), stale)
-		for _, u := range []string{removedUser, recruit} {
+		require.NoError(t, insertRow(ctx, s,
+			makeUUIDNode(testNodeUUID(4), tree, survivor, 2, ptr(removedUser), ptr(rootUser), intPtr(1))))
+		writes := map[string]string{removedUser: testNodeUUID(2), recruit: testNodeUUID(3), survivor: testNodeUUID(4)}
+		for u, node := range writes {
+			setUpdatedAt(t, s, node, stale)
 			backdated, err := s.GetNode(ctx, tree, u)
 			require.NoError(t, err)
 			require.NotNil(t, backdated)
@@ -977,19 +980,25 @@ func runTreeStoreSuite(
 		require.NoError(t, s.ProjectRemoval(ctx, tree, RemovalProjection{
 			Users:       []string{removedUser},
 			Responsored: []Responsored{{UserID: recruit, NewSponsorID: rootUser}},
+			Relocated:   []Relocation{{UserID: survivor, ParentID: rootUser, Position: 1, Depth: 1}},
 		}, testNodeUUID(9), 1))
 
 		removed, err := s.GetNodeIncludingRemoved(ctx, tree, removedUser)
 		require.NoError(t, err)
 		require.NotNil(t, removed)
-		assert.True(t, removed.UpdatedAt.After(stale),
-			"removed row's UpdatedAt read back as %v, want later than %v", removed.UpdatedAt, stale)
+		require.NotNil(t, removed.RemovedAt, "removed row read back with no RemovedAt")
+		tombstone := *removed.RemovedAt
+		assert.True(t, tombstone.After(stale), "RemovedAt read back as %v, want later than %v", tombstone, stale)
+		assert.True(t, removed.UpdatedAt.Equal(tombstone),
+			"removed row's UpdatedAt read back as %v, RemovedAt as %v", removed.UpdatedAt, tombstone)
 
-		moved, err := s.GetNode(ctx, tree, recruit)
-		require.NoError(t, err)
-		require.NotNil(t, moved)
-		assert.True(t, moved.UpdatedAt.After(stale),
-			"recruit's UpdatedAt read back as %v, want later than %v", moved.UpdatedAt, stale)
+		for _, u := range []string{recruit, survivor} {
+			got, err := s.GetNode(ctx, tree, u)
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			assert.True(t, got.UpdatedAt.Equal(tombstone),
+				"%s's UpdatedAt read back as %v, removed row's RemovedAt as %v", u, got.UpdatedAt, tombstone)
+		}
 	})
 
 	t.Run("a removal does not cross tree boundaries", func(t *testing.T) {

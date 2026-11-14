@@ -231,12 +231,25 @@ For an audit column, use `clock_timestamp()`. Measured on HEU-555: a
 replacement run's `started_at` landed 1.95s *before* the run it superseded was
 voided, making the lifecycle read backwards.
 
+One exception, decided on HEU-849: `tree_nodes` keeps `DEFAULT now()` on its
+audit columns at insert. The cost is that an inserted row's stamps can predate a
+removal that committed before it. Binding one `clock_timestamp()` reading to
+both columns would fix that and keep `created_at` equal to `updated_at`. HEU-849
+left that out of scope. Revisit it before anything orders rows by these columns.
+
 A memory twin of a `now()` default takes one clock reading per transaction, not
 one per row. Every row a Postgres transaction inserts carries the same instant.
 A twin that reads the clock per row passes every single-row test and disagrees
 on the first batch. A twin with a multi-row write needs a shared-suite case that
 writes two rows in one call. Found on HEU-403, where the tree store's memory
-`BulkInsert` stamped each row separately.
+batch insert stamped each row separately. That batch insert has since been
+removed.
+
+A write that stamps audit columns across several statements reads
+`clock_timestamp()` once and binds it to each one. Calling it inline gives every
+statement its own reading. A memory twin that reads the clock once then
+disagrees with Postgres on whether those rows share an instant. Found on
+HEU-849.
 
 ## A same-period foreign key is expressible
 

@@ -672,5 +672,5 @@ Stop the walk where the go tool stops. Skip any directory below the root that
 holds its own `go.mod`, any name that starts with a dot or an underscore, and
 `testdata`.
 
-HEU-884 hit this. When the review measured it, the main checkout's
-`docs/plans` held 1558 non-test Go files under 17 nested `go.mod` files.
+HEU-884 hit this. The main checkout's `docs/plans` held reviewer copies of the
+module, each with its own `go.mod`.

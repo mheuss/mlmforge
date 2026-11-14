@@ -17,6 +17,11 @@ func TestTreeReplayError_StatesWhatWasObserved(t *testing.T) {
 				FailedVersion: 5, FailedType: EventTypeNodePlaced, Err: errors.New("boom")},
 			"build tree t at stage replay: reached version 4 of projected version 9; event at version 5 of type tree.node_placed failed: boom",
 		},
+		"an event that failed, with its ID": {
+			&TreeReplayError{TreeID: "t", Stage: TreeReplayStageReplay, ReachedVersion: 4, ProjectedVersion: 9,
+				FailedVersion: 5, FailedEventID: "e5", FailedType: EventTypeNodePlaced, Err: errors.New("boom")},
+			"build tree t at stage replay: reached version 4 of projected version 9; event e5 at version 5 of type tree.node_placed failed: boom",
+		},
 		"an invariant": {
 			&TreeReplayError{TreeID: "t", Stage: TreeReplayStageReplay, ReachedVersion: 2, ProjectedVersion: 9,
 				Expected: "version 3", Observed: "version 4"},

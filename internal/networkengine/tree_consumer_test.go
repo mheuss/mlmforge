@@ -2417,6 +2417,39 @@ func TestHandleNodePlaced_SkippedInsertOfThisEventsActiveRowReachesTheEngine(t *
 	assert.Equal(t, []string{"add_node"}, tr.mutationOps, "the lost-reply case still reaches the engine")
 }
 
+func TestHandleNodePlaced_SkippedInsertMatchesAnUppercaseEventID(t *testing.T) {
+	tr := &reconcileTransport{}
+	c, store := newReconcileConsumer(t, tr)
+	ev := makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1)))
+	seedRow(t, store, ev.ID, posUser, nil)
+	ev.ID = strings.ToUpper(ev.ID)
+
+	err := deliver(context.Background(), c, ev)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"add_node"}, tr.mutationOps)
+}
+
+func TestHandleRootAdded_SkippedInsertMatchesAnUppercaseEventID(t *testing.T) {
+	tr := &reconcileTransport{}
+	c, store := newRootConsumer(tr)
+	ev := makeEvent(EventTypeRootAdded, rootPayload())
+	require.NoError(t, store.insertNode(context.Background(), TreeNodeRow{
+		ID:         ev.ID,
+		TreeID:     consumerTree,
+		UserID:     posUser,
+		SponsorID:  ptr(posUser),
+		Depth:      0,
+		EnrolledAt: posEnrolled,
+	}))
+	ev.ID = strings.ToUpper(ev.ID)
+
+	err := deliver(context.Background(), c, ev)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"add_root"}, tr.mutationOps)
+}
+
 // The colliding event ID belongs to another user, so the read for this tree
 // and user finds nothing at all.
 func TestHandleNodePlaced_SkippedInsertWithNoRowForThisUser(t *testing.T) {

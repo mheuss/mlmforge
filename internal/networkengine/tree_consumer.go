@@ -71,7 +71,7 @@ func (c *TreeEventConsumer) checkReplayedInsert(
 	}
 	// Only this event's own active row continues. Under anything else the
 	// engine call would add a user this event holds no active row for.
-	if existing != nil && existing.ID == eventID && existing.RemovedAt == nil {
+	if existing != nil && sameUUID(existing.ID, eventID) && existing.RemovedAt == nil {
 		return nil
 	}
 	return fmt.Errorf("%w: the read for %s in tree %s returned %s (%w)",

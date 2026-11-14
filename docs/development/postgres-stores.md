@@ -242,7 +242,8 @@ one per row. Every row a Postgres transaction inserts carries the same instant.
 A twin that reads the clock per row passes every single-row test and disagrees
 on the first batch. A twin with a multi-row write needs a shared-suite case that
 writes two rows in one call. Found on HEU-403, where the tree store's memory
-`BulkInsert` stamped each row separately.
+batch insert stamped each row separately. That batch insert has since been
+removed.
 
 ## A same-period foreign key is expressible
 

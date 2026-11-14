@@ -233,8 +233,8 @@ voided, making the lifecycle read backwards.
 
 One exception, decided on HEU-849: `tree_nodes` keeps `DEFAULT now()` on its
 audit columns at insert. `now()` gives an inserted row's `created_at` and
-`updated_at` the same value, and the suite pins that equality. Two
-`clock_timestamp()` defaults could differ, and no production code uses either
+`updated_at` the same value. The suite pins that equality. Two
+`clock_timestamp()` defaults could differ. No production code uses either
 value.
 
 A memory twin of a `now()` default takes one clock reading per transaction, not

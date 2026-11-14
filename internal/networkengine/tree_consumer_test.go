@@ -1596,7 +1596,10 @@ func TestHandleNodePlaced_ReconcileInconclusiveRetries(t *testing.T) {
 }
 
 func TestHandleNodePlaced_ReconcileDivergesWhenThePositionLookupFindsNoUser(t *testing.T) {
-	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeUserAlreadyExists}}
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: engineCodeUserAlreadyExists},
+		positionErr: &EngineError{Code: engineCodeUserNotFound, Message: "lookup-marker"},
+	}
 	c, _ := newReconcileConsumer(t, tr)
 
 	err := deliver(context.Background(), c, makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
@@ -1605,7 +1608,7 @@ func TestHandleNodePlaced_ReconcileDivergesWhenThePositionLookupFindsNoUser(t *t
 	assert.Len(t, tr.mutationOps, 1, "a not-found answer is not retried")
 	assert.Equal(t, 1, tr.positionOps)
 	assert.True(t, isEngineCode(err, engineCodeUserAlreadyExists), "the refused mutation is the error carried")
-	assert.Contains(t, err.Error(), engineCodeUserNotFound, "and the lookup's answer is named")
+	assert.Contains(t, err.Error(), "lookup-marker", "and the lookup's own error is kept")
 }
 
 // Any other engine failure is not reconcile's business, and inspecting it

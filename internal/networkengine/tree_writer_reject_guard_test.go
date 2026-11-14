@@ -271,7 +271,7 @@ func TestNoProductionCodeBuildsARejectionOutsideTheWritersReject(t *testing.T) {
 		"expected no non-test code to build tree.event_rejected outside (*TreeWriter).Reject; found:\n%s",
 		strings.Join(scan.producers, "\n"))
 	assert.Positive(t, scan.exemptTypes,
-		"expected (*TreeWriter).Reject to name the rejection type; the scan found it named %d times", scan.exemptTypes)
+		"expected (*TreeWriter).Reject to build an event of the rejection type; the scan found %d such builds", scan.exemptTypes)
 	assert.Positive(t, scan.exemptPayloads,
 		"expected (*TreeWriter).Reject to build a rejection payload; the scan found %d", scan.exemptPayloads)
 }

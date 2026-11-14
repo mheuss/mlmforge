@@ -111,7 +111,7 @@ func insertNode(ctx context.Context, db execer, node TreeNodeRow) error {
 	)
 	if err != nil {
 		if c := conflictError(err); c != nil {
-			return fmt.Errorf("%w: tree=%s user=%s id=%s", c, node.TreeID, node.UserID, node.ID)
+			return fmt.Errorf("%w: this insert was for tree=%s user=%s id=%s", c, node.TreeID, node.UserID, node.ID)
 		}
 		return err
 	}

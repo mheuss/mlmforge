@@ -232,9 +232,10 @@ replacement run's `started_at` landed 1.95s *before* the run it superseded was
 voided, making the lifecycle read backwards.
 
 One exception, decided on HEU-849: `tree_nodes` keeps `DEFAULT now()` on its
-audit columns at insert. A batch insert stamps every row with one instant, and
-an inserted row's `created_at` equals its `updated_at`. The suite pins both, and
-nothing reads either column.
+audit columns at insert. `now()` gives an inserted row's `created_at` and
+`updated_at` the same value, and the suite pins that equality. Two
+`clock_timestamp()` defaults could differ, and no production code uses either
+value.
 
 A memory twin of a `now()` default takes one clock reading per transaction, not
 one per row. Every row a Postgres transaction inserts carries the same instant.

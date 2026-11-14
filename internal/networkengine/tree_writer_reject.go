@@ -212,11 +212,11 @@ type RejectResult struct {
 // Reject appends a rejection of the stream's last event, or projects one
 // already there, under the tree's lock.
 func (w *TreeWriter) Reject(ctx context.Context, r RejectRequest) (result RejectResult, err error) {
-	treeID, err := canonicalID("tree_id", r.TreeID)
+	treeID, err := parseRequestID("tree_id", r.TreeID)
 	if err != nil {
 		return result, err
 	}
-	eventID, err := canonicalID("event_id", r.EventID)
+	eventID, err := parseRequestID("event_id", r.EventID)
 	if err != nil {
 		return result, err
 	}

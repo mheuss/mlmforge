@@ -148,20 +148,24 @@ func NewTreeWriter(events platform.EventStore, store TreeStore, snapshots Snapsh
 
 // AddRoot appends a tree.root_added event and projects it.
 func (w *TreeWriter) AddRoot(ctx context.Context, r AddRootRequest) (WriteResult, error) {
-	treeID, err := canonicalID("tree_id", r.TreeID)
+	treeID, err := parseRequestID("tree_id", r.TreeID)
 	if err != nil {
 		return WriteResult{}, err
 	}
-	userID, err := canonicalID("user_id", r.UserID)
+	userID, err := parseRequestID("user_id", r.UserID)
 	if err != nil {
 		return WriteResult{}, err
 	}
-	sponsorID, err := canonicalID("sponsor_id", r.SponsorID)
+	sponsorID, err := parseRequestID("sponsor_id", r.SponsorID)
 	if err != nil {
 		return WriteResult{}, err
 	}
 	tree := treeID.String()
 	stream := TreeStreamName(tree)
+	base := RootAddedPayload{TreeID: tree, UserID: userID.String(), SponsorID: sponsorID.String(), EnrolledAt: r.EnrolledAt}
+	if err := checkRootAddedIDs(base); err != nil {
+		return WriteResult{}, err
+	}
 
 	shape, found, err := w.readShape(ctx, stream)
 	if err != nil {
@@ -183,19 +187,14 @@ func (w *TreeWriter) AddRoot(ctx context.Context, r AddRootRequest) (WriteResult
 		treeID: treeID,
 		shape:  shape,
 		build: func(shape treeShape) (platform.NewEvent, Mutation, error) {
-			payload := RootAddedPayload{
-				TreeID:     tree,
-				UserID:     userID.String(),
-				SponsorID:  sponsorID.String(),
-				EnrolledAt: r.EnrolledAt,
-				TreeType:   shape.treeType,
-			}
+			payload := base
+			payload.TreeType = shape.treeType
 			if shape.treeType == treeTypeMatrix {
 				width, spillover := shape.width, shape.spillover
 				payload.MatrixWidth, payload.MatrixSpillover = &width, &spillover
 			}
 			event, err := newTreeEvent(EventTypeRootAdded, payload)
-			return event, CheckAddRoot(userID.String(), r.EnrolledAt.Unix()), err
+			return event, CheckAddRoot(payload.UserID, payload.EnrolledAt.Unix()), err
 		},
 	}
 	if !found {
@@ -219,19 +218,19 @@ func (w *TreeWriter) AddRoot(ctx context.Context, r AddRootRequest) (WriteResult
 // Place appends a tree.node_placed event at the parent and position the
 // request names, and projects it.
 func (w *TreeWriter) Place(ctx context.Context, r PlaceRequest) (WriteResult, error) {
-	treeID, err := canonicalID("tree_id", r.TreeID)
+	treeID, err := parseRequestID("tree_id", r.TreeID)
 	if err != nil {
 		return WriteResult{}, err
 	}
-	userID, err := canonicalID("user_id", r.UserID)
+	userID, err := parseRequestID("user_id", r.UserID)
 	if err != nil {
 		return WriteResult{}, err
 	}
-	parentID, err := canonicalID("parent_id", r.ParentID)
+	parentID, err := parseRequestID("parent_id", r.ParentID)
 	if err != nil {
 		return WriteResult{}, err
 	}
-	sponsorID, err := canonicalID("sponsor_id", r.SponsorID)
+	sponsorID, err := parseRequestID("sponsor_id", r.SponsorID)
 	if err != nil {
 		return WriteResult{}, err
 	}
@@ -253,6 +252,9 @@ func (w *TreeWriter) Place(ctx context.Context, r PlaceRequest) (WriteResult, er
 		Position:   r.Position,
 		TreeType:   shape.treeType,
 		EnrolledAt: r.EnrolledAt,
+	}
+	if err := checkNodePlacedIDs(payload); err != nil {
+		return WriteResult{}, err
 	}
 	if err := checkNodePlacedShape(payload); err != nil {
 		return WriteResult{}, err
@@ -282,11 +284,11 @@ func placementCheck(p NodePlacedPayload) Mutation {
 
 // Remove appends a tree.node_removed event and projects it.
 func (w *TreeWriter) Remove(ctx context.Context, r RemoveRequest) (WriteResult, error) {
-	treeID, err := canonicalID("tree_id", r.TreeID)
+	treeID, err := parseRequestID("tree_id", r.TreeID)
 	if err != nil {
 		return WriteResult{}, err
 	}
-	userID, err := canonicalID("user_id", r.UserID)
+	userID, err := parseRequestID("user_id", r.UserID)
 	if err != nil {
 		return WriteResult{}, err
 	}
@@ -305,6 +307,9 @@ func (w *TreeWriter) Remove(ctx context.Context, r RemoveRequest) (WriteResult, 
 	}
 	payload := NodeRemovedPayload{TreeID: tree, UserID: userID.String(), RemovedAt: r.RemovedAt,
 		TreeType: shape.treeType, PruningMode: r.PruningMode}
+	if err := checkNodeRemovedIDs(payload); err != nil {
+		return WriteResult{}, err
+	}
 
 	return w.write(ctx, writeSpec{
 		treeID: treeID,
@@ -457,7 +462,7 @@ func (w *TreeWriter) write(ctx context.Context, spec writeSpec) (result WriteRes
 // Load loads the tree, and brings its store level with its stream when the
 // store is one event behind.
 func (w *TreeWriter) Load(ctx context.Context, r LoadRequest) (result LoadResult, err error) {
-	treeID, err := canonicalID("tree_id", r.TreeID)
+	treeID, err := parseRequestID("tree_id", r.TreeID)
 	if err != nil {
 		return result, err
 	}

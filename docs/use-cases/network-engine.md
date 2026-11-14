@@ -1046,7 +1046,7 @@ if err != nil && treeLoadRetryable(err) {
 
 **Problem:** Two processes can each load a tree. Each can decide correctly against what it saw. Together they can append a state neither would have allowed. An event store's version check serialises appends, not decisions.
 
-**Solution:** `TreeWriter` holds a per-tree Postgres advisory lock from before the load until projection returns. The lock sits on a connection of its own. Under the lock it reads the tree's projected version, rebuilds the tree in a scratch engine, and redelivers the stream's last event. It refuses the write unless that event is at the projected version or one past it. It asks `check_mutation` whether the mutation would succeed, appends, and projects the stored copy. `MemoryTreeLocker` is a real per-tree lock for tests.
+**Solution:** `TreeWriter` holds a per-tree Postgres advisory lock from before the load until projection returns. The lock sits on a connection of its own. Before the lock, it refuses a request whose user, parent or sponsor ID the consumer would refuse, using the same per-event ID checks (HEU-959). Under the lock it reads the tree's projected version, rebuilds the tree in a scratch engine, and redelivers the stream's last event. It refuses the write unless that event is at the projected version or one past it. It asks `check_mutation` whether the mutation would succeed, appends, and projects the stored copy. `MemoryTreeLocker` is a real per-tree lock for tests.
 
 **Usage:**
 ```go

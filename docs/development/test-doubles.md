@@ -156,3 +156,19 @@ Dated examples, from HEU-948 on 2026-10-19:
 - The `stuckPlacement` fixture and
   `TestTreeWriterReject_AFailedAppendLeavesTheOutcomeEmpty` were changed the
   same day to give the reply the worker gives for an absent sponsor.
+
+## A double that ends the path leaves nothing past it to assert
+
+A double that fails the call ends the code path there. An assertion about
+anything the code would do after that call cannot fail. It holds with or
+without the code under test.
+
+Put the proof on the double being reached, or not, and on the error returned.
+To check that a later step did not run, run the same case through a double that
+lets the call through.
+
+Found in review for HEU-959 on 2026-11-14. The nil-ID gate test ran each write
+with `refusingLocker`, which fails the test when the lock is taken. It also
+asserted an empty engine call log and an unchanged stream. Both held without
+the gate, because the write stops at the lock before it calls the engine or
+appends. Both assertions were dropped.

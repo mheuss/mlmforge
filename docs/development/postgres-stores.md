@@ -245,6 +245,12 @@ writes two rows in one call. Found on HEU-403, where the tree store's memory
 batch insert stamped each row separately. That batch insert has since been
 removed.
 
+A write that stamps audit columns across several statements reads
+`clock_timestamp()` once and binds it to each one. Calling it inline gives every
+statement its own reading. A memory twin that reads the clock once then
+disagrees with Postgres on whether those rows share an instant. Found on
+HEU-849.
+
 ## A same-period foreign key is expressible
 
 "This column must reference a row sharing my `period_id`" looks like it needs a

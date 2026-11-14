@@ -47,12 +47,14 @@ func TestTreeWriterSnapshot_StoresNothingWhenTheProjectionFails(t *testing.T) {
 	placeUnderRoot(t, env, 10, snapshotInterval-2)
 	w, engine := env.writer()
 	user := testUserUUID(9000)
-	engine.failAdd[user] = fakeEngineError("INVALID_PARAMS", "refused by the test")
+	engine.failAdd[user] = fakeHandlerPanic()
 
 	res, err := w.Place(context.Background(), placeRequest(user, nil))
 
 	require.NoError(t, err)
 	require.Error(t, res.ProjectionErr)
+	assert.ErrorContains(t, res.ProjectionErr, "failed after")
+	assert.True(t, isEngineCode(res.ProjectionErr, "INTERNAL_ERROR"), "got %v", res.ProjectionErr)
 	assert.NotContains(t, engine.calls, "take_snapshot")
 	_, found, err := env.snapshots.Get(context.Background(), writerTree)
 	require.NoError(t, err)

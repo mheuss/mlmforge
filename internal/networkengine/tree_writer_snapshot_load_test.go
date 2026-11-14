@@ -102,7 +102,7 @@ func midReplayLoad(t *testing.T) (*writerEnv, *TreeWriter, *fakeWriterEngine) {
 	seedSnapshot(t, env, 2)
 	mustPlace(t, env, writerOther, nil)
 	w, engine := env.writer()
-	engine.failAddOnce[writerOther] = fakeEngineError("SPONSOR_NOT_FOUND", "refused by the test")
+	engine.failAddOnce[writerOther] = fakeHandlerPanic()
 	return env, w, engine
 }
 
@@ -206,7 +206,7 @@ func TestTreeWriterSnapshotLoad_RecoversFromAnEngineRefusalMidReplay(t *testing.
 		res.Warnings[0])
 	assert.True(t, strings.HasSuffix(res.Warnings[0], "); dropped the structure; deleted the snapshot"),
 		res.Warnings[0])
-	assert.Contains(t, res.Warnings[0], "SPONSOR_NOT_FOUND")
+	assert.Contains(t, res.Warnings[0], "INTERNAL_ERROR")
 	assert.Equal(t, 3, res.Nodes)
 	assert.False(t, snapshotStored(t, env))
 }
@@ -317,7 +317,7 @@ func TestTreeWriterSnapshotLoad_FailsWhenTheDropIsRefused(t *testing.T) {
 	_, err := w.Load(context.Background(), loadRequest())
 
 	requireReplayStage(t, err, TreeReplayStageDrop)
-	assert.ErrorContains(t, err, "SPONSOR_NOT_FOUND")
+	assert.ErrorContains(t, err, "INTERNAL_ERROR")
 	assert.NotContains(t, err.Error(), "\n")
 }
 
@@ -336,14 +336,14 @@ func TestTreeWriterSnapshotLoad_CountsARefusedMembershipQueryAsAMismatch(t *test
 	mustAddRoot(t, env, treeTypeUnilevel)
 	seedSnapshot(t, env, 1)
 	w, engine := env.writer()
-	engine.downlineErrOnce = fakeEngineError(engineCodeUserNotFound, "refused by the test")
+	engine.downlineErrOnce = fakeHandlerPanic()
 
 	res, err := w.Load(context.Background(), loadRequest())
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, countCalls(engine, "drop_structure"))
 	require.Len(t, res.Warnings, 1)
-	assert.Contains(t, res.Warnings[0], "refused by the test")
+	assert.Contains(t, res.Warnings[0], "handler panicked unexpectedly")
 	assert.False(t, snapshotStored(t, env))
 }
 
@@ -484,7 +484,7 @@ func TestTreeWriterSnapshotLoad_FailsOnARefusedMembershipQueryAfterAFullReplay(t
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
 	w, engine := env.writer()
-	engine.downlineErr = fakeEngineError(engineCodeUserNotFound, "refused by the test")
+	engine.downlineErr = fakeHandlerPanic()
 
 	_, err := w.Load(context.Background(), loadRequest())
 
@@ -517,7 +517,7 @@ func TestTreeWriterSnapshotLoad_KeepsTheLoadsWarningBeforeTheSnapshotWarning(t *
 	seedSnapshot(t, env, 1)
 	placeUnderRoot(t, env, 10, snapshotInterval-1)
 	engine := newFakeWriterEngine()
-	engine.failAddOnce[testUserUUID(10)] = fakeEngineError("SPONSOR_NOT_FOUND", "refused by the test")
+	engine.failAddOnce[testUserUUID(10)] = fakeHandlerPanic()
 	w := NewTreeWriter(env.events, env.store, failingPutStore{SnapshotStore: env.snapshots, err: errors.New("disk full")},
 		engine, env.locker)
 
@@ -595,8 +595,8 @@ func TestTreeWriterSnapshotLoad_AFailedDropKeepsWhyItDropped(t *testing.T) {
 
 	replay := replayAtStage(t, err, TreeReplayStageDrop)
 	assert.Equal(t, int64(2), replay.ReachedVersion)
-	assert.ErrorContains(t, err, "SPONSOR_NOT_FOUND")
+	assert.ErrorContains(t, err, "INTERNAL_ERROR")
 	var engineErr *EngineError
 	require.ErrorAs(t, err, &engineErr)
-	assert.Equal(t, "SPONSOR_NOT_FOUND", engineErr.Code)
+	assert.Equal(t, "INTERNAL_ERROR", engineErr.Code)
 }

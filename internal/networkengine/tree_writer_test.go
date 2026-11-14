@@ -842,17 +842,17 @@ func TestTreeWriterCatchUp_LeavesTheRowOfAnEventTheEngineRefused(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
 	refused := appendDirect(t, env.events, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: writerTree, UserID: writerChild, ParentID: writerRoot, SponsorID: writerRoot,
+		TreeID: writerTree, UserID: writerChild, ParentID: writerRoot, SponsorID: writerAbsentSponsor,
 		TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
 	})
-	w, engine := env.writer()
-	engine.failAdd[writerChild] = fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", writerRoot)
+	w, _ := env.writer()
 
 	_, err := w.Place(context.Background(), placeRequest(writerOther, nil))
 
 	var failed *CatchUpFailedError
 	require.ErrorAs(t, err, &failed)
 	assert.Equal(t, refused.ID, failed.EventID)
+	assert.True(t, isEngineCode(err, "SPONSOR_NOT_FOUND"), "got %v", err)
 	assert.Len(t, streamEvents(t, env.events, TreeStreamName(writerTree)), 2)
 	row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
 	require.NoError(t, err)

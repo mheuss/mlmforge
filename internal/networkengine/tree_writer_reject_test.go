@@ -14,17 +14,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// absentSponsorPlacement is a placement of writerChild under writerRoot, for a
+// tree that does not hold its sponsor, writerOther.
+func absentSponsorPlacement() NodePlacedPayload {
+	return NodePlacedPayload{
+		TreeID: writerTree, UserID: writerChild, ParentID: writerRoot, SponsorID: writerOther,
+		TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
+	}
+}
+
 // stuckPlacement appends a placement of writerChild naming a sponsor the tree
 // does not hold, and runs one write whose engine refuses it.
 func stuckPlacement(t *testing.T, env *writerEnv) platform.Event {
 	t.Helper()
 	mustAddRoot(t, env, treeTypeUnilevel)
-	stuck := appendDirect(t, env.events, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: writerTree, UserID: writerChild, ParentID: writerRoot, SponsorID: writerOther,
-		TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
-	})
-	w, engine := env.writer()
-	engine.failAdd[writerChild] = fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", writerOther)
+	stuck := appendDirect(t, env.events, EventTypeNodePlaced, absentSponsorPlacement())
+	w, _ := env.writer()
 	_, err := w.Place(context.Background(), placeRequest(testUserUUID(4), nil))
 	var failed *CatchUpFailedError
 	require.ErrorAs(t, err, &failed)
@@ -485,12 +490,8 @@ func TestTreeWriterReject_RejectsAPlacementWhoseRowStopsTheLoad(t *testing.T) {
 func TestTreeWriterReject_RejectsAPlacementTheEngineRefusesOnItsFirstDelivery(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
-	stuck := appendDirect(t, env.events, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: writerTree, UserID: writerChild, ParentID: writerRoot, SponsorID: writerOther,
-		TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
-	})
-	w, engine := env.writer()
-	engine.failAdd[writerChild] = fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", writerOther)
+	stuck := appendDirect(t, env.events, EventTypeNodePlaced, absentSponsorPlacement())
+	w, _ := env.writer()
 
 	res, err := w.Reject(context.Background(), rejectRequest(stuck.ID))
 
@@ -611,7 +612,7 @@ func TestTreeWriterReject_RefusesARetryErrorThatIsNotEvidence(t *testing.T) {
 	}{
 		{"an engine INTERNAL_ERROR", func(env *writerEnv) *TreeWriter {
 			w, engine := env.writer()
-			engine.failAdd[writerChild] = fakeEngineError("INTERNAL_ERROR", "handler panicked")
+			engine.failAdd[writerChild] = fakeHandlerPanic()
 			return w
 		}},
 		{"an engine USER_ALREADY_EXISTS", func(env *writerEnv) *TreeWriter {
@@ -703,12 +704,9 @@ func TestTreeWriterReject_AFirstRunWhoseRetryIsNotEvidenceCommitsTheRowThenTheLo
 	env := newWriterEnv()
 	ctx := context.Background()
 	mustAddRoot(t, env, treeTypeUnilevel)
-	stuck := appendDirect(t, env.events, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: writerTree, UserID: writerChild, ParentID: writerRoot, SponsorID: writerOther,
-		TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
-	})
+	stuck := appendDirect(t, env.events, EventTypeNodePlaced, absentSponsorPlacement())
 	first, engine := env.writer()
-	engine.failAdd[writerChild] = fakeEngineError("INTERNAL_ERROR", "handler panicked")
+	engine.failAdd[writerChild] = fakeHandlerPanic()
 
 	_, err := first.Reject(ctx, rejectRequest(stuck.ID))
 
@@ -814,12 +812,8 @@ func TestTreeWriterReject_RefusesWhenTheLockIsNotAcquired(t *testing.T) {
 
 func TestTreeWriterReject_AFailedAppendLeavesTheOutcomeEmpty(t *testing.T) {
 	env, scripted := scriptedEnv(t)
-	stuck := appendDirect(t, env.events, EventTypeNodePlaced, NodePlacedPayload{
-		TreeID: writerTree, UserID: writerChild, ParentID: writerRoot, SponsorID: writerOther,
-		TreeType: treeTypeUnilevel, EnrolledAt: writeTime,
-	})
-	trigger, engine := env.writer()
-	engine.failAdd[writerChild] = fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", writerOther)
+	stuck := appendDirect(t, env.events, EventTypeNodePlaced, absentSponsorPlacement())
+	trigger, _ := env.writer()
 	_, err := trigger.Place(context.Background(), placeRequest(testUserUUID(4), nil))
 	var failed *CatchUpFailedError
 	require.ErrorAs(t, err, &failed)

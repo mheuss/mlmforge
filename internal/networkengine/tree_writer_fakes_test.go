@@ -22,10 +22,11 @@ var writeTime = time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
 
 // Identifiers the writer unit tests share.
 var (
-	writerTree  = testTreeUUID(1)
-	writerRoot  = testUserUUID(1)
-	writerChild = testUserUUID(2)
-	writerOther = testUserUUID(3)
+	writerTree          = testTreeUUID(1)
+	writerRoot          = testUserUUID(1)
+	writerChild         = testUserUUID(2)
+	writerOther         = testUserUUID(3)
+	writerAbsentSponsor = testUserUUID(9)
 )
 
 // fakeWriterEngine stands in for the engine in writer tests.
@@ -74,6 +75,10 @@ func newFakeWriterEngine() *fakeWriterEngine {
 
 func fakeEngineError(code, format string, args ...any) error {
 	return &EngineError{Code: code, Message: fmt.Sprintf(format, args...)}
+}
+
+func fakeHandlerPanic() error {
+	return fakeEngineError("INTERNAL_ERROR", "handler panicked unexpectedly")
 }
 
 func (f *fakeWriterEngine) tree(structure string) (*fakeEngineTree, error) {
@@ -143,6 +148,9 @@ func (f *fakeWriterEngine) place(structure, userID, parentID, sponsorID string, 
 	parent, ok := t.nodes[parentID]
 	if !ok {
 		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", parentID)
+	}
+	if _, ok := t.nodes[sponsorID]; !ok {
+		return fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", sponsorID)
 	}
 	p, s := parentID, sponsorID
 	t.nodes[userID] = EnginePosition{
@@ -282,9 +290,20 @@ func (f *fakeWriterEngine) CheckMutation(_ context.Context, structure string, m 
 	if _, ok := m.params["pruning_mode"]; m.op == "remove_node" && t.treeType == treeTypeMatrix && !ok {
 		return fakeEngineError("MISSING_PARAM", "a matrix remove_node needs pruning_mode")
 	}
+	placement := m.op == "add_node" || m.op == "add_node_at"
+	if user, ok := m.params["user_id"].(string); ok && placement {
+		if _, held := t.nodes[user]; held {
+			return fakeEngineError(engineCodeUserAlreadyExists, "user %s already exists in tree", user)
+		}
+	}
 	if parent, ok := m.params["parent_id"].(string); ok {
 		if _, found := t.nodes[parent]; !found {
 			return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", parent)
+		}
+	}
+	if sponsor, ok := m.params["sponsor_id"].(string); ok && placement {
+		if _, found := t.nodes[sponsor]; !found {
+			return fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", sponsor)
 		}
 	}
 	return f.checkErr

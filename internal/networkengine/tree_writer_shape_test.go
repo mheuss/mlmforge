@@ -9,18 +9,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCanonicalID_GivesEquivalentSpellingsOneForm(t *testing.T) {
-	lower, err := canonicalID("tree_id", "aaaaaaaa-aaaa-aaaa-aaaa-000000000001")
+func TestParseRequestID_GivesEquivalentSpellingsOneForm(t *testing.T) {
+	lower, err := parseRequestID("tree_id", "aaaaaaaa-aaaa-aaaa-aaaa-000000000001")
 	require.NoError(t, err)
-	upper, err := canonicalID("tree_id", "AAAAAAAA-AAAA-AAAA-AAAA-000000000001")
+	upper, err := parseRequestID("tree_id", "AAAAAAAA-AAAA-AAAA-AAAA-000000000001")
 	require.NoError(t, err)
 
 	assert.Equal(t, lower, upper)
 	assert.Equal(t, "aaaaaaaa-aaaa-aaaa-aaaa-000000000001", upper.String())
 }
 
-func TestCanonicalID_NamesTheFieldItRefuses(t *testing.T) {
-	_, err := canonicalID("parent_id", "not-a-uuid")
+func TestParseRequestID_NamesTheFieldItRefuses(t *testing.T) {
+	_, err := parseRequestID("parent_id", "not-a-uuid")
 
 	require.ErrorContains(t, err, `parent_id "not-a-uuid" is not a UUID: `)
 }

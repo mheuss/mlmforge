@@ -8,8 +8,8 @@ import (
 	"github.com/mlmforge/mlmforge/internal/platform"
 )
 
-// canonicalID parses one identifier the writer was given.
-func canonicalID(field, value string) (uuid.UUID, error) {
+// parseRequestID parses one identifier the writer was given.
+func parseRequestID(field, value string) (uuid.UUID, error) {
 	id, err := uuid.Parse(value)
 	if err != nil {
 		return uuid.UUID{}, fmt.Errorf("%s %q is not a UUID: %w", field, value, err)

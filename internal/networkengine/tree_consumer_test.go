@@ -1578,6 +1578,19 @@ func TestHandleNodePlaced_ReconcileInconclusiveRetries(t *testing.T) {
 	assert.NotContains(t, err.Error(), "timed out", "not the inspection that could not check it")
 }
 
+func TestHandleNodePlaced_ReconcileDivergesWhenThePositionLookupFindsNoUser(t *testing.T) {
+	tr := &reconcileTransport{mutationErr: &EngineError{Code: engineCodeUserAlreadyExists}}
+	c, _ := newReconcileConsumer(t, tr)
+
+	err := deliver(context.Background(), c, makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
+
+	require.Error(t, err)
+	assert.Len(t, tr.mutationOps, 1, "a not-found answer is not retried")
+	assert.Equal(t, 1, tr.positionOps)
+	assert.True(t, isEngineCode(err, engineCodeUserNotFound), "the lookup's answer is carried")
+	assert.Contains(t, err.Error(), engineCodeUserAlreadyExists, "and so is the refusal it contradicts")
+}
+
 // Any other engine failure is not reconcile's business, and inspecting it
 // would cost a round trip on every transport hiccup.
 func TestHandleNodePlaced_ReconcileSkipsOtherEngineErrors(t *testing.T) {

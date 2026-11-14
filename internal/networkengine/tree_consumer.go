@@ -273,6 +273,14 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, shape treeShap
 				payload.UserID, payload.TreeID, event.ID)
 		}
 		pos, perr := c.engine.GetPosition(ctx, payload.TreeID, payload.UserID)
+		// USER_NOT_FOUND is an answer, not a failed inspection. The add was
+		// just refused as USER_ALREADY_EXISTS, so the engine contradicts
+		// itself. A retry could place a user removed between the two calls.
+		if isEngineCode(perr, engineCodeUserNotFound) {
+			return reconcileDiverged, fmt.Errorf(
+				"engine refused the add of %s in tree %s with USER_ALREADY_EXISTS, then get_position reported USER_NOT_FOUND; event %s: %w",
+				payload.UserID, payload.TreeID, event.ID, perr)
+		}
 		if perr != nil {
 			return reconcileInconclusive, perr
 		}

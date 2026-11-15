@@ -72,6 +72,19 @@ the control fails, the refusal rows are not testing what they name.
 HEU-844 found this in review. Its refusal table for the memory tree store had
 no controls until then.
 
+## pgconn stays in the Postgres stores
+
+**In the `internal/networkengine` package, only a Postgres store implementation imports `pgconn`.**
+
+A store implementation is a non-test file named `*_postgres.go`. Test files may
+import it.
+
+The rule covers this package only. Other packages use `pgconn` on purpose, such
+as the CLI checking whether a failed read is safe to retry.
+
+`TestPgconnStaysInThePostgresStores` enforces it. It parses each file's imports,
+so an aliased import counts too.
+
 ## pgx sends only a nil slice as SQL NULL
 
 An empty non-nil `[]byte` or `json.RawMessage` is sent as an empty payload, and

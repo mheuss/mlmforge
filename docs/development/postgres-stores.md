@@ -77,8 +77,7 @@ no controls until then.
 **In `internal/networkengine`, only a Postgres store implementation imports `pgconn`.**
 
 A store implementation is a non-test file named `*_postgres.go`. Test files may
-import it. Everything else in the package sees driver errors only as the
-store's own sentinels and typed errors.
+import it.
 
 The rule covers this package only. Other packages read `pgconn` types on
 purpose, such as the CLI checking whether a failed read is safe to retry.

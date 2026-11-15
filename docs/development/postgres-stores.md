@@ -74,13 +74,13 @@ no controls until then.
 
 ## pgconn stays in the Postgres stores
 
-**In `internal/networkengine`, only a Postgres store implementation imports `pgconn`.**
+**In the `internal/networkengine` package, only a Postgres store implementation imports `pgconn`.**
 
 A store implementation is a non-test file named `*_postgres.go`. Test files may
 import it.
 
-The rule covers this package only. Other packages read `pgconn` types on
-purpose, such as the CLI checking whether a failed read is safe to retry.
+The rule covers this package only. Other packages use `pgconn` on purpose, such
+as the CLI checking whether a failed read is safe to retry.
 
 `TestPgconnStaysInThePostgresStores` enforces it. It parses each file's imports,
 so an aliased import counts too.

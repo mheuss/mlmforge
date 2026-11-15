@@ -54,6 +54,8 @@ func TestFindPgconnImports_NamesEachImporterOutsideThePostgresStores(t *testing.
 	}
 	write("writer.go", "package networkengine\n\nimport \"github.com/jackc/pgx/v5/pgconn\"\n\nvar _ pgconn.PgError\n")
 	write("aliased.go", "package networkengine\n\nimport (\n\t\"errors\"\n\tpg \"github.com/jackc/pgx/v5/pgconn\"\n)\n\nvar _ = errors.New\nvar _ pg.PgError\n")
+	write("dot.go", "package networkengine\n\nimport . \"github.com/jackc/pgx/v5/pgconn\"\n\nvar _ PgError\n")
+	write("blank.go", "package networkengine\n\nimport _ \"github.com/jackc/pgx/v5/pgconn\"\n")
 	write("plain.go", "package networkengine\n\nimport \"github.com/jackc/pgx/v5\"\n\nvar _ pgx.Rows\n")
 	write("tree_store_postgres.go", "package networkengine\n\nimport \"github.com/jackc/pgx/v5/pgconn\"\n\nvar _ pgconn.PgError\n")
 	write("writer_test.go", "package networkengine\n\nimport \"github.com/jackc/pgx/v5/pgconn\"\n\nvar _ pgconn.PgError\n")
@@ -61,7 +63,7 @@ func TestFindPgconnImports_NamesEachImporterOutsideThePostgresStores(t *testing.
 	found, err := findPgconnImports(dir)
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"aliased.go", "writer.go"}, found)
+	assert.Equal(t, []string{"aliased.go", "blank.go", "dot.go", "writer.go"}, found)
 }
 
 func TestPgconnStaysInThePostgresStores(t *testing.T) {

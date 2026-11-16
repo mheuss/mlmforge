@@ -99,6 +99,7 @@ func TestTreeWriter_AForeignRemovalOfAUserNeverHeldIsRefusedAndRejectEventClears
 	rejected, err := it.writer(t).Reject(ctx, RejectRequest{TreeID: tree, EventID: foreign.ID, Reason: "removes a user the tree never held"})
 	require.NoError(t, err)
 	assert.Equal(t, RejectOutcomeRejected, rejected.Outcome)
+	assert.ErrorIs(t, rejected.RetryErr, ErrUnprojectableEvent)
 	assert.NoError(t, rejected.ProjectionErr)
 
 	placedX, err := it.writer(t).Place(ctx, placeX)
@@ -126,6 +127,9 @@ func TestTreeWriter_ARemovalOfAUserWhosePlacementWasRejectedIsRefused(t *testing
 	rejected, err := it.writer(t).Reject(ctx, RejectRequest{TreeID: tree, EventID: stuck.ID, Reason: "sponsor never enrolled"})
 	require.NoError(t, err)
 	require.Equal(t, RejectOutcomeRejected, rejected.Outcome, "the retry returned %v", rejected.RetryErr)
+	var engineErr *EngineError
+	require.ErrorAs(t, rejected.RetryErr, &engineErr)
+	assert.Equal(t, "SPONSOR_NOT_FOUND", engineErr.Code)
 	tomb, err := it.store.GetNodeIncludingRemoved(ctx, tree, b)
 	require.NoError(t, err)
 	require.NotNil(t, tomb, "the rejected placement left no row for %s", b)
@@ -152,6 +156,7 @@ func TestTreeWriter_ARemovalOfAUserWhosePlacementWasRejectedIsRefused(t *testing
 	cleared, err := it.writer(t).Reject(ctx, RejectRequest{TreeID: tree, EventID: foreign.ID, Reason: "removes a user whose placement was rejected"})
 	require.NoError(t, err)
 	assert.Equal(t, RejectOutcomeRejected, cleared.Outcome)
+	assert.ErrorIs(t, cleared.RetryErr, ErrUnprojectableEvent)
 	placedY, err := it.writer(t).Place(ctx, placeY)
 	require.NoError(t, err)
 	require.NoError(t, placedY.ProjectionErr)

@@ -32,9 +32,9 @@ func requireLockDatabase(t *testing.T) string {
 	return pgContainer.DSN
 }
 
-// refusedPollQuery counts idle lock sessions outside $2 whose last statement
+// refusedPollQuery lists idle lock sessions outside $2 whose last query text
 // was a pg_try_advisory_lock call and that hold no advisory lock.
-const refusedPollQuery = `SELECT count(*) FROM pg_stat_activity a
+const refusedPollQuery = `SELECT a.pid, a.query_start FROM pg_stat_activity a
 WHERE a.datname = current_database()
   AND a.application_name = $1
   AND a.pid <> ALL($2::int[])
@@ -55,14 +55,37 @@ func watchLockPolls(dsn string) watchPolls {
 		require.NoError(t, conn.QueryRow(ctx,
 			"SELECT coalesce(array_agg(pid), '{}') FROM pg_stat_activity WHERE datname = current_database() AND application_name = $1",
 			treeLockApplicationName).Scan(&before))
-		// Each check runs as its own statement outside a transaction, so
-		// pg_stat_activity is read fresh rather than from a cached snapshot.
+		// A prepared but unexecuted try shows the same query text and state as
+		// a refused one. Two different query_start values for one session mean
+		// at least one of them was an executed try.
+		firstStart := map[int32]time.Time{}
+		// Each check runs as its own statement outside an explicit transaction,
+		// so pg_stat_activity is read fresh rather than from a cached snapshot.
 		return func() bool {
 			check, cancel := context.WithTimeout(ctx, time.Second)
 			defer cancel()
-			var n int
-			require.NoError(t, conn.QueryRow(check, refusedPollQuery, treeLockApplicationName, before).Scan(&n))
-			return n > 0
+			rows, err := conn.Query(check, refusedPollQuery, treeLockApplicationName, before)
+			require.NoError(t, err, "the refused-poll query on pg_stat_activity returned an error")
+			type sighting struct {
+				pid   int32
+				start time.Time
+			}
+			seen, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (sighting, error) {
+				var s sighting
+				return s, r.Scan(&s.pid, &s.start)
+			})
+			require.NoError(t, err, "reading the refused-poll rows from pg_stat_activity returned an error")
+			for _, s := range seen {
+				first, ok := firstStart[s.pid]
+				if !ok {
+					firstStart[s.pid] = s.start
+					continue
+				}
+				if !first.Equal(s.start) {
+					return true
+				}
+			}
+			return false
 		}
 	}
 }

@@ -36,6 +36,15 @@ func readProjectionState(t *testing.T, s TreeStore, tree string, users ...string
 	return projectionState{version: version, found: found, rows: rows}
 }
 
+// requireRemovalMismatch requires err to be a RemovalMismatchError that
+// matched the given number of rows.
+func requireRemovalMismatch(t *testing.T, err error, matched int) {
+	t.Helper()
+	var mismatch *RemovalMismatchError
+	require.ErrorAs(t, err, &mismatch)
+	assert.Equal(t, matched, mismatch.Matched, "rows matched")
+}
+
 // notAUUID is an id that Postgres's uuid input refuses.
 const notAUUID = "not-a-uuid"
 
@@ -394,6 +403,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 
 		require.ErrorContains(t, err,
 			"tombstoning removed users ["+child+" "+absent+"] in tree "+tree+" matched 0 of 2 active rows")
+		requireRemovalMismatch(t, err, 0)
 		assert.Equal(t, before, readProjectionState(t, s, tree, root, child, absent))
 	})
 
@@ -411,6 +421,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 
 		require.ErrorContains(t, err,
 			"tombstoning removed users ["+child+" "+recruit+"] in tree "+tree+" matched 1 of 2 active rows")
+		requireRemovalMismatch(t, err, 1)
 		assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit))
 	})
 
@@ -427,6 +438,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		err := s.ProjectRemoval(ctx, tree, onlyChild, removal, 4)
 
 		require.ErrorContains(t, err, "tombstoning removed users ["+child+"] in tree "+tree+" matched 0 of 1 active rows")
+		requireRemovalMismatch(t, err, 0)
 		assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit))
 	})
 
@@ -444,6 +456,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		err := s.ProjectRemoval(ctx, other, onlyChild, removal, 1)
 
 		require.ErrorContains(t, err, "tombstoning removed users ["+child+"] in tree "+other+" matched 0 of 1 active rows")
+		requireRemovalMismatch(t, err, 0)
 		assert.Equal(t, before, readProjectionState(t, s, other, root, child))
 	})
 
@@ -458,6 +471,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		err := s.ProjectRemoval(ctx, tree, onlyChild, testNodeUUID(9), 3)
 
 		require.ErrorContains(t, err, "tombstoning removed users ["+child+"] in tree "+tree+" matched 0 of 1 active rows")
+		requireRemovalMismatch(t, err, 0)
 		assert.Equal(t, before, readProjectionState(t, s, tree, root, child))
 	})
 
@@ -474,6 +488,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 
 		require.ErrorContains(t, err,
 			"tombstoning removed users ["+child+" "+child+"] in tree "+tree+" matched 0 of 2 active rows")
+		requireRemovalMismatch(t, err, 0)
 		assert.Equal(t, before, readProjectionState(t, s, tree, root, child))
 	})
 
@@ -490,6 +505,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{absent}}, removal, 3)
 
 		require.ErrorContains(t, err, "tombstoning removed users ["+absent+"] in tree "+tree+" matched 0 of 1 active rows")
+		requireRemovalMismatch(t, err, 0)
 		assert.Equal(t, before, readProjectionState(t, s, tree, root, child, absent))
 	})
 
@@ -1138,6 +1154,7 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		err = s.ProjectRemoval(ctx, upTree, RemovalProjection{Users: []string{upAbsent}}, testNodeUUID(9), 2)
 		assert.EqualError(t, err, fmt.Sprintf(
 			"tombstoning removed users [%s] in tree %s matched 0 of 1 active rows", upAbsent, upTree))
+		requireRemovalMismatch(t, err, 0)
 
 		below := fmt.Sprintf("tree %s was given event version 0, below 1; nothing was written", upTree)
 		upRow := makeUUIDNode(testNodeUUID(12), upTree, hexUser(2), 1, ptr(r), ptr(r), intPtr(0))

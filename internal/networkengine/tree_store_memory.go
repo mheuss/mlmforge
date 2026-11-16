@@ -342,8 +342,7 @@ func (s *MemoryTreeStore) stageRemoval(treeID, given string, r RemovalProjection
 		return rows, nil
 	}
 	if len(tombstoned) != len(r.Users) {
-		return nil, fmt.Errorf("tombstoning removed users %v in tree %s matched %d of %d active rows",
-			r.Users, given, len(tombstoned), len(r.Users))
+		return nil, &RemovalMismatchError{TreeID: given, Users: r.Users, Matched: len(tombstoned)}
 	}
 
 	responsored := map[int]bool{}

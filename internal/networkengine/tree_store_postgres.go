@@ -314,8 +314,7 @@ func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProj
 		}
 	}
 	if tag.RowsAffected() != int64(len(r.Users)) {
-		return fmt.Errorf("tombstoning removed users %v in tree %s matched %d of %d active rows",
-			r.Users, treeID, tag.RowsAffected(), len(r.Users))
+		return &RemovalMismatchError{TreeID: treeID, Users: r.Users, Matched: int(tag.RowsAffected())}
 	}
 
 	if len(r.Responsored) > 0 {

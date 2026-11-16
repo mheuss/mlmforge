@@ -178,6 +178,20 @@ func (e *unprojectableEventError) Is(target error) bool { return target == ErrUn
 // unprojectable marks err as ErrUnprojectableEvent.
 func unprojectable(err error) error { return &unprojectableEventError{err: err} }
 
+// RemovalMismatchError reports a removal whose tombstone matched a different
+// number of active rows than the users it names, when the rows the removal
+// event stamped are not exactly those users.
+type RemovalMismatchError struct {
+	TreeID  string
+	Users   []string
+	Matched int
+}
+
+func (e *RemovalMismatchError) Error() string {
+	return fmt.Sprintf("tombstoning removed users %v in tree %s matched %d of %d active rows",
+		e.Users, e.TreeID, e.Matched, len(e.Users))
+}
+
 // RemovalNotProjectedError reports a removal the engine applied whose store
 // write did not land.
 type RemovalNotProjectedError struct {

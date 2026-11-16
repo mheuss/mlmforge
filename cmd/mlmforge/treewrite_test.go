@@ -293,7 +293,42 @@ func TestTreePlaceCmd_ExitsZeroForAStoreObservedPastARefusedEvent(t *testing.T) 
 		"the event at version 2 was not projected. The tree's projected version is 3.\n", out.stderr.String())
 }
 
-func TestTreeRemoveCmd_PromisesNoRedeliveryForAProjectionErrorAtTheEventsVersion(t *testing.T) {
+func TestTreeRemoveCmd_ExitsNonZeroForAStampMismatchAtTheEventsVersion(t *testing.T) {
+	mismatch := &networkengine.RemovalMismatchError{TreeID: "t", Users: []string{"u"}, Matched: 0}
+	w := &recordingWriter{result: networkengine.WriteResult{
+		Stream: "tree-t", EventID: "e5", Version: 5,
+		ProjectionErr: fmt.Errorf("project event e5 at version 5 in stream tree-t: remove node and re-sponsor recruits: %w", mismatch),
+		Observed:      &networkengine.ProjectionObservation{Version: 5, Found: true},
+	}}
+
+	out, err := runWriteCmd(t, w, "remove", "--tree-id", "t", "--user-id", "u")
+
+	assert.Equal(t, 3, exitCode(err))
+	assert.Equal(t, "appended event e5 at version 5 to stream tree-t; projection returned an error\n", out.stdout.String())
+	assert.Equal(t, "warning: event e5 at version 5 was appended and its projection returned an error: "+
+		"project event e5 at version 5 in stream tree-t: remove node and re-sponsor recruits: "+
+		"tombstoning removed users [u] in tree t matched 0 of 1 active rows. The tree's projected version is 5.\n"+
+		"Error: event e5 at version 5 was appended and its projection tombstoned 0 of the 1 users the event removes\n",
+		out.stderr.String())
+	assert.NotContains(t, out.stderr.String(), "redelivers")
+}
+
+func TestTreeRemoveCmd_ExitsNonZeroForAPartialStampMismatchPastTheEventsVersion(t *testing.T) {
+	mismatch := &networkengine.RemovalMismatchError{TreeID: "t", Users: []string{"u", "v"}, Matched: 1}
+	w := &recordingWriter{result: networkengine.WriteResult{
+		Stream: "tree-t", EventID: "e5", Version: 5,
+		ProjectionErr: fmt.Errorf("project event e5 at version 5 in stream tree-t: %w", mismatch),
+		Observed:      &networkengine.ProjectionObservation{Version: 6, Found: true},
+	}}
+
+	out, err := runWriteCmd(t, w, "remove", "--tree-id", "t", "--user-id", "u")
+
+	assert.Equal(t, 3, exitCode(err))
+	assert.Contains(t, out.stderr.String(),
+		"Error: event e5 at version 5 was appended and its projection tombstoned 1 of the 2 users the event removes\n")
+}
+
+func TestTreeRemoveCmd_ExitsZeroForAnotherProjectionErrorAtTheEventsVersion(t *testing.T) {
 	w := &recordingWriter{result: networkengine.WriteResult{
 		Stream: "tree-t", EventID: "e5", Version: 5,
 		ProjectionErr: errors.New("project event e5 at version 5 in stream tree-t: remove node and re-sponsor recruits: " +
@@ -303,13 +338,34 @@ func TestTreeRemoveCmd_PromisesNoRedeliveryForAProjectionErrorAtTheEventsVersion
 
 	out, err := runWriteCmd(t, w, "remove", "--tree-id", "t", "--user-id", "u")
 
-	require.NoError(t, err, "a store observed at the event's version exits 0")
-	assert.Equal(t, "appended event e5 at version 5 to stream tree-t; projection returned an error\n", out.stdout.String())
+	require.NoError(t, err, "an error of no mismatch type, with the store observed at the event's version, exits 0")
 	assert.Equal(t, "warning: event e5 at version 5 was appended and its projection returned an error: "+
 		"project event e5 at version 5 in stream tree-t: remove node and re-sponsor recruits: "+
 		"tombstoning removed users [u] in tree t matched 0 of 1 active rows. The tree's projected version is 5.\n",
 		out.stderr.String())
-	assert.NotContains(t, out.stderr.String(), "redelivers")
+}
+
+func TestTreeRemoveCmd_NamesTheStampMismatchExitInItsHelp(t *testing.T) {
+	const sentence = "Exits 3 also when the store was observed at or past the event and its projection tombstoned " +
+		"fewer rows than the users the event removes."
+	for _, c := range newTreeCmd().Commands() {
+		switch c.Name() {
+		case "remove":
+			assert.Contains(t, c.Long, sentence)
+		default:
+			assert.NotContains(t, c.Long, sentence, "%s help", c.Name())
+		}
+	}
+}
+
+func TestTreeRemoveCmd_ExitsZeroForARemovalAnotherWriterAlreadyProjected(t *testing.T) {
+	w := &recordingWriter{result: networkengine.WriteResult{Stream: "tree-t", EventID: "e5", Version: 5}}
+
+	out, err := runWriteCmd(t, w, "remove", "--tree-id", "t", "--user-id", "u")
+
+	require.NoError(t, err)
+	assert.Equal(t, "appended event e5 at version 5 to stream tree-t; projected\n", out.stdout.String())
+	assert.Empty(t, out.stderr.String())
 }
 
 func TestTreeWriteCmds_NameTheirExitCodesInTheirHelp(t *testing.T) {

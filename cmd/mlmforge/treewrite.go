@@ -221,8 +221,8 @@ func newTreeRemoveCmd(resolve flagResolver, open depsOpener, writer writerFor) *
 		Long: "Opens a database pool, starts the engine worker, appends one tree.node_removed event, tries to project it, and exits. " +
 			"A matrix tree needs --pruning-mode, promote_earliest or holding_tank. Any other tree refuses it. " +
 			"Exits 0 when the event was appended and the store was observed current, with any warnings on stderr. " +
-			"The exception is a store observed at or past the event when the removal's tombstone matched " +
-			"fewer active rows than the users the event removes. It exits 3 there. " +
+			"The exception is a removal whose tombstone matched fewer active rows than the users the event removes. " +
+			"That case exits 3 even when the store was observed current. " +
 			"Exits 3 when the event was appended and the store was not observed current. Exits 1 when no append was confirmed.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,

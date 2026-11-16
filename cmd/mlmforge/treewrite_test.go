@@ -348,8 +348,8 @@ func TestTreeRemoveCmd_ExitsZeroForAnotherProjectionErrorAtTheEventsVersion(t *t
 
 func TestTreeRemoveCmd_NamesTheStampMismatchExitInItsHelp(t *testing.T) {
 	const sentence = "with any warnings on stderr. " +
-		"The exception is a store observed at or past the event when the removal's tombstone matched " +
-		"fewer active rows than the users the event removes. It exits 3 there."
+		"The exception is a removal whose tombstone matched fewer active rows than the users the event removes. " +
+		"That case exits 3 even when the store was observed current."
 	for _, c := range newTreeCmd().Commands() {
 		switch c.Name() {
 		case "remove":

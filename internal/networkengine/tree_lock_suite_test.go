@@ -10,8 +10,9 @@ import (
 )
 
 type lockResult struct {
-	unlock func() error
-	err    error
+	unlock   func() error
+	err      error
+	returned time.Time
 }
 
 // lockInBackground runs Lock in a goroutine and, at test cleanup, releases a
@@ -21,7 +22,7 @@ func lockInBackground(t *testing.T, ctx context.Context, locker TreeLocker, tree
 	out := make(chan lockResult, 1)
 	go func() {
 		unlock, err := locker.Lock(ctx, tree)
-		out <- lockResult{unlock, err}
+		out <- lockResult{unlock, err, time.Now()}
 	}()
 	// A blocking receive here would wait on a tree that a later cleanup has
 	// not released yet.
@@ -84,7 +85,7 @@ wait:
 			seen = seen || polled()
 		}
 	}
-	elapsed := time.Since(start)
+	elapsed := got.returned.Sub(start)
 	if got.err == nil {
 		_ = got.unlock()
 	}

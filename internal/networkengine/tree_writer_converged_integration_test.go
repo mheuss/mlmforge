@@ -55,6 +55,34 @@ func TestTreeWriter_ARemovalWhoseReplyWasLostConvergesOnTheStampAnotherWriterLef
 	assert.Equal(t, b, stamped.UserID)
 }
 
+// mismatchRemovalStore returns a RemovalMismatchError from every
+// ProjectRemoval and passes every other call through.
+type mismatchRemovalStore struct {
+	TreeStore
+}
+
+func (s *mismatchRemovalStore) ProjectRemoval(_ context.Context, treeID string, r RemovalProjection,
+	_ string, _ int64) error {
+	return &RemovalMismatchError{TreeID: treeID, Users: r.Users, Matched: 0}
+}
+
+func TestTreeWriter_ARemovalMismatchReachesTheWriteResultAsItsType(t *testing.T) {
+	it := newWriterIntegration(t)
+	ctx := context.Background()
+	tree, root, a, b, c := testTreeUUID(332), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4)
+	it.buildSponsorChain(t, tree, root, a, b, c)
+
+	store := &mismatchRemovalStore{TreeStore: it.store}
+	res, err := NewTreeWriter(it.events, store, NewMemorySnapshotStore(), it.engine(t), NewPostgresTreeLocker(it.dsn)).
+		Remove(ctx, RemoveRequest{TreeID: tree, UserID: b, RemovedAt: writeTime.Add(4 * time.Hour)})
+
+	require.NoError(t, err)
+	var mismatch *RemovalMismatchError
+	require.ErrorAs(t, res.ProjectionErr, &mismatch)
+	assert.Equal(t, []string{b}, mismatch.Users)
+	assert.Equal(t, 0, mismatch.Matched)
+}
+
 // appendForeign appends one tree event straight to the event store after the
 // stream's last event, and returns the stored copy.
 func appendForeign(t *testing.T, it *writerIntegration, tree, eventType string, payload any) platform.Event {

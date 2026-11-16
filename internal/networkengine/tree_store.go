@@ -179,8 +179,7 @@ func (e *unprojectableEventError) Is(target error) bool { return target == ErrUn
 func unprojectable(err error) error { return &unprojectableEventError{err: err} }
 
 // RemovalMismatchError reports a removal whose tombstone matched a different
-// number of active rows than the users it names, when the rows the removal
-// event stamped are not exactly those users.
+// number of active rows than the users it names.
 type RemovalMismatchError struct {
 	TreeID  string
 	Users   []string

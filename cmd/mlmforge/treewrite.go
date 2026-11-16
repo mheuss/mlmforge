@@ -62,8 +62,7 @@ func reportWrite(ctx context.Context, out, warn io.Writer, res networkengine.Wri
 }
 
 // warnProjection prints what a write observed after its projection returned an
-// error. It returns an exit-3 error unless the store was observed current and
-// the projection error is not a removal mismatch.
+// error, and returns the error to report.
 func warnProjection(warn io.Writer, res networkengine.WriteResult) error {
 	head := fmt.Sprintf("warning: event %s at version %d was appended and its projection returned an error: %s.",
 		res.EventID, res.Version, res.ProjectionErr)
@@ -87,7 +86,7 @@ func warnProjection(warn io.Writer, res networkengine.WriteResult) error {
 		var mismatch *networkengine.RemovalMismatchError
 		if errors.As(res.ProjectionErr, &mismatch) {
 			return &exitCodeError{code: exitNotCurrent, err: fmt.Errorf(
-				"event %s at version %d was appended and its projection tombstoned %d of the %d users the event removes",
+				"event %s at version %d was appended and its removal's tombstone matched %d of the %d users the event removes",
 				res.EventID, res.Version, mismatch.Matched, len(mismatch.Users))}
 		}
 		return nil
@@ -223,8 +222,8 @@ func newTreeRemoveCmd(resolve flagResolver, open depsOpener, writer writerFor) *
 			"A matrix tree needs --pruning-mode, promote_earliest or holding_tank. Any other tree refuses it. " +
 			"Exits 0 when the event was appended and the store was observed current, with any warnings on stderr. " +
 			"Exits 3 when the event was appended and the store was not observed current. " +
-			"Exits 3 also when the store was observed at or past the event and its projection tombstoned " +
-			"fewer rows than the users the event removes. Exits 1 when no append was confirmed.",
+			"Exits 3 also when the store was observed at or past the event and the removal's tombstone matched " +
+			"fewer active rows than the users the event removes. Exits 1 when no append was confirmed.",
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {

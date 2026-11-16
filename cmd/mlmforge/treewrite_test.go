@@ -308,7 +308,7 @@ func TestTreeRemoveCmd_ExitsNonZeroForAStampMismatchAtTheEventsVersion(t *testin
 	assert.Equal(t, "warning: event e5 at version 5 was appended and its projection returned an error: "+
 		"project event e5 at version 5 in stream tree-t: remove node and re-sponsor recruits: "+
 		"tombstoning removed users [u] in tree t matched 0 of 1 active rows. The tree's projected version is 5.\n"+
-		"Error: event e5 at version 5 was appended and its projection tombstoned 0 of the 1 users the event removes\n",
+		"Error: event e5 at version 5 was appended and its removal's tombstone matched 0 of the 1 users the event removes\n",
 		out.stderr.String())
 	assert.NotContains(t, out.stderr.String(), "redelivers")
 }
@@ -325,7 +325,7 @@ func TestTreeRemoveCmd_ExitsNonZeroForAPartialStampMismatchPastTheEventsVersion(
 
 	assert.Equal(t, 3, exitCode(err))
 	assert.Contains(t, out.stderr.String(),
-		"Error: event e5 at version 5 was appended and its projection tombstoned 1 of the 2 users the event removes\n")
+		"Error: event e5 at version 5 was appended and its removal's tombstone matched 1 of the 2 users the event removes\n")
 }
 
 func TestTreeRemoveCmd_ExitsZeroForAnotherProjectionErrorAtTheEventsVersion(t *testing.T) {
@@ -339,6 +339,7 @@ func TestTreeRemoveCmd_ExitsZeroForAnotherProjectionErrorAtTheEventsVersion(t *t
 	out, err := runWriteCmd(t, w, "remove", "--tree-id", "t", "--user-id", "u")
 
 	require.NoError(t, err, "an error of no mismatch type, with the store observed at the event's version, exits 0")
+	assert.Equal(t, "appended event e5 at version 5 to stream tree-t; projection returned an error\n", out.stdout.String())
 	assert.Equal(t, "warning: event e5 at version 5 was appended and its projection returned an error: "+
 		"project event e5 at version 5 in stream tree-t: remove node and re-sponsor recruits: "+
 		"tombstoning removed users [u] in tree t matched 0 of 1 active rows. The tree's projected version is 5.\n",
@@ -346,8 +347,8 @@ func TestTreeRemoveCmd_ExitsZeroForAnotherProjectionErrorAtTheEventsVersion(t *t
 }
 
 func TestTreeRemoveCmd_NamesTheStampMismatchExitInItsHelp(t *testing.T) {
-	const sentence = "Exits 3 also when the store was observed at or past the event and its projection tombstoned " +
-		"fewer rows than the users the event removes."
+	const sentence = "Exits 3 also when the store was observed at or past the event and the removal's tombstone matched " +
+		"fewer active rows than the users the event removes."
 	for _, c := range newTreeCmd().Commands() {
 		switch c.Name() {
 		case "remove":
@@ -358,7 +359,7 @@ func TestTreeRemoveCmd_NamesTheStampMismatchExitInItsHelp(t *testing.T) {
 	}
 }
 
-func TestTreeRemoveCmd_ExitsZeroForARemovalAnotherWriterAlreadyProjected(t *testing.T) {
+func TestTreeRemoveCmd_ExitsZeroForAProjectionThatReturnedNoError(t *testing.T) {
 	w := &recordingWriter{result: networkengine.WriteResult{Stream: "tree-t", EventID: "e5", Version: 5}}
 
 	out, err := runWriteCmd(t, w, "remove", "--tree-id", "t", "--user-id", "u")

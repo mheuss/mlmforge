@@ -391,22 +391,24 @@ func TestTreeWriterSnapshotBackoff_ASnapshotEveryLoadDiscardsIsRetakenOncePerTho
 	takes, _ := backoffWrites(t, env, env.snapshots, refusingRestores, snapshotInterval, snapshotInterval)
 	require.Equal(t, 1, takes, "write 1000 stores the first snapshot")
 
-	takes, discarding := backoffWrites(t, env, env.snapshots, refusingRestores, snapshotInterval+1, snapshotInterval+1)
+	for _, at := range []int64{snapshotInterval, 2 * snapshotInterval} {
+		takes, discarding := backoffWrites(t, env, env.snapshots, refusingRestores, at+1, at+1)
 
-	assert.Equal(t, 0, takes, "write 1001")
-	require.Len(t, discarding.Warnings, 2, "warnings of write 1001")
-	assert.Contains(t, discarding.Warnings[0], "the snapshot of tree "+writerTree+" at version 1000 could not be used")
-	assert.Contains(t, discarding.Warnings[0], "deleted the snapshot")
-	assert.Equal(t, storedSkipWarning(snapshotInterval+1, snapshotInterval), discarding.Warnings[1])
+		assert.Equal(t, 0, takes, "write %d", at+1)
+		require.Len(t, discarding.Warnings, 2, "warnings of write %d", at+1)
+		assert.Contains(t, discarding.Warnings[0], fmt.Sprintf("the snapshot of tree %s at version %d could not be used", writerTree, at))
+		assert.Contains(t, discarding.Warnings[0], "deleted the snapshot")
+		assert.Equal(t, storedSkipWarning(at+1, at), discarding.Warnings[1])
 
-	takes = skippedWrites(t, env, refusingRestores, snapshotInterval+2, 2*snapshotInterval-1, snapshotInterval)
+		takes = skippedWrites(t, env, refusingRestores, at+2, at+snapshotInterval-1, at)
 
-	assert.Equal(t, 0, takes, "writes 1002 to 1999")
+		assert.Equal(t, 0, takes, "writes %d to %d", at+2, at+snapshotInterval-1)
 
-	takes, _ = backoffWrites(t, env, env.snapshots, refusingRestores, 2*snapshotInterval, 2*snapshotInterval)
+		takes, _ = backoffWrites(t, env, env.snapshots, refusingRestores, at+snapshotInterval, at+snapshotInterval)
 
-	assert.Equal(t, 1, takes, "write 2000")
-	requireLastAttempt(t, env, SnapshotAttempt{TreeID: writerTree, Version: 2 * snapshotInterval, Stored: true})
+		assert.Equal(t, 1, takes, "write %d", at+snapshotInterval)
+		requireLastAttempt(t, env, SnapshotAttempt{TreeID: writerTree, Version: at + snapshotInterval, Stored: true})
+	}
 }
 
 // storedSkipWarning is the warning of a write at version whose skip honors a

@@ -1627,8 +1627,6 @@ func TestHandleNodePlaced_ReconcileSkipsOtherEngineErrors(t *testing.T) {
 	assert.Equal(t, 0, tr.positionOps, "no inspection for an error reconcile cannot speak to")
 }
 
-// Matrix placements go through add_node_at, a separate withRetry call. The
-// closure has to reach both or half the handler is unreconciled.
 func TestHandleNodePlaced_ReconcileCoversTheMatrixPath(t *testing.T) {
 	tr := &reconcileTransport{
 		mutationErr: &EngineError{Code: engineCodeUserAlreadyExists},

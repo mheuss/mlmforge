@@ -251,9 +251,6 @@ func (c *TreeEventConsumer) handleNodePlaced(ctx context.Context, shape treeShap
 		}
 	}
 
-	// One closure for both engine calls below. USER_ALREADY_EXISTS after a
-	// store insert that reported the row already present is the lost-reply
-	// case: the mutation landed and the reply did not.
 	reconcile := func(ctx context.Context, err error) (reconcileOutcome, error) {
 		if !isEngineCode(err, engineCodeUserAlreadyExists) {
 			return reconcileNotApplicable, nil

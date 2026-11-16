@@ -45,18 +45,44 @@ const lockTimeout = 300 * time.Millisecond
 // waiterHold is how long a held tree keeps a waiting Lock waiting.
 const waiterHold = 2 * time.Second
 
+// pollCheckInterval is the pause between two checks of a pollWatcher.
+const pollCheckInterval = 20 * time.Millisecond
+
+// pollWatcher reports whether a Lock started after the watcher was made has
+// been refused at least once.
+type pollWatcher func() bool
+
+// watchPolls makes a pollWatcher just before a Lock starts.
+type watchPolls func(t *testing.T) pollWatcher
+
 // requireLockTimesOut requires a Lock on tree to wait out its context and end
-// with context.DeadlineExceeded.
-func requireLockTimesOut(t *testing.T, locker TreeLocker, tree uuid.UUID, msg string) {
+// with context.DeadlineExceeded. With a non-nil watch it also requires a
+// refused attempt to be seen before the Lock returned.
+func requireLockTimesOut(t *testing.T, locker TreeLocker, tree uuid.UUID, watch watchPolls, msg string) {
 	t.Helper()
+	var polled pollWatcher
+	if watch != nil {
+		polled = watch(t)
+	}
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), lockTimeout)
 	defer cancel()
+	result := lockInBackground(t, ctx, locker, tree)
+	giveUp := time.After(lockTimeout + 2*time.Second)
+	tick := time.NewTicker(pollCheckInterval)
+	defer tick.Stop()
+	seen := polled == nil
 	var got lockResult
-	select {
-	case got = <-lockInBackground(t, ctx, locker, tree):
-	case <-time.After(lockTimeout + 2*time.Second):
-		t.Fatal("a waiting Lock did not return within 2s of its context ending")
+wait:
+	for {
+		select {
+		case got = <-result:
+			break wait
+		case <-giveUp:
+			t.Fatal("a waiting Lock did not return within 2s of its context ending")
+		case <-tick.C:
+			seen = seen || polled()
+		}
 	}
 	elapsed := time.Since(start)
 	if got.err == nil {
@@ -65,6 +91,38 @@ func requireLockTimesOut(t *testing.T, locker TreeLocker, tree uuid.UUID, msg st
 	require.ErrorIs(t, got.err, context.DeadlineExceeded, msg)
 	require.GreaterOrEqual(t, elapsed, lockTimeout,
 		"a Lock on tree %s returned %v after its %v context was made", tree, elapsed, lockTimeout)
+	require.True(t, seen,
+		"the poll watcher saw no refused attempt on tree %s before the Lock returned after %v", tree, elapsed)
+}
+
+// requireWaitingAfterRefusal requires a Lock to still be waiting once polled
+// reports a refused attempt, or after lockTimeout when polled is nil.
+func requireWaitingAfterRefusal(t *testing.T, waiting <-chan lockResult, polled pollWatcher) {
+	t.Helper()
+	var ready <-chan time.Time
+	if polled == nil {
+		ready = time.After(lockTimeout)
+	}
+	giveUp := time.After(5 * time.Second)
+	tick := time.NewTicker(pollCheckInterval)
+	defer tick.Stop()
+	for {
+		select {
+		case got := <-waiting:
+			if got.err == nil {
+				releaseAtCleanup(t, got.unlock)
+			}
+			t.Fatalf("a waiting Lock on a held tree returned before its context was cancelled, with error %v", got.err)
+		case <-ready:
+			return
+		case <-giveUp:
+			t.Fatal("the poll watcher saw no refused attempt within 5s of the Lock starting")
+		case <-tick.C:
+			if polled != nil && polled() {
+				return
+			}
+		}
+	}
 }
 
 // releaseAtCleanup releases a held tree when the test ends.
@@ -85,8 +143,8 @@ func holdTree(t *testing.T, locker TreeLocker, tree uuid.UUID) func() error {
 }
 
 // runTreeLockerSuite runs the behaviour every TreeLocker promises against the
-// lockers newLocker returns.
-func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
+// lockers newLocker returns. A nil watch skips the refused-attempt checks.
+func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker, watch watchPolls) {
 	t.Helper()
 
 	t.Run("a second Lock waits until the holder releases", func(t *testing.T) {
@@ -94,7 +152,7 @@ func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
 		tree := uuid.MustParse(testTreeUUID(11))
 		unlock := holdTree(t, locker, tree)
 
-		requireLockTimesOut(t, locker, tree, "a second Lock on a held tree did not time out")
+		requireLockTimesOut(t, locker, tree, watch, "a second Lock on a held tree did not time out")
 
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -117,7 +175,7 @@ func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
 		}
 		require.NoError(t, got.err)
 		releaseAtCleanup(t, got.unlock)
-		requireLockTimesOut(t, locker, tree, "a Lock did not end with DeadlineExceeded while the waiting Lock held the tree")
+		requireLockTimesOut(t, locker, tree, watch, "a Lock did not end with DeadlineExceeded while the waiting Lock held the tree")
 		require.NoError(t, got.unlock())
 	})
 
@@ -152,7 +210,7 @@ func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
 		releaseAtCleanup(t, second)
 
 		staleErr := first()
-		requireLockTimesOut(t, locker, tree, "a third Lock did not end with DeadlineExceeded after the first holder's stale unlock")
+		requireLockTimesOut(t, locker, tree, watch, "a third Lock did not end with DeadlineExceeded after the first holder's stale unlock")
 		require.Error(t, staleErr, "the first holder's second unlock returned nil")
 	})
 
@@ -161,7 +219,7 @@ func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
 		tree := uuid.MustParse(testTreeUUID(15))
 		holdTree(t, locker, tree)
 
-		requireLockTimesOut(t, locker, tree, "a Lock waiting on a held tree did not end with DeadlineExceeded")
+		requireLockTimesOut(t, locker, tree, watch, "a Lock waiting on a held tree did not end with DeadlineExceeded")
 	})
 
 	t.Run("a waiting Lock gives up when its context is cancelled", func(t *testing.T) {
@@ -169,17 +227,14 @@ func runTreeLockerSuite(t *testing.T, newLocker func(t *testing.T) TreeLocker) {
 		tree := uuid.MustParse(testTreeUUID(18))
 		holdTree(t, locker, tree)
 
+		var polled pollWatcher
+		if watch != nil {
+			polled = watch(t)
+		}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		waiting := lockInBackground(t, ctx, locker, tree)
-		select {
-		case got := <-waiting:
-			if got.err == nil {
-				releaseAtCleanup(t, got.unlock)
-			}
-			t.Fatal("a waiting Lock on a held tree returned before its context was cancelled")
-		case <-time.After(lockTimeout):
-		}
+		requireWaitingAfterRefusal(t, waiting, polled)
 
 		cancel()
 		var got lockResult

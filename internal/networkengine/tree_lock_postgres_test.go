@@ -32,11 +32,43 @@ func requireLockDatabase(t *testing.T) string {
 	return pgContainer.DSN
 }
 
+// refusedPollQuery counts lock sessions outside $2 whose last statement was a
+// pg_try_advisory_lock call and that hold no advisory lock.
+const refusedPollQuery = `SELECT count(*) FROM pg_stat_activity a
+WHERE a.datname = current_database()
+  AND a.application_name = $1
+  AND a.pid <> ALL($2::int[])
+  AND a.query LIKE 'SELECT pg_try_advisory_lock(%'
+  AND NOT EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.locktype = 'advisory')`
+
+// watchLockPolls watches for refused attempts from lock sessions that open
+// after the watcher is made.
+func watchLockPolls(dsn string) watchPolls {
+	return func(t *testing.T) pollWatcher {
+		t.Helper()
+		ctx := context.Background()
+		conn, err := pgx.Connect(ctx, dsn)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = conn.Close(context.Background()) })
+		var before []int32
+		require.NoError(t, conn.QueryRow(ctx,
+			"SELECT coalesce(array_agg(pid), '{}') FROM pg_stat_activity WHERE datname = current_database() AND application_name = $1",
+			treeLockApplicationName).Scan(&before))
+		// Each check runs as its own statement outside a transaction, so
+		// pg_stat_activity is read fresh rather than from a cached snapshot.
+		return func() bool {
+			var n int
+			require.NoError(t, conn.QueryRow(ctx, refusedPollQuery, treeLockApplicationName, before).Scan(&n))
+			return n > 0
+		}
+	}
+}
+
 func TestPostgresTreeLocker_SharedBehaviour(t *testing.T) {
 	dsn := requireLockDatabase(t)
 	runTreeLockerSuite(t, func(t *testing.T) TreeLocker {
 		return NewPostgresTreeLocker(dsn)
-	})
+	}, watchLockPolls(dsn))
 }
 
 func TestPostgresTreeLocker_SeparateLockersExcludeEachOther(t *testing.T) {
@@ -47,10 +79,8 @@ func TestPostgresTreeLocker_SeparateLockersExcludeEachOther(t *testing.T) {
 	unlock, err := first.Lock(context.Background(), tree)
 	require.NoError(t, err)
 
-	short, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	_, err = second.Lock(short, tree)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+	requireLockTimesOut(t, second, tree, watchLockPolls(dsn),
+		"a Lock from a second locker on a tree the first locker holds did not time out")
 
 	require.NoError(t, unlock())
 	wait, cancelWait := context.WithTimeout(context.Background(), 5*time.Second)
@@ -70,7 +100,7 @@ func TestPostgresTreeLocker_TreesWhoseKeysCollideExcludeEachOther(t *testing.T) 
 	locker := NewPostgresTreeLocker(dsn)
 
 	unlock := holdTree(t, locker, held)
-	requireLockTimesOut(t, locker, colliding,
+	requireLockTimesOut(t, locker, colliding, watchLockPolls(dsn),
 		"a Lock on a tree whose key equals the held tree's key did not time out")
 
 	require.NoError(t, unlock())
@@ -105,10 +135,7 @@ func TestPostgresTreeLocker_ALostSessionReleasesTheLock(t *testing.T) {
 	require.NoError(t, err)
 
 	locker := NewPostgresTreeLocker(dsn)
-	short, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-	defer cancel()
-	_, err = locker.Lock(short, tree)
-	require.ErrorIs(t, err, context.DeadlineExceeded, "the raw holder and the locker must use one key")
+	requireLockTimesOut(t, locker, tree, watchLockPolls(dsn), "the raw holder and the locker must use one key")
 
 	require.NoError(t, holder.Close(ctx))
 
@@ -145,10 +172,7 @@ func TestPostgresTreeLocker_ClosesItsConnections(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, lockSessions(t, dsn), "a held lock keeps one connection open")
 
-	short, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	_, err = waiter.Lock(short, tree)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+	requireLockTimesOut(t, waiter, tree, watchLockPolls(dsn), "a Lock on a held tree did not time out")
 	require.Eventually(t, func() bool { return lockSessions(t, dsn) == 1 }, 5*time.Second, 50*time.Millisecond,
 		"a Lock that gave up left its connection open")
 

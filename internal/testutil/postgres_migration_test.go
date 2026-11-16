@@ -2,6 +2,7 @@ package testutil_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,6 +26,49 @@ func TestMain(m *testing.M) {
 		migrationContainer.Terminate()
 	}
 	os.Exit(code)
+}
+
+// dirtiedBy is the test whose restore cleanup last read the shared container's record as dirty, and the version it read.
+var dirtiedBy struct {
+	test    string
+	version uint
+}
+
+// requireCleanContainer stops the test when the shared container's migration record is dirty.
+func requireCleanContainer(t *testing.T, m *migrate.Migrate) {
+	t.Helper()
+	version, dirty, err := m.Version()
+	if errors.Is(err, migrate.ErrNilVersion) {
+		return
+	}
+	require.NoError(t, err, "read the shared container's migration record")
+	if !dirty {
+		return
+	}
+	if dirtiedBy.test == "" {
+		t.Fatalf("the shared container reads version %d, dirty. No earlier test in this run recorded leaving it dirty", version)
+	}
+	t.Fatalf("the shared container reads version %d, dirty. %s's restore cleanup read version %d, dirty",
+		version, dirtiedBy.test, dirtiedBy.version)
+}
+
+// restoreHead returns a cleanup that migrates the shared container back to head and fails the test when it cannot.
+func restoreHead(t *testing.T, m *migrate.Migrate) func() {
+	return func() {
+		err := m.Up()
+		if err == nil || errors.Is(err, migrate.ErrNoChange) {
+			return
+		}
+		version, dirty, readErr := m.Version()
+		if readErr != nil {
+			t.Errorf("restoring the shared container to head failed, and reading its migration record then failed with %v: %v", readErr, err)
+			return
+		}
+		if dirty {
+			dirtiedBy.test, dirtiedBy.version = t.Name(), version
+		}
+		t.Errorf("restoring the shared container to head failed, and its migration record then read version %d, dirty=%t: %v", version, dirty, err)
+	}
 }
 
 func TestMigrations_QualificationHistoryTableExists(t *testing.T) {
@@ -92,6 +136,7 @@ func TestMigrations_SlotUniqueDownUp(t *testing.T) {
 	m, err := migrate.New(fmt.Sprintf("file://%s", absPath), migrationContainer.DSN)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = m.Close() })
+	requireCleanContainer(t, m)
 
 	indexExists := func() bool {
 		pool, err := pgxpool.New(context.Background(), migrationContainer.DSN)
@@ -106,15 +151,8 @@ func TestMigrations_SlotUniqueDownUp(t *testing.T) {
 	}
 
 	require.True(t, indexExists(), "index present after full migrate up")
-	// Self-heal the shared container on any failure from here down,
-	// including a Migrate(3) that dies after dropping the index. Cleanups
-	// are LIFO, so this restore fires before m.Close. This is the
-	// failure-path net only — the happy path restores head explicitly below,
-	// because a discarded error here would leave the shared container short
-	// of head and break later tests in this package. Each package builds its
-	// own container in TestMain, so the blast radius stops here. On a dirty
-	// version Up returns ErrDirty, which is safely discarded.
-	t.Cleanup(func() { _ = m.Up() })
+	// Cleanups are LIFO, so this restore runs before m.Close.
+	t.Cleanup(restoreHead(t, m))
 	// Pinned to versions 3 and 4, not Steps(-1): a relative step would roll
 	// back whichever migration is newest and fail confusingly. This test is
 	// about 000004's down file specifically.
@@ -143,6 +181,7 @@ func TestMigrations_RootUniqueDownUp(t *testing.T) {
 	m, err := migrate.New(fmt.Sprintf("file://%s", absPath), migrationContainer.DSN)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = m.Close() })
+	requireCleanContainer(t, m)
 
 	indexExists := func() bool {
 		pool, err := pgxpool.New(context.Background(), migrationContainer.DSN)
@@ -157,11 +196,8 @@ func TestMigrations_RootUniqueDownUp(t *testing.T) {
 	}
 
 	require.True(t, indexExists(), "index present after full migrate up")
-	// Best-effort restore of the shared container on any failure from here
-	// down. Cleanups are LIFO, so this fires before m.Close. A dirty version
-	// is not recovered here: Up reports ErrDirty and later tests in this
-	// package fail on it.
-	t.Cleanup(func() { _ = m.Up() })
+	// Cleanups are LIFO, so this restore runs before m.Close.
+	t.Cleanup(restoreHead(t, m))
 	// Pinned versions, not Steps(-1): a relative step would roll back
 	// whichever migration is newest and fail confusingly. This test is about
 	// 000006's down file specifically.
@@ -188,6 +224,7 @@ func TestMigrations_RemovedByEventDownUp(t *testing.T) {
 	m, err := migrate.New(fmt.Sprintf("file://%s", absPath), migrationContainer.DSN)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = m.Close() })
+	requireCleanContainer(t, m)
 
 	// Proves the migration files actually work, not just that they contain words.
 	nullableUUIDColumnExists := func() bool {
@@ -207,9 +244,8 @@ func TestMigrations_RemovedByEventDownUp(t *testing.T) {
 	}
 
 	require.True(t, nullableUUIDColumnExists(), "nullable uuid column present after full migrate up")
-	// Best-effort restore of the shared container on any failure from here
-	// down. Cleanups are LIFO, so this fires before m.Close.
-	t.Cleanup(func() { _ = m.Up() })
+	// Cleanups are LIFO, so this restore runs before m.Close.
+	t.Cleanup(restoreHead(t, m))
 	// Pinned versions, not Steps(-1): a relative step would roll back
 	// whichever migration is newest and fail confusingly.
 	require.NoError(t, m.Migrate(6), "migrate down to version 6 (drops 000007)")
@@ -235,6 +271,7 @@ func TestMigrations_RemovalStampIndexDownUp(t *testing.T) {
 	m, err := migrate.New(fmt.Sprintf("file://%s", absPath), migrationContainer.DSN)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = m.Close() })
+	requireCleanContainer(t, m)
 
 	indexExists := func() bool {
 		pool, err := pgxpool.New(context.Background(), migrationContainer.DSN)
@@ -250,9 +287,8 @@ func TestMigrations_RemovalStampIndexDownUp(t *testing.T) {
 	}
 
 	require.True(t, indexExists(), "partial index present after full migrate up")
-	// Best-effort restore of the shared container on any failure from here
-	// down. Cleanups are LIFO, so this fires before m.Close.
-	t.Cleanup(func() { _ = m.Up() })
+	// Cleanups are LIFO, so this restore runs before m.Close.
+	t.Cleanup(restoreHead(t, m))
 	// Pinned versions, not Steps(-1): a relative step would roll back
 	// whichever migration is newest and fail confusingly.
 	require.NoError(t, m.Migrate(7), "migrate down to version 7 (drops 000008)")
@@ -277,6 +313,7 @@ func TestMigrations_SnapshotAttemptsDownUp(t *testing.T) {
 	m, err := migrate.New(fmt.Sprintf("file://%s", absPath), migrationContainer.DSN)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = m.Close() })
+	requireCleanContainer(t, m)
 
 	tableExists := func() bool {
 		pool, err := pgxpool.New(context.Background(), migrationContainer.DSN)
@@ -291,7 +328,7 @@ func TestMigrations_SnapshotAttemptsDownUp(t *testing.T) {
 	}
 
 	require.True(t, tableExists(), "table present after full migrate up")
-	t.Cleanup(func() { _ = m.Up() })
+	t.Cleanup(restoreHead(t, m))
 	require.NoError(t, m.Migrate(10), "migrate down to version 10 (drops 000011)")
 	require.False(t, tableExists(), "down file actually drops the table")
 	require.NoError(t, m.Migrate(11), "migrate back up to version 11")
@@ -332,6 +369,7 @@ func TestMigrations_QualificationHistoryPeriodCollationDownUp(t *testing.T) {
 	m, err := migrate.New(fmt.Sprintf("file://%s", absPath), migrationContainer.DSN)
 	require.NoError(t, err)
 	t.Cleanup(func() { _, _ = m.Close() })
+	requireCleanContainer(t, m)
 
 	// Matched on attnum, so period_id's key position in each index does not
 	// matter.
@@ -381,7 +419,7 @@ func TestMigrations_QualificationHistoryPeriodCollationDownUp(t *testing.T) {
 
 	assert.Equal(t, collatedAs("C"), indexCollations(), "index collations at head")
 	require.Equal(t, "C", columnCollation(), "period_id collation at head")
-	t.Cleanup(func() { _ = m.Up() })
+	t.Cleanup(restoreHead(t, m))
 	require.NoError(t, m.Migrate(11), "migrate down to version 11 (drops 000012)")
 	assert.Equal(t, collatedAs("default"), indexCollations(), "index collations after migrating down to 11")
 	require.Equal(t, "default", columnCollation(), "period_id collation after migrating down to 11")

@@ -55,9 +55,7 @@ func watchLockPolls(dsn string) watchPolls {
 		require.NoError(t, conn.QueryRow(ctx,
 			"SELECT coalesce(array_agg(pid), '{}') FROM pg_stat_activity WHERE datname = current_database() AND application_name = $1",
 			treeLockApplicationName).Scan(&before))
-		// A prepared but unexecuted try shows the same query text and state as
-		// a refused one. Two different query_start values for one session mean
-		// at least one of them was an executed try.
+		// Count a session only once it shows a second, different query_start.
 		firstStart := map[int32]time.Time{}
 		// Each check runs as its own statement outside an explicit transaction,
 		// so pg_stat_activity is read fresh rather than from a cached snapshot.

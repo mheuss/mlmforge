@@ -48,11 +48,11 @@ const waiterHold = 2 * time.Second
 // pollCheckInterval is the pause between two checks of a pollWatcher.
 const pollCheckInterval = 20 * time.Millisecond
 
-// pollWatcher reports whether a Lock started after the watcher was made has
-// been refused at least once.
+// pollWatcher reports whether a lock session opened after the watcher was made
+// is now sitting refused.
 type pollWatcher func() bool
 
-// watchPolls makes a pollWatcher just before a Lock starts.
+// watchPolls makes a pollWatcher for Locks that start after it.
 type watchPolls func(t *testing.T) pollWatcher
 
 // requireLockTimesOut requires a Lock on tree to wait out its context and end
@@ -95,14 +95,13 @@ wait:
 		"the poll watcher saw no refused attempt on tree %s before the Lock returned after %v", tree, elapsed)
 }
 
-// requireWaitingAfterRefusal requires a Lock to still be waiting once polled
-// reports a refused attempt, or after lockTimeout when polled is nil.
+// requireWaitingAfterRefusal requires a Lock to still be waiting after
+// lockTimeout and, when polled is non-nil, after polled reports a refused
+// attempt.
 func requireWaitingAfterRefusal(t *testing.T, waiting <-chan lockResult, polled pollWatcher) {
 	t.Helper()
-	var ready <-chan time.Time
-	if polled == nil {
-		ready = time.After(lockTimeout)
-	}
+	held := time.After(lockTimeout)
+	heldOut, seen := false, polled == nil
 	giveUp := time.After(5 * time.Second)
 	tick := time.NewTicker(pollCheckInterval)
 	defer tick.Stop()
@@ -113,14 +112,15 @@ func requireWaitingAfterRefusal(t *testing.T, waiting <-chan lockResult, polled 
 				releaseAtCleanup(t, got.unlock)
 			}
 			t.Fatalf("a waiting Lock on a held tree returned before its context was cancelled, with error %v", got.err)
-		case <-ready:
-			return
+		case <-held:
+			heldOut = true
 		case <-giveUp:
 			t.Fatal("the poll watcher saw no refused attempt within 5s of the Lock starting")
 		case <-tick.C:
-			if polled != nil && polled() {
-				return
-			}
+			seen = seen || polled()
+		}
+		if heldOut && seen {
+			return
 		}
 	}
 }

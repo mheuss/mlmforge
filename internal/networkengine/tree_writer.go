@@ -860,7 +860,11 @@ func (w *TreeWriter) maybeSnapshot(ctx context.Context, tree string, shape treeS
 	}
 	if found && attemptHonored(last, prep) && version-last.Version < snapshotInterval {
 		if last.Stored {
-			return nil
+			if prep.snapshotVersion != 0 || prep.snapshotReadFailed {
+				return nil
+			}
+			return []string{fmt.Sprintf("skipped the snapshot of tree %s at version %d; the last attempt, at version %d, stored a snapshot, "+
+				"and this load used no snapshot; no snapshot was taken", tree, version, last.Version)}
 		}
 		return []string{fmt.Sprintf("skipped the snapshot of tree %s at version %d; the last attempt, at version %d, stored nothing: %s",
 			tree, version, last.Version, last.Observed)}

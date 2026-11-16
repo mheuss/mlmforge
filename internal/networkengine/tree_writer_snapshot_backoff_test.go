@@ -3,6 +3,7 @@ package networkengine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -393,18 +394,67 @@ func TestTreeWriterSnapshotBackoff_ASnapshotEveryLoadDiscardsIsRetakenOncePerTho
 	takes, discarding := backoffWrites(t, env, env.snapshots, refusingRestores, snapshotInterval+1, snapshotInterval+1)
 
 	assert.Equal(t, 0, takes, "write 1001")
-	require.Len(t, discarding.Warnings, 1, "warnings of write 1001")
+	require.Len(t, discarding.Warnings, 2, "warnings of write 1001")
 	assert.Contains(t, discarding.Warnings[0], "the snapshot of tree "+writerTree+" at version 1000 could not be used")
 	assert.Contains(t, discarding.Warnings[0], "deleted the snapshot")
+	assert.Equal(t, storedSkipWarning(snapshotInterval+1, snapshotInterval), discarding.Warnings[1])
 
-	takes, honoring := backoffWrites(t, env, env.snapshots, refusingRestores, snapshotInterval+2, 2*snapshotInterval-1)
+	takes = skippedWrites(t, env, refusingRestores, snapshotInterval+2, 2*snapshotInterval-1, snapshotInterval)
 
 	assert.Equal(t, 0, takes, "writes 1002 to 1999")
-	assert.Empty(t, honoring.Warnings, "write 1999 skips silently")
 
 	takes, _ = backoffWrites(t, env, env.snapshots, refusingRestores, 2*snapshotInterval, 2*snapshotInterval)
 
 	assert.Equal(t, 1, takes, "write 2000")
+	requireLastAttempt(t, env, SnapshotAttempt{TreeID: writerTree, Version: 2 * snapshotInterval, Stored: true})
+}
+
+// storedSkipWarning is the warning of a write at version whose skip honors a
+// stored attempt at last, on a load that used no snapshot.
+func storedSkipWarning(version, last int64) string {
+	return fmt.Sprintf("skipped the snapshot of tree %s at version %d; the last attempt, at version %d, stored a snapshot, "+
+		"and this load used no snapshot; no snapshot was taken", writerTree, version, last)
+}
+
+// skippedWrites requires each write in [from, to] to skip the snapshot with the
+// stored-skip warning against last, and returns its take_snapshot calls.
+func skippedWrites(t *testing.T, env *writerEnv, newEngine func() *fakeWriterEngine, from, to, last int64) int {
+	t.Helper()
+	takes := 0
+	for v := from; v <= to; v++ {
+		n, res := backoffWrites(t, env, env.snapshots, newEngine, v, v)
+		takes += n
+		require.Equal(t, []string{storedSkipWarning(v, last)}, res.Warnings, "warnings of write %d", v)
+	}
+	return takes
+}
+
+func TestTreeWriterSnapshotBackoff_AOneOffDiscardWarnsOnEachSkippedWrite(t *testing.T) {
+	env := backoffEnv(t)
+	refusingRestore := func() *fakeWriterEngine {
+		e := newFakeWriterEngine()
+		e.restoreErr = fakeEngineError("INCONSISTENT_SNAPSHOT", "refused by the test")
+		return e
+	}
+
+	takes, _ := backoffWrites(t, env, env.snapshots, newFakeWriterEngine, snapshotInterval, snapshotInterval)
+	require.Equal(t, 1, takes, "write 1000 stores the first snapshot")
+
+	takes, discarding := backoffWrites(t, env, env.snapshots, refusingRestore, snapshotInterval+1, snapshotInterval+1)
+
+	assert.Equal(t, 0, takes, "write 1001")
+	require.Len(t, discarding.Warnings, 2, "warnings of write 1001")
+	assert.Contains(t, discarding.Warnings[0], "the snapshot of tree "+writerTree+" at version 1000 could not be used")
+	assert.Equal(t, storedSkipWarning(snapshotInterval+1, snapshotInterval), discarding.Warnings[1])
+
+	takes = skippedWrites(t, env, newFakeWriterEngine, snapshotInterval+2, 2*snapshotInterval-1, snapshotInterval)
+
+	assert.Equal(t, 0, takes, "writes 1002 to 1999")
+
+	takes, retaken := backoffWrites(t, env, env.snapshots, newFakeWriterEngine, 2*snapshotInterval, 2*snapshotInterval)
+
+	assert.Equal(t, 1, takes, "write 2000")
+	assert.Empty(t, retaken.Warnings, "warnings of write 2000")
 	requireLastAttempt(t, env, SnapshotAttempt{TreeID: writerTree, Version: 2 * snapshotInterval, Stored: true})
 }
 

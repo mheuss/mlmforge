@@ -43,6 +43,10 @@ func lockInBackground(t *testing.T, ctx context.Context, locker TreeLocker, tree
 // lockTimeout is the wait given to a Lock that must time out.
 const lockTimeout = 300 * time.Millisecond
 
+// watchedLockTimeout is the wait given to a Lock that must time out while a
+// pollWatcher looks for its refused attempts.
+const watchedLockTimeout = time.Second
+
 // waiterHold is how long a held tree keeps a waiting Lock waiting.
 const waiterHold = 2 * time.Second
 
@@ -57,19 +61,22 @@ type pollWatcher func() bool
 type watchPolls func(t *testing.T) pollWatcher
 
 // requireLockTimesOut requires a Lock on tree to wait out its context and end
-// with context.DeadlineExceeded. With a non-nil watch it also requires a
-// refused attempt to be seen before the Lock returned.
+// with context.DeadlineExceeded. With a non-nil watch the context is
+// watchedLockTimeout, and a refused attempt must also be seen before the Lock
+// returned.
 func requireLockTimesOut(t *testing.T, locker TreeLocker, tree uuid.UUID, watch watchPolls, msg string) {
 	t.Helper()
 	var polled pollWatcher
+	timeout := lockTimeout
 	if watch != nil {
 		polled = watch(t)
+		timeout = watchedLockTimeout
 	}
 	start := time.Now()
-	ctx, cancel := context.WithTimeout(context.Background(), lockTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	result := lockInBackground(t, ctx, locker, tree)
-	giveUp := time.After(lockTimeout + 2*time.Second)
+	giveUp := time.After(timeout + 2*time.Second)
 	tick := time.NewTicker(pollCheckInterval)
 	defer tick.Stop()
 	seen := polled == nil
@@ -90,8 +97,8 @@ wait:
 		_ = got.unlock()
 	}
 	require.ErrorIs(t, got.err, context.DeadlineExceeded, msg)
-	require.GreaterOrEqual(t, elapsed, lockTimeout,
-		"a Lock on tree %s returned %v after its %v context was made", tree, elapsed, lockTimeout)
+	require.GreaterOrEqual(t, elapsed, timeout,
+		"a Lock on tree %s returned %v after its %v context was made", tree, elapsed, timeout)
 	require.True(t, seen,
 		"the poll watcher saw no refused attempt on tree %s before the Lock returned after %v", tree, elapsed)
 }

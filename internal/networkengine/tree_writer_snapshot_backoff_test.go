@@ -388,8 +388,8 @@ func TestTreeWriterSnapshotBackoff_ASnapshotEveryLoadDiscardsIsRetakenOncePerTho
 		return e
 	}
 
-	takes, _ := backoffWrites(t, env, env.snapshots, refusingRestores, snapshotInterval, snapshotInterval)
-	require.Equal(t, 1, takes, "write 1000 stores the first snapshot")
+	first, _ := backoffWrites(t, env, env.snapshots, refusingRestores, snapshotInterval, snapshotInterval)
+	require.Equal(t, 1, first, "write 1000 stores the first snapshot")
 
 	for _, at := range []int64{snapshotInterval, 2 * snapshotInterval} {
 		takes, discarding := backoffWrites(t, env, env.snapshots, refusingRestores, at+1, at+1)

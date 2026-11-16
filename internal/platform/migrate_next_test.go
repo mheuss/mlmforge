@@ -43,6 +43,8 @@ type closeFailingSource struct {
 	source.Driver
 	upErr    error
 	firstErr error
+	nextErr  error
+	prevErr  error
 }
 
 func (f closeFailingSource) First() (uint, error) {
@@ -52,14 +54,20 @@ func (f closeFailingSource) First() (uint, error) {
 	return 1, nil
 }
 
-func (closeFailingSource) Prev(v uint) (uint, error) {
+func (f closeFailingSource) Prev(v uint) (uint, error) {
+	if f.prevErr != nil {
+		return 0, f.prevErr
+	}
 	if v <= 1 {
 		return 0, os.ErrNotExist
 	}
 	return v - 1, nil
 }
 
-func (closeFailingSource) Next(v uint) (uint, error) {
+func (f closeFailingSource) Next(v uint) (uint, error) {
+	if f.nextErr != nil {
+		return 0, f.nextErr
+	}
 	if v >= 3 {
 		return 0, os.ErrNotExist
 	}
@@ -114,7 +122,54 @@ func TestNextTarget_ARefusalFromSourceInfoRefusesTheReset(t *testing.T) {
 
 	var notWritten *NotWrittenError
 	require.ErrorAs(t, err, &notWritten, "returned %v", to)
+	assert.Equal(t, "find the first migration in /migrations: permission denied", err.Error())
+}
+
+func TestResetTargets_AFailedLookupNamesTheLookup(t *testing.T) {
+	cases := []struct {
+		name string
+		src  closeFailingSource
+		want string
+	}{
+		{"first", closeFailingSource{firstErr: os.ErrPermission}, "find the first migration in /migrations: permission denied"},
+		{"next", closeFailingSource{nextErr: os.ErrPermission}, "find the migration after 2 in /migrations: permission denied"},
+		{"prev", closeFailingSource{prevErr: os.ErrPermission}, "find the migration before 2 in /migrations: permission denied"},
+	}
+	for _, tc := range cases {
+		mg := &migration{source: tc.src, path: "/migrations"}
+		targets := map[string]func(Record) (Record, error){
+			"previousTarget": mg.previousTarget,
+			"nextTarget":     mg.nextTarget,
+		}
+		for targetName, target := range targets {
+			t.Run(tc.name+"/"+targetName, func(t *testing.T) {
+				to, err := target(Record{Version: 2, Dirty: true})
+
+				var notWritten *NotWrittenError
+				require.ErrorAs(t, err, &notWritten, "returned %v", to)
+				assert.Equal(t, tc.want, err.Error())
+				assert.ErrorIs(t, err, os.ErrPermission)
+			})
+		}
+	}
+}
+
+func TestPreviousTarget_AnUnreadableUpFileNamesTheMigration(t *testing.T) {
+	mg := &migration{source: closeFailingSource{upErr: os.ErrPermission}, path: "/migrations"}
+
+	_, err := mg.previousTarget(Record{Version: 2, Dirty: true})
+
+	var notWritten *NotWrittenError
+	require.ErrorAs(t, err, &notWritten)
 	assert.Equal(t, "read migration 2 from /migrations: permission denied", err.Error())
+}
+
+func TestSourceInfo_AnErrWithNoCallNamesTheDirectory(t *testing.T) {
+	err := SourceInfo{Path: "/migrations", Err: os.ErrPermission}.refusal(2)
+
+	var notWritten *NotWrittenError
+	require.ErrorAs(t, err, &notWritten)
+	assert.Equal(t, "read the migrations directory /migrations: permission denied", err.Error())
 }
 
 func TestNextTarget_AnUnreadableDirectoryFromNoVersionNamesTheDirectory(t *testing.T) {

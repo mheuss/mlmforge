@@ -52,9 +52,8 @@ func runArgs(root *cobra.Command, args []string) int {
 	return exitCode(root.Execute())
 }
 
-// exitNotCurrent is the exit code for an appended event whose store was not
-// observed current, or whose removal's tombstone matched fewer active rows than
-// its users.
+// exitNotCurrent is the exit code for an event that was appended but whose
+// projection was not confirmed.
 const exitNotCurrent = 3
 
 // exitCodeError carries an exit code other than 1.

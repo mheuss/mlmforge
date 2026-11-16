@@ -416,9 +416,8 @@ func storedSkipWarning(version, last int64) string {
 		"and this load used no snapshot; no snapshot was taken", writerTree, version, last)
 }
 
-// skippedWrites writes each version from through to through its own writer,
-// requires each write's warnings to be exactly the stored-skip warning against
-// last, and returns the take_snapshot calls across them.
+// skippedWrites requires each write in [from, to] to skip the snapshot with the
+// stored-skip warning against last, and returns its take_snapshot calls.
 func skippedWrites(t *testing.T, env *writerEnv, newEngine func() *fakeWriterEngine, from, to, last int64) int {
 	t.Helper()
 	takes := 0

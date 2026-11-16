@@ -261,7 +261,7 @@ func (mg *migration) sourceInfo(version int) SourceInfo {
 		case err == nil:
 			info.Next, info.HasNext = first, true
 		case !errors.Is(err, os.ErrNotExist):
-			info.Err = err
+			info.Err, info.failed = err, callFirst
 		}
 		return info
 	}
@@ -274,7 +274,7 @@ func (mg *migration) sourceInfo(version int) SourceInfo {
 		return info
 	}
 	if err != nil {
-		info.Err = err
+		info.Err, info.failed = err, callReadUp
 		return info
 	}
 	_ = body.Close()
@@ -285,13 +285,13 @@ func (mg *migration) sourceInfo(version int) SourceInfo {
 	case err == nil:
 		info.Next, info.HasNext = next, true
 	case !errors.Is(err, os.ErrNotExist):
-		info.Err = err
+		info.Err, info.failed = err, callNext
 		return info
 	}
 
 	first, err := mg.source.First()
 	if err != nil {
-		info.Err = err
+		info.Err, info.failed = err, callFirst
 		return info
 	}
 	if first == n {
@@ -299,7 +299,7 @@ func (mg *migration) sourceInfo(version int) SourceInfo {
 	}
 	prev, err := mg.source.Prev(n)
 	if err != nil {
-		info.Err = err
+		info.Err, info.failed = err, callPrev
 		return info
 	}
 	info.Previous, info.HasPrevious = prev, true
@@ -406,7 +406,7 @@ func (mg *migration) previousTarget(rec Record) (Record, error) {
 	}
 	src := mg.sourceInfo(rec.Version)
 	if src.Err != nil {
-		return Record{}, &NotWrittenError{Err: fmt.Errorf("read migration %d from %s: %w", rec.Version, src.Path, src.Err)}
+		return Record{}, src.refusal(rec.Version)
 	}
 	if !src.InSource {
 		return Record{}, &VersionNotInSourceError{Record: rec, Path: src.Path}
@@ -428,7 +428,7 @@ func (mg *migration) nextTarget(rec Record) (Record, error) {
 		return Record{}, &NotWrittenError{Err: fmt.Errorf("read the migrations directory %s: %w", src.Path, src.Err)}
 	}
 	if src.Err != nil {
-		return Record{}, &NotWrittenError{Err: fmt.Errorf("read migration %d from %s: %w", rec.Version, src.Path, src.Err)}
+		return Record{}, src.refusal(rec.Version)
 	}
 	if rec.Version != database.NilVersion && !src.InSource {
 		return Record{}, &VersionNotInSourceError{Record: rec, Path: src.Path}

@@ -38,6 +38,36 @@ type SourceInfo struct {
 	Next        uint
 	HasNext     bool
 	Err         error
+	failed      sourceCall
+}
+
+// sourceCall names the migrations directory call that set SourceInfo.Err.
+type sourceCall int
+
+const (
+	callUnknown sourceCall = iota
+	callReadUp
+	callFirst
+	callNext
+	callPrev
+)
+
+// refusal is the reset refusal for a version of 0 or more whose place in the migrations directory could not be read.
+func (s SourceInfo) refusal(version int) error {
+	var err error
+	switch s.failed {
+	case callReadUp:
+		err = fmt.Errorf("read migration %d from %s: %w", version, s.Path, s.Err)
+	case callFirst:
+		err = fmt.Errorf("find the first migration in %s: %w", s.Path, s.Err)
+	case callNext:
+		err = fmt.Errorf("find the migration after %d in %s: %w", version, s.Path, s.Err)
+	case callPrev:
+		err = fmt.Errorf("find the migration before %d in %s: %w", version, s.Path, s.Err)
+	default:
+		err = fmt.Errorf("read the migrations directory %s: %w", s.Path, s.Err)
+	}
+	return &NotWrittenError{Err: err}
 }
 
 // Status is a migration record and where its version sits in the migrations directory.

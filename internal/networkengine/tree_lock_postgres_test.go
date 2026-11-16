@@ -55,7 +55,8 @@ func watchLockPolls(dsn string) watchPolls {
 		require.NoError(t, conn.QueryRow(ctx,
 			"SELECT coalesce(array_agg(pid), '{}') FROM pg_stat_activity WHERE datname = current_database() AND application_name = $1",
 			treeLockApplicationName).Scan(&before))
-		// Count a session only once it shows a second, different query_start.
+		// Count a session only once it shows two query_start values at least
+		// half a poll interval apart.
 		firstStart := map[int32]time.Time{}
 		// Each check runs as its own statement outside an explicit transaction,
 		// so pg_stat_activity is read fresh rather than from a cached snapshot.
@@ -79,7 +80,7 @@ func watchLockPolls(dsn string) watchPolls {
 					firstStart[s.pid] = s.start
 					continue
 				}
-				if !first.Equal(s.start) {
+				if s.start.Sub(first) >= treeLockPollInterval/2 {
 					return true
 				}
 			}

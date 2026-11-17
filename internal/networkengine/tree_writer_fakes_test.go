@@ -756,25 +756,20 @@ func (f *fakeWriterEngine) DropStructure(_ context.Context, structure string) (b
 	return ok, nil
 }
 
-// checkRestored refuses a snapshot whose root, parent or sponsor names a node
-// it does not hold.
+// checkRestored refuses a snapshot whose root or parent names a node it does
+// not hold.
 func checkRestored(snap fakeSnapshot) error {
 	if _, ok := snap.Nodes[snap.Root]; snap.Root != "" && !ok {
 		return fakeEngineError("INCONSISTENT_SNAPSHOT", "root names %s; the snapshot holds no such node", snap.Root)
 	}
 	for _, id := range slices.Sorted(maps.Keys(snap.Nodes)) {
-		node := snap.Nodes[id]
-		for _, edge := range []struct {
-			field string
-			ref   *string
-		}{{"parent", node.ParentUserID}, {"sponsor", node.SponsorUserID}} {
-			if edge.ref == nil {
-				continue
-			}
-			if _, ok := snap.Nodes[*edge.ref]; !ok {
-				return fakeEngineError("INCONSISTENT_SNAPSHOT", "%s on node %s names %s; the snapshot holds no such node",
-					edge.field, id, *edge.ref)
-			}
+		parent := snap.Nodes[id].ParentUserID
+		if parent == nil {
+			continue
+		}
+		if _, ok := snap.Nodes[*parent]; !ok {
+			return fakeEngineError("INCONSISTENT_SNAPSHOT", "parent on node %s names %s; the snapshot holds no such node",
+				id, *parent)
 		}
 	}
 	return nil
@@ -831,6 +826,38 @@ func TestFakeWriterEngine_AcceptsAFreeSlotBesideAHeldOne(t *testing.T) {
 			assert.Equal(t, 1, engine.trees[writerTree].nodes[writerOther].Position)
 		})
 	}
+}
+
+func TestFakeWriterEngine_RestoresATreeAfterASponsorIsRemoved(t *testing.T) {
+	engine := newFakeWriterEngine()
+	ctx := context.Background()
+	require.NoError(t, engine.CreateTree(ctx, writerTree, treeTypeUnilevel))
+	require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, 1))
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, 2))
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerOther, writerRoot, writerChild, 3))
+	_, err := engine.RemoveNode(ctx, writerTree, writerChild)
+	require.NoError(t, err)
+	taken, err := engine.TakeSnapshot(ctx, writerTree)
+	require.NoError(t, err)
+	_, err = engine.DropStructure(ctx, writerTree)
+	require.NoError(t, err)
+
+	require.NoError(t, engine.RestoreSnapshot(ctx, writerTree, taken.TreeType, taken.Data))
+
+	pos, err := engine.GetPosition(ctx, writerTree, writerOther)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), pos.EnrolledAt)
+}
+
+func TestFakeWriterEngine_RefusesASnapshotWithAnAbsentParent(t *testing.T) {
+	engine := newFakeWriterEngine()
+	data := `{"root":"` + writerRoot + `","nodes":{"` + writerRoot + `":{"user_id":"` + writerRoot + `"},"` +
+		writerOther + `":{"user_id":"` + writerOther + `","parent_user_id":"` + writerChild + `"}}}`
+
+	err := engine.RestoreSnapshot(context.Background(), writerTree, treeTypeUnilevel, json.RawMessage(data))
+
+	requireEngineRefusal(t, err, "INCONSISTENT_SNAPSHOT",
+		"parent on node "+writerOther+" names "+writerChild+"; the snapshot holds no such node")
 }
 
 func TestFakeWriterEngine_RestoresAMatrixWithItsWidth(t *testing.T) {

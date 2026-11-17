@@ -547,5 +547,8 @@ func relocationReplay(treeID string, relocated []Relocation) *explainable {
 	for i, r := range relocated {
 		users[i], parents[i], positions[i], depths[i] = r.UserID, r.ParentID, r.Position, r.Depth
 	}
-	return &explainable{sql: relocateSurvivorsSQL, args: func() []any { return []any{treeID, users, parents, positions, depths} }}
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	return &explainable{sql: relocateSurvivorsSQL, args: func() []any {
+		return []any{treeID, users, parents, positions, depths, at}
+	}}
 }

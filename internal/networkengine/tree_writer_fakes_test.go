@@ -50,8 +50,9 @@ type fakeWriterEngine struct {
 	failAddOnce map[string]error
 	// takeErr is what every TakeSnapshot returns.
 	takeErr error
-	// snapshotType replaces the tree type TakeSnapshot reports when set.
-	snapshotType string
+	// retypeBeforeTake, when set, makes TakeSnapshot drop the structure and
+	// create it again as this type before reading it.
+	retypeBeforeTake string
 	// restoreErr is what every RestoreSnapshot returns.
 	restoreErr error
 	// dropErr is what every DropStructure returns.
@@ -688,10 +689,18 @@ type fakeSnapshot struct {
 	Nodes map[string]EnginePosition `json:"nodes"`
 }
 
-func (f *fakeWriterEngine) TakeSnapshot(_ context.Context, structure string) (*SnapshotResultDTO, error) {
+func (f *fakeWriterEngine) TakeSnapshot(ctx context.Context, structure string) (*SnapshotResultDTO, error) {
 	f.calls = append(f.calls, "take_snapshot")
 	if f.takeErr != nil {
 		return nil, f.takeErr
+	}
+	if f.retypeBeforeTake != "" {
+		if _, err := f.DropStructure(ctx, structure); err != nil {
+			return nil, err
+		}
+		if err := f.CreateTree(ctx, structure, f.retypeBeforeTake); err != nil {
+			return nil, err
+		}
 	}
 	t, err := f.tree(structure)
 	if err != nil {
@@ -701,11 +710,7 @@ func (f *fakeWriterEngine) TakeSnapshot(_ context.Context, structure string) (*S
 	if err != nil {
 		return nil, err
 	}
-	treeType := t.treeType
-	if f.snapshotType != "" {
-		treeType = f.snapshotType
-	}
-	return &SnapshotResultDTO{TreeType: treeType, Data: data}, nil
+	return &SnapshotResultDTO{TreeType: t.treeType, Data: data}, nil
 }
 
 func (f *fakeWriterEngine) RestoreSnapshot(_ context.Context, structure, treeType string, data json.RawMessage) error {

@@ -168,6 +168,9 @@ func (f *fakeWriterEngine) tree(structure string) (*fakeEngineTree, error) {
 
 func (f *fakeWriterEngine) CreateTree(_ context.Context, structure, treeType string) error {
 	f.calls = append(f.calls, "create_tree "+treeType)
+	if _, held := f.trees[structure]; !held && treeType == treeTypeMatrix {
+		return fakeEngineError("MISSING_PARAM", "missing or invalid width (must be integer >= 2)")
+	}
 	return f.createTree(structure, treeType)
 }
 
@@ -717,6 +720,17 @@ func (f *fakeWriterEngine) RestoreSnapshot(_ context.Context, structure, treeTyp
 	if err := json.Unmarshal(data, &snap); err != nil {
 		return fakeEngineError("INVALID_PARAMS", "%s", err)
 	}
+	if treeType == treeTypeMatrix {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fields); err == nil {
+			if _, ok := fields["width"]; !ok {
+				return fakeEngineError("INVALID_PARAMS", "failed to deserialize matrix snapshot: missing field `width`")
+			}
+		}
+		if snap.Width < 2 {
+			return fakeEngineError("INCONSISTENT_SNAPSHOT", "the tree declares a width of %d; a matrix width is at least 2", snap.Width)
+		}
+	}
 	if snap.Nodes == nil {
 		snap.Nodes = map[string]EnginePosition{}
 	}
@@ -775,6 +789,46 @@ func TestFakeWriterEngine_RestoresAMatrixWithItsWidth(t *testing.T) {
 	require.NoError(t, engine.CheckMutation(ctx, writerTree, CheckAddNodeAt(writerChild, writerRoot, writerRoot, 4, 2)))
 	err = engine.CheckMutation(ctx, writerTree, CheckAddNodeAt(writerChild, writerRoot, writerRoot, 5, 2))
 	requireEngineRefusal(t, err, "INVALID_POSITION", "position 5 out of range for user "+writerRoot+" (has 5 children)")
+}
+
+func TestFakeWriterEngine_RefusesAMatrixSnapshotWithoutAUsableWidth(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		data          string
+		code, message string
+	}{
+		"no width": {`{"root":"","nodes":{}}`, "INVALID_PARAMS",
+			"failed to deserialize matrix snapshot: missing field `width`"},
+		"width 0": {`{"width":0,"root":"","nodes":{}}`, "INCONSISTENT_SNAPSHOT",
+			"the tree declares a width of 0; a matrix width is at least 2"},
+		"width 1": {`{"width":1,"root":"","nodes":{}}`, "INCONSISTENT_SNAPSHOT",
+			"the tree declares a width of 1; a matrix width is at least 2"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			engine := newFakeWriterEngine()
+
+			err := engine.RestoreSnapshot(ctx, writerTree, treeTypeMatrix, json.RawMessage(tc.data))
+
+			requireEngineRefusal(t, err, tc.code, tc.message)
+			assert.NotContains(t, engine.trees, writerTree)
+		})
+	}
+}
+
+func TestFakeWriterEngine_CreatesAMatrixOnlyWithAWidth(t *testing.T) {
+	binary := findWorkerBinary(t)
+	ctx := context.Background()
+	client, err := NewEngineClient(ctx, binary)
+	require.NoError(t, err)
+	defer func() { _ = client.Stop() }()
+	fake := newFakeWriterEngine()
+
+	workerErr := client.CreateTree(ctx, writerTree, treeTypeMatrix)
+	fakeErr := fake.CreateTree(ctx, writerTree, treeTypeMatrix)
+
+	require.Equal(t, "MISSING_PARAM", engineCodeOf(workerErr), "the worker's answer")
+	assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(fakeErr))
+	assert.NotContains(t, fake.trees, writerTree)
 }
 
 func TestFakeWriterEngine_RefusesAMatrixRemovalCheckWithNoMode(t *testing.T) {

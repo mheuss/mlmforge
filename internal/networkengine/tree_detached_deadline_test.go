@@ -11,14 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// requireFlatDeadline requires a recorded time-to-deadline of storeWriteTimeout, less at most one second.
-func requireFlatDeadline(t *testing.T, left time.Duration, ok bool, site string) {
-	t.Helper()
-	require.True(t, ok, "%s got a context with no deadline", site)
-	assert.LessOrEqual(t, left, storeWriteTimeout, site)
-	assert.Greater(t, left, storeWriteTimeout-time.Second, site)
-}
-
 // deadlines records the time left on each context that carries a deadline.
 type deadlines struct {
 	left []time.Duration
@@ -34,7 +26,8 @@ func (d *deadlines) record(ctx context.Context) {
 func (d *deadlines) requireOneFlatDeadline(t *testing.T, site string) {
 	t.Helper()
 	require.Len(t, d.left, 1, "%s calls made with a deadline", site)
-	requireFlatDeadline(t, d.left[0], true, site)
+	assert.LessOrEqual(t, d.left[0], storeWriteTimeout, site)
+	assert.Greater(t, d.left[0], storeWriteTimeout-time.Second, site)
 }
 
 type undoDeadlineStore struct {
@@ -132,11 +125,9 @@ func (s *readStreamDeadlineEvents) ReadStream(ctx context.Context, stream string
 }
 
 func TestDetachedDeadline_AppendOutcomeRead(t *testing.T) {
-	env := newWriterEnv()
-	scripted := &scriptedEvents{MemoryEventStore: platform.NewMemoryEventStore()}
+	env, scripted := scriptedEnv(t)
 	events := &readStreamDeadlineEvents{scriptedEvents: scripted}
 	env.events = events
-	mustAddRoot(t, env, treeTypeUnilevel)
 	scripted.appendErr, scripted.readErr = errors.New("connection reset by peer"), errors.New("read timed out")
 	w, _ := env.writer()
 

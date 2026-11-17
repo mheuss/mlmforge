@@ -92,6 +92,27 @@ func (t *fakeEngineTree) checkPlacement(userID, parentID, sponsorID string) erro
 	return nil
 }
 
+// checkRemoval refuses a unilevel or binary removal this tree cannot make.
+func (t *fakeEngineTree) checkRemoval(userID string) error {
+	if _, ok := t.nodes[userID]; !ok {
+		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
+	}
+	if n := t.childCount(userID); n > 0 {
+		return fakeEngineError("HAS_CHILDREN", "cannot remove user %s: has %d children (must remove children first)", userID, n)
+	}
+	return nil
+}
+
+func (t *fakeEngineTree) childCount(userID string) int {
+	n := 0
+	for _, node := range t.nodes {
+		if node.ParentUserID != nil && *node.ParentUserID == userID {
+			n++
+		}
+	}
+	return n
+}
+
 var _ TreeRebuilder = (*fakeWriterEngine)(nil)
 
 func newFakeWriterEngine() *fakeWriterEngine {
@@ -198,8 +219,8 @@ func (f *fakeWriterEngine) RemoveNode(_ context.Context, structure, userID strin
 	if t.treeType == treeTypeMatrix {
 		return nil, fakeEngineError("MISSING_PARAM", "a matrix remove_node needs pruning_mode")
 	}
-	if _, ok := t.nodes[userID]; !ok {
-		return nil, fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
+	if err := t.checkRemoval(userID); err != nil {
+		return nil, err
 	}
 	delete(t.nodes, userID)
 	if t.root == userID {
@@ -302,9 +323,6 @@ func (f *fakeWriterEngine) CheckMutation(_ context.Context, structure string, m 
 	if err != nil {
 		return err
 	}
-	if _, ok := m.params["pruning_mode"]; m.op == "remove_node" && t.treeType == treeTypeMatrix && !ok {
-		return fakeEngineError("MISSING_PARAM", "a matrix remove_node needs pruning_mode")
-	}
 	user, _ := m.params["user_id"].(string)
 	switch m.op {
 	case "add_root":
@@ -316,6 +334,15 @@ func (f *fakeWriterEngine) CheckMutation(_ context.Context, structure string, m 
 		sponsor, _ := m.params["sponsor_id"].(string)
 		if err := t.checkPlacement(user, parent, sponsor); err != nil {
 			return err
+		}
+	case "remove_node":
+		if _, ok := m.params["pruning_mode"]; t.treeType == treeTypeMatrix && !ok {
+			return fakeEngineError("MISSING_PARAM", "a matrix remove_node needs pruning_mode")
+		}
+		if t.treeType != treeTypeMatrix {
+			if err := t.checkRemoval(user); err != nil {
+				return err
+			}
 		}
 	}
 	return f.checkErr

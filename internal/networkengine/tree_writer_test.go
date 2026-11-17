@@ -603,10 +603,14 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 		{"add_node_at", "USER_NOT_FOUND", rooted(treeTypeMatrix), placeOther, "scripted refusal", true},
 		{"add_node_at", "SPONSOR_NOT_FOUND", rooted(treeTypeMatrix), placeOther, "scripted refusal", true},
 		{"add_node_at", "POSITION_OCCUPIED", rooted(treeTypeMatrix), placeOther, "scripted refusal", true},
-		{"remove_node", "USER_NOT_FOUND", withChild, remove(writerRoot), "scripted refusal", true},
-		{"remove_node", "HAS_CHILDREN", withChild, remove(writerRoot), "scripted refusal", true},
-		{"remove_node", "SPONSORLESS_WITH_RECRUITS", withChild, remove(writerRoot), "scripted refusal", true},
-		{"remove_node", "SPONSOR_CYCLE", withChild, remove(writerRoot), "scripted refusal", true},
+		{"remove_node", "USER_NOT_FOUND", rooted(treeTypeUnilevel), remove(writerOther),
+			"user " + writerOther + " not found in tree", false},
+		{"remove_node", "HAS_CHILDREN", withChild, remove(writerRoot),
+			"cannot remove user " + writerRoot + ": has 1 children (must remove children first)", false},
+		{"remove_node", "SPONSORLESS_WITH_RECRUITS", withChild, remove(writerChild),
+			"scripted: pass-through", true},
+		{"remove_node", "SPONSOR_CYCLE", withChild, remove(writerChild),
+			"scripted: pass-through", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.mutation+" "+tc.code, func(t *testing.T) {

@@ -71,6 +71,23 @@ func addNodeCase(name, code string, setup func(*testing.T, agreementEngine),
 		}}
 }
 
+func addRootCase(name, code string, setup func(*testing.T, agreementEngine), user string) agreementCase {
+	return agreementCase{name: name, code: code, setup: setup,
+		check: CheckAddRoot(user, 100),
+		apply: func(e agreementEngine) error {
+			return e.AddRoot(context.Background(), writerTree, user, 100)
+		}}
+}
+
+func removeNodeCase(name, code string, setup func(*testing.T, agreementEngine), user string) agreementCase {
+	return agreementCase{name: name, code: code, setup: setup,
+		check: CheckRemoveNode(user),
+		apply: func(e agreementEngine) error {
+			_, err := e.RemoveNode(context.Background(), writerTree, user)
+			return err
+		}}
+}
+
 func agreementCases() []agreementCase {
 	return []agreementCase{
 		addNodeCase("unilevel add_node of a held user", engineCodeUserAlreadyExists,
@@ -79,12 +96,16 @@ func agreementCases() []agreementCase {
 			agreementRooted(treeTypeUnilevel), writerOther, writerChild, writerAbsentSponsor),
 		addNodeCase("unilevel add_node with an absent sponsor", "SPONSOR_NOT_FOUND",
 			agreementRooted(treeTypeUnilevel), writerOther, writerRoot, writerAbsentSponsor),
-		{name: "add_root with a root held", code: engineCodeRootAlreadyExists, setup: agreementRooted(treeTypeUnilevel),
-			check: CheckAddRoot(writerOther, 100),
-			apply: func(e agreementEngine) error { return e.AddRoot(context.Background(), writerTree, writerOther, 100) }},
-		{name: "add_root of the held root", code: engineCodeRootAlreadyExists, setup: agreementRooted(treeTypeUnilevel),
-			check: CheckAddRoot(writerRoot, 100),
-			apply: func(e agreementEngine) error { return e.AddRoot(context.Background(), writerTree, writerRoot, 100) }},
+		addRootCase("add_root with a root held", engineCodeRootAlreadyExists,
+			agreementRooted(treeTypeUnilevel), writerOther),
+		addRootCase("add_root of the held root", engineCodeRootAlreadyExists,
+			agreementRooted(treeTypeUnilevel), writerRoot),
+		removeNodeCase("remove_node of a user the tree does not hold", engineCodeUserNotFound,
+			agreementRooted(treeTypeUnilevel), writerOther),
+		removeNodeCase("remove_node of a unilevel parent", "HAS_CHILDREN",
+			agreementWithChild(treeTypeUnilevel), writerRoot),
+		removeNodeCase("remove_node of a binary parent", "HAS_CHILDREN",
+			agreementWithChild(treeTypeBinary), writerRoot),
 	}
 }
 

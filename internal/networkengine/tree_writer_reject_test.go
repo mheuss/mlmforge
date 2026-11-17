@@ -541,27 +541,26 @@ func TestTreeWriterReject_RejectsACompensatedRoot(t *testing.T) {
 	assert.Equal(t, int64(3), added.Version)
 }
 
-// refusingRemovalEngine refuses every RemoveNode with HAS_CHILDREN.
-type refusingRemovalEngine struct{ *fakeWriterEngine }
-
-func (refusingRemovalEngine) RemoveNode(context.Context, string, string) ([]Responsored, error) {
-	return nil, fakeEngineError("HAS_CHILDREN", "user has children")
-}
-
 func TestReject_RemovalLeavesUserActive(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
 	placed := mustPlace(t, env, writerChild, nil)
+	under, _ := env.writer()
+	grandchild, err := under.Place(context.Background(), PlaceRequest{
+		TreeID: writerTree, UserID: writerOther, ParentID: writerChild, SponsorID: writerChild, EnrolledAt: writeTime,
+	})
+	require.NoError(t, err)
+	require.NoError(t, grandchild.ProjectionErr)
 	removal := appendDirect(t, env.events, EventTypeNodeRemoved, NodeRemovedPayload{
 		TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime,
 	})
-	w := NewTreeWriter(env.events, env.store, env.snapshots, refusingRemovalEngine{newFakeWriterEngine()}, env.locker)
+	w, _ := env.writer()
 
 	res, err := w.Reject(context.Background(), rejectRequest(removal.ID))
 
 	require.NoError(t, err)
 	require.NoError(t, res.ProjectionErr)
-	assert.Equal(t, int64(4), res.Version)
+	assert.Equal(t, int64(5), res.Version)
 	row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
 	require.NoError(t, err)
 	require.NotNil(t, row, "rejecting the removal took the user out of the tree")
@@ -572,13 +571,13 @@ func TestReject_RemovalLeavesUserActive(t *testing.T) {
 
 	next, _ := env.writer()
 	_, err = next.Place(context.Background(), PlaceRequest{
-		TreeID: writerTree, UserID: writerOther, ParentID: writerChild, SponsorID: writerChild, EnrolledAt: writeTime,
+		TreeID: writerTree, UserID: testUserUUID(4), ParentID: writerChild, SponsorID: writerChild, EnrolledAt: writeTime,
 	})
 	require.NoError(t, err)
 	loader, _ := env.writer()
 	loaded, err := loader.Load(context.Background(), loadRequest())
 	require.NoError(t, err)
-	assert.Equal(t, 3, loaded.Nodes)
+	assert.Equal(t, 4, loaded.Nodes)
 }
 
 func TestTreeWriterReject_RefusesWhenTheRetrySucceeds(t *testing.T) {

@@ -274,7 +274,8 @@ const (
 		 RETURNING n.user_id::text`
 	relocateSurvivorsSQL = `UPDATE tree_nodes AS n SET parent_id = r.parent_id, position = r.position, depth = r.depth, updated_at = $6
 		 FROM unnest($2::text[]::uuid[], $3::text[]::uuid[], $4::int[], $5::int[]) AS r(user_id, parent_id, position, depth)
-		 WHERE n.tree_id = $1 AND n.user_id = r.user_id AND n.removed_at IS NULL`
+		 WHERE n.tree_id = $1 AND n.user_id = r.user_id AND n.removed_at IS NULL
+		 RETURNING n.user_id::text`
 )
 
 // defaultRemovalChunk is the default chunk size for a removal's statements.
@@ -366,23 +367,31 @@ func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProj
 	}
 
 	if len(r.Relocated) > 0 {
-		users := make([]string, len(r.Relocated))
-		parents := make([]string, len(r.Relocated))
-		positions := make([]int, len(r.Relocated))
-		depths := make([]int, len(r.Relocated))
-		for i, m := range r.Relocated {
-			users[i], parents[i], positions[i], depths[i] = m.UserID, m.ParentID, m.Position, m.Depth
-		}
-		tag, err := tx.Exec(ctx, relocateSurvivorsSQL, treeID, users, parents, positions, depths, at)
-		if err != nil {
-			if c := conflictError(err); c != nil {
-				return fmt.Errorf("relocate survivors in tree %s: %w: %w", treeID, c, err)
+		moved := make(map[string]struct{}, len(r.Relocated))
+		for lo := 0; lo < len(r.Relocated); lo += chunk {
+			hi := min(lo+chunk, len(r.Relocated))
+			users := make([]string, hi-lo)
+			parents := make([]string, hi-lo)
+			positions := make([]int, hi-lo)
+			depths := make([]int, hi-lo)
+			for i, m := range r.Relocated[lo:hi] {
+				users[i], parents[i], positions[i], depths[i] = m.UserID, m.ParentID, m.Position, m.Depth
 			}
-			return fmt.Errorf("relocate survivors in tree %s: %w", treeID, err)
+			ids, err := collectUserIDs(ctx, tx, relocateSurvivorsSQL, treeID, users, parents, positions, depths, at)
+			if err != nil {
+				where := chunkRange(lo, hi, len(r.Relocated))
+				if c := conflictError(err); c != nil {
+					return fmt.Errorf("relocate survivors in tree %s, %s: %w: %w", treeID, where, c, err)
+				}
+				return fmt.Errorf("relocate survivors in tree %s, %s: %w", treeID, where, err)
+			}
+			for _, id := range ids {
+				moved[id] = struct{}{}
+			}
 		}
-		if tag.RowsAffected() != int64(len(r.Relocated)) {
+		if len(moved) != len(r.Relocated) {
 			return fmt.Errorf("relocating %d survivors in tree %s updated %d active rows",
-				len(r.Relocated), treeID, tag.RowsAffected())
+				len(r.Relocated), treeID, len(moved))
 		}
 	}
 	return nil

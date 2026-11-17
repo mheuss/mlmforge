@@ -1011,6 +1011,26 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		assert.Equal(t, 1, got.rows[grand].Depth)
 	})
 
+	t.Run("a removal naming one relocated survivor twice fails and writes nothing", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		require.NoError(t, s.ProjectInsert(ctx, recruitRow, 3))
+		require.NoError(t, s.ProjectInsert(ctx, grandRow, 4))
+		before := readProjectionState(t, s, tree, root, child, recruit, grand)
+
+		err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{grand}, Relocated: []Relocation{
+			{UserID: child, ParentID: root, Position: 0, Depth: 1},
+			{UserID: child, ParentID: root, Position: 2, Depth: 1},
+		}}, testNodeUUID(9), 5)
+
+		require.ErrorContains(t, err, "relocating 2 survivors in tree "+tree+" updated 1 active rows")
+		var mismatch *RemovalMismatchError
+		assert.False(t, errors.As(err, &mismatch), "a duplicate relocation is not a tombstone mismatch")
+		assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit, grand))
+	})
+
 	t.Run("a removal runs its tombstones, re-sponsors and relocations together", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()

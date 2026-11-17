@@ -310,7 +310,7 @@ func (s *PostgresTreeStore) ProjectRemoval(
 	})
 }
 
-// projectRemoval runs a removal's three steps in tx, in statements of at most chunk rows.
+// projectRemoval runs a removal's three steps in tx, in statements that write at most chunk rows.
 func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProjection, removalEventID string, chunk int) error {
 	// Tombstones first. A relocation run before them collides with the slot a
 	// removed row still holds.

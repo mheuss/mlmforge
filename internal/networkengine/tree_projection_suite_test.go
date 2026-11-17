@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -310,6 +311,26 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		require.NotNil(t, got.rows[recruit])
 		require.NotNil(t, got.rows[recruit].SponsorID)
 		assert.Equal(t, root, *got.rows[recruit].SponsorID)
+	})
+
+	t.Run("a removal naming one re-sponsored recruit twice fails and writes nothing", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		require.NoError(t, s.ProjectInsert(ctx, recruitRow, 3))
+		require.NoError(t, s.ProjectInsert(ctx, grandRow, 4))
+		before := readProjectionState(t, s, tree, root, child, recruit, grand)
+
+		err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{grand}, Responsored: []Responsored{
+			{UserID: recruit, NewSponsorID: root},
+			{UserID: recruit, NewSponsorID: child},
+		}}, testNodeUUID(9), 5)
+
+		require.ErrorContains(t, err, "re-sponsoring 2 recruits in tree "+tree+" updated 1 active rows")
+		var mismatch *RemovalMismatchError
+		assert.False(t, errors.As(err, &mismatch), "a duplicate re-sponsor is not a tombstone mismatch")
+		assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit, grand))
 	})
 
 	t.Run("a removal above the version that fails part way writes nothing", func(t *testing.T) {

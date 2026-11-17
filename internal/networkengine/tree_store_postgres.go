@@ -270,7 +270,8 @@ const (
 		 WHERE tree_id = $1 AND user_id = ANY($2::text[]::uuid[]) AND removed_at IS NULL`
 	responsorRemovedSQL = `UPDATE tree_nodes AS n SET sponsor_id = m.new_sponsor_id, updated_at = $4
 		 FROM unnest($2::text[]::uuid[], $3::text[]::uuid[]) AS m(user_id, new_sponsor_id)
-		 WHERE n.tree_id = $1 AND n.user_id = m.user_id AND n.removed_at IS NULL`
+		 WHERE n.tree_id = $1 AND n.user_id = m.user_id AND n.removed_at IS NULL
+		 RETURNING n.user_id::text`
 	relocateSurvivorsSQL = `UPDATE tree_nodes AS n SET parent_id = r.parent_id, position = r.position, depth = r.depth, updated_at = $6
 		 FROM unnest($2::text[]::uuid[], $3::text[]::uuid[], $4::int[], $5::int[]) AS r(user_id, parent_id, position, depth)
 		 WHERE n.tree_id = $1 AND n.user_id = r.user_id AND n.removed_at IS NULL`
@@ -342,18 +343,25 @@ func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProj
 	}
 
 	if len(r.Responsored) > 0 {
-		users := make([]string, len(r.Responsored))
-		sponsors := make([]string, len(r.Responsored))
-		for i, m := range r.Responsored {
-			users[i], sponsors[i] = m.UserID, m.NewSponsorID
+		updated := map[string]struct{}{}
+		for lo := 0; lo < len(r.Responsored); lo += chunk {
+			hi := min(lo+chunk, len(r.Responsored))
+			users := make([]string, hi-lo)
+			sponsors := make([]string, hi-lo)
+			for i, m := range r.Responsored[lo:hi] {
+				users[i], sponsors[i] = m.UserID, m.NewSponsorID
+			}
+			ids, err := collectUserIDs(ctx, tx, responsorRemovedSQL, treeID, users, sponsors, at)
+			if err != nil {
+				return fmt.Errorf("re-sponsor recruits in tree %s, %s: %w", treeID, chunkRange(lo, hi, len(r.Responsored)), err)
+			}
+			for _, id := range ids {
+				updated[id] = struct{}{}
+			}
 		}
-		tag, err := tx.Exec(ctx, responsorRemovedSQL, treeID, users, sponsors, at)
-		if err != nil {
-			return fmt.Errorf("re-sponsor recruits in tree %s: %w", treeID, err)
-		}
-		if tag.RowsAffected() != int64(len(r.Responsored)) {
+		if len(updated) != len(r.Responsored) {
 			return fmt.Errorf("re-sponsoring %d recruits in tree %s updated %d active rows",
-				len(r.Responsored), treeID, tag.RowsAffected())
+				len(r.Responsored), treeID, len(updated))
 		}
 	}
 
@@ -378,6 +386,15 @@ func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProj
 		}
 	}
 	return nil
+}
+
+// collectUserIDs runs a removal UPDATE that returns one user id per row, and returns those ids.
+func collectUserIDs(ctx context.Context, tx pgx.Tx, sql string, args ...any) ([]string, error) {
+	rows, err := tx.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
 }
 
 // removalAlreadyHeld reports whether the rows removalEventID stamped in treeID

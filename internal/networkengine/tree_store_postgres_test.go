@@ -679,3 +679,23 @@ func TestPostgresTreeStore_ATombstoneChunkErrorNamesItsRows(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(4), version, "the failed removal moved the projected version")
 }
+
+func TestPostgresTreeStore_AReSponsorChunkErrorNamesItsRows(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	store.removalChunk = 1
+	ctx := context.Background()
+	tree, root, child, a, b := testTreeUUID(10422), testUserUUID(1), testUserUUID(2), testUserUUID(3), testUserUUID(4)
+	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0)), 2))
+	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(3), tree, a, 1, ptr(root), ptr(child), intPtr(1)), 3))
+	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(4), tree, b, 1, ptr(root), ptr(child), intPtr(2)), 4))
+
+	err := store.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{child}, Responsored: []Responsored{
+		{UserID: a, NewSponsorID: root},
+		{UserID: b, NewSponsorID: notAUUID},
+	}}, testNodeUUID(9), 5)
+
+	require.ErrorContains(t, err, "re-sponsor recruits in tree "+tree+", rows 2-2 of 2: ")
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, err, &pgErr)
+}

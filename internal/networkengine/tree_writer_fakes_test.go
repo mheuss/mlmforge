@@ -79,7 +79,15 @@ func (t *fakeEngineTree) checkRoot(userID string) error {
 }
 
 // checkPlacement refuses a placement this tree cannot take.
-func (t *fakeEngineTree) checkPlacement(userID, parentID, sponsorID string) error {
+func (t *fakeEngineTree) checkPlacement(op, userID, parentID, sponsorID string, position int, hasPosition bool) error {
+	binary := op == "add_node" && t.treeType == treeTypeBinary
+	switch {
+	case binary && !hasPosition:
+		return fakeEngineError("MISSING_PARAM", "missing position (required for binary)")
+	case binary && position > 1:
+		return fakeEngineError("INVALID_POSITION", "position %d out of range for user %s (has 2 children)",
+			position, parentID)
+	}
 	if _, ok := t.nodes[userID]; ok {
 		return fakeEngineError(engineCodeUserAlreadyExists, "user %s already exists in tree", userID)
 	}
@@ -89,7 +97,19 @@ func (t *fakeEngineTree) checkPlacement(userID, parentID, sponsorID string) erro
 	if _, ok := t.nodes[sponsorID]; !ok {
 		return fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", sponsorID)
 	}
+	if binary && t.slotTaken(parentID, position) {
+		return fakeEngineError("POSITION_OCCUPIED", "position %d already occupied for user %s", position, parentID)
+	}
 	return nil
+}
+
+func (t *fakeEngineTree) slotTaken(parentID string, position int) bool {
+	for _, node := range t.nodes {
+		if node.ParentUserID != nil && *node.ParentUserID == parentID && node.Position == position {
+			return true
+		}
+	}
+	return false
 }
 
 // checkRemoval refuses a unilevel or binary removal this tree cannot make.
@@ -173,7 +193,7 @@ func (f *fakeWriterEngine) AddRoot(_ context.Context, structure, userID string, 
 	return nil
 }
 
-func (f *fakeWriterEngine) place(structure, userID, parentID, sponsorID string, position int, enrolledAt int64) error {
+func (f *fakeWriterEngine) place(op, structure, userID, parentID, sponsorID string, position int, hasPosition bool, enrolledAt int64) error {
 	if err, ok := f.failAddOnce[userID]; ok {
 		delete(f.failAddOnce, userID)
 		return err
@@ -185,7 +205,7 @@ func (f *fakeWriterEngine) place(structure, userID, parentID, sponsorID string, 
 	if err != nil {
 		return err
 	}
-	if err := t.checkPlacement(userID, parentID, sponsorID); err != nil {
+	if err := t.checkPlacement(op, userID, parentID, sponsorID, position, hasPosition); err != nil {
 		return err
 	}
 	p, s := parentID, sponsorID
@@ -201,14 +221,14 @@ func (f *fakeWriterEngine) AddNode(_ context.Context, structure, userID, parentI
 	for _, opt := range opts {
 		opt(params)
 	}
-	position, _ := params["position"].(int)
+	position, hasPosition := params["position"].(int)
 	f.placements = append(f.placements, CheckAddNode(userID, parentID, sponsorID, enrolledAt, opts...))
-	return f.place(structure, userID, parentID, sponsorID, position, enrolledAt)
+	return f.place("add_node", structure, userID, parentID, sponsorID, position, hasPosition, enrolledAt)
 }
 
 func (f *fakeWriterEngine) AddNodeAt(_ context.Context, structure, userID, parentID, sponsorID string, position int, enrolledAt int64) error {
 	f.placements = append(f.placements, CheckAddNodeAt(userID, parentID, sponsorID, position, enrolledAt))
-	return f.place(structure, userID, parentID, sponsorID, position, enrolledAt)
+	return f.place("add_node_at", structure, userID, parentID, sponsorID, position, true, enrolledAt)
 }
 
 func (f *fakeWriterEngine) RemoveNode(_ context.Context, structure, userID string) ([]Responsored, error) {
@@ -332,7 +352,8 @@ func (f *fakeWriterEngine) CheckMutation(_ context.Context, structure string, m 
 	case "add_node", "add_node_at":
 		parent, _ := m.params["parent_id"].(string)
 		sponsor, _ := m.params["sponsor_id"].(string)
-		if err := t.checkPlacement(user, parent, sponsor); err != nil {
+		position, hasPosition := m.params["position"].(int)
+		if err := t.checkPlacement(m.op, user, parent, sponsor, position, hasPosition); err != nil {
 			return err
 		}
 	case "remove_node":

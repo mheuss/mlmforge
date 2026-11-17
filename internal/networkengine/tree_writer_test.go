@@ -580,6 +580,19 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 	placeOther := func(w *TreeWriter) (WriteResult, error) {
 		return w.Place(context.Background(), placeRequest(writerOther, &zero))
 	}
+	absentParent := testUserUUID(8)
+	placed := func(treeType, user string, position int) func(*testing.T, *writerEnv) {
+		return func(t *testing.T, env *writerEnv) {
+			mustAddRoot(t, env, treeType)
+			mustPlace(t, env, user, &position)
+		}
+	}
+	placeAt := func(parent, sponsor string, position int) func(*TreeWriter) (WriteResult, error) {
+		return func(w *TreeWriter) (WriteResult, error) {
+			return w.Place(context.Background(), PlaceRequest{TreeID: writerTree, UserID: writerOther,
+				ParentID: parent, SponsorID: sponsor, Position: &position, EnrolledAt: writeTime})
+		}
+	}
 	remove := func(user string) func(*TreeWriter) (WriteResult, error) {
 		return func(w *TreeWriter) (WriteResult, error) {
 			return w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: user, RemovedAt: writeTime})
@@ -593,10 +606,14 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 		scripted       bool
 	}{
 		{"add_root", "ROOT_ALREADY_EXISTS", rooted(treeTypeUnilevel), addOtherRoot, "tree already has a root node", false},
-		{"add_node", "USER_ALREADY_EXISTS", rooted(treeTypeBinary), placeOther, "scripted refusal", true},
-		{"add_node", "USER_NOT_FOUND", rooted(treeTypeBinary), placeOther, "scripted refusal", true},
-		{"add_node", "POSITION_OCCUPIED", rooted(treeTypeBinary), placeOther, "scripted refusal", true},
-		{"add_node", "INVALID_POSITION", rooted(treeTypeBinary), placeOther, "scripted refusal", true},
+		{"add_node", "USER_ALREADY_EXISTS", placed(treeTypeBinary, writerOther, 1), placeOther,
+			"user " + writerOther + " already exists in tree", false},
+		{"add_node", "USER_NOT_FOUND", rooted(treeTypeBinary), placeAt(absentParent, writerRoot, 0),
+			"user " + absentParent + " not found in tree", false},
+		{"add_node", "POSITION_OCCUPIED", placed(treeTypeBinary, writerChild, 0), placeOther,
+			"position 0 already occupied for user " + writerRoot, false},
+		{"add_node", "INVALID_POSITION", rooted(treeTypeBinary), placeOther,
+			"scripted: pass-through", true},
 		{"add_node_at", "TREE_EMPTY", rooted(treeTypeMatrix), placeOther, "scripted refusal", true},
 		{"add_node_at", "INVALID_POSITION", rooted(treeTypeMatrix), placeOther, "scripted refusal", true},
 		{"add_node_at", "USER_ALREADY_EXISTS", rooted(treeTypeMatrix), placeOther, "scripted refusal", true},

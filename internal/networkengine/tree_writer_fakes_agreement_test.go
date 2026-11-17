@@ -106,6 +106,18 @@ func agreementCases() []agreementCase {
 			agreementWithChild(treeTypeUnilevel), writerRoot),
 		removeNodeCase("remove_node of a binary parent", "HAS_CHILDREN",
 			agreementWithChild(treeTypeBinary), writerRoot),
+		addNodeCase("binary add_node at a held slot", "POSITION_OCCUPIED",
+			agreementWithChild(treeTypeBinary), writerOther, writerRoot, writerRoot, WithPosition(0)),
+		addNodeCase("binary add_node of a held user at a held slot", engineCodeUserAlreadyExists,
+			agreementWithChild(treeTypeBinary), writerChild, writerRoot, writerRoot, WithPosition(0)),
+		addNodeCase("binary add_node with an absent sponsor at a held slot", "SPONSOR_NOT_FOUND",
+			agreementWithChild(treeTypeBinary), writerOther, writerRoot, writerAbsentSponsor, WithPosition(0)),
+		addNodeCase("binary add_node under an absent parent", engineCodeUserNotFound,
+			agreementRooted(treeTypeBinary), writerOther, writerOther, writerRoot, WithPosition(0)),
+		addNodeCase("binary add_node of a held user at position 2", "INVALID_POSITION",
+			agreementWithChild(treeTypeBinary), writerChild, writerRoot, writerRoot, WithPosition(2)),
+		addNodeCase("binary add_node with no position", "MISSING_PARAM",
+			agreementRooted(treeTypeBinary), writerOther, writerRoot, writerRoot),
 	}
 }
 

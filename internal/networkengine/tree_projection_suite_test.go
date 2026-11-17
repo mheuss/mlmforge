@@ -990,6 +990,20 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 			"one removal's tombstones carry one removed_at: %s and %s", got.rows[child].RemovedAt, got.rows[grand].RemovedAt)
 	})
 
+	t.Run("a removal whose last removed user has no active row reports what it matched", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		require.NoError(t, s.ProjectInsert(ctx, grandRow, 3))
+		before := readProjectionState(t, s, tree, root, child, grand)
+
+		err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{grand, child, testUserUUID(7)}}, testNodeUUID(9), 4)
+
+		requireRemovalMismatch(t, err, 2)
+		assert.Equal(t, before, readProjectionState(t, s, tree, root, child, grand))
+	})
+
 	t.Run("a removal moves every relocated row", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
@@ -1417,6 +1431,14 @@ func TestMemoryTreeStore_ProjectionSuite(t *testing.T) {
 func TestPostgresTreeStore_ProjectionSuite(t *testing.T) {
 	runTreeProjectionSuite(t, func(t *testing.T) TreeStore {
 		return newTestPostgresTreeStore(t)
+	})
+}
+
+func TestPostgresTreeStore_ProjectionSuiteInChunksOfOne(t *testing.T) {
+	runTreeProjectionSuite(t, func(t *testing.T) TreeStore {
+		s := newTestPostgresTreeStore(t)
+		s.removalChunk = 1
+		return s
 	})
 }
 

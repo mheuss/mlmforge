@@ -659,20 +659,23 @@ func TestPostgresTreeStore_ATombstoneChunkErrorNamesItsRows(t *testing.T) {
 	ctx := context.Background()
 	tree, root := testTreeUUID(10421), testUserUUID(1)
 	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
-	users := []string{testUserUUID(2), testUserUUID(3), notAUUID}
-	for i, u := range users[:2] {
+	users := []string{testUserUUID(2), testUserUUID(3), testUserUUID(4), notAUUID}
+	for i, u := range users[:3] {
 		require.NoError(t, store.ProjectInsert(ctx,
 			makeUUIDNode(testNodeUUID(2+i), tree, u, 1, ptr(root), ptr(root), intPtr(i)), int64(2+i)))
 	}
 
-	err := store.ProjectRemoval(ctx, tree, RemovalProjection{Users: users}, testNodeUUID(9), 4)
+	err := store.ProjectRemoval(ctx, tree, RemovalProjection{Users: users}, testNodeUUID(9), 5)
 
-	require.ErrorContains(t, err, "tombstone removed users in tree "+tree+", rows 3-3 of 3: ")
+	require.ErrorContains(t, err, "tombstone removed users in tree "+tree+", rows 3-4 of 4: ")
 	var pgErr *pgconn.PgError
 	require.ErrorAs(t, err, &pgErr, "the driver error is still reachable")
-	for _, u := range users[:2] {
+	for _, u := range users[:3] {
 		row, err := store.GetNode(ctx, tree, u)
 		require.NoError(t, err)
 		assert.NotNil(t, row, "%s was tombstoned by a removal that failed", u)
 	}
+	version, _, err := store.ProjectedVersion(ctx, tree)
+	require.NoError(t, err)
+	assert.Equal(t, int64(4), version, "the failed removal moved the projected version")
 }

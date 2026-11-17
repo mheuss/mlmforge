@@ -19,7 +19,7 @@ type PostgresTreeStore struct {
 	pool *pgxpool.Pool
 	// afterVersionRead runs between ProjectedRows' two reads when set.
 	afterVersionRead func()
-	// removalChunk caps the rows one removal statement writes. Zero or less means defaultRemovalChunk.
+	// removalChunk caps the rows one removal statement writes.
 	removalChunk int
 }
 
@@ -276,7 +276,7 @@ const (
 		 WHERE n.tree_id = $1 AND n.user_id = r.user_id AND n.removed_at IS NULL`
 )
 
-// defaultRemovalChunk is the most rows one removal statement writes.
+// defaultRemovalChunk is the default chunk size for a removal's statements.
 const defaultRemovalChunk = 25_000
 
 // chunk returns the most rows one removal statement writes.

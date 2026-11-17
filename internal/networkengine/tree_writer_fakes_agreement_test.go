@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// agreementEngine is the surface the agreement cases drive on both engines.
+// agreementEngine is the surface the agreement cases drive.
 type agreementEngine interface {
 	CreateTree(ctx context.Context, structure, treeType string) error
 	CreateMatrixTree(ctx context.Context, structure string, width int, spillover string) error
@@ -87,6 +87,7 @@ func TestFakeWriterEngine_AnswersAsTheWorkerDoes(t *testing.T) {
 	ctx := context.Background()
 	for _, tc := range agreementCases() {
 		t.Run(tc.name, func(t *testing.T) {
+			require.NotEmpty(t, tc.code, "a case names the code the worker refuses with")
 			client, err := NewEngineClient(ctx, binary)
 			require.NoError(t, err)
 			defer func() { _ = client.Stop() }()
@@ -100,6 +101,7 @@ func TestFakeWriterEngine_AnswersAsTheWorkerDoes(t *testing.T) {
 			fakeApply := tc.apply(fake)
 
 			require.Equal(t, tc.code, engineCodeOf(workerCheck), "the worker's check answer")
+			assert.Equal(t, engineErrorOf(workerCheck), engineErrorOf(workerApply), "the worker's apply against its check")
 			assert.Equal(t, engineErrorOf(workerCheck), engineErrorOf(fakeCheck), "check")
 			assert.Equal(t, engineErrorOf(workerApply), engineErrorOf(fakeApply), "apply")
 		})

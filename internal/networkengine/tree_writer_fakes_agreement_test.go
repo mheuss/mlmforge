@@ -147,6 +147,12 @@ func agreementCases() []agreementCase {
 			agreementRooted(treeTypeBinary), writerOther, writerRoot, writerRoot, 0),
 		addNodeAtCase("add_node_at of a held user at a negative position on a unilevel tree", "MISSING_PARAM",
 			agreementWithChild(treeTypeUnilevel), writerChild, writerRoot, writerRoot, -1),
+		addNodeAtCase("matrix add_node_at of a held user at a negative position", "MISSING_PARAM",
+			agreementWithChild(treeTypeMatrix), writerChild, writerRoot, writerRoot, -1),
+		addNodeAtCase("matrix add_node_at at a negative position on an empty tree", "MISSING_PARAM",
+			agreementTree(treeTypeMatrix), writerOther, writerRoot, writerRoot, -1),
+		addNodeAtCase("add_node_at on an empty unilevel tree", "INVALID_PARAMS",
+			agreementTree(treeTypeUnilevel), writerOther, writerRoot, writerRoot, 0),
 	}
 }
 

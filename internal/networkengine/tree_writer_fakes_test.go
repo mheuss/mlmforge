@@ -760,6 +760,23 @@ func TestFakeWriterEngine_RestoresWhatItSnapshotted(t *testing.T) {
 	assert.True(t, isEngineCode(err, engineCodeTreeExists))
 }
 
+func TestFakeWriterEngine_RestoresAMatrixWithItsWidth(t *testing.T) {
+	engine := newFakeWriterEngine()
+	ctx := context.Background()
+	require.NoError(t, engine.CreateMatrixTree(ctx, writerTree, 3, "breadth_first"))
+	require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, 1))
+	taken, err := engine.TakeSnapshot(ctx, writerTree)
+	require.NoError(t, err)
+	_, err = engine.DropStructure(ctx, writerTree)
+	require.NoError(t, err)
+
+	require.NoError(t, engine.RestoreSnapshot(ctx, writerTree, taken.TreeType, taken.Data))
+
+	require.NoError(t, engine.CheckMutation(ctx, writerTree, CheckAddNodeAt(writerChild, writerRoot, writerRoot, 2, 2)))
+	err = engine.CheckMutation(ctx, writerTree, CheckAddNodeAt(writerChild, writerRoot, writerRoot, 3, 2))
+	requireEngineRefusal(t, err, "INVALID_POSITION", "position 3 out of range for user "+writerRoot+" (has 3 children)")
+}
+
 func TestFakeWriterEngine_RefusesAMatrixRemovalCheckWithNoMode(t *testing.T) {
 	ctx := context.Background()
 	f := newFakeWriterEngine()

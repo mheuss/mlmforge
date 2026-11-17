@@ -2757,18 +2757,26 @@ func TestTreeConsumer_RefusesARemovalWhoseShapeTheEngineCannotApply(t *testing.T
 	}{
 		{"a mode on a unilevel removal", treeTypeUnilevel, PruningHoldingTank},
 		{"an unknown mode on a matrix removal", treeTypeMatrix, "prune_all"},
-		{"an unsupported tree_type", "ternary", ""},
+		{"an unsupported tree_type, as only a corrupt payload carries", "ternary", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			store := NewMemoryTreeStore()
 			engine := newFakeWriterEngine()
-			require.NoError(t, engine.CreateTree(ctx, writerTree, treeTypeUnilevel))
-			require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, writeTime.Unix()))
-			require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, writeTime.Unix()))
+			var position *int
+			if tc.treeType == treeTypeMatrix {
+				position = intPtr(0)
+				require.NoError(t, engine.CreateMatrixTree(ctx, writerTree, 3, "breadth_first"))
+				require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, writeTime.Unix()))
+				require.NoError(t, engine.AddNodeAt(ctx, writerTree, writerChild, writerRoot, writerRoot, 0, writeTime.Unix()))
+			} else {
+				require.NoError(t, engine.CreateTree(ctx, writerTree, treeTypeUnilevel))
+				require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, writeTime.Unix()))
+				require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, writeTime.Unix()))
+			}
 			require.NoError(t, store.insertNode(ctx, makeUUIDNode(testNodeUUID(1), writerTree, writerRoot, 0, nil, ptr(writerRoot), nil)))
 			require.NoError(t, store.insertNode(ctx, makeUUIDNode(testNodeUUID(2), writerTree, writerChild, 1,
-				ptr(writerRoot), ptr(writerRoot), nil)))
+				ptr(writerRoot), ptr(writerRoot), position)))
 			consumer := NewTreeEventConsumer(store, engine)
 
 			err := deliver(ctx, consumer, versionedEvent(t, writerTree, 3, EventTypeNodeRemoved, NodeRemovedPayload{

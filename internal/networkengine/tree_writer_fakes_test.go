@@ -67,6 +67,31 @@ type fakeEngineTree struct {
 	nodes    map[string]EnginePosition
 }
 
+// checkRoot refuses a root this tree cannot take.
+func (t *fakeEngineTree) checkRoot(userID string) error {
+	if t.root != "" {
+		return fakeEngineError(engineCodeRootAlreadyExists, "tree already has a root node")
+	}
+	if _, ok := t.nodes[userID]; ok {
+		return fakeEngineError(engineCodeUserAlreadyExists, "user %s already exists in tree", userID)
+	}
+	return nil
+}
+
+// checkPlacement refuses a placement this tree cannot take.
+func (t *fakeEngineTree) checkPlacement(userID, parentID, sponsorID string) error {
+	if _, ok := t.nodes[userID]; ok {
+		return fakeEngineError(engineCodeUserAlreadyExists, "user %s already exists in tree", userID)
+	}
+	if _, ok := t.nodes[parentID]; !ok {
+		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", parentID)
+	}
+	if _, ok := t.nodes[sponsorID]; !ok {
+		return fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", sponsorID)
+	}
+	return nil
+}
+
 var _ TreeRebuilder = (*fakeWriterEngine)(nil)
 
 func newFakeWriterEngine() *fakeWriterEngine {
@@ -119,11 +144,8 @@ func (f *fakeWriterEngine) AddRoot(_ context.Context, structure, userID string, 
 	if err != nil {
 		return err
 	}
-	if t.root != "" {
-		return fakeEngineError(engineCodeRootAlreadyExists, "tree already has a root node")
-	}
-	if _, ok := t.nodes[userID]; ok {
-		return fakeEngineError(engineCodeUserAlreadyExists, "user %s already exists in tree", userID)
+	if err := t.checkRoot(userID); err != nil {
+		return err
 	}
 	t.root = userID
 	t.nodes[userID] = EnginePosition{UserID: userID, EnrolledAt: enrolledAt}
@@ -142,20 +164,13 @@ func (f *fakeWriterEngine) place(structure, userID, parentID, sponsorID string, 
 	if err != nil {
 		return err
 	}
-	if _, ok := t.nodes[userID]; ok {
-		return fakeEngineError(engineCodeUserAlreadyExists, "user %s already exists in tree", userID)
-	}
-	parent, ok := t.nodes[parentID]
-	if !ok {
-		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", parentID)
-	}
-	if _, ok := t.nodes[sponsorID]; !ok {
-		return fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", sponsorID)
+	if err := t.checkPlacement(userID, parentID, sponsorID); err != nil {
+		return err
 	}
 	p, s := parentID, sponsorID
 	t.nodes[userID] = EnginePosition{
 		UserID: userID, ParentUserID: &p, SponsorUserID: &s,
-		Position: position, Depth: parent.Depth + 1, EnrolledAt: enrolledAt,
+		Position: position, Depth: t.nodes[parentID].Depth + 1, EnrolledAt: enrolledAt,
 	}
 	return nil
 }
@@ -290,20 +305,13 @@ func (f *fakeWriterEngine) CheckMutation(_ context.Context, structure string, m 
 	if _, ok := m.params["pruning_mode"]; m.op == "remove_node" && t.treeType == treeTypeMatrix && !ok {
 		return fakeEngineError("MISSING_PARAM", "a matrix remove_node needs pruning_mode")
 	}
-	placement := m.op == "add_node" || m.op == "add_node_at"
-	if user, ok := m.params["user_id"].(string); ok && placement {
-		if _, held := t.nodes[user]; held {
-			return fakeEngineError(engineCodeUserAlreadyExists, "user %s already exists in tree", user)
-		}
-	}
-	if parent, ok := m.params["parent_id"].(string); ok {
-		if _, found := t.nodes[parent]; !found {
-			return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", parent)
-		}
-	}
-	if sponsor, ok := m.params["sponsor_id"].(string); ok && placement {
-		if _, found := t.nodes[sponsor]; !found {
-			return fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", sponsor)
+	user, _ := m.params["user_id"].(string)
+	switch m.op {
+	case "add_node", "add_node_at":
+		parent, _ := m.params["parent_id"].(string)
+		sponsor, _ := m.params["sponsor_id"].(string)
+		if err := t.checkPlacement(user, parent, sponsor); err != nil {
+			return err
 		}
 	}
 	return f.checkErr

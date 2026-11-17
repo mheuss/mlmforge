@@ -343,7 +343,7 @@ func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProj
 	}
 
 	if len(r.Responsored) > 0 {
-		updated := map[string]struct{}{}
+		updated := make(map[string]struct{}, len(r.Responsored))
 		for lo := 0; lo < len(r.Responsored); lo += chunk {
 			hi := min(lo+chunk, len(r.Responsored))
 			users := make([]string, hi-lo)

@@ -694,6 +694,9 @@ func (f *fakeWriterEngine) TakeSnapshot(ctx context.Context, structure string) (
 	if f.takeErr != nil {
 		return nil, f.takeErr
 	}
+	if _, held := f.trees[structure]; !held {
+		return nil, fakeEngineError("STRUCTURE_NOT_FOUND", "structure '%s' not found", structure)
+	}
 	if f.retypeBeforeTake != "" {
 		if _, err := f.DropStructure(ctx, structure); err != nil {
 			return nil, err
@@ -943,6 +946,25 @@ func TestFakeWriterEngine_CreatesAMatrixOnlyWithAWidth(t *testing.T) {
 
 	require.Equal(t, engineCodeTreeExists, engineCodeOf(workerErr), "the worker's answer for a held structure")
 	assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(fakeErr), "a held structure")
+}
+
+func TestFakeWriterEngine_TakesNoSnapshotOfAnAbsentStructure(t *testing.T) {
+	binary := findWorkerBinary(t)
+	ctx := context.Background()
+	client, err := NewEngineClient(ctx, binary)
+	require.NoError(t, err)
+	defer func() { _ = client.Stop() }()
+	fake := newFakeWriterEngine()
+
+	_, workerErr := client.TakeSnapshot(ctx, writerTree)
+	_, fakeErr := fake.TakeSnapshot(ctx, writerTree)
+	fake.retypeBeforeTake = treeTypeBinary
+	_, retypedErr := fake.TakeSnapshot(ctx, writerTree)
+
+	require.Equal(t, "STRUCTURE_NOT_FOUND", engineCodeOf(workerErr), "the worker's answer")
+	assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(fakeErr))
+	assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(retypedErr), "with a retype set")
+	assert.NotContains(t, fake.trees, writerTree)
 }
 
 func TestFakeWriterEngine_RefusesAMatrixRemovalCheckWithNoMode(t *testing.T) {

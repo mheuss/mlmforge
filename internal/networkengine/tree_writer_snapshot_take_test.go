@@ -148,6 +148,7 @@ func TestTreeWriterSnapshot_ReportsWhetherTheEngineWasAskedAndTheStoreKeptIt(t *
 		retypeBeforeTake  string
 		attempted, stored bool
 		warns             bool
+		warning           string
 	}{
 		"stored": {snapshots: unchanged, attempted: true, stored: true},
 		"put failed": {snapshots: func(env *writerEnv) SnapshotStore {
@@ -155,8 +156,10 @@ func TestTreeWriterSnapshot_ReportsWhetherTheEngineWasAskedAndTheStoreKeptIt(t *
 		}, attempted: true, warns: true},
 		"stored nothing": {snapshots: func(env *writerEnv) SnapshotStore { return noopPutStore{SnapshotStore: env.snapshots} },
 			attempted: true, warns: true},
-		"take failed":   {snapshots: unchanged, takeErr: errors.New("worker gone"), attempted: true, warns: true},
-		"type mismatch": {snapshots: unchanged, retypeBeforeTake: treeTypeBinary, attempted: true, warns: true},
+		"take failed": {snapshots: unchanged, takeErr: errors.New("worker gone"), attempted: true, warns: true},
+		"type mismatch": {snapshots: unchanged, retypeBeforeTake: treeTypeBinary, attempted: true, warns: true,
+			warning: "take_snapshot for tree " + writerTree + " at version 1 returned tree type binary, " +
+				"and version 1 records unilevel; no snapshot was stored"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -174,6 +177,9 @@ func TestTreeWriterSnapshot_ReportsWhetherTheEngineWasAskedAndTheStoreKeptIt(t *
 			assert.Equal(t, tc.attempted, attempted, "attempted")
 			assert.Equal(t, tc.stored, stored, "stored")
 			assert.Equal(t, tc.warns, warning != "", "warning %q", warning)
+			if tc.warning != "" {
+				assert.Equal(t, tc.warning, warning)
+			}
 		})
 	}
 }

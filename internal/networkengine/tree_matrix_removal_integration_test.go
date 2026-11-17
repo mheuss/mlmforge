@@ -484,7 +484,16 @@ func TestPostgresTreeStore_AReversedRelocationInChunksOfOneMatchesTheEngine(t *t
 	require.NoError(t, err)
 	outcome, err := call.apply(ctx, engine)
 	require.NoError(t, err)
-	require.Greater(t, len(outcome.relocated), 2, "the removal relocated too few rows to reorder")
+	slotChanges := 0
+	for _, r := range outcome.relocated {
+		row, err := store.GetNode(ctx, tree.id, r.UserID)
+		require.NoError(t, err)
+		require.NotNil(t, row, "no active row for relocated user %s", r.UserID)
+		if row.ParentID == nil || *row.ParentID != r.ParentID || row.Position == nil || *row.Position != r.Position {
+			slotChanges++
+		}
+	}
+	require.GreaterOrEqual(t, slotChanges, 2, "relocations that change parent or position, of %d relocated", len(outcome.relocated))
 	reversed := slices.Clone(outcome.relocated)
 	slices.Reverse(reversed)
 

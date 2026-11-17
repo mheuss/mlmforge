@@ -19,6 +19,8 @@ type PostgresTreeStore struct {
 	pool *pgxpool.Pool
 	// afterVersionRead runs between ProjectedRows' two reads when set.
 	afterVersionRead func()
+	// removalChunk caps the rows one removal statement writes. Zero or less means defaultRemovalChunk.
+	removalChunk int
 }
 
 // ON CONFLICT targets the primary key, which carries the event ID. A
@@ -274,6 +276,22 @@ const (
 		 WHERE n.tree_id = $1 AND n.user_id = r.user_id AND n.removed_at IS NULL`
 )
 
+// defaultRemovalChunk is the most rows one removal statement writes.
+const defaultRemovalChunk = 25_000
+
+// chunk returns the most rows one removal statement writes.
+func (s *PostgresTreeStore) chunk() int {
+	if s.removalChunk <= 0 {
+		return defaultRemovalChunk
+	}
+	return s.removalChunk
+}
+
+// chunkRange names rows lo+1 to hi of n.
+func chunkRange(lo, hi, n int) string {
+	return fmt.Sprintf("rows %d-%d of %d", lo+1, hi, n)
+}
+
 func (s *PostgresTreeStore) ProjectRemoval(
 	ctx context.Context,
 	treeID string,
@@ -284,24 +302,30 @@ func (s *PostgresTreeStore) ProjectRemoval(
 	if len(r.Users) == 0 {
 		return fmt.Errorf("project removal in tree %s: the removal names no users", treeID)
 	}
+	chunk := s.chunk()
 	return s.project(ctx, treeID, eventVersion, func(tx pgx.Tx) error {
-		return projectRemoval(ctx, tx, treeID, r, removalEventID)
+		return projectRemoval(ctx, tx, treeID, r, removalEventID, chunk)
 	})
 }
 
-// projectRemoval runs a removal's three writes in tx.
-func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProjection, removalEventID string) error {
+// projectRemoval runs a removal's three steps in tx, in statements of at most chunk rows.
+func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProjection, removalEventID string, chunk int) error {
 	// Tombstones first. A relocation run before them collides with the slot a
 	// removed row still holds.
 	at, err := tombstoneTime(ctx, tx)
 	if err != nil {
 		return err
 	}
-	tag, err := tx.Exec(ctx, tombstoneRemovedSQL, treeID, r.Users, removalEventID, at)
-	if err != nil {
-		return fmt.Errorf("tombstone removed users in tree %s: %w", treeID, err)
+	var tombstoned int64
+	for lo := 0; lo < len(r.Users); lo += chunk {
+		hi := min(lo+chunk, len(r.Users))
+		tag, err := tx.Exec(ctx, tombstoneRemovedSQL, treeID, r.Users[lo:hi], removalEventID, at)
+		if err != nil {
+			return fmt.Errorf("tombstone removed users in tree %s, %s: %w", treeID, chunkRange(lo, hi, len(r.Users)), err)
+		}
+		tombstoned += tag.RowsAffected()
 	}
-	if tag.RowsAffected() == 0 {
+	if tombstoned == 0 {
 		held, err := removalAlreadyHeld(ctx, tx, treeID, r.Users, removalEventID)
 		if err != nil {
 			return err
@@ -313,8 +337,8 @@ func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProj
 			return refuseNonInt4("project removal", treeID, relocationIntFields(r)...)
 		}
 	}
-	if tag.RowsAffected() != int64(len(r.Users)) {
-		return &RemovalMismatchError{TreeID: treeID, Users: r.Users, Matched: int(tag.RowsAffected())}
+	if tombstoned != int64(len(r.Users)) {
+		return &RemovalMismatchError{TreeID: treeID, Users: r.Users, Matched: int(tombstoned)}
 	}
 
 	if len(r.Responsored) > 0 {

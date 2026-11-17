@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -650,4 +651,28 @@ func TestPostgresTreeStore_ARootUndoThatWaitedOnTheLockStampsAfterIt(t *testing.
 	require.NotNil(t, removed, "the root's removed_at is NULL after the undo")
 	assert.False(t, removed.Before(held), "the root removed at %s, before %s, read after a lock waiter was seen", removed, held)
 	assert.True(t, removed.Equal(updated), "the root removed_at %s, updated_at %s", removed, updated)
+}
+
+func TestPostgresTreeStore_ATombstoneChunkErrorNamesItsRows(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	store.removalChunk = 2
+	ctx := context.Background()
+	tree, root := testTreeUUID(10421), testUserUUID(1)
+	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+	users := []string{testUserUUID(2), testUserUUID(3), notAUUID}
+	for i, u := range users[:2] {
+		require.NoError(t, store.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(2+i), tree, u, 1, ptr(root), ptr(root), intPtr(i)), int64(2+i)))
+	}
+
+	err := store.ProjectRemoval(ctx, tree, RemovalProjection{Users: users}, testNodeUUID(9), 4)
+
+	require.ErrorContains(t, err, "tombstone removed users in tree "+tree+", rows 3-3 of 3: ")
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, err, &pgErr, "the driver error is still reachable")
+	for _, u := range users[:2] {
+		row, err := store.GetNode(ctx, tree, u)
+		require.NoError(t, err)
+		assert.NotNil(t, row, "%s was tombstoned by a removal that failed", u)
+	}
 }

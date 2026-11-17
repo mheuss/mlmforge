@@ -128,7 +128,6 @@ func TestTreeWriterAddRoot_TakesAnExistingTreesShapeFromVersion1(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeMatrix)
 	w, engine := env.writer()
-	engine.checkErr = &EngineError{Code: engineCodeRootAlreadyExists, Message: "tree already has a root node"}
 	req := unilevelRootRequest()
 	req.UserID, req.SponsorID, req.TreeType = writerOther, writerOther, treeTypeMatrix
 
@@ -181,8 +180,7 @@ func TestTreeWriterAddRoot_RefusesMatrixParametersThatDifferFromVersion1(t *test
 func TestTreeWriterAddRoot_AcceptsMatrixParametersThatMatchVersion1(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeMatrix)
-	w, engine := env.writer()
-	engine.checkErr = &EngineError{Code: engineCodeRootAlreadyExists, Message: "tree already has a root node"}
+	w, _ := env.writer()
 	width, spillover := 3, "breadth_first"
 	req := unilevelRootRequest()
 	req.UserID, req.SponsorID, req.TreeType = writerOther, writerOther, treeTypeMatrix
@@ -257,7 +255,7 @@ func TestTreeWriterAddRoot_ReportsAReleaseFailureAlongsideARefusal(t *testing.T)
 	env := newWriterEnv()
 	unlockErr := errors.New("pg_advisory_unlock for tree x returned false")
 	engine := newFakeWriterEngine()
-	engine.checkErr = &EngineError{Code: engineCodeRootAlreadyExists, Message: "tree already has a root node"}
+	engine.checkErr = fakeHandlerPanic()
 	w := NewTreeWriter(env.events, env.store, env.snapshots, engine, releaseFailingLocker{err: unlockErr})
 
 	res, err := w.AddRoot(context.Background(), unilevelRootRequest())
@@ -594,8 +592,7 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 		message        string
 		scripted       bool
 	}{
-		{"add_root", "ROOT_ALREADY_EXISTS", rooted(treeTypeUnilevel), addOtherRoot, "scripted refusal", true},
-		{"add_root", "USER_ALREADY_EXISTS", rooted(treeTypeUnilevel), addOtherRoot, "scripted refusal", true},
+		{"add_root", "ROOT_ALREADY_EXISTS", rooted(treeTypeUnilevel), addOtherRoot, "tree already has a root node", false},
 		{"add_node", "USER_ALREADY_EXISTS", rooted(treeTypeBinary), placeOther, "scripted refusal", true},
 		{"add_node", "USER_NOT_FOUND", rooted(treeTypeBinary), placeOther, "scripted refusal", true},
 		{"add_node", "POSITION_OCCUPIED", rooted(treeTypeBinary), placeOther, "scripted refusal", true},
@@ -1019,7 +1016,6 @@ func TestTreeWriterAddRoot_ChecksARootOfTheSameShapeThatLandedBeforeTheLock(t *t
 		})
 	}}
 	engine := newFakeWriterEngine()
-	engine.checkErr = &EngineError{Code: engineCodeRootAlreadyExists, Message: "tree already has a root node"}
 	w := NewTreeWriter(env.events, env.store, env.snapshots, engine, locker)
 
 	res, err := w.AddRoot(context.Background(), unilevelRootRequest())

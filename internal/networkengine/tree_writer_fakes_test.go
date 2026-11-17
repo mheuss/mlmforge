@@ -307,6 +307,10 @@ func (f *fakeWriterEngine) CheckMutation(_ context.Context, structure string, m 
 	}
 	user, _ := m.params["user_id"].(string)
 	switch m.op {
+	case "add_root":
+		if err := t.checkRoot(user); err != nil {
+			return err
+		}
 	case "add_node", "add_node_at":
 		parent, _ := m.params["parent_id"].(string)
 		sponsor, _ := m.params["sponsor_id"].(string)

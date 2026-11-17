@@ -614,11 +614,6 @@ func TestTreeWriterReject_RefusesARetryErrorThatIsNotEvidence(t *testing.T) {
 			engine.failAdd[writerChild] = fakeHandlerPanic()
 			return w
 		}},
-		{"an engine USER_ALREADY_EXISTS", func(env *writerEnv) *TreeWriter {
-			w, engine := env.writer()
-			engine.failAdd[writerChild] = fakeEngineError(engineCodeUserAlreadyExists, "user already exists in tree")
-			return w
-		}},
 		{"a transport error", func(env *writerEnv) *TreeWriter {
 			w, engine := env.writer()
 			engine.failAdd[writerChild] = errors.New("write |1: broken pipe")

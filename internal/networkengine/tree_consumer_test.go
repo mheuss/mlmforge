@@ -2889,11 +2889,11 @@ func TestHandleNodeRemoved_GivesTheStoreADeadlineCountingEveryList(t *testing.T)
 			store := &deadlineRecordingStore{deleteRecordingStore: &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}}
 			c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
 			c.retryDelay = 0
-			c.removalFloor, c.removalPerRow = 2*time.Second, time.Second
+			c.removalFloor, c.removalPerRow = 3*time.Second, time.Second
 
 			require.NoError(t, deliver(context.Background(), c, makeEvent(EventTypeNodeRemoved, tc.payload)))
 
-			want := 2*time.Second + time.Duration(tc.rows)*time.Second
+			want := 3*time.Second + time.Duration(tc.rows)*time.Second
 			require.True(t, store.ok, "ProjectRemoval got a context with no deadline")
 			assert.LessOrEqual(t, store.left, want)
 			assert.Greater(t, store.left, want-500*time.Millisecond)
@@ -2916,6 +2916,29 @@ func TestHandleNodeRemoved_ARemovalPastItsDeadlineNamesTheDeadline(t *testing.T)
 
 	err := deliver(context.Background(), c, makeEvent(EventTypeNodeRemoved, removedPayload()))
 
-	require.ErrorContains(t, err, "remove node and re-sponsor recruits: the removal projection's 20ms deadline, for 1 rows, ended: blocked write: ")
+	require.ErrorContains(t, err, "remove node and re-sponsor recruits: the removal projection's 20ms deadline, for 1 rows, ended: context deadline exceeded: blocked write: ")
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+// opaqueTimeoutStore blocks ProjectRemoval until its context ends, then returns an error that does not wrap the context's.
+type opaqueTimeoutStore struct {
+	*deleteRecordingStore
+}
+
+func (s *opaqueTimeoutStore) ProjectRemoval(ctx context.Context, _ string, _ RemovalProjection, _ string, _ int64) error {
+	<-ctx.Done()
+	return errors.New("ERROR: canceling statement due to user request (SQLSTATE 57014)")
+}
+
+func TestHandleNodeRemoved_ADeadlineStaysReachableWhenTheStoreDropsIt(t *testing.T) {
+	tr := &reconcileTransport{mutationResponse: json.RawMessage(`{"responsored":[]}`)}
+	store := &opaqueTimeoutStore{deleteRecordingStore: &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}}
+	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
+	c.retryDelay = 0
+	c.removalFloor, c.removalPerRow = 20*time.Millisecond, 0
+
+	err := deliver(context.Background(), c, makeEvent(EventTypeNodeRemoved, removedPayload()))
+
+	require.ErrorContains(t, err, "the removal projection's 20ms deadline, for 1 rows, ended: ")
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }

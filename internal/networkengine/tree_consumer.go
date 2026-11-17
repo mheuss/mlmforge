@@ -402,8 +402,8 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, shape treeSha
 	defer cancelWrite()
 	if err := c.store.ProjectRemoval(writeCtx, payload.TreeID, projection, event.ID, event.Version); err != nil {
 		if writeCtx.Err() != nil {
-			return fmt.Errorf("remove node and re-sponsor recruits: the removal projection's %s deadline, for %d rows, ended: %w",
-				limit, rows, err)
+			return fmt.Errorf("remove node and re-sponsor recruits: the removal projection's %s deadline, for %d rows, ended: %w: %w",
+				limit, rows, writeCtx.Err(), err)
 		}
 		return fmt.Errorf("remove node and re-sponsor recruits: %w", err)
 	}
@@ -527,7 +527,7 @@ func samePtrUUID(a, b *string) bool {
 // this the write has no bound at all.
 const storeWriteTimeout = 5 * time.Second
 
-// Defaults for a removal projection's deadline, which grows with the rows it writes.
+// Defaults for a removal projection's deadline.
 const (
 	defaultRemovalFloor  = 5 * time.Second
 	defaultRemovalPerRow = 100 * time.Microsecond

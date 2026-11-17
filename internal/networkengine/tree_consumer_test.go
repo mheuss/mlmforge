@@ -1609,6 +1609,9 @@ func TestHandleNodePlaced_ReconcileDivergesWhenThePositionLookupFindsNoUser(t *t
 	assert.Equal(t, 1, tr.positionOps)
 	assert.True(t, isEngineCode(err, engineCodeUserAlreadyExists), "the refused mutation is the error carried")
 	assert.Contains(t, err.Error(), "lookup-marker", "and the lookup's own error is kept")
+	for _, sentinel := range rejectionSentinels {
+		assert.NotErrorIs(t, err, sentinel)
+	}
 }
 
 // Any other engine failure is not reconcile's business, and inspecting it

@@ -2846,3 +2846,76 @@ func TestTreeConsumer_AMatrixRemovalWhoseReplyWasLostRefusesAndWritesNothing(t *
 	assert.Empty(t, store.writes)
 	assert.Equal(t, before, readProjectionState(t, inner, writerTree, writerRoot, writerChild))
 }
+
+// deadlineRecordingStore records the time left on ProjectRemoval's context. It blocks until the context ends when block is set,
+// and otherwise returns nil without writing.
+type deadlineRecordingStore struct {
+	*deleteRecordingStore
+	left  time.Duration
+	ok    bool
+	block bool
+}
+
+func (s *deadlineRecordingStore) ProjectRemoval(ctx context.Context, _ string, _ RemovalProjection, _ string, _ int64) error {
+	var dl time.Time
+	dl, s.ok = ctx.Deadline()
+	s.left = time.Until(dl)
+	if s.block {
+		<-ctx.Done()
+		return fmt.Errorf("blocked write: %w", ctx.Err())
+	}
+	return nil
+}
+
+func TestHandleNodeRemoved_GivesTheStoreADeadlineCountingEveryList(t *testing.T) {
+	sponsored := `{"user_id":"` + testUserUUID(31) + `","new_sponsor_id":"` + posSponsor + `"}`
+	moved := `{"user_id":"` + testUserUUID(41) + `","parent_id":"` + posParent + `","position":0,"depth":1}`
+	matrix := removedPayload()
+	matrix.TreeType, matrix.PruningMode = treeTypeMatrix, PruningPromoteEarliest
+	cases := []struct {
+		name     string
+		response string
+		payload  NodeRemovedPayload
+		rows     int
+	}{
+		{"the removed user alone", `{"responsored":[]}`, removedPayload(), 1},
+		{"three re-sponsored recruits", `{"responsored":[` + sponsored + `,` + sponsored + `,` + sponsored + `]}`, removedPayload(), 4},
+		{"two relocated survivors", `{"removed":"` + posUser + `","moved_to_tank":[],"responsored":[],"relocated":[` +
+			moved + `,` + moved + `]}`, matrix, 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := &reconcileTransport{mutationResponse: json.RawMessage(tc.response)}
+			store := &deadlineRecordingStore{deleteRecordingStore: &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}}
+			c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
+			c.retryDelay = 0
+			c.removalFloor, c.removalPerRow = 2*time.Second, time.Second
+
+			require.NoError(t, deliver(context.Background(), c, makeEvent(EventTypeNodeRemoved, tc.payload)))
+
+			want := 2*time.Second + time.Duration(tc.rows)*time.Second
+			require.True(t, store.ok, "ProjectRemoval got a context with no deadline")
+			assert.LessOrEqual(t, store.left, want)
+			assert.Greater(t, store.left, want-500*time.Millisecond)
+		})
+	}
+}
+
+func TestHandleNodeRemoved_DefaultsToAFiveSecondFloorAndAHundredMicrosecondsARow(t *testing.T) {
+	c := NewTreeEventConsumer(NewMemoryTreeStore(), nil)
+	assert.Equal(t, 5*time.Second, c.removalFloor)
+	assert.Equal(t, 100*time.Microsecond, c.removalPerRow)
+}
+
+func TestHandleNodeRemoved_ARemovalPastItsDeadlineNamesTheDeadline(t *testing.T) {
+	tr := &reconcileTransport{mutationResponse: json.RawMessage(`{"responsored":[]}`)}
+	store := &deadlineRecordingStore{deleteRecordingStore: &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}, block: true}
+	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
+	c.retryDelay = 0
+	c.removalFloor, c.removalPerRow = 20*time.Millisecond, 0
+
+	err := deliver(context.Background(), c, makeEvent(EventTypeNodeRemoved, removedPayload()))
+
+	require.ErrorContains(t, err, "remove node and re-sponsor recruits: the removal projection's 20ms deadline, for 1 rows, ended: blocked write: ")
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}

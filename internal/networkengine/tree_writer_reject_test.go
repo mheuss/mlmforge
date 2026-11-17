@@ -1206,8 +1206,8 @@ func TestTreeWriterReject_AFailedDropIsNotEvidence(t *testing.T) {
 	requireStored(t, ctx, env.snapshots, Snapshot{TreeID: writerTree, Version: 2, TreeType: taken.TreeType, Data: taken.Data})
 	before := streamEvents(t, env.events, TreeStreamName(writerTree))
 	w, engine := env.writer()
-	engine.restoreErr = fakeEngineError("INCONSISTENT_SNAPSHOT", "refused by the test")
-	engine.dropErr = fakeEngineError("HAS_CHILDREN", "refused by the test")
+	engine.restoreErr = fakeHandlerPanic()
+	engine.dropErr = fakeHandlerPanic()
 
 	res, err := w.Reject(ctx, rejectRequest(stuck.ID))
 

@@ -29,8 +29,8 @@ type TreeEventConsumer struct {
 // the given store and engine. Default retry count is 2.
 func NewTreeEventConsumer(store TreeStore, engine TreeEngine) *TreeEventConsumer {
 	return &TreeEventConsumer{
-		store:      store,
-		engine:     engine,
+		store:         store,
+		engine:        engine,
 		maxRetries:    2,
 		retryDelay:    50 * time.Millisecond,
 		removalFloor:  defaultRemovalFloor,

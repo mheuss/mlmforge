@@ -82,7 +82,7 @@ func (t *fakeEngineTree) checkRoot(userID string) error {
 func (t *fakeEngineTree) checkPlacement(op, userID, parentID, sponsorID string, position int, hasPosition bool) error {
 	binary := op == "add_node" && t.treeType == treeTypeBinary
 	switch {
-	case binary && !hasPosition:
+	case binary && (!hasPosition || position < 0):
 		return fakeEngineError("MISSING_PARAM", "missing position (required for binary)")
 	case binary && position > 1:
 		return fakeEngineError("INVALID_POSITION", "position %d out of range for user %s (has 2 children)",

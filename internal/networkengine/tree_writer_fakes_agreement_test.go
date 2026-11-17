@@ -116,8 +116,10 @@ func agreementCases() []agreementCase {
 			agreementRooted(treeTypeBinary), writerOther, writerOther, writerRoot, WithPosition(0)),
 		addNodeCase("binary add_node of a held user at position 2", "INVALID_POSITION",
 			agreementWithChild(treeTypeBinary), writerChild, writerRoot, writerRoot, WithPosition(2)),
-		addNodeCase("binary add_node with no position", "MISSING_PARAM",
-			agreementRooted(treeTypeBinary), writerOther, writerRoot, writerRoot),
+		addNodeCase("binary add_node of a held user at a held slot with no position", "MISSING_PARAM",
+			agreementWithChild(treeTypeBinary), writerChild, writerRoot, writerRoot),
+		addNodeCase("binary add_node of a held user at a negative position", "MISSING_PARAM",
+			agreementWithChild(treeTypeBinary), writerChild, writerRoot, writerRoot, WithPosition(-1)),
 	}
 }
 

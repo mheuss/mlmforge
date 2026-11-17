@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"slices"
 	"testing"
 	"time"
 
@@ -454,4 +455,42 @@ func TestTreeWriter_RefusesToPlaceAUserInTheHoldingTank(t *testing.T) {
 	taken, err := loaded.TakeSnapshot(ctx, tree)
 	require.NoError(t, err)
 	assert.NoError(t, it.engine(t).RestoreSnapshot(ctx, tree, taken.TreeType, taken.Data))
+}
+
+func TestTreeConsumer_SeededMatrixRemovalsKeepEveryRowOnTheEngineInSmallChunks(t *testing.T) {
+	for _, chunk := range []int{1, 2} {
+		t.Run(fmt.Sprintf("chunk %d", chunk), func(t *testing.T) {
+			store := newTestPostgresTreeStore(t)
+			store.removalChunk = chunk
+			engine, err := NewEngineClient(context.Background(), findWorkerBinary(t))
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = engine.Stop() })
+			for seed := uint64(1); seed <= 100; seed++ {
+				t.Run(fmt.Sprintf("seed %d", seed), func(t *testing.T) {
+					runSeededMatrixRemoval(t, store, engine, seed)
+				})
+			}
+		})
+	}
+}
+
+func TestPostgresTreeStore_AReversedRelocationInChunksOfOneMatchesTheEngine(t *testing.T) {
+	es, store, engine, pool := newIntegrationDeps(t)
+	store.removalChunk = 1
+	ctx := context.Background()
+	m := matrixShape{width: 2}
+	tree := generateMatrixTree(t, es, engine, pool, m, 255)
+	call, err := nodeRemovedCall(NodeRemovedPayload{TreeID: tree.id, UserID: measureUser(1), PruningMode: PruningPromoteEarliest}, treeTypeMatrix)
+	require.NoError(t, err)
+	outcome, err := call.apply(ctx, engine)
+	require.NoError(t, err)
+	require.Greater(t, len(outcome.relocated), 2, "the removal relocated too few rows to reorder")
+	reversed := slices.Clone(outcome.relocated)
+	slices.Reverse(reversed)
+
+	require.NoError(t, store.ProjectRemoval(ctx, tree.id,
+		RemovalProjection{Users: outcome.removed, Responsored: outcome.responsored, Relocated: reversed},
+		nextEventUUID(), tree.version+1))
+
+	requireRowsMatchEngine(t, store, engine, tree.id)
 }

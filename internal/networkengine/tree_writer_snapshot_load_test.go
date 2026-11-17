@@ -319,12 +319,12 @@ func TestTreeWriterSnapshotLoad_ContinuesWhenADeleteFails(t *testing.T) {
 
 func TestTreeWriterSnapshotLoad_FailsWhenTheDropIsRefused(t *testing.T) {
 	_, w, engine := midReplayLoad(t)
-	engine.dropErr = fakeEngineError("INVALID_PARAMS", "refused by the test")
+	engine.dropErr = fakeHandlerPanic()
 
 	_, err := w.Load(context.Background(), loadRequest())
 
 	requireReplayStage(t, err, TreeReplayStageDrop)
-	assert.ErrorContains(t, err, "INTERNAL_ERROR")
+	assert.Regexp(t, "the drop followed: build tree "+writerTree+" at stage replay: .*INTERNAL_ERROR", err.Error())
 	assert.NotContains(t, err.Error(), "\n")
 }
 

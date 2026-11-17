@@ -63,6 +63,7 @@ type fakeWriterEngine struct {
 
 type fakeEngineTree struct {
 	treeType string
+	width    int
 	root     string
 	nodes    map[string]EnginePosition
 }
@@ -81,9 +82,19 @@ func (t *fakeEngineTree) checkRoot(userID string) error {
 // checkPlacement refuses a placement this tree cannot take.
 func (t *fakeEngineTree) checkPlacement(op, userID, parentID, sponsorID string, position int, hasPosition bool) error {
 	binary := op == "add_node" && t.treeType == treeTypeBinary
+	at := op == "add_node_at"
 	switch {
+	case at && position < 0:
+		return fakeEngineError("MISSING_PARAM", "missing position (required for add_node_at)")
+	case at && t.treeType != treeTypeMatrix:
+		return fakeEngineError("INVALID_PARAMS", "add_node_at is only supported for matrix trees")
 	case binary && (!hasPosition || position < 0):
 		return fakeEngineError("MISSING_PARAM", "missing position (required for binary)")
+	case at && t.root == "":
+		return fakeEngineError("TREE_EMPTY", "tree has no root node")
+	case at && position >= t.width:
+		return fakeEngineError("INVALID_POSITION", "position %d out of range for user %s (has %d children)",
+			position, parentID, t.width)
 	case binary && position > 1:
 		return fakeEngineError("INVALID_POSITION", "position %d out of range for user %s (has 2 children)",
 			position, parentID)
@@ -97,7 +108,7 @@ func (t *fakeEngineTree) checkPlacement(op, userID, parentID, sponsorID string, 
 	if _, ok := t.nodes[sponsorID]; !ok {
 		return fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", sponsorID)
 	}
-	if binary && t.slotTaken(parentID, position) {
+	if (binary || at) && t.slotTaken(parentID, position) {
 		return fakeEngineError("POSITION_OCCUPIED", "position %d already occupied for user %s", position, parentID)
 	}
 	return nil
@@ -170,7 +181,11 @@ func (f *fakeWriterEngine) createTree(structure, treeType string) error {
 
 func (f *fakeWriterEngine) CreateMatrixTree(_ context.Context, structure string, width int, spillover string) error {
 	f.calls = append(f.calls, fmt.Sprintf("create_matrix_tree %d %s", width, spillover))
-	return f.createTree(structure, treeTypeMatrix)
+	if err := f.createTree(structure, treeTypeMatrix); err != nil {
+		return err
+	}
+	f.trees[structure].width = width
+	return nil
 }
 
 func (f *fakeWriterEngine) AddRoot(_ context.Context, structure, userID string, enrolledAt int64) error {
@@ -665,6 +680,7 @@ func TestFakeWriterEngine_GetDownlineStopsAtTheDepthAsked(t *testing.T) {
 
 // fakeSnapshot is the fake engine's snapshot payload.
 type fakeSnapshot struct {
+	Width int                       `json:"width,omitempty"`
 	Root  string                    `json:"root"`
 	Nodes map[string]EnginePosition `json:"nodes"`
 }
@@ -678,7 +694,7 @@ func (f *fakeWriterEngine) TakeSnapshot(_ context.Context, structure string) (*S
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(fakeSnapshot{Root: t.root, Nodes: t.nodes})
+	data, err := json.Marshal(fakeSnapshot{Width: t.width, Root: t.root, Nodes: t.nodes})
 	if err != nil {
 		return nil, err
 	}
@@ -704,7 +720,7 @@ func (f *fakeWriterEngine) RestoreSnapshot(_ context.Context, structure, treeTyp
 	if snap.Nodes == nil {
 		snap.Nodes = map[string]EnginePosition{}
 	}
-	f.trees[structure] = &fakeEngineTree{treeType: treeType, root: snap.Root, nodes: snap.Nodes}
+	f.trees[structure] = &fakeEngineTree{treeType: treeType, width: snap.Width, root: snap.Root, nodes: snap.Nodes}
 	return nil
 }
 

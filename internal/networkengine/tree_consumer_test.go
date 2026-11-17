@@ -2716,7 +2716,15 @@ func TestTreeConsumer_ARemovalTombstonesTheUserOnEveryTreeType(t *testing.T) {
 				require.NoError(t, engine.CreateTree(ctx, writerTree, tc.treeType))
 			}
 			require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, writeTime.Unix()))
-			require.NoError(t, engine.AddNodeAt(ctx, writerTree, writerChild, writerRoot, writerRoot, 0, writeTime.Unix()))
+			if tc.treeType == treeTypeMatrix {
+				require.NoError(t, engine.AddNodeAt(ctx, writerTree, writerChild, writerRoot, writerRoot, 0, writeTime.Unix()))
+			} else {
+				var opts []AddNodeOption
+				if tc.position != nil {
+					opts = append(opts, WithPosition(*tc.position))
+				}
+				require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, writeTime.Unix(), opts...))
+			}
 			require.NoError(t, store.insertNode(ctx, makeUUIDNode(testNodeUUID(1), writerTree, writerRoot, 0, nil, ptr(writerRoot), nil)))
 			require.NoError(t, store.insertNode(ctx, makeUUIDNode(testNodeUUID(2), writerTree, writerChild, 1,
 				ptr(writerRoot), ptr(writerRoot), tc.position)))

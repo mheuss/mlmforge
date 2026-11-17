@@ -71,6 +71,15 @@ func addNodeCase(name, code string, setup func(*testing.T, agreementEngine),
 		}}
 }
 
+func addNodeAtCase(name, code string, setup func(*testing.T, agreementEngine),
+	user, parent, sponsor string, position int) agreementCase {
+	return agreementCase{name: name, code: code, setup: setup,
+		check: CheckAddNodeAt(user, parent, sponsor, position, 300),
+		apply: func(e agreementEngine) error {
+			return e.AddNodeAt(context.Background(), writerTree, user, parent, sponsor, position, 300)
+		}}
+}
+
 func addRootCase(name, code string, setup func(*testing.T, agreementEngine), user string) agreementCase {
 	return agreementCase{name: name, code: code, setup: setup,
 		check: CheckAddRoot(user, 100),
@@ -120,6 +129,24 @@ func agreementCases() []agreementCase {
 			agreementWithChild(treeTypeBinary), writerChild, writerRoot, writerRoot),
 		addNodeCase("binary add_node of a held user at a negative position", "MISSING_PARAM",
 			agreementWithChild(treeTypeBinary), writerChild, writerRoot, writerRoot, WithPosition(-1)),
+		addNodeAtCase("matrix add_node_at on an empty tree", "TREE_EMPTY",
+			agreementTree(treeTypeMatrix), writerOther, writerRoot, writerAbsentSponsor, 3),
+		addNodeAtCase("matrix add_node_at of a held user past the width", "INVALID_POSITION",
+			agreementWithChild(treeTypeMatrix), writerChild, writerRoot, writerRoot, 3),
+		addNodeAtCase("matrix add_node_at of a held user at a held slot", engineCodeUserAlreadyExists,
+			agreementWithChild(treeTypeMatrix), writerChild, writerRoot, writerRoot, 0),
+		addNodeAtCase("matrix add_node_at under an absent parent", engineCodeUserNotFound,
+			agreementRooted(treeTypeMatrix), writerOther, writerOther, writerAbsentSponsor, 0),
+		addNodeAtCase("matrix add_node_at with an absent sponsor at a held slot", "SPONSOR_NOT_FOUND",
+			agreementWithChild(treeTypeMatrix), writerOther, writerRoot, writerAbsentSponsor, 0),
+		addNodeAtCase("matrix add_node_at at a held slot", "POSITION_OCCUPIED",
+			agreementWithChild(treeTypeMatrix), writerOther, writerRoot, writerRoot, 0),
+		addNodeAtCase("add_node_at on a unilevel tree", "INVALID_PARAMS",
+			agreementRooted(treeTypeUnilevel), writerOther, writerRoot, writerRoot, 0),
+		addNodeAtCase("add_node_at on a binary tree", "INVALID_PARAMS",
+			agreementRooted(treeTypeBinary), writerOther, writerRoot, writerRoot, 0),
+		addNodeAtCase("add_node_at of a held user at a negative position on a unilevel tree", "MISSING_PARAM",
+			agreementWithChild(treeTypeUnilevel), writerChild, writerRoot, writerRoot, -1),
 	}
 }
 

@@ -403,6 +403,20 @@ func placeRequest(user string, position *int) PlaceRequest {
 	}
 }
 
+// rejectedMatrixRoot appends a matrix root with the nil user ID, then rejects it.
+func rejectedMatrixRoot(t *testing.T, env *writerEnv) {
+	t.Helper()
+	width, spillover := 3, "breadth_first"
+	root := appendDirect(t, env.events, EventTypeRootAdded, RootAddedPayload{
+		TreeID: writerTree, UserID: uuid.Nil.String(), SponsorID: uuid.Nil.String(),
+		TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover, EnrolledAt: writeTime,
+	})
+	w, _ := env.writer()
+	res, err := w.Reject(context.Background(), RejectRequest{TreeID: writerTree, EventID: root.ID, Reason: "nil user id"})
+	require.NoError(t, err)
+	require.Equal(t, RejectOutcomeRejected, res.Outcome, "the retry returned %v", res.RetryErr)
+}
+
 func TestTreeWriterPlace_AppendsAndProjectsAPlacement(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
@@ -614,12 +628,17 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 			"position 0 already occupied for user " + writerRoot, false},
 		{"add_node", "INVALID_POSITION", rooted(treeTypeBinary), placeOther,
 			"scripted: pass-through", true},
-		{"add_node_at", "TREE_EMPTY", rooted(treeTypeMatrix), placeOther, "scripted refusal", true},
-		{"add_node_at", "INVALID_POSITION", rooted(treeTypeMatrix), placeOther, "scripted refusal", true},
-		{"add_node_at", "USER_ALREADY_EXISTS", rooted(treeTypeMatrix), placeOther, "scripted refusal", true},
-		{"add_node_at", "USER_NOT_FOUND", rooted(treeTypeMatrix), placeOther, "scripted refusal", true},
-		{"add_node_at", "SPONSOR_NOT_FOUND", rooted(treeTypeMatrix), placeOther, "scripted refusal", true},
-		{"add_node_at", "POSITION_OCCUPIED", rooted(treeTypeMatrix), placeOther, "scripted refusal", true},
+		{"add_node_at", "TREE_EMPTY", rejectedMatrixRoot, placeOther, "tree has no root node", false},
+		{"add_node_at", "INVALID_POSITION", rooted(treeTypeMatrix), placeAt(writerRoot, writerRoot, 3),
+			"position 3 out of range for user " + writerRoot + " (has 3 children)", false},
+		{"add_node_at", "USER_ALREADY_EXISTS", placed(treeTypeMatrix, writerOther, 1), placeOther,
+			"user " + writerOther + " already exists in tree", false},
+		{"add_node_at", "USER_NOT_FOUND", rooted(treeTypeMatrix), placeAt(absentParent, writerRoot, 0),
+			"user " + absentParent + " not found in tree", false},
+		{"add_node_at", "SPONSOR_NOT_FOUND", rooted(treeTypeMatrix), placeAt(writerRoot, writerAbsentSponsor, 0),
+			"sponsor " + writerAbsentSponsor + " not found in tree", false},
+		{"add_node_at", "POSITION_OCCUPIED", placed(treeTypeMatrix, writerChild, 0), placeOther,
+			"position 0 already occupied for user " + writerRoot, false},
 		{"remove_node", "USER_NOT_FOUND", rooted(treeTypeUnilevel), remove(writerOther),
 			"user " + writerOther + " not found in tree", false},
 		{"remove_node", "HAS_CHILDREN", withChild, remove(writerRoot),

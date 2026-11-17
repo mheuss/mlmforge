@@ -567,62 +567,70 @@ func TestTreeWriterPlace_EnforcesThePositionRuleBeforeTheLock(t *testing.T) {
 
 func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) {
 	zero := 0
-	run := map[string]func(w *TreeWriter) (WriteResult, error){
-		"add_root": func(w *TreeWriter) (WriteResult, error) {
-			req := unilevelRootRequest()
-			req.UserID, req.SponsorID = writerOther, writerOther
-			return w.AddRoot(context.Background(), req)
-		},
-		"add_node": func(w *TreeWriter) (WriteResult, error) {
-			return w.Place(context.Background(), placeRequest(writerOther, &zero))
-		},
-		"add_node_at": func(w *TreeWriter) (WriteResult, error) {
-			return w.Place(context.Background(), placeRequest(writerOther, &zero))
-		},
-		"remove_node": func(w *TreeWriter) (WriteResult, error) {
-			return w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: writerRoot, RemovedAt: writeTime})
-		},
+	rooted := func(treeType string) func(*testing.T, *writerEnv) {
+		return func(t *testing.T, env *writerEnv) { mustAddRoot(t, env, treeType) }
 	}
-	treeTypeFor := map[string]string{
-		"add_root": treeTypeUnilevel, "add_node": treeTypeBinary,
-		"add_node_at": treeTypeMatrix, "remove_node": treeTypeUnilevel,
+	withChild := func(t *testing.T, env *writerEnv) {
+		mustAddRoot(t, env, treeTypeUnilevel)
+		mustPlace(t, env, writerChild, nil)
 	}
-	cases := []struct{ mutation, code string }{
-		{"add_root", "ROOT_ALREADY_EXISTS"},
-		{"add_root", "USER_ALREADY_EXISTS"},
-		{"add_node", "USER_ALREADY_EXISTS"},
-		{"add_node", "USER_NOT_FOUND"},
-		{"add_node", "POSITION_OCCUPIED"},
-		{"add_node", "INVALID_POSITION"},
-		{"add_node_at", "TREE_EMPTY"},
-		{"add_node_at", "INVALID_POSITION"},
-		{"add_node_at", "USER_ALREADY_EXISTS"},
-		{"add_node_at", "USER_NOT_FOUND"},
-		{"add_node_at", "SPONSOR_NOT_FOUND"},
-		{"add_node_at", "POSITION_OCCUPIED"},
-		{"remove_node", "USER_NOT_FOUND"},
-		{"remove_node", "HAS_CHILDREN"},
-		{"remove_node", "SPONSORLESS_WITH_RECRUITS"},
-		{"remove_node", "SPONSOR_CYCLE"},
+	addOtherRoot := func(w *TreeWriter) (WriteResult, error) {
+		req := unilevelRootRequest()
+		req.UserID, req.SponsorID = writerOther, writerOther
+		return w.AddRoot(context.Background(), req)
+	}
+	placeOther := func(w *TreeWriter) (WriteResult, error) {
+		return w.Place(context.Background(), placeRequest(writerOther, &zero))
+	}
+	remove := func(user string) func(*TreeWriter) (WriteResult, error) {
+		return func(w *TreeWriter) (WriteResult, error) {
+			return w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: user, RemovedAt: writeTime})
+		}
+	}
+	cases := []struct {
+		mutation, code string
+		setup          func(*testing.T, *writerEnv)
+		run            func(*TreeWriter) (WriteResult, error)
+		// message is the engine's answer. A scripted row gives code with this
+		// message through checkErr, for a payload the engine accepts, and
+		// tests pass-through only.
+		message  string
+		scripted bool
+	}{
+		{"add_root", "ROOT_ALREADY_EXISTS", rooted(treeTypeUnilevel), addOtherRoot, "scripted refusal", true},
+		{"add_root", "USER_ALREADY_EXISTS", rooted(treeTypeUnilevel), addOtherRoot, "scripted refusal", true},
+		{"add_node", "USER_ALREADY_EXISTS", rooted(treeTypeBinary), placeOther, "scripted refusal", true},
+		{"add_node", "USER_NOT_FOUND", rooted(treeTypeBinary), placeOther, "scripted refusal", true},
+		{"add_node", "POSITION_OCCUPIED", rooted(treeTypeBinary), placeOther, "scripted refusal", true},
+		{"add_node", "INVALID_POSITION", rooted(treeTypeBinary), placeOther, "scripted refusal", true},
+		{"add_node_at", "TREE_EMPTY", rooted(treeTypeMatrix), placeOther, "scripted refusal", true},
+		{"add_node_at", "INVALID_POSITION", rooted(treeTypeMatrix), placeOther, "scripted refusal", true},
+		{"add_node_at", "USER_ALREADY_EXISTS", rooted(treeTypeMatrix), placeOther, "scripted refusal", true},
+		{"add_node_at", "USER_NOT_FOUND", rooted(treeTypeMatrix), placeOther, "scripted refusal", true},
+		{"add_node_at", "SPONSOR_NOT_FOUND", rooted(treeTypeMatrix), placeOther, "scripted refusal", true},
+		{"add_node_at", "POSITION_OCCUPIED", rooted(treeTypeMatrix), placeOther, "scripted refusal", true},
+		{"remove_node", "USER_NOT_FOUND", withChild, remove(writerRoot), "scripted refusal", true},
+		{"remove_node", "HAS_CHILDREN", withChild, remove(writerRoot), "scripted refusal", true},
+		{"remove_node", "SPONSORLESS_WITH_RECRUITS", withChild, remove(writerRoot), "scripted refusal", true},
+		{"remove_node", "SPONSOR_CYCLE", withChild, remove(writerRoot), "scripted refusal", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.mutation+" "+tc.code, func(t *testing.T) {
 			env := newWriterEnv()
-			mustAddRoot(t, env, treeTypeFor[tc.mutation])
-			if tc.mutation == "remove_node" {
-				mustPlace(t, env, writerChild, nil)
-			}
+			tc.setup(t, env)
 			stream := TreeStreamName(writerTree)
 			before := len(streamEvents(t, env.events, stream))
 			w, engine := env.writer()
-			engine.checkErr = &EngineError{Code: tc.code, Message: "scripted refusal"}
+			if tc.scripted {
+				engine.checkErr = &EngineError{Code: tc.code, Message: tc.message}
+			}
 
-			_, err := run[tc.mutation](w)
+			_, err := tc.run(w)
 
 			var engineErr *EngineError
 			require.ErrorAs(t, err, &engineErr)
 			assert.Equal(t, tc.code, engineErr.Code)
-			assert.Equal(t, "scripted refusal", engineErr.Message)
+			assert.Equal(t, tc.message, engineErr.Message)
 			assert.Contains(t, err.Error(), "nothing was appended")
 			require.Len(t, engine.checks, 1)
 			assert.Equal(t, tc.mutation, engine.checks[0].op)

@@ -653,7 +653,7 @@ func TestPostgresTreeStore_ARootUndoThatWaitedOnTheLockStampsAfterIt(t *testing.
 	assert.True(t, removed.Equal(updated), "the root removed_at %s, updated_at %s", removed, updated)
 }
 
-// chunkFailureCases places one bad entry in a middle chunk and one in a short last chunk, for five entries in chunks of two.
+// chunkFailureCases names where a bad entry sits and the range a chunk error must report for it.
 var chunkFailureCases = []struct {
 	name  string
 	bad   int
@@ -688,7 +688,7 @@ func TestPostgresTreeStore_ATombstoneChunkErrorNamesItsRows(t *testing.T) {
 			require.ErrorContains(t, err, "tombstone removed users in tree "+tree+", "+tc.where+": ")
 			var pgErr *pgconn.PgError
 			require.ErrorAs(t, err, &pgErr, "the driver error is still reachable")
-			assert.Equal(t, "22P02", pgErr.Code, "the reported chunk's own error, not a later statement's")
+			assert.Equal(t, "22P02", pgErr.Code, "expected SQLSTATE 22P02")
 			assert.Equal(t, before, readProjectionState(t, store, tree, active...))
 		})
 	}
@@ -723,7 +723,7 @@ func TestPostgresTreeStore_AReSponsorChunkErrorNamesItsRows(t *testing.T) {
 			require.ErrorContains(t, err, "re-sponsor recruits in tree "+tree+", "+tc.where+": ")
 			var pgErr *pgconn.PgError
 			require.ErrorAs(t, err, &pgErr)
-			assert.Equal(t, "22P02", pgErr.Code, "the reported chunk's own error, not a later statement's")
+			assert.Equal(t, "22P02", pgErr.Code, "expected SQLSTATE 22P02")
 			assert.Equal(t, before, readProjectionState(t, store, tree, watched...))
 		})
 	}

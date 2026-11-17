@@ -591,11 +591,8 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 		mutation, code string
 		setup          func(*testing.T, *writerEnv)
 		run            func(*TreeWriter) (WriteResult, error)
-		// message is the engine's answer. A scripted row gives code with this
-		// message through checkErr, for a payload the engine accepts, and
-		// tests pass-through only.
-		message  string
-		scripted bool
+		message        string
+		scripted       bool
 	}{
 		{"add_root", "ROOT_ALREADY_EXISTS", rooted(treeTypeUnilevel), addOtherRoot, "scripted refusal", true},
 		{"add_root", "USER_ALREADY_EXISTS", rooted(treeTypeUnilevel), addOtherRoot, "scripted refusal", true},

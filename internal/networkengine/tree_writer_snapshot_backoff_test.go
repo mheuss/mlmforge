@@ -384,7 +384,7 @@ func TestTreeWriterSnapshotBackoff_ASnapshotEveryLoadDiscardsIsRetakenOncePerTho
 	env := backoffEnv(t)
 	refusingRestores := func() *fakeWriterEngine {
 		e := newFakeWriterEngine()
-		e.restoreErr = fakeEngineError("INCONSISTENT_SNAPSHOT", "refused by the test")
+		e.restoreErr = fakeHandlerPanic()
 		return e
 	}
 
@@ -435,7 +435,7 @@ func TestTreeWriterSnapshotBackoff_AOneOffDiscardWarnsOnEachSkippedWrite(t *test
 	env := backoffEnv(t)
 	refusingRestore := func() *fakeWriterEngine {
 		e := newFakeWriterEngine()
-		e.restoreErr = fakeEngineError("INCONSISTENT_SNAPSHOT", "refused by the test")
+		e.restoreErr = fakeHandlerPanic()
 		return e
 	}
 

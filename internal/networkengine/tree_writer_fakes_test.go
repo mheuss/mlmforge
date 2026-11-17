@@ -714,7 +714,8 @@ func (f *fakeWriterEngine) RestoreSnapshot(_ context.Context, structure, treeTyp
 		return f.restoreErr
 	}
 	if _, ok := f.trees[structure]; ok {
-		return fakeEngineError(engineCodeTreeExists, "structure '%s' already exists", structure)
+		return fakeEngineError(engineCodeTreeExists,
+			"structure '%s' already exists; drop it with drop_structure before restoring", structure)
 	}
 	var snap fakeSnapshot
 	if err := json.Unmarshal(data, &snap); err != nil {
@@ -734,6 +735,9 @@ func (f *fakeWriterEngine) RestoreSnapshot(_ context.Context, structure, treeTyp
 	if snap.Nodes == nil {
 		snap.Nodes = map[string]EnginePosition{}
 	}
+	if err := checkRestored(snap); err != nil {
+		return err
+	}
 	f.trees[structure] = &fakeEngineTree{treeType: treeType, width: snap.Width, root: snap.Root, nodes: snap.Nodes}
 	return nil
 }
@@ -750,6 +754,30 @@ func (f *fakeWriterEngine) DropStructure(_ context.Context, structure string) (b
 	_, ok := f.trees[structure]
 	delete(f.trees, structure)
 	return ok, nil
+}
+
+// checkRestored refuses a snapshot whose root, parent or sponsor names a node
+// it does not hold.
+func checkRestored(snap fakeSnapshot) error {
+	if _, ok := snap.Nodes[snap.Root]; snap.Root != "" && !ok {
+		return fakeEngineError("INCONSISTENT_SNAPSHOT", "root names %s; the snapshot holds no such node", snap.Root)
+	}
+	for _, id := range slices.Sorted(maps.Keys(snap.Nodes)) {
+		node := snap.Nodes[id]
+		for _, edge := range []struct {
+			field string
+			ref   *string
+		}{{"parent", node.ParentUserID}, {"sponsor", node.SponsorUserID}} {
+			if edge.ref == nil {
+				continue
+			}
+			if _, ok := snap.Nodes[*edge.ref]; !ok {
+				return fakeEngineError("INCONSISTENT_SNAPSHOT", "%s on node %s names %s; the snapshot holds no such node",
+					edge.field, id, *edge.ref)
+			}
+		}
+	}
+	return nil
 }
 
 func TestFakeWriterEngine_RestoresWhatItSnapshotted(t *testing.T) {
@@ -856,7 +884,8 @@ func TestFakeWriterEngine_RefusesAMatrixSnapshotWithoutAUsableWidth(t *testing.T
 
 		err := engine.RestoreSnapshot(ctx, writerTree, treeTypeMatrix, json.RawMessage(`{"root":"","nodes":{}}`))
 
-		requireEngineRefusal(t, err, engineCodeTreeExists, "structure '"+writerTree+"' already exists")
+		requireEngineRefusal(t, err, engineCodeTreeExists,
+			"structure '"+writerTree+"' already exists; drop it with drop_structure before restoring")
 	})
 }
 

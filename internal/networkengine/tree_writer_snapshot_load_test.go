@@ -214,15 +214,22 @@ func TestTreeWriterSnapshotLoad_RecoversFromAnEngineRefusalMidReplay(t *testing.
 func TestTreeWriterSnapshotLoad_RecoversFromARefusedRestore(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
-	seedSnapshot(t, env, 1)
+	snap := takeTreeSnapshot(t, env, 1)
+	var held fakeSnapshot
+	require.NoError(t, json.Unmarshal(snap.Data, &held))
+	held.Root = writerAbsentSponsor
+	data, err := json.Marshal(held)
+	require.NoError(t, err)
+	snap.Data = data
+	requireStored(t, context.Background(), env.snapshots, snap)
 	w, engine := env.writer()
-	engine.restoreErr = fakeEngineError("INCONSISTENT_SNAPSHOT", "refused by the test")
 
 	res, err := w.Load(context.Background(), loadRequest())
 
 	require.NoError(t, err)
 	assert.Equal(t, 1, countCalls(engine, "drop_structure"))
-	assert.Len(t, res.Warnings, 1)
+	require.Len(t, res.Warnings, 1)
+	assert.Contains(t, res.Warnings[0], "INCONSISTENT_SNAPSHOT")
 	assert.False(t, snapshotStored(t, env))
 }
 

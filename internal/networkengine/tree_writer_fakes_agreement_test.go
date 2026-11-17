@@ -161,6 +161,12 @@ func agreementCases() []agreementCase {
 			agreementWithChild(treeTypeBinary), writerChild, writerRoot, writerRoot, -1),
 		addNodeAtCase("add_node_at on an empty binary tree", "INVALID_PARAMS",
 			agreementTree(treeTypeBinary), writerOther, writerRoot, writerRoot, 0),
+		addNodeAtCase("matrix add_node_at at a held slot sponsored by a leaf", "POSITION_OCCUPIED",
+			agreementWithChild(treeTypeMatrix), writerOther, writerRoot, writerChild, 0),
+		addNodeAtCase("matrix add_node_at beyond the width sponsored by a leaf", "INVALID_POSITION",
+			agreementWithChild(treeTypeMatrix), writerOther, writerRoot, writerChild, 4),
+		addNodeCase("binary add_node of a held user at position 3", "INVALID_POSITION",
+			agreementWithChild(treeTypeBinary), writerChild, writerRoot, writerRoot, WithPosition(3)),
 	}
 }
 

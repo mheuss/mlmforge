@@ -770,8 +770,39 @@ func TestFakeWriterEngine_RestoresWhatItSnapshotted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), pos.EnrolledAt)
 	assert.True(t, isEngineCode(engine.AddRoot(ctx, writerTree, writerOther, 2), engineCodeRootAlreadyExists))
+	assert.True(t, isEngineCode(engine.CheckMutation(ctx, writerTree,
+		CheckAddNodeAt(writerOther, writerRoot, writerRoot, 0, 2)), "INVALID_PARAMS"), "the restored tree is not unilevel")
 	err = engine.RestoreSnapshot(ctx, writerTree, taken.TreeType, taken.Data)
 	assert.True(t, isEngineCode(err, engineCodeTreeExists))
+}
+
+func TestFakeWriterEngine_AcceptsAFreeSlotBesideAHeldOne(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		treeType string
+		place    func(*fakeWriterEngine) error
+		check    Mutation
+	}{
+		"matrix": {treeTypeMatrix,
+			func(e *fakeWriterEngine) error {
+				return e.AddNodeAt(ctx, writerTree, writerOther, writerRoot, writerRoot, 1, 3)
+			},
+			CheckAddNodeAt(writerOther, writerRoot, writerRoot, 1, 3)},
+		"binary": {treeTypeBinary,
+			func(e *fakeWriterEngine) error {
+				return e.AddNode(ctx, writerTree, writerOther, writerRoot, writerRoot, 3, WithPosition(1))
+			},
+			CheckAddNode(writerOther, writerRoot, writerRoot, 3, WithPosition(1))},
+	} {
+		t.Run(name, func(t *testing.T) {
+			engine := newFakeWriterEngine()
+			agreementWithChild(tc.treeType)(t, engine)
+
+			require.NoError(t, engine.CheckMutation(ctx, writerTree, tc.check))
+			require.NoError(t, tc.place(engine))
+			assert.Equal(t, 1, engine.trees[writerTree].nodes[writerOther].Position)
+		})
+	}
 }
 
 func TestFakeWriterEngine_RestoresAMatrixWithItsWidth(t *testing.T) {
@@ -813,6 +844,20 @@ func TestFakeWriterEngine_RefusesAMatrixSnapshotWithoutAUsableWidth(t *testing.T
 			assert.NotContains(t, engine.trees, writerTree)
 		})
 	}
+	t.Run("width 2", func(t *testing.T) {
+		engine := newFakeWriterEngine()
+
+		require.NoError(t, engine.RestoreSnapshot(ctx, writerTree, treeTypeMatrix,
+			json.RawMessage(`{"width":2,"root":"","nodes":{}}`)))
+	})
+	t.Run("no width, onto a held structure", func(t *testing.T) {
+		engine := newFakeWriterEngine()
+		require.NoError(t, engine.CreateMatrixTree(ctx, writerTree, 3, "breadth_first"))
+
+		err := engine.RestoreSnapshot(ctx, writerTree, treeTypeMatrix, json.RawMessage(`{"root":"","nodes":{}}`))
+
+		requireEngineRefusal(t, err, engineCodeTreeExists, "structure '"+writerTree+"' already exists")
+	})
 }
 
 func TestFakeWriterEngine_CreatesAMatrixOnlyWithAWidth(t *testing.T) {
@@ -829,6 +874,14 @@ func TestFakeWriterEngine_CreatesAMatrixOnlyWithAWidth(t *testing.T) {
 	require.Equal(t, "MISSING_PARAM", engineCodeOf(workerErr), "the worker's answer")
 	assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(fakeErr))
 	assert.NotContains(t, fake.trees, writerTree)
+
+	require.NoError(t, client.CreateMatrixTree(ctx, writerTree, 3, "breadth_first"))
+	require.NoError(t, fake.CreateMatrixTree(ctx, writerTree, 3, "breadth_first"))
+	workerErr = client.CreateTree(ctx, writerTree, treeTypeMatrix)
+	fakeErr = fake.CreateTree(ctx, writerTree, treeTypeMatrix)
+
+	require.Equal(t, engineCodeTreeExists, engineCodeOf(workerErr), "the worker's answer for a held structure")
+	assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(fakeErr), "a held structure")
 }
 
 func TestFakeWriterEngine_RefusesAMatrixRemovalCheckWithNoMode(t *testing.T) {

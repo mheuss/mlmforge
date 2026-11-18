@@ -70,6 +70,14 @@ type fakeEngineTree struct {
 	nodes    map[string]EnginePosition
 	// sponsored lists each sponsor's recruits in the order they were attached.
 	sponsored map[string][]string
+	// tank lists the matrix users a holding_tank removal took out, in the
+	// order they went in.
+	tank []HoldingTankEntryDTO
+}
+
+// tanked reports whether userID waits in the holding tank.
+func (t *fakeEngineTree) tanked(userID string) bool {
+	return slices.ContainsFunc(t.tank, func(e HoldingTankEntryDTO) bool { return e.UserID == userID })
 }
 
 // checkRoot refuses a root this tree cannot take.
@@ -105,6 +113,9 @@ func (t *fakeEngineTree) checkPlacement(op, userID, parentID, sponsorID string, 
 	}
 	if _, ok := t.nodes[userID]; ok {
 		return fakeEngineError(engineCodeUserAlreadyExists, "user %s already exists in tree", userID)
+	}
+	if t.tanked(userID) {
+		return fakeEngineError("USER_IN_HOLDING_TANK", "user %s is in the holding tank", userID)
 	}
 	if _, ok := t.nodes[parentID]; !ok {
 		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", parentID)
@@ -339,8 +350,9 @@ func (f *fakeWriterEngine) RemoveNode(_ context.Context, structure, userID strin
 	return moved, nil
 }
 
-// RemoveMatrixNode removes a leaf. It refuses a node with children rather than
-// modelling promotion or the holding tank.
+// RemoveMatrixNode removes a leaf, and in holding_tank mode puts it in the
+// holding tank. It refuses a node with children rather than modelling
+// promotion or a subtree going to the tank.
 func (f *fakeWriterEngine) RemoveMatrixNode(_ context.Context, structure, userID string, mode PruningMode) (*MatrixRemovalResult, error) {
 	t, err := f.tree(structure)
 	if err != nil {
@@ -348,6 +360,15 @@ func (f *fakeWriterEngine) RemoveMatrixNode(_ context.Context, structure, userID
 	}
 	if err := t.checkMatrixRemoval(userID); err != nil {
 		return nil, err
+	}
+	if mode == PruningHoldingTank {
+		removed := t.nodes[userID]
+		entry := HoldingTankEntryDTO{UserID: userID, EnrolledAt: removed.EnrolledAt}
+		if removed.SponsorUserID != nil {
+			sponsor := *removed.SponsorUserID
+			entry.SponsorUserID = &sponsor
+		}
+		t.tank = append(t.tank, entry)
 	}
 	moved := t.moveRecruits(userID)
 	delete(t.nodes, userID)

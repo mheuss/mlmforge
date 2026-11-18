@@ -1224,7 +1224,7 @@ return w.buildFromStream(ctx, tree, shape, projected, rows)
 ### UC-NET-034: Projecting a removal that moves other nodes
 
 **Added:** Unreleased (HEU-582)
-**Files:** `internal/networkengine/tree_store.go`, `internal/networkengine/tree_store_postgres.go`, `internal/networkengine/tree_engine_calls.go`
+**Files:** `internal/networkengine/tree_store.go`, `internal/networkengine/tree_store_postgres.go`, `internal/networkengine/tree_engine_calls.go`, `internal/networkengine/tree_consumer.go`
 
 **Problem:** A removal can tombstone more than one user and move survivors. The store has to follow all of it or none of it.
 
@@ -1248,6 +1248,7 @@ return store.ProjectRemoval(ctx, treeID, projection, eventID, eventVersion)
 - A promote_earliest removal removes only `userID`. Pass `[]string{userID}` as `Users`.
 - An empty `Users` is refused.
 - A relocation that changes parent or slot must target a slot that is free once the removed rows are tombstoned, and that no other relocation vacates. A depth-only relocation keeps its own slot.
+- Each step runs as statements of at most a fixed number of rows, inside the one transaction. The consumer gives a removal a deadline that grows with the rows it writes.
 
 ### UC-NET-035: Exact decimal values for volume and money
 

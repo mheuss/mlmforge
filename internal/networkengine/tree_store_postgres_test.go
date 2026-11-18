@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -650,4 +651,163 @@ func TestPostgresTreeStore_ARootUndoThatWaitedOnTheLockStampsAfterIt(t *testing.
 	require.NotNil(t, removed, "the root's removed_at is NULL after the undo")
 	assert.False(t, removed.Before(held), "the root removed at %s, before %s, read after a lock waiter was seen", removed, held)
 	assert.True(t, removed.Equal(updated), "the root removed_at %s, updated_at %s", removed, updated)
+}
+
+// chunkFailureCases names where a bad entry sits and the range a chunk error must report for it.
+var chunkFailureCases = []struct {
+	name  string
+	bad   int
+	where string
+}{
+	{"a middle chunk", 2, "rows 3-4 of 5"},
+	{"a short last chunk", 4, "rows 5-5 of 5"},
+}
+
+func TestPostgresTreeStore_ATombstoneChunkErrorNamesItsRows(t *testing.T) {
+	for _, tc := range chunkFailureCases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newTestPostgresTreeStore(t)
+			store.removalChunk = 2
+			ctx := context.Background()
+			tree, root := testTreeUUID(10421), testUserUUID(1)
+			require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+			var active, users []string
+			for i := range 4 {
+				u := testUserUUID(2 + i)
+				active = append(active, u)
+				require.NoError(t, store.ProjectInsert(ctx,
+					makeUUIDNode(testNodeUUID(2+i), tree, u, 1, ptr(root), ptr(root), intPtr(i)), int64(2+i)))
+			}
+			users = append(users, active[:tc.bad]...)
+			users = append(users, notAUUID)
+			users = append(users, active[tc.bad:]...)
+			before := readProjectionState(t, store, tree, active...)
+
+			err := store.ProjectRemoval(ctx, tree, RemovalProjection{Users: users}, testNodeUUID(9), 6)
+
+			require.ErrorContains(t, err, "tombstone removed users in tree "+tree+", "+tc.where+": ")
+			var pgErr *pgconn.PgError
+			require.ErrorAs(t, err, &pgErr, "the driver error is still reachable")
+			assert.Equal(t, "22P02", pgErr.Code, "expected SQLSTATE 22P02")
+			assert.Equal(t, before, readProjectionState(t, store, tree, active...))
+		})
+	}
+}
+
+func TestPostgresTreeStore_AReSponsorChunkErrorNamesItsRows(t *testing.T) {
+	for _, tc := range chunkFailureCases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newTestPostgresTreeStore(t)
+			store.removalChunk = 2
+			ctx := context.Background()
+			tree, root, child := testTreeUUID(10422), testUserUUID(1), testUserUUID(2)
+			require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+			require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, child, 1, ptr(root), ptr(root), intPtr(0)), 2))
+			watched := []string{root, child}
+			var moved []Responsored
+			for i := range 5 {
+				u := testUserUUID(3 + i)
+				watched = append(watched, u)
+				require.NoError(t, store.ProjectInsert(ctx,
+					makeUUIDNode(testNodeUUID(3+i), tree, u, 1, ptr(root), ptr(child), intPtr(1+i)), int64(3+i)))
+				sponsor := root
+				if i == tc.bad {
+					sponsor = notAUUID
+				}
+				moved = append(moved, Responsored{UserID: u, NewSponsorID: sponsor})
+			}
+			before := readProjectionState(t, store, tree, watched...)
+
+			err := store.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{child}, Responsored: moved}, testNodeUUID(9), 8)
+
+			require.ErrorContains(t, err, "re-sponsor recruits in tree "+tree+", "+tc.where+": ")
+			var pgErr *pgconn.PgError
+			require.ErrorAs(t, err, &pgErr)
+			assert.Equal(t, "22P02", pgErr.Code, "expected SQLSTATE 22P02")
+			assert.Equal(t, before, readProjectionState(t, store, tree, watched...))
+		})
+	}
+}
+
+func TestPostgresTreeStore_ARelocationChunkConflictNamesItsRows(t *testing.T) {
+	for _, tc := range chunkFailureCases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newTestPostgresTreeStore(t)
+			store.removalChunk = 2
+			ctx := context.Background()
+			tree, root, holder, leaf := testTreeUUID(10423), testUserUUID(1), testUserUUID(2), testUserUUID(3)
+			require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+			watched := []string{root, holder, leaf}
+			var survivors []string
+			var moves []Relocation
+			for i := range 5 {
+				u := testUserUUID(4 + i)
+				survivors = append(survivors, u)
+				watched = append(watched, u)
+				require.NoError(t, store.ProjectInsert(ctx,
+					makeUUIDNode(testNodeUUID(4+i), tree, u, 1, ptr(root), ptr(root), intPtr(i)), int64(2+i)))
+				slot := i
+				if i == tc.bad {
+					slot = 5
+				}
+				moves = append(moves, Relocation{UserID: u, ParentID: root, Position: slot, Depth: 1})
+			}
+			require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(2), tree, holder, 1, ptr(root), ptr(root), intPtr(5)), 7))
+			require.NoError(t, store.ProjectInsert(ctx,
+				makeUUIDNode(testNodeUUID(3), tree, leaf, 2, ptr(survivors[0]), ptr(survivors[0]), intPtr(0)), 8))
+			before := readProjectionState(t, store, tree, watched...)
+
+			err := store.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{leaf}, Relocated: moves}, testNodeUUID(9), 9)
+
+			require.ErrorContains(t, err, "relocate survivors in tree "+tree+", "+tc.where+": ")
+			assert.ErrorIs(t, err, ErrSlotConflict)
+			var pgErr *pgconn.PgError
+			require.ErrorAs(t, err, &pgErr)
+			assert.Equal(t, "23505", pgErr.Code, "expected SQLSTATE 23505")
+			assert.Equal(t, before, readProjectionState(t, store, tree, watched...))
+		})
+	}
+}
+
+func TestPostgresTreeStore_ARelocationChunkErrorNamesItsRows(t *testing.T) {
+	for _, tc := range chunkFailureCases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newTestPostgresTreeStore(t)
+			store.removalChunk = 2
+			ctx := context.Background()
+			tree, root, leaf := testTreeUUID(10424), testUserUUID(1), testUserUUID(3)
+			require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+			watched := []string{root, leaf}
+			var survivors []string
+			var moves []Relocation
+			for i := range 5 {
+				u := testUserUUID(4 + i)
+				survivors = append(survivors, u)
+				watched = append(watched, u)
+				require.NoError(t, store.ProjectInsert(ctx,
+					makeUUIDNode(testNodeUUID(4+i), tree, u, 1, ptr(root), ptr(root), intPtr(i)), int64(2+i)))
+				parent := root
+				if i == tc.bad {
+					parent = notAUUID
+				}
+				moves = append(moves, Relocation{UserID: u, ParentID: parent, Position: i, Depth: 1})
+			}
+			require.NoError(t, store.ProjectInsert(ctx,
+				makeUUIDNode(testNodeUUID(3), tree, leaf, 2, ptr(survivors[0]), ptr(survivors[0]), intPtr(0)), 7))
+			before := readProjectionState(t, store, tree, watched...)
+
+			err := store.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{leaf}, Relocated: moves}, testNodeUUID(9), 8)
+
+			require.ErrorContains(t, err, "relocate survivors in tree "+tree+", "+tc.where+": ")
+			assert.NotErrorIs(t, err, ErrSlotConflict)
+			var pgErr *pgconn.PgError
+			require.ErrorAs(t, err, &pgErr)
+			assert.Equal(t, "22P02", pgErr.Code, "expected SQLSTATE 22P02")
+			assert.Equal(t, before, readProjectionState(t, store, tree, watched...))
+		})
+	}
+}
+
+func TestPostgresTreeStore_DefaultsToRemovalChunksOf25000Rows(t *testing.T) {
+	assert.Equal(t, 25_000, NewPostgresTreeStore(nil).chunk())
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"slices"
 	"testing"
 	"time"
 
@@ -454,4 +455,100 @@ func TestTreeWriter_RefusesToPlaceAUserInTheHoldingTank(t *testing.T) {
 	taken, err := loaded.TakeSnapshot(ctx, tree)
 	require.NoError(t, err)
 	assert.NoError(t, it.engine(t).RestoreSnapshot(ctx, tree, taken.TreeType, taken.Data))
+}
+
+func TestTreeConsumer_SeededMatrixRemovalsKeepEveryRowOnTheEngineInSmallChunks(t *testing.T) {
+	for _, chunk := range []int{1, 2} {
+		t.Run(fmt.Sprintf("chunk %d", chunk), func(t *testing.T) {
+			store := newTestPostgresTreeStore(t)
+			store.removalChunk = chunk
+			engine, err := NewEngineClient(context.Background(), findWorkerBinary(t))
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = engine.Stop() })
+			for seed := uint64(1); seed <= 100; seed++ {
+				t.Run(fmt.Sprintf("seed %d", seed), func(t *testing.T) {
+					runSeededMatrixRemoval(t, store, engine, seed)
+				})
+			}
+		})
+	}
+}
+
+func TestPostgresTreeStore_AReversedRelocationInChunksOfOneMatchesTheEngine(t *testing.T) {
+	es, store, engine, pool := newIntegrationDeps(t)
+	store.removalChunk = 1
+	ctx := context.Background()
+	m := matrixShape{width: 2}
+	tree := generateMatrixTree(t, es, engine, pool, m, 255)
+	call, err := nodeRemovedCall(NodeRemovedPayload{TreeID: tree.id, UserID: measureUser(1), PruningMode: PruningPromoteEarliest}, treeTypeMatrix)
+	require.NoError(t, err)
+	outcome, err := call.apply(ctx, engine)
+	require.NoError(t, err)
+	slotChanges := 0
+	for _, r := range outcome.relocated {
+		row, err := store.GetNode(ctx, tree.id, r.UserID)
+		require.NoError(t, err)
+		require.NotNil(t, row, "no active row for relocated user %s", r.UserID)
+		if row.ParentID == nil || *row.ParentID != r.ParentID || row.Position == nil || *row.Position != r.Position {
+			slotChanges++
+		}
+	}
+	require.GreaterOrEqual(t, slotChanges, 2, "relocations that change parent or position, of %d relocated", len(outcome.relocated))
+	reversed := slices.Clone(outcome.relocated)
+	slices.Reverse(reversed)
+
+	require.NoError(t, store.ProjectRemoval(ctx, tree.id,
+		RemovalProjection{Users: outcome.removed, Responsored: outcome.responsored, Relocated: reversed},
+		nextEventUUID(), tree.version+1))
+
+	requireRowsMatchEngine(t, store, engine, tree.id)
+}
+
+func TestTreeConsumer_AUnilevelRemovalReSponsorsInChunksOfOne(t *testing.T) {
+	store := newTestPostgresTreeStore(t)
+	store.removalChunk = 1
+	ctx := context.Background()
+	engine, err := NewEngineClient(ctx, findWorkerBinary(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Stop() })
+	tree, root, x := testTreeUUID(10427), testUserUUID(1), testUserUUID(2)
+	require.NoError(t, engine.CreateTree(ctx, tree, treeTypeUnilevel))
+	consumer := NewTreeEventConsumer(store, engine)
+	version := int64(0)
+	handle := func(eventType string, payload any) {
+		version++
+		require.NoError(t, deliver(ctx, consumer, versionedEvent(t, tree, version, eventType, payload)), "event at version %d", version)
+	}
+	handle(EventTypeRootAdded, RootAddedPayload{TreeID: tree, UserID: root, SponsorID: root, EnrolledAt: writeTime, TreeType: treeTypeUnilevel})
+	handle(EventTypeNodePlaced, NodePlacedPayload{TreeID: tree, UserID: x, ParentID: root, SponsorID: root,
+		TreeType: treeTypeUnilevel, EnrolledAt: writeTime})
+	for i := range 5 {
+		handle(EventTypeNodePlaced, NodePlacedPayload{TreeID: tree, UserID: testUserUUID(3 + i), ParentID: root, SponsorID: x,
+			TreeType: treeTypeUnilevel, EnrolledAt: writeTime.Add(time.Duration(i+1) * time.Minute)})
+	}
+
+	handle(EventTypeNodeRemoved, NodeRemovedPayload{TreeID: tree, UserID: x, RemovedAt: writeTime, TreeType: treeTypeUnilevel})
+
+	rows, err := store.GetByTree(ctx, tree)
+	require.NoError(t, err)
+	require.Len(t, rows, 6, "active rows after removing %s", x)
+	for _, row := range rows {
+		pos, err := engine.GetPosition(ctx, tree, row.UserID)
+		require.NoError(t, err, "engine position of %s", row.UserID)
+		assert.True(t, samePtrUUID(pos.ParentUserID, row.ParentID),
+			"parent of %s: engine %s, row %s", row.UserID, orNone(pos.ParentUserID), orNone(row.ParentID))
+		assert.Equal(t, int(pos.Depth), row.Depth, "depth of %s", row.UserID)
+		if row.ParentID == nil {
+			continue
+		}
+		assert.True(t, samePtrUUID(pos.SponsorUserID, row.SponsorID),
+			"sponsor of %s: engine %s, row %s", row.UserID, orNone(pos.SponsorUserID), orNone(row.SponsorID))
+	}
+	for i := range 5 {
+		row, err := store.GetNode(ctx, tree, testUserUUID(3+i))
+		require.NoError(t, err)
+		require.NotNil(t, row)
+		require.NotNil(t, row.SponsorID)
+		assert.Equal(t, root, *row.SponsorID, "recruit %d's sponsor", i)
+	}
 }

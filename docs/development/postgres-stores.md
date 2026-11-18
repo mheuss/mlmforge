@@ -279,6 +279,22 @@ point, it gives the pair something to reference. Since `id` is the PK, exactly
 one row has that id, so requiring the pair to exist forces its `period_id` to
 match the referencing row's.
 
+## Chunking a set-based UPDATE breaks its duplicate check
+
+One `UPDATE ... FROM unnest` updates a row once, however often the list names
+it. So a duplicate makes the row count fall short, and the write fails.
+
+Split the list into chunks and the check is gone. A duplicate in two chunks
+updates the row once in each. The summed counts then match the list length.
+
+Count the distinct ids the statements return with `RETURNING` instead. A
+duplicate then leaves the distinct set one short, wherever its entries land.
+
+Found on HEU-1042, 2026-11-17. At a chunk size of 1, a list naming one user twice
+puts each entry in its own chunk. Each chunk updates the row. The summed counts
+make 2 against a length of 2. The distinct `RETURNING` set holds 1. Put a case
+with the duplicate on either side of a chunk boundary in the shared suite.
+
 ## Sampling live-heap peak measures GC pacing, not your code
 
 Polling `/memory/classes/heap/objects:bytes` during an operation, even against
@@ -294,6 +310,22 @@ To measure what an operation actually holds, suppress pacing for the duration
 inflates it several-fold — so time and live heap cannot be measured in one
 pass. For allocation *volume*, `runtime.MemStats.TotalAlloc` is deterministic
 and needs no sampling.
+
+## Give both arms of a timing comparison the same warm-up
+
+A statement that runs before a timed call warms the pages it touches. If only
+one arm of a comparison runs it, that arm starts with a warmer cache.
+
+Measured on HEU-1042, 2026-11-17, on a 600,000-node matrix:
+
+- An EXPLAIN replay over every relocated row ran before the unsplit arm only.
+  Chunked relocation then measured 18% slower.
+- With both arms replaying the same first 25,000 rows, every chunked sample beat
+  every unsplit sample.
+
+To separate cache state from the cost under test, time each pass in a
+rolled-back transaction. Run `VACUUM` before each pass, and run the sizes twice
+in mirrored order.
 
 ## TEXT cannot store a NUL byte
 

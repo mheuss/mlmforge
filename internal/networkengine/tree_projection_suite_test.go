@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -310,6 +311,26 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		require.NotNil(t, got.rows[recruit])
 		require.NotNil(t, got.rows[recruit].SponsorID)
 		assert.Equal(t, root, *got.rows[recruit].SponsorID)
+	})
+
+	t.Run("a removal naming one re-sponsored recruit twice fails and writes nothing", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		require.NoError(t, s.ProjectInsert(ctx, recruitRow, 3))
+		require.NoError(t, s.ProjectInsert(ctx, grandRow, 4))
+		before := readProjectionState(t, s, tree, root, child, recruit, grand)
+
+		err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{grand}, Responsored: []Responsored{
+			{UserID: recruit, NewSponsorID: root},
+			{UserID: recruit, NewSponsorID: child},
+		}}, testNodeUUID(9), 5)
+
+		require.ErrorContains(t, err, "re-sponsoring 2 recruits in tree "+tree+" updated 1 active rows")
+		var mismatch *RemovalMismatchError
+		assert.False(t, errors.As(err, &mismatch), "a duplicate re-sponsor is not a tombstone mismatch")
+		assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit, grand))
 	})
 
 	t.Run("a removal above the version that fails part way writes nothing", func(t *testing.T) {
@@ -969,6 +990,20 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 			"one removal's tombstones carry one removed_at: %s and %s", got.rows[child].RemovedAt, got.rows[grand].RemovedAt)
 	})
 
+	t.Run("a removal whose last removed user has no active row reports what it matched", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		require.NoError(t, s.ProjectInsert(ctx, grandRow, 3))
+		before := readProjectionState(t, s, tree, root, child, grand)
+
+		err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{grand, child, testUserUUID(7)}}, testNodeUUID(9), 4)
+
+		requireRemovalMismatch(t, err, 2)
+		assert.Equal(t, before, readProjectionState(t, s, tree, root, child, grand))
+	})
+
 	t.Run("a removal moves every relocated row", func(t *testing.T) {
 		s := newStore(t)
 		ctx := context.Background()
@@ -988,6 +1023,26 @@ func runTreeProjectionSuite(t *testing.T, newStore func(t *testing.T) TreeStore)
 		assert.Equal(t, root, *got.rows[grand].ParentID)
 		assert.Equal(t, 0, *got.rows[grand].Position)
 		assert.Equal(t, 1, got.rows[grand].Depth)
+	})
+
+	t.Run("a removal naming one relocated survivor twice fails and writes nothing", func(t *testing.T) {
+		s := newStore(t)
+		ctx := context.Background()
+		require.NoError(t, s.ProjectInsert(ctx, rootRow, 1))
+		require.NoError(t, s.ProjectInsert(ctx, childRow, 2))
+		require.NoError(t, s.ProjectInsert(ctx, recruitRow, 3))
+		require.NoError(t, s.ProjectInsert(ctx, grandRow, 4))
+		before := readProjectionState(t, s, tree, root, child, recruit, grand)
+
+		err := s.ProjectRemoval(ctx, tree, RemovalProjection{Users: []string{grand}, Relocated: []Relocation{
+			{UserID: child, ParentID: root, Position: 0, Depth: 1},
+			{UserID: child, ParentID: root, Position: 2, Depth: 1},
+		}}, testNodeUUID(9), 5)
+
+		require.ErrorContains(t, err, "relocating 2 survivors in tree "+tree+" updated 1 active rows")
+		var mismatch *RemovalMismatchError
+		assert.False(t, errors.As(err, &mismatch), "a duplicate relocation is not a tombstone mismatch")
+		assert.Equal(t, before, readProjectionState(t, s, tree, root, child, recruit, grand))
 	})
 
 	t.Run("a removal runs its tombstones, re-sponsors and relocations together", func(t *testing.T) {
@@ -1376,6 +1431,14 @@ func TestMemoryTreeStore_ProjectionSuite(t *testing.T) {
 func TestPostgresTreeStore_ProjectionSuite(t *testing.T) {
 	runTreeProjectionSuite(t, func(t *testing.T) TreeStore {
 		return newTestPostgresTreeStore(t)
+	})
+}
+
+func TestPostgresTreeStore_ProjectionSuiteInChunksOfOne(t *testing.T) {
+	runTreeProjectionSuite(t, func(t *testing.T) TreeStore {
+		s := newTestPostgresTreeStore(t)
+		s.removalChunk = 1
+		return s
 	})
 }
 

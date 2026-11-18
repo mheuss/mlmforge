@@ -50,8 +50,9 @@ type fakeWriterEngine struct {
 	failAddOnce map[string]error
 	// takeErr is what every TakeSnapshot returns.
 	takeErr error
-	// snapshotType replaces the tree type TakeSnapshot reports when set.
-	snapshotType string
+	// retypeBeforeTake, when set, makes TakeSnapshot drop the structure and
+	// create it again as this type before reading it.
+	retypeBeforeTake string
 	// restoreErr is what every RestoreSnapshot returns.
 	restoreErr error
 	// dropErr is what every DropStructure returns.
@@ -63,8 +64,100 @@ type fakeWriterEngine struct {
 
 type fakeEngineTree struct {
 	treeType string
+	width    int
 	root     string
 	nodes    map[string]EnginePosition
+}
+
+// checkRoot refuses a root this tree cannot take.
+func (t *fakeEngineTree) checkRoot(userID string) error {
+	if t.root != "" {
+		return fakeEngineError(engineCodeRootAlreadyExists, "tree already has a root node")
+	}
+	if _, ok := t.nodes[userID]; ok {
+		return fakeEngineError(engineCodeUserAlreadyExists, "user %s already exists in tree", userID)
+	}
+	return nil
+}
+
+// checkPlacement refuses a placement this tree cannot take.
+func (t *fakeEngineTree) checkPlacement(op, userID, parentID, sponsorID string, position int, hasPosition bool) error {
+	binary := op == "add_node" && t.treeType == treeTypeBinary
+	at := op == "add_node_at"
+	switch {
+	case at && position < 0:
+		return fakeEngineError("MISSING_PARAM", "missing position (required for add_node_at)")
+	case at && t.treeType != treeTypeMatrix:
+		return fakeEngineError("INVALID_PARAMS", "add_node_at is only supported for matrix trees")
+	case binary && (!hasPosition || position < 0):
+		return fakeEngineError("MISSING_PARAM", "missing position (required for binary)")
+	case at && t.root == "":
+		return fakeEngineError("TREE_EMPTY", "tree has no root node")
+	case at && position >= t.width:
+		return fakeEngineError("INVALID_POSITION", "position %d out of range for user %s (has %d children)",
+			position, parentID, t.width)
+	case binary && position > 1:
+		return fakeEngineError("INVALID_POSITION", "position %d out of range for user %s (has 2 children)",
+			position, parentID)
+	}
+	if _, ok := t.nodes[userID]; ok {
+		return fakeEngineError(engineCodeUserAlreadyExists, "user %s already exists in tree", userID)
+	}
+	if _, ok := t.nodes[parentID]; !ok {
+		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", parentID)
+	}
+	if _, ok := t.nodes[sponsorID]; !ok {
+		return fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", sponsorID)
+	}
+	if (binary || at) && t.slotTaken(parentID, position) {
+		return fakeEngineError("POSITION_OCCUPIED", "position %d already occupied for user %s", position, parentID)
+	}
+	return nil
+}
+
+func (t *fakeEngineTree) slotTaken(parentID string, position int) bool {
+	for _, node := range t.nodes {
+		if node.ParentUserID != nil && *node.ParentUserID == parentID && node.Position == position {
+			return true
+		}
+	}
+	return false
+}
+
+// checkRemoval refuses a unilevel or binary removal this tree cannot make.
+func (t *fakeEngineTree) checkRemoval(userID string) error {
+	if _, ok := t.nodes[userID]; !ok {
+		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
+	}
+	if n := t.childCount(userID); n > 0 {
+		return fakeEngineError("HAS_CHILDREN", "cannot remove user %s: has %d children (must remove children first)", userID, n)
+	}
+	return nil
+}
+
+// checkMatrixRemoval refuses a matrix removal of an absent user or of the root.
+func (t *fakeEngineTree) checkMatrixRemoval(userID string) error {
+	if _, ok := t.nodes[userID]; !ok {
+		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
+	}
+	if t.root == userID {
+		return fakeEngineError("CANNOT_REMOVE_ROOT", "cannot remove root node")
+	}
+	return nil
+}
+
+func fakeMissingPruningMode() error {
+	return fakeEngineError("MISSING_PARAM", `missing pruning_mode (must be "promote_earliest" or "holding_tank")`)
+}
+
+func (t *fakeEngineTree) childCount(userID string) int {
+	n := 0
+	for _, node := range t.nodes {
+		if node.ParentUserID != nil && *node.ParentUserID == userID {
+			n++
+		}
+	}
+	return n
 }
 
 var _ TreeRebuilder = (*fakeWriterEngine)(nil)
@@ -91,6 +184,9 @@ func (f *fakeWriterEngine) tree(structure string) (*fakeEngineTree, error) {
 
 func (f *fakeWriterEngine) CreateTree(_ context.Context, structure, treeType string) error {
 	f.calls = append(f.calls, "create_tree "+treeType)
+	if _, held := f.trees[structure]; !held && treeType == treeTypeMatrix {
+		return fakeEngineError("MISSING_PARAM", "missing or invalid width (must be integer >= 2)")
+	}
 	return f.createTree(structure, treeType)
 }
 
@@ -104,7 +200,11 @@ func (f *fakeWriterEngine) createTree(structure, treeType string) error {
 
 func (f *fakeWriterEngine) CreateMatrixTree(_ context.Context, structure string, width int, spillover string) error {
 	f.calls = append(f.calls, fmt.Sprintf("create_matrix_tree %d %s", width, spillover))
-	return f.createTree(structure, treeTypeMatrix)
+	if err := f.createTree(structure, treeTypeMatrix); err != nil {
+		return err
+	}
+	f.trees[structure].width = width
+	return nil
 }
 
 func (f *fakeWriterEngine) AddRoot(_ context.Context, structure, userID string, enrolledAt int64) error {
@@ -119,18 +219,15 @@ func (f *fakeWriterEngine) AddRoot(_ context.Context, structure, userID string, 
 	if err != nil {
 		return err
 	}
-	if t.root != "" {
-		return fakeEngineError(engineCodeRootAlreadyExists, "tree already has a root node")
-	}
-	if _, ok := t.nodes[userID]; ok {
-		return fakeEngineError(engineCodeUserAlreadyExists, "user %s already exists in tree", userID)
+	if err := t.checkRoot(userID); err != nil {
+		return err
 	}
 	t.root = userID
 	t.nodes[userID] = EnginePosition{UserID: userID, EnrolledAt: enrolledAt}
 	return nil
 }
 
-func (f *fakeWriterEngine) place(structure, userID, parentID, sponsorID string, position int, enrolledAt int64) error {
+func (f *fakeWriterEngine) place(op, structure, userID, parentID, sponsorID string, position int, hasPosition bool, enrolledAt int64) error {
 	if err, ok := f.failAddOnce[userID]; ok {
 		delete(f.failAddOnce, userID)
 		return err
@@ -142,20 +239,13 @@ func (f *fakeWriterEngine) place(structure, userID, parentID, sponsorID string, 
 	if err != nil {
 		return err
 	}
-	if _, ok := t.nodes[userID]; ok {
-		return fakeEngineError(engineCodeUserAlreadyExists, "user %s already exists in tree", userID)
-	}
-	parent, ok := t.nodes[parentID]
-	if !ok {
-		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", parentID)
-	}
-	if _, ok := t.nodes[sponsorID]; !ok {
-		return fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", sponsorID)
+	if err := t.checkPlacement(op, userID, parentID, sponsorID, position, hasPosition); err != nil {
+		return err
 	}
 	p, s := parentID, sponsorID
 	t.nodes[userID] = EnginePosition{
 		UserID: userID, ParentUserID: &p, SponsorUserID: &s,
-		Position: position, Depth: parent.Depth + 1, EnrolledAt: enrolledAt,
+		Position: position, Depth: t.nodes[parentID].Depth + 1, EnrolledAt: enrolledAt,
 	}
 	return nil
 }
@@ -165,14 +255,14 @@ func (f *fakeWriterEngine) AddNode(_ context.Context, structure, userID, parentI
 	for _, opt := range opts {
 		opt(params)
 	}
-	position, _ := params["position"].(int)
+	position, hasPosition := params["position"].(int)
 	f.placements = append(f.placements, CheckAddNode(userID, parentID, sponsorID, enrolledAt, opts...))
-	return f.place(structure, userID, parentID, sponsorID, position, enrolledAt)
+	return f.place("add_node", structure, userID, parentID, sponsorID, position, hasPosition, enrolledAt)
 }
 
 func (f *fakeWriterEngine) AddNodeAt(_ context.Context, structure, userID, parentID, sponsorID string, position int, enrolledAt int64) error {
 	f.placements = append(f.placements, CheckAddNodeAt(userID, parentID, sponsorID, position, enrolledAt))
-	return f.place(structure, userID, parentID, sponsorID, position, enrolledAt)
+	return f.place("add_node_at", structure, userID, parentID, sponsorID, position, true, enrolledAt)
 }
 
 func (f *fakeWriterEngine) RemoveNode(_ context.Context, structure, userID string) ([]Responsored, error) {
@@ -181,10 +271,10 @@ func (f *fakeWriterEngine) RemoveNode(_ context.Context, structure, userID strin
 		return nil, err
 	}
 	if t.treeType == treeTypeMatrix {
-		return nil, fakeEngineError("MISSING_PARAM", "a matrix remove_node needs pruning_mode")
+		return nil, fakeMissingPruningMode()
 	}
-	if _, ok := t.nodes[userID]; !ok {
-		return nil, fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
+	if err := t.checkRemoval(userID); err != nil {
+		return nil, err
 	}
 	delete(t.nodes, userID)
 	if t.root == userID {
@@ -200,11 +290,8 @@ func (f *fakeWriterEngine) RemoveMatrixNode(_ context.Context, structure, userID
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := t.nodes[userID]; !ok {
-		return nil, fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
-	}
-	if t.root == userID {
-		return nil, fakeEngineError("CANNOT_REMOVE_ROOT", "cannot remove root node")
+	if err := t.checkMatrixRemoval(userID); err != nil {
+		return nil, err
 	}
 	for _, n := range t.nodes {
 		if n.ParentUserID != nil && *n.ParentUserID == userID {
@@ -287,23 +374,29 @@ func (f *fakeWriterEngine) CheckMutation(_ context.Context, structure string, m 
 	if err != nil {
 		return err
 	}
-	if _, ok := m.params["pruning_mode"]; m.op == "remove_node" && t.treeType == treeTypeMatrix && !ok {
-		return fakeEngineError("MISSING_PARAM", "a matrix remove_node needs pruning_mode")
-	}
-	placement := m.op == "add_node" || m.op == "add_node_at"
-	if user, ok := m.params["user_id"].(string); ok && placement {
-		if _, held := t.nodes[user]; held {
-			return fakeEngineError(engineCodeUserAlreadyExists, "user %s already exists in tree", user)
+	user, _ := m.params["user_id"].(string)
+	switch m.op {
+	case "add_root":
+		if err := t.checkRoot(user); err != nil {
+			return err
 		}
-	}
-	if parent, ok := m.params["parent_id"].(string); ok {
-		if _, found := t.nodes[parent]; !found {
-			return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", parent)
+	case "add_node", "add_node_at":
+		parent, _ := m.params["parent_id"].(string)
+		sponsor, _ := m.params["sponsor_id"].(string)
+		position, hasPosition := m.params["position"].(int)
+		if err := t.checkPlacement(m.op, user, parent, sponsor, position, hasPosition); err != nil {
+			return err
 		}
-	}
-	if sponsor, ok := m.params["sponsor_id"].(string); ok && placement {
-		if _, found := t.nodes[sponsor]; !found {
-			return fakeEngineError("SPONSOR_NOT_FOUND", "sponsor %s not found in tree", sponsor)
+	case "remove_node":
+		if t.treeType == treeTypeMatrix {
+			if _, ok := m.params["pruning_mode"]; !ok {
+				return fakeMissingPruningMode()
+			}
+			if err := t.checkMatrixRemoval(user); err != nil {
+				return err
+			}
+		} else if err := t.checkRemoval(user); err != nil {
+			return err
 		}
 	}
 	return f.checkErr
@@ -605,28 +698,36 @@ func TestFakeWriterEngine_GetDownlineStopsAtTheDepthAsked(t *testing.T) {
 
 // fakeSnapshot is the fake engine's snapshot payload.
 type fakeSnapshot struct {
+	Width int                       `json:"width,omitempty"`
 	Root  string                    `json:"root"`
 	Nodes map[string]EnginePosition `json:"nodes"`
 }
 
-func (f *fakeWriterEngine) TakeSnapshot(_ context.Context, structure string) (*SnapshotResultDTO, error) {
+func (f *fakeWriterEngine) TakeSnapshot(ctx context.Context, structure string) (*SnapshotResultDTO, error) {
 	f.calls = append(f.calls, "take_snapshot")
 	if f.takeErr != nil {
 		return nil, f.takeErr
+	}
+	if _, held := f.trees[structure]; !held {
+		return nil, fakeEngineError("STRUCTURE_NOT_FOUND", "structure '%s' not found", structure)
+	}
+	if f.retypeBeforeTake != "" {
+		if _, err := f.DropStructure(ctx, structure); err != nil {
+			return nil, err
+		}
+		if err := f.CreateTree(ctx, structure, f.retypeBeforeTake); err != nil {
+			return nil, err
+		}
 	}
 	t, err := f.tree(structure)
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(fakeSnapshot{Root: t.root, Nodes: t.nodes})
+	data, err := json.Marshal(fakeSnapshot{Width: t.width, Root: t.root, Nodes: t.nodes})
 	if err != nil {
 		return nil, err
 	}
-	treeType := t.treeType
-	if f.snapshotType != "" {
-		treeType = f.snapshotType
-	}
-	return &SnapshotResultDTO{TreeType: treeType, Data: data}, nil
+	return &SnapshotResultDTO{TreeType: t.treeType, Data: data}, nil
 }
 
 func (f *fakeWriterEngine) RestoreSnapshot(_ context.Context, structure, treeType string, data json.RawMessage) error {
@@ -635,16 +736,31 @@ func (f *fakeWriterEngine) RestoreSnapshot(_ context.Context, structure, treeTyp
 		return f.restoreErr
 	}
 	if _, ok := f.trees[structure]; ok {
-		return fakeEngineError(engineCodeTreeExists, "structure '%s' already exists", structure)
+		return fakeEngineError(engineCodeTreeExists,
+			"structure '%s' already exists; drop it with drop_structure before restoring", structure)
 	}
 	var snap fakeSnapshot
 	if err := json.Unmarshal(data, &snap); err != nil {
 		return fakeEngineError("INVALID_PARAMS", "%s", err)
 	}
+	if treeType == treeTypeMatrix {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fields); err == nil {
+			if _, ok := fields["width"]; !ok {
+				return fakeEngineError("INVALID_PARAMS", "failed to deserialize matrix snapshot: missing field `width`")
+			}
+		}
+		if snap.Width < 2 {
+			return fakeEngineError("INCONSISTENT_SNAPSHOT", "the tree declares a width of %d; a matrix width is at least 2", snap.Width)
+		}
+	}
 	if snap.Nodes == nil {
 		snap.Nodes = map[string]EnginePosition{}
 	}
-	f.trees[structure] = &fakeEngineTree{treeType: treeType, root: snap.Root, nodes: snap.Nodes}
+	if err := checkRestored(snap); err != nil {
+		return err
+	}
+	f.trees[structure] = &fakeEngineTree{treeType: treeType, width: snap.Width, root: snap.Root, nodes: snap.Nodes}
 	return nil
 }
 
@@ -660,6 +776,25 @@ func (f *fakeWriterEngine) DropStructure(_ context.Context, structure string) (b
 	_, ok := f.trees[structure]
 	delete(f.trees, structure)
 	return ok, nil
+}
+
+// checkRestored refuses a snapshot whose root or parent names a node it does
+// not hold.
+func checkRestored(snap fakeSnapshot) error {
+	if _, ok := snap.Nodes[snap.Root]; snap.Root != "" && !ok {
+		return fakeEngineError("INCONSISTENT_SNAPSHOT", "root names %s; the snapshot holds no such node", snap.Root)
+	}
+	for _, id := range slices.Sorted(maps.Keys(snap.Nodes)) {
+		parent := snap.Nodes[id].ParentUserID
+		if parent == nil {
+			continue
+		}
+		if _, ok := snap.Nodes[*parent]; !ok {
+			return fakeEngineError("INCONSISTENT_SNAPSHOT", "parent on node %s names %s; the snapshot holds no such node",
+				id, *parent)
+		}
+	}
+	return nil
 }
 
 func TestFakeWriterEngine_RestoresWhatItSnapshotted(t *testing.T) {
@@ -680,8 +815,172 @@ func TestFakeWriterEngine_RestoresWhatItSnapshotted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), pos.EnrolledAt)
 	assert.True(t, isEngineCode(engine.AddRoot(ctx, writerTree, writerOther, 2), engineCodeRootAlreadyExists))
+	assert.True(t, isEngineCode(engine.CheckMutation(ctx, writerTree,
+		CheckAddNodeAt(writerOther, writerRoot, writerRoot, 0, 2)), "INVALID_PARAMS"),
+		"add_node_at on the restored tree was not refused with INVALID_PARAMS; the restored tree type is %q",
+		engine.trees[writerTree].treeType)
 	err = engine.RestoreSnapshot(ctx, writerTree, taken.TreeType, taken.Data)
 	assert.True(t, isEngineCode(err, engineCodeTreeExists))
+}
+
+func TestFakeWriterEngine_AcceptsAFreeSlotBesideAHeldOne(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		treeType string
+		place    func(*fakeWriterEngine) error
+		check    Mutation
+	}{
+		"matrix": {treeTypeMatrix,
+			func(e *fakeWriterEngine) error {
+				return e.AddNodeAt(ctx, writerTree, writerOther, writerRoot, writerRoot, 1, 3)
+			},
+			CheckAddNodeAt(writerOther, writerRoot, writerRoot, 1, 3)},
+		"binary": {treeTypeBinary,
+			func(e *fakeWriterEngine) error {
+				return e.AddNode(ctx, writerTree, writerOther, writerRoot, writerRoot, 3, WithPosition(1))
+			},
+			CheckAddNode(writerOther, writerRoot, writerRoot, 3, WithPosition(1))},
+	} {
+		t.Run(name, func(t *testing.T) {
+			engine := newFakeWriterEngine()
+			agreementWithChild(tc.treeType)(t, engine)
+
+			require.NoError(t, engine.CheckMutation(ctx, writerTree, tc.check))
+			require.NoError(t, tc.place(engine))
+			assert.Equal(t, 1, engine.trees[writerTree].nodes[writerOther].Position)
+		})
+	}
+}
+
+func TestFakeWriterEngine_RestoresATreeAfterASponsorIsRemoved(t *testing.T) {
+	engine := newFakeWriterEngine()
+	ctx := context.Background()
+	require.NoError(t, engine.CreateTree(ctx, writerTree, treeTypeUnilevel))
+	require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, 1))
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, 2))
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerOther, writerRoot, writerChild, 3))
+	_, err := engine.RemoveNode(ctx, writerTree, writerChild)
+	require.NoError(t, err)
+	taken, err := engine.TakeSnapshot(ctx, writerTree)
+	require.NoError(t, err)
+	_, err = engine.DropStructure(ctx, writerTree)
+	require.NoError(t, err)
+
+	require.NoError(t, engine.RestoreSnapshot(ctx, writerTree, taken.TreeType, taken.Data))
+
+	pos, err := engine.GetPosition(ctx, writerTree, writerOther)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), pos.EnrolledAt)
+}
+
+func TestFakeWriterEngine_RefusesASnapshotWithAnAbsentParent(t *testing.T) {
+	engine := newFakeWriterEngine()
+	data := `{"root":"` + writerRoot + `","nodes":{"` + writerRoot + `":{"user_id":"` + writerRoot + `"},"` +
+		writerOther + `":{"user_id":"` + writerOther + `","parent_user_id":"` + writerChild + `"}}}`
+
+	err := engine.RestoreSnapshot(context.Background(), writerTree, treeTypeUnilevel, json.RawMessage(data))
+
+	requireEngineRefusal(t, err, "INCONSISTENT_SNAPSHOT",
+		"parent on node "+writerOther+" names "+writerChild+"; the snapshot holds no such node")
+}
+
+func TestFakeWriterEngine_RestoresAMatrixWithItsWidth(t *testing.T) {
+	engine := newFakeWriterEngine()
+	ctx := context.Background()
+	require.NoError(t, engine.CreateMatrixTree(ctx, writerTree, 5, "breadth_first"))
+	require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, 1))
+	taken, err := engine.TakeSnapshot(ctx, writerTree)
+	require.NoError(t, err)
+	_, err = engine.DropStructure(ctx, writerTree)
+	require.NoError(t, err)
+
+	require.NoError(t, engine.RestoreSnapshot(ctx, writerTree, taken.TreeType, taken.Data))
+
+	require.NoError(t, engine.CheckMutation(ctx, writerTree, CheckAddNodeAt(writerChild, writerRoot, writerRoot, 4, 2)))
+	err = engine.CheckMutation(ctx, writerTree, CheckAddNodeAt(writerChild, writerRoot, writerRoot, 5, 2))
+	requireEngineRefusal(t, err, "INVALID_POSITION", "position 5 out of range for user "+writerRoot+" (has 5 children)")
+}
+
+func TestFakeWriterEngine_RefusesAMatrixSnapshotWithoutAUsableWidth(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		data          string
+		code, message string
+	}{
+		"no width": {`{"root":"","nodes":{}}`, "INVALID_PARAMS",
+			"failed to deserialize matrix snapshot: missing field `width`"},
+		"width 0": {`{"width":0,"root":"","nodes":{}}`, "INCONSISTENT_SNAPSHOT",
+			"the tree declares a width of 0; a matrix width is at least 2"},
+		"width 1": {`{"width":1,"root":"","nodes":{}}`, "INCONSISTENT_SNAPSHOT",
+			"the tree declares a width of 1; a matrix width is at least 2"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			engine := newFakeWriterEngine()
+
+			err := engine.RestoreSnapshot(ctx, writerTree, treeTypeMatrix, json.RawMessage(tc.data))
+
+			requireEngineRefusal(t, err, tc.code, tc.message)
+			assert.NotContains(t, engine.trees, writerTree)
+		})
+	}
+	t.Run("width 2", func(t *testing.T) {
+		engine := newFakeWriterEngine()
+
+		require.NoError(t, engine.RestoreSnapshot(ctx, writerTree, treeTypeMatrix,
+			json.RawMessage(`{"width":2,"root":"","nodes":{}}`)))
+	})
+	t.Run("no width, onto a held structure", func(t *testing.T) {
+		engine := newFakeWriterEngine()
+		require.NoError(t, engine.CreateMatrixTree(ctx, writerTree, 3, "breadth_first"))
+
+		err := engine.RestoreSnapshot(ctx, writerTree, treeTypeMatrix, json.RawMessage(`{"root":"","nodes":{}}`))
+
+		requireEngineRefusal(t, err, engineCodeTreeExists,
+			"structure '"+writerTree+"' already exists; drop it with drop_structure before restoring")
+	})
+}
+
+func TestFakeWriterEngine_CreatesAMatrixOnlyWithAWidth(t *testing.T) {
+	binary := findWorkerBinary(t)
+	ctx := context.Background()
+	client, err := NewEngineClient(ctx, binary)
+	require.NoError(t, err)
+	defer func() { _ = client.Stop() }()
+	fake := newFakeWriterEngine()
+
+	workerErr := client.CreateTree(ctx, writerTree, treeTypeMatrix)
+	fakeErr := fake.CreateTree(ctx, writerTree, treeTypeMatrix)
+
+	require.Equal(t, "MISSING_PARAM", engineCodeOf(workerErr), "the worker's answer")
+	assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(fakeErr))
+	assert.NotContains(t, fake.trees, writerTree)
+
+	require.NoError(t, client.CreateMatrixTree(ctx, writerTree, 3, "breadth_first"))
+	require.NoError(t, fake.CreateMatrixTree(ctx, writerTree, 3, "breadth_first"))
+	workerErr = client.CreateTree(ctx, writerTree, treeTypeMatrix)
+	fakeErr = fake.CreateTree(ctx, writerTree, treeTypeMatrix)
+
+	require.Equal(t, engineCodeTreeExists, engineCodeOf(workerErr), "the worker's answer for a held structure")
+	assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(fakeErr), "a held structure")
+}
+
+func TestFakeWriterEngine_TakesNoSnapshotOfAnAbsentStructure(t *testing.T) {
+	binary := findWorkerBinary(t)
+	ctx := context.Background()
+	client, err := NewEngineClient(ctx, binary)
+	require.NoError(t, err)
+	defer func() { _ = client.Stop() }()
+	fake := newFakeWriterEngine()
+
+	_, workerErr := client.TakeSnapshot(ctx, writerTree)
+	_, fakeErr := fake.TakeSnapshot(ctx, writerTree)
+	fake.retypeBeforeTake = treeTypeBinary
+	_, retypedErr := fake.TakeSnapshot(ctx, writerTree)
+
+	require.Equal(t, "STRUCTURE_NOT_FOUND", engineCodeOf(workerErr), "the worker's answer")
+	assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(fakeErr))
+	assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(retypedErr), "with a retype set")
+	assert.NotContains(t, fake.trees, writerTree)
 }
 
 func TestFakeWriterEngine_RefusesAMatrixRemovalCheckWithNoMode(t *testing.T) {

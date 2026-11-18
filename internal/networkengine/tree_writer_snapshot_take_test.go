@@ -145,9 +145,10 @@ func TestTreeWriterSnapshot_ReportsWhetherTheEngineWasAskedAndTheStoreKeptIt(t *
 	cases := map[string]struct {
 		snapshots         func(env *writerEnv) SnapshotStore
 		takeErr           error
-		snapshotType      string
+		retypeBeforeTake  string
 		attempted, stored bool
 		warns             bool
+		warning           string
 	}{
 		"stored": {snapshots: unchanged, attempted: true, stored: true},
 		"put failed": {snapshots: func(env *writerEnv) SnapshotStore {
@@ -155,8 +156,10 @@ func TestTreeWriterSnapshot_ReportsWhetherTheEngineWasAskedAndTheStoreKeptIt(t *
 		}, attempted: true, warns: true},
 		"stored nothing": {snapshots: func(env *writerEnv) SnapshotStore { return noopPutStore{SnapshotStore: env.snapshots} },
 			attempted: true, warns: true},
-		"take failed":   {snapshots: unchanged, takeErr: errors.New("worker gone"), attempted: true, warns: true},
-		"type mismatch": {snapshots: unchanged, snapshotType: treeTypeBinary, attempted: true, warns: true},
+		"take failed": {snapshots: unchanged, takeErr: errors.New("worker gone"), attempted: true, warns: true},
+		"type mismatch": {snapshots: unchanged, retypeBeforeTake: treeTypeBinary, attempted: true, warns: true,
+			warning: "take_snapshot for tree " + writerTree + " at version 1 returned tree type binary, " +
+				"and version 1 records unilevel; no snapshot was stored"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -167,13 +170,16 @@ func TestTreeWriterSnapshot_ReportsWhetherTheEngineWasAskedAndTheStoreKeptIt(t *
 			_, err := w.Load(context.Background(), loadRequest())
 			require.NoError(t, err)
 			engine.takeErr = tc.takeErr
-			engine.snapshotType = tc.snapshotType
+			engine.retypeBeforeTake = tc.retypeBeforeTake
 
 			warning, attempted, stored := w.takeSnapshot(context.Background(), writerTree, treeShape{treeType: treeTypeUnilevel}, 1)
 
 			assert.Equal(t, tc.attempted, attempted, "attempted")
 			assert.Equal(t, tc.stored, stored, "stored")
 			assert.Equal(t, tc.warns, warning != "", "warning %q", warning)
+			if tc.warning != "" {
+				assert.Equal(t, tc.warning, warning)
+			}
 		})
 	}
 }
@@ -196,7 +202,7 @@ func TestTreeWriterSnapshot_StoresNothingWhenTheSnapshotTypeDiffers(t *testing.T
 	mustAddRoot(t, env, treeTypeUnilevel)
 	placeUnderRoot(t, env, 10, snapshotInterval-2)
 	w, engine := env.writer()
-	engine.snapshotType = treeTypeBinary
+	engine.retypeBeforeTake = treeTypeBinary
 
 	res, err := w.Place(context.Background(), placeRequest(testUserUUID(9000), nil))
 

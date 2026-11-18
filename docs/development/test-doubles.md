@@ -172,3 +172,23 @@ with `refusingLocker`, which fails the test when the lock is taken. It also
 asserted an empty engine call log and an unchanged stream. Both held without
 the gate, because the write stops at the lock before it calls the engine or
 appends. Both assertions were dropped.
+
+## Check the fake against the worker, not against your reading of it
+
+A fake that models the worker's refusals can drift from the worker without any
+test failing. Reading the worker's handlers is not enough. The order of the
+checks matters, and so does the message text.
+
+Send the same request to the fake and to the real worker binary, and require the
+same answer. Make each case one the worker refuses, so an empty answer on both
+sides cannot pass. Build the check request and the apply request from one set of
+arguments, and require the worker's check to answer what its apply answers.
+
+Give the fake one function per rule, and call it from both the check path and
+the apply path. Two copies of a rule drift apart. The worker runs one rule for
+both.
+
+Found in final review for HEU-1058 on 2026-11-17. The fake's matrix removal
+check refused nothing once a pruning mode was set. Its own removal refused the
+root and an absent user, as the worker's check does. Agreement cases now pin
+it.

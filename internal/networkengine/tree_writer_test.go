@@ -128,7 +128,6 @@ func TestTreeWriterAddRoot_TakesAnExistingTreesShapeFromVersion1(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeMatrix)
 	w, engine := env.writer()
-	engine.checkErr = &EngineError{Code: engineCodeRootAlreadyExists, Message: "tree already has a root node"}
 	req := unilevelRootRequest()
 	req.UserID, req.SponsorID, req.TreeType = writerOther, writerOther, treeTypeMatrix
 
@@ -181,8 +180,7 @@ func TestTreeWriterAddRoot_RefusesMatrixParametersThatDifferFromVersion1(t *test
 func TestTreeWriterAddRoot_AcceptsMatrixParametersThatMatchVersion1(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeMatrix)
-	w, engine := env.writer()
-	engine.checkErr = &EngineError{Code: engineCodeRootAlreadyExists, Message: "tree already has a root node"}
+	w, _ := env.writer()
 	width, spillover := 3, "breadth_first"
 	req := unilevelRootRequest()
 	req.UserID, req.SponsorID, req.TreeType = writerOther, writerOther, treeTypeMatrix
@@ -257,7 +255,7 @@ func TestTreeWriterAddRoot_ReportsAReleaseFailureAlongsideARefusal(t *testing.T)
 	env := newWriterEnv()
 	unlockErr := errors.New("pg_advisory_unlock for tree x returned false")
 	engine := newFakeWriterEngine()
-	engine.checkErr = &EngineError{Code: engineCodeRootAlreadyExists, Message: "tree already has a root node"}
+	engine.checkErr = fakeHandlerPanic()
 	w := NewTreeWriter(env.events, env.store, env.snapshots, engine, releaseFailingLocker{err: unlockErr})
 
 	res, err := w.AddRoot(context.Background(), unilevelRootRequest())
@@ -403,6 +401,20 @@ func placeRequest(user string, position *int) PlaceRequest {
 		TreeID: writerTree, UserID: user, ParentID: writerRoot, SponsorID: writerRoot,
 		Position: position, EnrolledAt: writeTime,
 	}
+}
+
+// rejectedMatrixRoot appends a matrix root with the nil user ID, then rejects it.
+func rejectedMatrixRoot(t *testing.T, env *writerEnv) {
+	t.Helper()
+	width, spillover := 3, "breadth_first"
+	root := appendDirect(t, env.events, EventTypeRootAdded, RootAddedPayload{
+		TreeID: writerTree, UserID: uuid.Nil.String(), SponsorID: uuid.Nil.String(),
+		TreeType: treeTypeMatrix, MatrixWidth: &width, MatrixSpillover: &spillover, EnrolledAt: writeTime,
+	})
+	w, _ := env.writer()
+	res, err := w.Reject(context.Background(), RejectRequest{TreeID: writerTree, EventID: root.ID, Reason: "nil user id"})
+	require.NoError(t, err)
+	require.Equal(t, RejectOutcomeRejected, res.Outcome, "the retry returned %v", res.RetryErr)
 }
 
 func TestTreeWriterPlace_AppendsAndProjectsAPlacement(t *testing.T) {
@@ -567,62 +579,92 @@ func TestTreeWriterPlace_EnforcesThePositionRuleBeforeTheLock(t *testing.T) {
 
 func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) {
 	zero := 0
-	run := map[string]func(w *TreeWriter) (WriteResult, error){
-		"add_root": func(w *TreeWriter) (WriteResult, error) {
-			req := unilevelRootRequest()
-			req.UserID, req.SponsorID = writerOther, writerOther
-			return w.AddRoot(context.Background(), req)
-		},
-		"add_node": func(w *TreeWriter) (WriteResult, error) {
-			return w.Place(context.Background(), placeRequest(writerOther, &zero))
-		},
-		"add_node_at": func(w *TreeWriter) (WriteResult, error) {
-			return w.Place(context.Background(), placeRequest(writerOther, &zero))
-		},
-		"remove_node": func(w *TreeWriter) (WriteResult, error) {
-			return w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: writerRoot, RemovedAt: writeTime})
-		},
+	rooted := func(treeType string) func(*testing.T, *writerEnv) {
+		return func(t *testing.T, env *writerEnv) { mustAddRoot(t, env, treeType) }
 	}
-	treeTypeFor := map[string]string{
-		"add_root": treeTypeUnilevel, "add_node": treeTypeBinary,
-		"add_node_at": treeTypeMatrix, "remove_node": treeTypeUnilevel,
+	withChild := func(t *testing.T, env *writerEnv) {
+		mustAddRoot(t, env, treeTypeUnilevel)
+		mustPlace(t, env, writerChild, nil)
 	}
-	cases := []struct{ mutation, code string }{
-		{"add_root", "ROOT_ALREADY_EXISTS"},
-		{"add_root", "USER_ALREADY_EXISTS"},
-		{"add_node", "USER_ALREADY_EXISTS"},
-		{"add_node", "USER_NOT_FOUND"},
-		{"add_node", "POSITION_OCCUPIED"},
-		{"add_node", "INVALID_POSITION"},
-		{"add_node_at", "TREE_EMPTY"},
-		{"add_node_at", "INVALID_POSITION"},
-		{"add_node_at", "USER_ALREADY_EXISTS"},
-		{"add_node_at", "USER_NOT_FOUND"},
-		{"add_node_at", "SPONSOR_NOT_FOUND"},
-		{"add_node_at", "POSITION_OCCUPIED"},
-		{"remove_node", "USER_NOT_FOUND"},
-		{"remove_node", "HAS_CHILDREN"},
-		{"remove_node", "SPONSORLESS_WITH_RECRUITS"},
-		{"remove_node", "SPONSOR_CYCLE"},
+	addOtherRoot := func(w *TreeWriter) (WriteResult, error) {
+		req := unilevelRootRequest()
+		req.UserID, req.SponsorID = writerOther, writerOther
+		return w.AddRoot(context.Background(), req)
+	}
+	placeOther := func(w *TreeWriter) (WriteResult, error) {
+		return w.Place(context.Background(), placeRequest(writerOther, &zero))
+	}
+	absentParent := testUserUUID(8)
+	placed := func(treeType, user string, position int) func(*testing.T, *writerEnv) {
+		return func(t *testing.T, env *writerEnv) {
+			mustAddRoot(t, env, treeType)
+			mustPlace(t, env, user, &position)
+		}
+	}
+	placeAt := func(parent, sponsor string, position int) func(*TreeWriter) (WriteResult, error) {
+		return func(w *TreeWriter) (WriteResult, error) {
+			return w.Place(context.Background(), PlaceRequest{TreeID: writerTree, UserID: writerOther,
+				ParentID: parent, SponsorID: sponsor, Position: &position, EnrolledAt: writeTime})
+		}
+	}
+	remove := func(user string) func(*TreeWriter) (WriteResult, error) {
+		return func(w *TreeWriter) (WriteResult, error) {
+			return w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: user, RemovedAt: writeTime})
+		}
+	}
+	cases := []struct {
+		mutation, code string
+		setup          func(*testing.T, *writerEnv)
+		run            func(*TreeWriter) (WriteResult, error)
+		message        string
+		scripted       bool
+	}{
+		{"add_root", "ROOT_ALREADY_EXISTS", rooted(treeTypeUnilevel), addOtherRoot, "tree already has a root node", false},
+		{"add_node", "USER_ALREADY_EXISTS", placed(treeTypeBinary, writerOther, 1), placeOther,
+			"user " + writerOther + " already exists in tree", false},
+		{"add_node", "USER_NOT_FOUND", rooted(treeTypeBinary), placeAt(absentParent, writerRoot, 0),
+			"user " + absentParent + " not found in tree", false},
+		{"add_node", "POSITION_OCCUPIED", placed(treeTypeBinary, writerChild, 0), placeOther,
+			"position 0 already occupied for user " + writerRoot, false},
+		{"add_node", "INVALID_POSITION", rooted(treeTypeBinary), placeOther,
+			"scripted: pass-through", true},
+		{"add_node_at", "TREE_EMPTY", rejectedMatrixRoot, placeOther, "tree has no root node", false},
+		{"add_node_at", "INVALID_POSITION", rooted(treeTypeMatrix), placeAt(writerRoot, writerRoot, 3),
+			"position 3 out of range for user " + writerRoot + " (has 3 children)", false},
+		{"add_node_at", "USER_ALREADY_EXISTS", placed(treeTypeMatrix, writerOther, 1), placeOther,
+			"user " + writerOther + " already exists in tree", false},
+		{"add_node_at", "USER_NOT_FOUND", rooted(treeTypeMatrix), placeAt(absentParent, writerRoot, 0),
+			"user " + absentParent + " not found in tree", false},
+		{"add_node_at", "SPONSOR_NOT_FOUND", rooted(treeTypeMatrix), placeAt(writerRoot, writerAbsentSponsor, 0),
+			"sponsor " + writerAbsentSponsor + " not found in tree", false},
+		{"add_node_at", "POSITION_OCCUPIED", placed(treeTypeMatrix, writerChild, 0), placeOther,
+			"position 0 already occupied for user " + writerRoot, false},
+		{"remove_node", "USER_NOT_FOUND", rooted(treeTypeUnilevel), remove(writerOther),
+			"user " + writerOther + " not found in tree", false},
+		{"remove_node", "HAS_CHILDREN", withChild, remove(writerRoot),
+			"cannot remove user " + writerRoot + ": has 1 children (must remove children first)", false},
+		{"remove_node", "SPONSORLESS_WITH_RECRUITS", withChild, remove(writerChild),
+			"scripted: pass-through", true},
+		{"remove_node", "SPONSOR_CYCLE", withChild, remove(writerChild),
+			"scripted: pass-through", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.mutation+" "+tc.code, func(t *testing.T) {
 			env := newWriterEnv()
-			mustAddRoot(t, env, treeTypeFor[tc.mutation])
-			if tc.mutation == "remove_node" {
-				mustPlace(t, env, writerChild, nil)
-			}
+			tc.setup(t, env)
 			stream := TreeStreamName(writerTree)
 			before := len(streamEvents(t, env.events, stream))
 			w, engine := env.writer()
-			engine.checkErr = &EngineError{Code: tc.code, Message: "scripted refusal"}
+			if tc.scripted {
+				engine.checkErr = &EngineError{Code: tc.code, Message: tc.message}
+			}
 
-			_, err := run[tc.mutation](w)
+			_, err := tc.run(w)
 
 			var engineErr *EngineError
 			require.ErrorAs(t, err, &engineErr)
 			assert.Equal(t, tc.code, engineErr.Code)
-			assert.Equal(t, "scripted refusal", engineErr.Message)
+			assert.Equal(t, tc.message, engineErr.Message)
 			assert.Contains(t, err.Error(), "nothing was appended")
 			require.Len(t, engine.checks, 1)
 			assert.Equal(t, tc.mutation, engine.checks[0].op)
@@ -1014,7 +1056,6 @@ func TestTreeWriterAddRoot_ChecksARootOfTheSameShapeThatLandedBeforeTheLock(t *t
 		})
 	}}
 	engine := newFakeWriterEngine()
-	engine.checkErr = &EngineError{Code: engineCodeRootAlreadyExists, Message: "tree already has a root node"}
 	w := NewTreeWriter(env.events, env.store, env.snapshots, engine, locker)
 
 	res, err := w.AddRoot(context.Background(), unilevelRootRequest())

@@ -1601,14 +1601,20 @@ func TestHandleNodePlaced_ReconcileDivergesWhenThePositionLookupFindsNoUser(t *t
 		positionErr: &EngineError{Code: engineCodeUserNotFound, Message: "lookup-marker"},
 	}
 	c, _ := newReconcileConsumer(t, tr)
+	ev := makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1)))
 
-	err := deliver(context.Background(), c, makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
+	err := deliver(context.Background(), c, ev)
 
 	require.Error(t, err)
 	assert.Len(t, tr.mutationOps, 1, "a not-found answer is not retried")
 	assert.Equal(t, 1, tr.positionOps)
 	assert.True(t, isEngineCode(err, engineCodeUserAlreadyExists), "the refused mutation is the error carried")
 	assert.Contains(t, err.Error(), "lookup-marker", "and the lookup's own error is kept")
+	w, _ := newWriterEnv().writer()
+	evidence, evErr := w.rejectionEvidence(context.Background(), writerTree, treeShape{treeType: treeTypeBinary}, ev,
+		caughtUpFailure(ev, err))
+	require.NoError(t, evErr)
+	assert.False(t, evidence, "rejectionEvidence returned true for this error wrapped as a catch-up failure")
 }
 
 // Any other engine failure is not reconcile's business, and inspecting it
@@ -2716,7 +2722,15 @@ func TestTreeConsumer_ARemovalTombstonesTheUserOnEveryTreeType(t *testing.T) {
 				require.NoError(t, engine.CreateTree(ctx, writerTree, tc.treeType))
 			}
 			require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, writeTime.Unix()))
-			require.NoError(t, engine.AddNodeAt(ctx, writerTree, writerChild, writerRoot, writerRoot, 0, writeTime.Unix()))
+			if tc.treeType == treeTypeMatrix {
+				require.NoError(t, engine.AddNodeAt(ctx, writerTree, writerChild, writerRoot, writerRoot, 0, writeTime.Unix()))
+			} else {
+				var opts []AddNodeOption
+				if tc.position != nil {
+					opts = append(opts, WithPosition(*tc.position))
+				}
+				require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, writeTime.Unix(), opts...))
+			}
 			require.NoError(t, store.insertNode(ctx, makeUUIDNode(testNodeUUID(1), writerTree, writerRoot, 0, nil, ptr(writerRoot), nil)))
 			require.NoError(t, store.insertNode(ctx, makeUUIDNode(testNodeUUID(2), writerTree, writerChild, 1,
 				ptr(writerRoot), ptr(writerRoot), tc.position)))
@@ -2755,12 +2769,20 @@ func TestTreeConsumer_RefusesARemovalWhoseShapeTheEngineCannotApply(t *testing.T
 			ctx := context.Background()
 			store := NewMemoryTreeStore()
 			engine := newFakeWriterEngine()
-			require.NoError(t, engine.CreateTree(ctx, writerTree, treeTypeUnilevel))
-			require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, writeTime.Unix()))
-			require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, writeTime.Unix()))
+			var position *int
+			if tc.treeType == treeTypeMatrix {
+				position = intPtr(0)
+				require.NoError(t, engine.CreateMatrixTree(ctx, writerTree, 3, "breadth_first"))
+				require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, writeTime.Unix()))
+				require.NoError(t, engine.AddNodeAt(ctx, writerTree, writerChild, writerRoot, writerRoot, 0, writeTime.Unix()))
+			} else {
+				require.NoError(t, engine.CreateTree(ctx, writerTree, treeTypeUnilevel))
+				require.NoError(t, engine.AddRoot(ctx, writerTree, writerRoot, writeTime.Unix()))
+				require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, writeTime.Unix()))
+			}
 			require.NoError(t, store.insertNode(ctx, makeUUIDNode(testNodeUUID(1), writerTree, writerRoot, 0, nil, ptr(writerRoot), nil)))
 			require.NoError(t, store.insertNode(ctx, makeUUIDNode(testNodeUUID(2), writerTree, writerChild, 1,
-				ptr(writerRoot), ptr(writerRoot), nil)))
+				ptr(writerRoot), ptr(writerRoot), position)))
 			consumer := NewTreeEventConsumer(store, engine)
 
 			err := deliver(ctx, consumer, versionedEvent(t, writerTree, 3, EventTypeNodeRemoved, NodeRemovedPayload{

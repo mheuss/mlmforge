@@ -285,12 +285,13 @@ func TestTreeWriterSnapshotLoad_FailsWhenTheFullReplayAlsoDisagrees(t *testing.T
 		ID: testNodeUUID(70), TreeID: writerTree, UserID: writerOther, ParentID: &root, SponsorID: &root,
 		Depth: 1, EnrolledAt: writeTime,
 	}))
-	w, _ := env.writer()
+	w, engine := env.writer()
 
 	_, err := w.Load(context.Background(), loadRequest())
 
 	replay := replayAtStage(t, err, TreeReplayStageMembership)
 	assert.Contains(t, replay.Mismatch, "only in the store: ["+writerOther+"]")
+	assert.ElementsMatch(t, []string{writerRoot}, engineUsers(engine), "engine users after the load")
 }
 
 func TestTreeWriterSnapshotLoad_FailsWithoutADropOnAClosedTransport(t *testing.T) {
@@ -465,6 +466,7 @@ func TestTreeWriterSnapshotLoad_CountsZeroRowsAsAMismatchOnTheSnapshotPath(t *te
 	require.Len(t, res.Warnings, 1)
 	assert.Contains(t, res.Warnings[0], "the store holds no active rows")
 	assert.False(t, snapshotStored(t, env))
+	assert.ElementsMatch(t, []string{writerRoot}, engineUsers(engine), "engine users after the load")
 }
 
 func TestTreeWriterSnapshotLoad_FailsWithoutADropOnACancelledContext(t *testing.T) {

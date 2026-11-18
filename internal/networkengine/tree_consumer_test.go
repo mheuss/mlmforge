@@ -1440,7 +1440,7 @@ func TestPositionMatchesProjection(t *testing.T) {
 	}
 }
 
-// reconcileTransport fails the mutation with a chosen engine code and answers
+// reconcileTransport fails the mutation with a chosen error and answers
 // get_position separately, which is the pairing every reconcile path needs.
 type reconcileTransport struct {
 	mutationErr      error
@@ -1621,7 +1621,7 @@ func TestHandleNodePlaced_ReconcileDivergesWhenThePositionLookupFindsNoUser(t *t
 // would cost a round trip on every transport hiccup.
 func TestHandleNodePlaced_ReconcileSkipsOtherEngineErrors(t *testing.T) {
 	tr := &reconcileTransport{
-		mutationErr: &EngineError{Code: "PARENT_NOT_FOUND"},
+		mutationErr: &EngineError{Code: engineCodeUserNotFound, Message: "user " + posParent + " not found in tree"},
 		position:    enginePlaced(nil),
 	}
 	c, _ := newReconcileConsumer(t, tr)
@@ -1736,7 +1736,7 @@ func TestHandleRootAdded_ReconcileKeepsTheRowWhenInspectionFails(t *testing.T) {
 
 func TestHandleRootAdded_ReconcileSkipsOtherEngineErrors(t *testing.T) {
 	tr := &reconcileTransport{
-		mutationErr: &EngineError{Code: "TREE_NOT_FOUND"},
+		mutationErr: &EngineError{Code: "STRUCTURE_NOT_FOUND", Message: "no tree named '" + consumerTree + "'"},
 		position:    &EnginePosition{UserID: posUser, Depth: 0},
 	}
 	c, store := newRootConsumer(tr)
@@ -1832,7 +1832,7 @@ func TestHandleRootAdded_UncancelledPathsDoNotReadBack(t *testing.T) {
 
 	t.Run("the engine fails without a cancellation", func(t *testing.T) {
 		store := readTrippingStore{MemoryTreeStore: NewMemoryTreeStore(), t: t}
-		tr := &reconcileTransport{mutationErr: &EngineError{Code: "TRANSPORT_HICCUP"}}
+		tr := &reconcileTransport{mutationErr: errors.New("simulated transport failure")}
 		c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
 		c.retryDelay = 0
 
@@ -2018,12 +2018,12 @@ func TestHandleRootAdded_CompensationTouchesOnlyThisEventsRow(t *testing.T) {
 	assert.NotNil(t, theirs, "the root that was already there survives")
 }
 
-// Attempt 0 returns a code reconcile ignores, attempt 1 the one it acts on.
+// Attempt 0 fails in transit, and attempt 1 returns the code reconcile acts on.
 // Compensation must still run exactly once.
 func TestHandleRootAdded_CompensatesOnceAcrossAttempts(t *testing.T) {
 	tr := &reconcileTransport{
 		mutationErrs: []error{
-			&EngineError{Code: "TRANSPORT_HICCUP"},
+			errors.New("simulated transport failure"),
 			&EngineError{Code: engineCodeRootAlreadyExists},
 		},
 		position: &EnginePosition{UserID: posOther, Depth: 0, EnrolledAt: posEnrolled.Unix()},

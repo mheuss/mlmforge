@@ -164,22 +164,17 @@ func TestFakeWriterEngine_RefusesToRemoveASponsorlessUserWithRecruits(t *testing
 	}
 }
 
-// sponsorlessLayout says where writerChild's recruits sit.
+// sponsorlessLayout names where a sponsorless parent's recruits are placed.
 type sponsorlessLayout int
 
 const (
-	// recruitOutside: writerOther, under the root, is writerChild's one recruit.
 	recruitOutside sponsorlessLayout = iota
-	// recruitUnder: writerOther, under writerChild, is writerChild's one recruit.
 	recruitUnder
-	// recruitsMixed: writerRemoved under writerChild and writerOther under the
-	// root are both writerChild's recruits.
 	recruitsMixed
 )
 
-// restoreSponsorlessMatrixParent builds a matrix on both engines in which
-// writerChild has writerRemoved under it, then restores it as restoredTree with
-// writerChild's sponsor cleared.
+// restoreSponsorlessMatrixParent restores a matrix with a sponsorless parent on
+// both engines.
 func restoreSponsorlessMatrixParent(t *testing.T, client, fake removalAgreementEngine, layout sponsorlessLayout) {
 	t.Helper()
 	ctx := context.Background()

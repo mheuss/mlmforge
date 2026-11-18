@@ -168,7 +168,6 @@ type tankShape struct {
 	fakeMessage string
 }
 
-// tankShapes lists tanks for the restore agreement test.
 func tankShapes() []tankShape {
 	return []tankShape{
 		{

@@ -370,6 +370,7 @@ func TestTreeWriterSnapshotLoad_CountsARefusedMembershipQueryAsAMismatch(t *test
 	require.Len(t, res.Warnings, 1)
 	assert.Contains(t, res.Warnings[0], "handler panicked unexpectedly")
 	assert.False(t, snapshotStored(t, env))
+	assert.ElementsMatch(t, []string{writerRoot}, engineUsers(engine), "engine users after the load")
 }
 
 func TestTreeWriterSnapshotLoad_FailsWithoutADropWhenTheMembershipQueryLosesItsTransport(t *testing.T) {

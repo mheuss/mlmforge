@@ -125,6 +125,13 @@ Found in plan review for HEU-1068 on 2026-11-18. A count of hand-built fake
 snapshots covered the literals only. Two load tests decoded a taken snapshot and
 edited it. One of them would have been refused by the new restore check.
 
+A fixture that writes below the store's write method can leave out state a
+later check reads. The check then refuses on its own. A guard in the code under
+test looks pinned when it is not. Seed through the same write the code under
+test uses. Each check then sees what production gives it.
+
+Found in final review for HEU-1081 on 2026-11-18.
+
 ## Measure a new refusal with a probe that refuses nothing
 
 Before you make a double refuse an input, count who sends it. Copy the tree to

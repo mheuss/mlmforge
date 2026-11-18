@@ -138,7 +138,9 @@ func (t *fakeEngineTree) checkRemoval(userID string) error {
 	return t.checkSponsorless(userID)
 }
 
-// checkMatrixRemoval refuses a matrix removal this tree cannot make.
+// checkMatrixRemoval refuses a matrix removal this tree cannot make, and a
+// removal of a matrix parent, which the fake does not model. The worker accepts
+// that removal, so its refusal is a plain error with no worker code.
 func (t *fakeEngineTree) checkMatrixRemoval(userID string) error {
 	if _, ok := t.nodes[userID]; !ok {
 		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
@@ -146,7 +148,13 @@ func (t *fakeEngineTree) checkMatrixRemoval(userID string) error {
 	if t.root == userID {
 		return fakeEngineError("CANNOT_REMOVE_ROOT", "cannot remove root node")
 	}
-	return t.checkSponsorless(userID)
+	if err := t.checkSponsorless(userID); err != nil {
+		return err
+	}
+	if t.childCount(userID) > 0 {
+		return fmt.Errorf("fakeWriterEngine removes only a matrix leaf, and %s has children", userID)
+	}
+	return nil
 }
 
 // checkSponsorless refuses the removal of a user who has recruits and no sponsor.
@@ -340,11 +348,6 @@ func (f *fakeWriterEngine) RemoveMatrixNode(_ context.Context, structure, userID
 	}
 	if err := t.checkMatrixRemoval(userID); err != nil {
 		return nil, err
-	}
-	for _, n := range t.nodes {
-		if n.ParentUserID != nil && *n.ParentUserID == userID {
-			return nil, fmt.Errorf("fakeWriterEngine removes only a matrix leaf, and %s has children", userID)
-		}
 	}
 	moved := t.moveRecruits(userID)
 	delete(t.nodes, userID)

@@ -112,3 +112,21 @@ func TestFakeWriterEngine_AcceptsAPlacementWhoseSponsorIsHeld(t *testing.T) {
 	require.NoError(t, engine.AddNode(context.Background(), writerTree, writerChild, writerRoot, writerRoot, writeTime.Unix()))
 	assert.Contains(t, engine.trees[writerTree].nodes, writerChild)
 }
+
+func TestFakeWriterEngine_RefusesAMatrixParentRemovalOnTheCheckAsOnTheApply(t *testing.T) {
+	for _, mode := range []PruningMode{PruningPromoteEarliest, PruningHoldingTank} {
+		t.Run(string(mode), func(t *testing.T) {
+			ctx := context.Background()
+			engine := newRootedFakeEngine(t, treeTypeMatrix)
+			require.NoError(t, engine.AddNodeAt(ctx, writerTree, writerChild, writerRoot, writerRoot, 0, writeTime.Unix()))
+			require.NoError(t, engine.AddNodeAt(ctx, writerTree, writerOther, writerChild, writerRoot, 0, writeTime.Unix()))
+
+			checkErr := engine.CheckMutation(ctx, writerTree, CheckRemoveMatrixNode(writerChild, mode))
+			_, applyErr := engine.RemoveMatrixNode(ctx, writerTree, writerChild, mode)
+
+			require.EqualError(t, applyErr, "fakeWriterEngine removes only a matrix leaf, and "+writerChild+" has children")
+			assert.Equal(t, applyErr, checkErr)
+			assert.Contains(t, engine.trees[writerTree].nodes, writerChild)
+		})
+	}
+}

@@ -151,8 +151,7 @@ func (t *fakeEngineTree) checkRemoval(userID string) error {
 	return t.checkSponsorless(userID)
 }
 
-// checkMatrixRemoval refuses a matrix removal this tree cannot make in mode. It
-// refuses a node with children with a plain error rather than an engine code.
+// checkMatrixRemoval refuses a matrix removal this tree cannot make in mode.
 func (t *fakeEngineTree) checkMatrixRemoval(userID string, mode PruningMode) error {
 	if _, ok := t.nodes[userID]; !ok {
 		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)

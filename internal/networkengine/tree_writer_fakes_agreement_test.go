@@ -206,6 +206,8 @@ func agreementCases() []agreementCase {
 			agreementTanked, writerChild, writerRoot, writerAbsentSponsor, 0),
 		addNodeAtCase("matrix add_node_at of a tanked user at a held slot", "USER_IN_HOLDING_TANK",
 			agreementTanked, writerChild, writerRoot, writerRoot, 1),
+		addRootCase("add_root of a tanked user with a root held", engineCodeRootAlreadyExists,
+			agreementTanked, writerChild),
 	}
 }
 

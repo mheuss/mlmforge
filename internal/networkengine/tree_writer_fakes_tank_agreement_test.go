@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// editTank decodes the holding tank in a worker or fake matrix snapshot,
-// applies edit, and encodes the result.
+// editTank decodes the holding tank in a matrix snapshot that holds a
+// holding_tank key, applies edit, and encodes the result.
 func editTank(t *testing.T, data json.RawMessage, edit func(*[]HoldingTankEntryDTO)) json.RawMessage {
 	t.Helper()
 	var tree map[string]json.RawMessage

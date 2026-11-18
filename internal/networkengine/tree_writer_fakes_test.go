@@ -26,6 +26,7 @@ var (
 	writerRoot          = testUserUUID(1)
 	writerChild         = testUserUUID(2)
 	writerOther         = testUserUUID(3)
+	writerRemoved       = testUserUUID(4)
 	writerAbsentSponsor = testUserUUID(9)
 )
 
@@ -67,6 +68,8 @@ type fakeEngineTree struct {
 	width    int
 	root     string
 	nodes    map[string]EnginePosition
+	// sponsored lists each sponsor's recruits in the order they were attached.
+	sponsored map[string][]string
 }
 
 // checkRoot refuses a root this tree cannot take.
@@ -194,7 +197,7 @@ func (f *fakeWriterEngine) createTree(structure, treeType string) error {
 	if _, ok := f.trees[structure]; ok {
 		return fakeEngineError(engineCodeTreeExists, "tree '%s' already exists", structure)
 	}
-	f.trees[structure] = &fakeEngineTree{treeType: treeType, nodes: map[string]EnginePosition{}}
+	f.trees[structure] = &fakeEngineTree{treeType: treeType, nodes: map[string]EnginePosition{}, sponsored: map[string][]string{}}
 	return nil
 }
 
@@ -247,6 +250,7 @@ func (f *fakeWriterEngine) place(op, structure, userID, parentID, sponsorID stri
 		UserID: userID, ParentUserID: &p, SponsorUserID: &s,
 		Position: position, Depth: t.nodes[parentID].Depth + 1, EnrolledAt: enrolledAt,
 	}
+	t.sponsored[sponsorID] = append(t.sponsored[sponsorID], userID)
 	return nil
 }
 
@@ -696,11 +700,36 @@ func TestFakeWriterEngine_GetDownlineStopsAtTheDepthAsked(t *testing.T) {
 	assert.Equal(t, []EngineNode{{UserID: writerChild, Depth: 1, EnrolledAt: 2}}, got)
 }
 
+func TestFakeWriterEngine_ListsRecruitsInTheOrderTheyArePlaced(t *testing.T) {
+	engine := newRootedFakeEngine(t, treeTypeUnilevel)
+	ctx := context.Background()
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, 2))
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerOther, writerRoot, writerChild, 3))
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerRemoved, writerRoot, writerRoot, 4))
+
+	assert.Equal(t, map[string][]string{
+		writerRoot:  {writerChild, writerRemoved},
+		writerChild: {writerOther},
+	}, engine.trees[writerTree].sponsored)
+}
+
+func TestFakeWriterEngine_PlacesIntoARestoredRootOnlyTree(t *testing.T) {
+	engine := newFakeWriterEngine()
+	ctx := context.Background()
+	data := `{"root":"` + writerRoot + `","nodes":{"` + writerRoot + `":{"user_id":"` + writerRoot + `"}}}`
+	require.NoError(t, engine.RestoreSnapshot(ctx, writerTree, treeTypeUnilevel, json.RawMessage(data)))
+
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, 2))
+
+	assert.Equal(t, []string{writerChild}, engine.trees[writerTree].sponsored[writerRoot])
+}
+
 // fakeSnapshot is the fake engine's snapshot payload.
 type fakeSnapshot struct {
-	Width int                       `json:"width,omitempty"`
-	Root  string                    `json:"root"`
-	Nodes map[string]EnginePosition `json:"nodes"`
+	Width     int                       `json:"width,omitempty"`
+	Root      string                    `json:"root"`
+	Nodes     map[string]EnginePosition `json:"nodes"`
+	Sponsored map[string][]string       `json:"sponsored,omitempty"`
 }
 
 func (f *fakeWriterEngine) TakeSnapshot(ctx context.Context, structure string) (*SnapshotResultDTO, error) {
@@ -723,7 +752,7 @@ func (f *fakeWriterEngine) TakeSnapshot(ctx context.Context, structure string) (
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(fakeSnapshot{Width: t.width, Root: t.root, Nodes: t.nodes})
+	data, err := json.Marshal(fakeSnapshot{Width: t.width, Root: t.root, Nodes: t.nodes, Sponsored: t.sponsored})
 	if err != nil {
 		return nil, err
 	}
@@ -757,10 +786,14 @@ func (f *fakeWriterEngine) RestoreSnapshot(_ context.Context, structure, treeTyp
 	if snap.Nodes == nil {
 		snap.Nodes = map[string]EnginePosition{}
 	}
+	if snap.Sponsored == nil {
+		snap.Sponsored = map[string][]string{}
+	}
 	if err := checkRestored(snap); err != nil {
 		return err
 	}
-	f.trees[structure] = &fakeEngineTree{treeType: treeType, width: snap.Width, root: snap.Root, nodes: snap.Nodes}
+	f.trees[structure] = &fakeEngineTree{treeType: treeType, width: snap.Width, root: snap.Root, nodes: snap.Nodes,
+		sponsored: snap.Sponsored}
 	return nil
 }
 

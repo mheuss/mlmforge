@@ -14,7 +14,7 @@ import (
 // restoredTree is the structure an edited snapshot is restored as.
 var restoredTree = testTreeUUID(2)
 
-// workerArena mirrors the arena field the test decodes.
+// workerArena is the JSON shape of the arena in a worker tree snapshot.
 type workerArena struct {
 	Nodes    []workerNode   `json:"nodes"`
 	Index    map[string]int `json:"index"`
@@ -87,7 +87,7 @@ func restoreSetup(t *testing.T, e agreementEngine, treeType string) {
 	require.NoError(t, err)
 }
 
-// removeCheck builds the check for removing user under mode, or CheckRemoveNode's when mode is empty.
+// removeCheck builds the check for removing user under mode, or with CheckRemoveNode when mode is empty.
 func removeCheck(user string, mode PruningMode) Mutation {
 	if mode == "" {
 		return CheckRemoveNode(user)

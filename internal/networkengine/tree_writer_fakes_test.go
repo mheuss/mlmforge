@@ -26,6 +26,7 @@ var (
 	writerRoot          = testUserUUID(1)
 	writerChild         = testUserUUID(2)
 	writerOther         = testUserUUID(3)
+	writerRemoved       = testUserUUID(4)
 	writerAbsentSponsor = testUserUUID(9)
 )
 
@@ -67,6 +68,8 @@ type fakeEngineTree struct {
 	width    int
 	root     string
 	nodes    map[string]EnginePosition
+	// sponsored lists each sponsor's recruits in the order they were attached.
+	sponsored map[string][]string
 }
 
 // checkRoot refuses a root this tree cannot take.
@@ -132,16 +135,26 @@ func (t *fakeEngineTree) checkRemoval(userID string) error {
 	if n := t.childCount(userID); n > 0 {
 		return fakeEngineError("HAS_CHILDREN", "cannot remove user %s: has %d children (must remove children first)", userID, n)
 	}
-	return nil
+	return t.checkSponsorless(userID)
 }
 
-// checkMatrixRemoval refuses a matrix removal of an absent user or of the root.
+// checkMatrixRemoval refuses a matrix removal this tree cannot make.
 func (t *fakeEngineTree) checkMatrixRemoval(userID string) error {
 	if _, ok := t.nodes[userID]; !ok {
 		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
 	}
 	if t.root == userID {
 		return fakeEngineError("CANNOT_REMOVE_ROOT", "cannot remove root node")
+	}
+	return t.checkSponsorless(userID)
+}
+
+// checkSponsorless refuses the removal of a user who has recruits and no sponsor.
+func (t *fakeEngineTree) checkSponsorless(userID string) error {
+	if n := len(t.sponsored[userID]); n > 0 && t.nodes[userID].SponsorUserID == nil {
+		return fakeEngineError("SPONSORLESS_WITH_RECRUITS",
+			"cannot remove user %s: no node in its sponsor chain survives this removal. Recruits that outlive it: %d",
+			userID, n)
 	}
 	return nil
 }
@@ -158,6 +171,39 @@ func (t *fakeEngineTree) childCount(userID string) int {
 		}
 	}
 	return n
+}
+
+// moveRecruits takes userID off its sponsor's recruit list and moves its own
+// recruits onto that sponsor, in list order.
+func (t *fakeEngineTree) moveRecruits(userID string) []Responsored {
+	moved := []Responsored{}
+	sponsor := t.nodes[userID].SponsorUserID
+	if sponsor == nil {
+		delete(t.sponsored, userID)
+		return moved
+	}
+	target := *sponsor
+	t.dropRecruit(target, userID)
+	for _, recruit := range t.sponsored[userID] {
+		newSponsor := target
+		pos := t.nodes[recruit]
+		pos.SponsorUserID = &newSponsor
+		t.nodes[recruit] = pos
+		t.sponsored[target] = append(t.sponsored[target], recruit)
+		moved = append(moved, Responsored{UserID: recruit, NewSponsorID: target})
+	}
+	delete(t.sponsored, userID)
+	return moved
+}
+
+// dropRecruit takes userID off sponsorID's recruit list.
+func (t *fakeEngineTree) dropRecruit(sponsorID, userID string) {
+	list := slices.DeleteFunc(t.sponsored[sponsorID], func(id string) bool { return id == userID })
+	if len(list) == 0 {
+		delete(t.sponsored, sponsorID)
+		return
+	}
+	t.sponsored[sponsorID] = list
 }
 
 var _ TreeRebuilder = (*fakeWriterEngine)(nil)
@@ -194,7 +240,7 @@ func (f *fakeWriterEngine) createTree(structure, treeType string) error {
 	if _, ok := f.trees[structure]; ok {
 		return fakeEngineError(engineCodeTreeExists, "tree '%s' already exists", structure)
 	}
-	f.trees[structure] = &fakeEngineTree{treeType: treeType, nodes: map[string]EnginePosition{}}
+	f.trees[structure] = &fakeEngineTree{treeType: treeType, nodes: map[string]EnginePosition{}, sponsored: map[string][]string{}}
 	return nil
 }
 
@@ -247,6 +293,7 @@ func (f *fakeWriterEngine) place(op, structure, userID, parentID, sponsorID stri
 		UserID: userID, ParentUserID: &p, SponsorUserID: &s,
 		Position: position, Depth: t.nodes[parentID].Depth + 1, EnrolledAt: enrolledAt,
 	}
+	t.sponsored[sponsorID] = append(t.sponsored[sponsorID], userID)
 	return nil
 }
 
@@ -276,11 +323,12 @@ func (f *fakeWriterEngine) RemoveNode(_ context.Context, structure, userID strin
 	if err := t.checkRemoval(userID); err != nil {
 		return nil, err
 	}
+	moved := t.moveRecruits(userID)
 	delete(t.nodes, userID)
 	if t.root == userID {
 		t.root = ""
 	}
-	return []Responsored{}, nil
+	return moved, nil
 }
 
 // RemoveMatrixNode removes a leaf. It refuses a node with children rather than
@@ -298,9 +346,10 @@ func (f *fakeWriterEngine) RemoveMatrixNode(_ context.Context, structure, userID
 			return nil, fmt.Errorf("fakeWriterEngine removes only a matrix leaf, and %s has children", userID)
 		}
 	}
+	moved := t.moveRecruits(userID)
 	delete(t.nodes, userID)
 	result := &MatrixRemovalResult{Removed: userID, Repositioned: []string{}, MovedToTank: []string{},
-		Relocated: []Relocation{}, Responsored: []Responsored{}}
+		Relocated: []Relocation{}, Responsored: moved}
 	if mode == PruningHoldingTank {
 		result.MovedToTank = []string{userID}
 	}
@@ -696,11 +745,36 @@ func TestFakeWriterEngine_GetDownlineStopsAtTheDepthAsked(t *testing.T) {
 	assert.Equal(t, []EngineNode{{UserID: writerChild, Depth: 1, EnrolledAt: 2}}, got)
 }
 
+func TestFakeWriterEngine_ListsRecruitsInTheOrderTheyArePlaced(t *testing.T) {
+	engine := newRootedFakeEngine(t, treeTypeUnilevel)
+	ctx := context.Background()
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, 2))
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerOther, writerRoot, writerChild, 3))
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerRemoved, writerRoot, writerRoot, 4))
+
+	assert.Equal(t, map[string][]string{
+		writerRoot:  {writerChild, writerRemoved},
+		writerChild: {writerOther},
+	}, engine.trees[writerTree].sponsored)
+}
+
+func TestFakeWriterEngine_PlacesIntoARestoredRootOnlyTree(t *testing.T) {
+	engine := newFakeWriterEngine()
+	ctx := context.Background()
+	data := `{"root":"` + writerRoot + `","nodes":{"` + writerRoot + `":{"user_id":"` + writerRoot + `"}}}`
+	require.NoError(t, engine.RestoreSnapshot(ctx, writerTree, treeTypeUnilevel, json.RawMessage(data)))
+
+	require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, 2))
+
+	assert.Equal(t, []string{writerChild}, engine.trees[writerTree].sponsored[writerRoot])
+}
+
 // fakeSnapshot is the fake engine's snapshot payload.
 type fakeSnapshot struct {
-	Width int                       `json:"width,omitempty"`
-	Root  string                    `json:"root"`
-	Nodes map[string]EnginePosition `json:"nodes"`
+	Width     int                       `json:"width,omitempty"`
+	Root      string                    `json:"root"`
+	Nodes     map[string]EnginePosition `json:"nodes"`
+	Sponsored map[string][]string       `json:"sponsored,omitempty"`
 }
 
 func (f *fakeWriterEngine) TakeSnapshot(ctx context.Context, structure string) (*SnapshotResultDTO, error) {
@@ -723,7 +797,7 @@ func (f *fakeWriterEngine) TakeSnapshot(ctx context.Context, structure string) (
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(fakeSnapshot{Width: t.width, Root: t.root, Nodes: t.nodes})
+	data, err := json.Marshal(fakeSnapshot{Width: t.width, Root: t.root, Nodes: t.nodes, Sponsored: t.sponsored})
 	if err != nil {
 		return nil, err
 	}
@@ -757,10 +831,14 @@ func (f *fakeWriterEngine) RestoreSnapshot(_ context.Context, structure, treeTyp
 	if snap.Nodes == nil {
 		snap.Nodes = map[string]EnginePosition{}
 	}
+	if snap.Sponsored == nil {
+		snap.Sponsored = map[string][]string{}
+	}
 	if err := checkRestored(snap); err != nil {
 		return err
 	}
-	f.trees[structure] = &fakeEngineTree{treeType: treeType, width: snap.Width, root: snap.Root, nodes: snap.Nodes}
+	f.trees[structure] = &fakeEngineTree{treeType: treeType, width: snap.Width, root: snap.Root, nodes: snap.Nodes,
+		sponsored: snap.Sponsored}
 	return nil
 }
 
@@ -778,13 +856,14 @@ func (f *fakeWriterEngine) DropStructure(_ context.Context, structure string) (b
 	return ok, nil
 }
 
-// checkRestored refuses a snapshot whose root or parent names a node it does
-// not hold.
+// checkRestored refuses a snapshot that fails one of its root, parent, sponsor or recruit-list checks.
 func checkRestored(snap fakeSnapshot) error {
 	if _, ok := snap.Nodes[snap.Root]; snap.Root != "" && !ok {
 		return fakeEngineError("INCONSISTENT_SNAPSHOT", "root names %s; the snapshot holds no such node", snap.Root)
 	}
-	for _, id := range slices.Sorted(maps.Keys(snap.Nodes)) {
+	ids := slices.Sorted(maps.Keys(snap.Nodes))
+	owners := slices.Sorted(maps.Keys(snap.Sponsored))
+	for _, id := range ids {
 		parent := snap.Nodes[id].ParentUserID
 		if parent == nil {
 			continue
@@ -792,6 +871,64 @@ func checkRestored(snap fakeSnapshot) error {
 		if _, ok := snap.Nodes[*parent]; !ok {
 			return fakeEngineError("INCONSISTENT_SNAPSHOT", "parent on node %s names %s; the snapshot holds no such node",
 				id, *parent)
+		}
+	}
+	for _, id := range ids {
+		sponsor := snap.Nodes[id].SponsorUserID
+		if sponsor == nil {
+			continue
+		}
+		if _, ok := snap.Nodes[*sponsor]; !ok {
+			return fakeEngineError("INCONSISTENT_SNAPSHOT", "sponsor on node %s names %s; the snapshot holds no such node",
+				id, *sponsor)
+		}
+	}
+	for _, owner := range owners {
+		for _, recruit := range snap.Sponsored[owner] {
+			if _, ok := snap.Nodes[recruit]; !ok {
+				return fakeEngineError("INCONSISTENT_SNAPSHOT",
+					"the recruit list of %s names %s; the snapshot holds no such node", owner, recruit)
+			}
+		}
+	}
+	for _, owner := range owners {
+		if _, ok := snap.Nodes[owner]; !ok {
+			return fakeEngineError("INCONSISTENT_SNAPSHOT", "a recruit list belongs to %s; the snapshot holds no such node",
+				owner)
+		}
+	}
+	if snap.Root == "" && len(snap.Nodes) > 0 {
+		return fakeEngineError("INCONSISTENT_SNAPSHOT", "the snapshot holds %d nodes and names no root", len(snap.Nodes))
+	}
+	for _, id := range ids {
+		if snap.Nodes[id].ParentUserID == nil && id != snap.Root {
+			return fakeEngineError("INCONSISTENT_SNAPSHOT", "node %s names no parent and is not the root %s", id, snap.Root)
+		}
+	}
+	for _, owner := range owners {
+		seen := map[string]bool{}
+		for _, recruit := range snap.Sponsored[owner] {
+			if seen[recruit] {
+				return fakeEngineError("INCONSISTENT_SNAPSHOT", "the recruit list of %s names %s more than once",
+					owner, recruit)
+			}
+			seen[recruit] = true
+			sponsor := snap.Nodes[recruit].SponsorUserID
+			if sponsor == nil {
+				return fakeEngineError("INCONSISTENT_SNAPSHOT", "the recruit list of %s names %s, who has no sponsor",
+					owner, recruit)
+			}
+			if *sponsor != owner {
+				return fakeEngineError("INCONSISTENT_SNAPSHOT", "the recruit list of %s names %s, whose sponsor is %s",
+					owner, recruit, *sponsor)
+			}
+		}
+	}
+	for _, id := range ids {
+		sponsor := snap.Nodes[id].SponsorUserID
+		if sponsor != nil && !slices.Contains(snap.Sponsored[*sponsor], id) {
+			return fakeEngineError("INCONSISTENT_SNAPSHOT", "%s names sponsor %s; the recruit list of %s does not name it",
+				id, *sponsor, *sponsor)
 		}
 	}
 	return nil
@@ -871,6 +1008,8 @@ func TestFakeWriterEngine_RestoresATreeAfterASponsorIsRemoved(t *testing.T) {
 	pos, err := engine.GetPosition(ctx, writerTree, writerOther)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), pos.EnrolledAt)
+	require.NotNil(t, pos.SponsorUserID)
+	assert.Equal(t, writerRoot, *pos.SponsorUserID)
 }
 
 func TestFakeWriterEngine_RefusesASnapshotWithAnAbsentParent(t *testing.T) {

@@ -103,6 +103,30 @@ func leafUnderNodeTwo(t *testing.T, m matrixShape, n int) int {
 	return 0
 }
 
+// wedgeTimeout returns a whole-millisecond statement_timeout aimed between the slowest chunk's relocation and the unsplit relocation.
+func wedgeTimeout(unsplit, slowest time.Duration) time.Duration {
+	mean := time.Duration(math.Sqrt(float64(unsplit) * float64(slowest))).Round(time.Millisecond)
+	chunkMargin := (4*slowest + time.Millisecond - 1) / time.Millisecond * time.Millisecond
+	return max(mean, chunkMargin, time.Millisecond)
+}
+
+func TestWedgeTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		unsplit, slowest time.Duration
+		want             time.Duration
+	}{
+		{"geometric mean already inside", 131 * time.Millisecond, 3 * time.Millisecond, 20 * time.Millisecond},
+		{"rounded mean below the chunk margin", 24 * time.Millisecond, 1260 * time.Microsecond, 6 * time.Millisecond},
+		{"no whole millisecond fits both margins", 6 * time.Millisecond, 1100 * time.Microsecond, 5 * time.Millisecond},
+		{"floor at one millisecond", 2 * time.Millisecond, 0, time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, wedgeTimeout(tc.unsplit, tc.slowest))
+		})
+	}
+}
+
 // calibrateWedge returns a statement_timeout at least 4× above the slowest chunk's relocation and 4× below the unsplit relocation.
 func calibrateWedge(t *testing.T, it *writerIntegration, treeID string, outcome engineOutcome) time.Duration {
 	t.Helper()
@@ -115,7 +139,7 @@ func calibrateWedge(t *testing.T, it *writerIntegration, treeID string, outcome 
 			slowest = max(slowest, timeRelocation(t, it, treeID, outcome.removed, outcome.relocated[lo:hi]))
 		}
 		ratio := float64(unsplit) / float64(slowest)
-		timeout := max(time.Duration(math.Sqrt(float64(unsplit)*float64(slowest))).Round(time.Millisecond), time.Millisecond)
+		timeout := wedgeTimeout(unsplit, slowest)
 		line := fmt.Sprintf("attempt %d: timeout=%s unsplit=%s slowest chunk=%s ratio=%.1f", attempt, timeout, unsplit, slowest, ratio)
 		t.Logf("calibration: n=%d chunk=%d relocated=%d %s", wedgeNodes, wedgeChunk, len(outcome.relocated), line)
 		attempts = append(attempts, line)
@@ -163,5 +187,8 @@ func TestTreeWriter_ALargeRemovalProjectsUnderAStatementTimeoutInChunks(t *testi
 		var pgErr *pgconn.PgError
 		require.True(t, errors.As(res.ProjectionErr, &pgErr), "projection error %v carries no *pgconn.PgError", res.ProjectionErr)
 		require.Equal(t, "57014", pgErr.Code, "expected SQLSTATE 57014")
+		require.Equal(t, "canceling statement due to statement timeout", pgErr.Message, "server message for the 57014")
+		n := len(outcome.relocated)
+		require.ErrorContains(t, res.ProjectionErr, fmt.Sprintf("relocate survivors in tree %s, rows 1-%d of %d", tree.id, n, n))
 	})
 }

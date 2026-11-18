@@ -20,16 +20,21 @@ type TreeEventConsumer struct {
 	engine     TreeEngine
 	maxRetries int
 	retryDelay time.Duration
+	// removalFloor and removalPerRow set a removal projection's deadline.
+	removalFloor  time.Duration
+	removalPerRow time.Duration
 }
 
 // NewTreeEventConsumer creates a consumer that projects events into
 // the given store and engine. Default retry count is 2.
 func NewTreeEventConsumer(store TreeStore, engine TreeEngine) *TreeEventConsumer {
 	return &TreeEventConsumer{
-		store:      store,
-		engine:     engine,
-		maxRetries: 2,
-		retryDelay: 50 * time.Millisecond,
+		store:         store,
+		engine:        engine,
+		maxRetries:    2,
+		retryDelay:    50 * time.Millisecond,
+		removalFloor:  defaultRemovalFloor,
+		removalPerRow: defaultRemovalPerRow,
 	}
 }
 
@@ -390,10 +395,16 @@ func (c *TreeEventConsumer) handleNodeRemoved(ctx context.Context, shape treeSha
 	}
 
 	// The outcome cannot be rebuilt here, so giving up is not a clean abort.
-	writeCtx, cancelWrite := detachedWrite(ctx)
-	defer cancelWrite()
 	projection := RemovalProjection{Users: outcome.removed, Responsored: outcome.responsored, Relocated: outcome.relocated}
+	rows := removalRows(projection)
+	limit := c.removalFloor + time.Duration(rows)*c.removalPerRow
+	writeCtx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), limit)
+	defer cancelWrite()
 	if err := c.store.ProjectRemoval(writeCtx, payload.TreeID, projection, event.ID, event.Version); err != nil {
+		if writeCtx.Err() != nil {
+			return fmt.Errorf("remove node and re-sponsor recruits: the removal projection's %s deadline, for %d rows, ended: %w: %w",
+				limit, rows, writeCtx.Err(), err)
+		}
 		return fmt.Errorf("remove node and re-sponsor recruits: %w", err)
 	}
 	return nil
@@ -515,6 +526,17 @@ func samePtrUUID(a, b *string) bool {
 // WithoutCancel strips the deadline along with the cancellation, so without
 // this the write has no bound at all.
 const storeWriteTimeout = 5 * time.Second
+
+// Defaults for a removal projection's deadline.
+const (
+	defaultRemovalFloor  = 5 * time.Second
+	defaultRemovalPerRow = 100 * time.Microsecond
+)
+
+// removalRows returns how many rows projecting r writes.
+func removalRows(r RemovalProjection) int {
+	return len(r.Users) + len(r.Responsored) + len(r.Relocated)
+}
 
 // detachedWrite returns a context a store write can finish on after the caller
 // has given up, still bounded so it cannot hang.

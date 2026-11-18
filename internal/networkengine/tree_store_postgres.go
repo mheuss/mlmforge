@@ -19,6 +19,8 @@ type PostgresTreeStore struct {
 	pool *pgxpool.Pool
 	// afterVersionRead runs between ProjectedRows' two reads when set.
 	afterVersionRead func()
+	// removalChunk caps the rows one removal statement writes.
+	removalChunk int
 }
 
 // ON CONFLICT targets the primary key, which carries the event ID. A
@@ -268,11 +270,29 @@ const (
 		 WHERE tree_id = $1 AND user_id = ANY($2::text[]::uuid[]) AND removed_at IS NULL`
 	responsorRemovedSQL = `UPDATE tree_nodes AS n SET sponsor_id = m.new_sponsor_id, updated_at = $4
 		 FROM unnest($2::text[]::uuid[], $3::text[]::uuid[]) AS m(user_id, new_sponsor_id)
-		 WHERE n.tree_id = $1 AND n.user_id = m.user_id AND n.removed_at IS NULL`
+		 WHERE n.tree_id = $1 AND n.user_id = m.user_id AND n.removed_at IS NULL
+		 RETURNING n.user_id::text`
 	relocateSurvivorsSQL = `UPDATE tree_nodes AS n SET parent_id = r.parent_id, position = r.position, depth = r.depth, updated_at = $6
 		 FROM unnest($2::text[]::uuid[], $3::text[]::uuid[], $4::int[], $5::int[]) AS r(user_id, parent_id, position, depth)
-		 WHERE n.tree_id = $1 AND n.user_id = r.user_id AND n.removed_at IS NULL`
+		 WHERE n.tree_id = $1 AND n.user_id = r.user_id AND n.removed_at IS NULL
+		 RETURNING n.user_id::text`
 )
+
+// defaultRemovalChunk is the default chunk size for a removal's statements.
+const defaultRemovalChunk = 25_000
+
+// chunk returns the most rows one removal statement writes.
+func (s *PostgresTreeStore) chunk() int {
+	if s.removalChunk <= 0 {
+		return defaultRemovalChunk
+	}
+	return s.removalChunk
+}
+
+// chunkRange names rows lo+1 to hi of n.
+func chunkRange(lo, hi, n int) string {
+	return fmt.Sprintf("rows %d-%d of %d", lo+1, hi, n)
+}
 
 func (s *PostgresTreeStore) ProjectRemoval(
 	ctx context.Context,
@@ -284,24 +304,30 @@ func (s *PostgresTreeStore) ProjectRemoval(
 	if len(r.Users) == 0 {
 		return fmt.Errorf("project removal in tree %s: the removal names no users", treeID)
 	}
+	chunk := s.chunk()
 	return s.project(ctx, treeID, eventVersion, func(tx pgx.Tx) error {
-		return projectRemoval(ctx, tx, treeID, r, removalEventID)
+		return projectRemoval(ctx, tx, treeID, r, removalEventID, chunk)
 	})
 }
 
-// projectRemoval runs a removal's three writes in tx.
-func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProjection, removalEventID string) error {
+// projectRemoval runs a removal's three steps in tx, in statements that write at most chunk rows.
+func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProjection, removalEventID string, chunk int) error {
 	// Tombstones first. A relocation run before them collides with the slot a
 	// removed row still holds.
 	at, err := tombstoneTime(ctx, tx)
 	if err != nil {
 		return err
 	}
-	tag, err := tx.Exec(ctx, tombstoneRemovedSQL, treeID, r.Users, removalEventID, at)
-	if err != nil {
-		return fmt.Errorf("tombstone removed users in tree %s: %w", treeID, err)
+	var tombstoned int64
+	for lo := 0; lo < len(r.Users); lo += chunk {
+		hi := min(lo+chunk, len(r.Users))
+		tag, err := tx.Exec(ctx, tombstoneRemovedSQL, treeID, r.Users[lo:hi], removalEventID, at)
+		if err != nil {
+			return fmt.Errorf("tombstone removed users in tree %s, %s: %w", treeID, chunkRange(lo, hi, len(r.Users)), err)
+		}
+		tombstoned += tag.RowsAffected()
 	}
-	if tag.RowsAffected() == 0 {
+	if tombstoned == 0 {
 		held, err := removalAlreadyHeld(ctx, tx, treeID, r.Users, removalEventID)
 		if err != nil {
 			return err
@@ -313,47 +339,71 @@ func projectRemoval(ctx context.Context, tx pgx.Tx, treeID string, r RemovalProj
 			return refuseNonInt4("project removal", treeID, relocationIntFields(r)...)
 		}
 	}
-	if tag.RowsAffected() != int64(len(r.Users)) {
-		return &RemovalMismatchError{TreeID: treeID, Users: r.Users, Matched: int(tag.RowsAffected())}
+	if tombstoned != int64(len(r.Users)) {
+		return &RemovalMismatchError{TreeID: treeID, Users: r.Users, Matched: int(tombstoned)}
 	}
 
 	if len(r.Responsored) > 0 {
-		users := make([]string, len(r.Responsored))
-		sponsors := make([]string, len(r.Responsored))
-		for i, m := range r.Responsored {
-			users[i], sponsors[i] = m.UserID, m.NewSponsorID
+		updated := make(map[string]struct{}, len(r.Responsored))
+		for lo := 0; lo < len(r.Responsored); lo += chunk {
+			hi := min(lo+chunk, len(r.Responsored))
+			users := make([]string, hi-lo)
+			sponsors := make([]string, hi-lo)
+			for i, m := range r.Responsored[lo:hi] {
+				users[i], sponsors[i] = m.UserID, m.NewSponsorID
+			}
+			ids, err := collectUserIDs(ctx, tx, responsorRemovedSQL, treeID, users, sponsors, at)
+			if err != nil {
+				return fmt.Errorf("re-sponsor recruits in tree %s, %s: %w", treeID, chunkRange(lo, hi, len(r.Responsored)), err)
+			}
+			for _, id := range ids {
+				updated[id] = struct{}{}
+			}
 		}
-		tag, err := tx.Exec(ctx, responsorRemovedSQL, treeID, users, sponsors, at)
-		if err != nil {
-			return fmt.Errorf("re-sponsor recruits in tree %s: %w", treeID, err)
-		}
-		if tag.RowsAffected() != int64(len(r.Responsored)) {
+		if len(updated) != len(r.Responsored) {
 			return fmt.Errorf("re-sponsoring %d recruits in tree %s updated %d active rows",
-				len(r.Responsored), treeID, tag.RowsAffected())
+				len(r.Responsored), treeID, len(updated))
 		}
 	}
 
 	if len(r.Relocated) > 0 {
-		users := make([]string, len(r.Relocated))
-		parents := make([]string, len(r.Relocated))
-		positions := make([]int, len(r.Relocated))
-		depths := make([]int, len(r.Relocated))
-		for i, m := range r.Relocated {
-			users[i], parents[i], positions[i], depths[i] = m.UserID, m.ParentID, m.Position, m.Depth
-		}
-		tag, err := tx.Exec(ctx, relocateSurvivorsSQL, treeID, users, parents, positions, depths, at)
-		if err != nil {
-			if c := conflictError(err); c != nil {
-				return fmt.Errorf("relocate survivors in tree %s: %w: %w", treeID, c, err)
+		moved := make(map[string]struct{}, len(r.Relocated))
+		for lo := 0; lo < len(r.Relocated); lo += chunk {
+			hi := min(lo+chunk, len(r.Relocated))
+			users := make([]string, hi-lo)
+			parents := make([]string, hi-lo)
+			positions := make([]int, hi-lo)
+			depths := make([]int, hi-lo)
+			for i, m := range r.Relocated[lo:hi] {
+				users[i], parents[i], positions[i], depths[i] = m.UserID, m.ParentID, m.Position, m.Depth
 			}
-			return fmt.Errorf("relocate survivors in tree %s: %w", treeID, err)
+			ids, err := collectUserIDs(ctx, tx, relocateSurvivorsSQL, treeID, users, parents, positions, depths, at)
+			if err != nil {
+				where := chunkRange(lo, hi, len(r.Relocated))
+				if c := conflictError(err); c != nil {
+					return fmt.Errorf("relocate survivors in tree %s, %s: %w: %w", treeID, where, c, err)
+				}
+				return fmt.Errorf("relocate survivors in tree %s, %s: %w", treeID, where, err)
+			}
+			for _, id := range ids {
+				moved[id] = struct{}{}
+			}
 		}
-		if tag.RowsAffected() != int64(len(r.Relocated)) {
+		if len(moved) != len(r.Relocated) {
 			return fmt.Errorf("relocating %d survivors in tree %s updated %d active rows",
-				len(r.Relocated), treeID, tag.RowsAffected())
+				len(r.Relocated), treeID, len(moved))
 		}
 	}
 	return nil
+}
+
+// collectUserIDs runs a removal UPDATE that returns one user id per row, and returns those ids.
+func collectUserIDs(ctx context.Context, tx pgx.Tx, sql string, args ...any) ([]string, error) {
+	rows, err := tx.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
 }
 
 // removalAlreadyHeld reports whether the rows removalEventID stamped in treeID

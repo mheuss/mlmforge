@@ -163,6 +163,39 @@ func (t *fakeEngineTree) childCount(userID string) int {
 	return n
 }
 
+// moveRecruits takes userID off its sponsor's recruit list and moves its own
+// recruits onto that sponsor, in list order.
+func (t *fakeEngineTree) moveRecruits(userID string) []Responsored {
+	moved := []Responsored{}
+	sponsor := t.nodes[userID].SponsorUserID
+	if sponsor == nil {
+		delete(t.sponsored, userID)
+		return moved
+	}
+	target := *sponsor
+	t.dropRecruit(target, userID)
+	for _, recruit := range t.sponsored[userID] {
+		newSponsor := target
+		pos := t.nodes[recruit]
+		pos.SponsorUserID = &newSponsor
+		t.nodes[recruit] = pos
+		t.sponsored[target] = append(t.sponsored[target], recruit)
+		moved = append(moved, Responsored{UserID: recruit, NewSponsorID: target})
+	}
+	delete(t.sponsored, userID)
+	return moved
+}
+
+// dropRecruit takes userID off sponsorID's recruit list.
+func (t *fakeEngineTree) dropRecruit(sponsorID, userID string) {
+	list := slices.DeleteFunc(t.sponsored[sponsorID], func(id string) bool { return id == userID })
+	if len(list) == 0 {
+		delete(t.sponsored, sponsorID)
+		return
+	}
+	t.sponsored[sponsorID] = list
+}
+
 var _ TreeRebuilder = (*fakeWriterEngine)(nil)
 
 func newFakeWriterEngine() *fakeWriterEngine {
@@ -280,11 +313,12 @@ func (f *fakeWriterEngine) RemoveNode(_ context.Context, structure, userID strin
 	if err := t.checkRemoval(userID); err != nil {
 		return nil, err
 	}
+	moved := t.moveRecruits(userID)
 	delete(t.nodes, userID)
 	if t.root == userID {
 		t.root = ""
 	}
-	return []Responsored{}, nil
+	return moved, nil
 }
 
 // RemoveMatrixNode removes a leaf. It refuses a node with children rather than
@@ -302,9 +336,10 @@ func (f *fakeWriterEngine) RemoveMatrixNode(_ context.Context, structure, userID
 			return nil, fmt.Errorf("fakeWriterEngine removes only a matrix leaf, and %s has children", userID)
 		}
 	}
+	moved := t.moveRecruits(userID)
 	delete(t.nodes, userID)
 	result := &MatrixRemovalResult{Removed: userID, Repositioned: []string{}, MovedToTank: []string{},
-		Relocated: []Relocation{}, Responsored: []Responsored{}}
+		Relocated: []Relocation{}, Responsored: moved}
 	if mode == PruningHoldingTank {
 		result.MovedToTank = []string{userID}
 	}
@@ -904,6 +939,8 @@ func TestFakeWriterEngine_RestoresATreeAfterASponsorIsRemoved(t *testing.T) {
 	pos, err := engine.GetPosition(ctx, writerTree, writerOther)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), pos.EnrolledAt)
+	require.NotNil(t, pos.SponsorUserID)
+	assert.Equal(t, writerRoot, *pos.SponsorUserID)
 }
 
 func TestFakeWriterEngine_RefusesASnapshotWithAnAbsentParent(t *testing.T) {

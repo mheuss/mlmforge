@@ -510,7 +510,7 @@ func TestTreeWriterReject_RejectsACompensatedRoot(t *testing.T) {
 	env := newWriterEnv()
 	root := appendDirect(t, env.events, EventTypeRootAdded, rootAddedPayload())
 	trigger, engine := env.writer()
-	engine.failAdd[writerRoot] = fakeEngineError(engineCodeRootAlreadyExists, "scripted: no writer state found that provokes this")
+	engine.failAdd[writerRoot] = fakeEngineError(engineCodeRootAlreadyExists, "scripted: compensated root")
 	second := testUserUUID(5)
 	addSecond := AddRootRequest{TreeID: writerTree, UserID: second, SponsorID: second, TreeType: treeTypeUnilevel, EnrolledAt: writeTime}
 	_, err := trigger.AddRoot(context.Background(), addSecond)

@@ -2763,7 +2763,7 @@ func TestTreeConsumer_RefusesARemovalWhoseShapeTheEngineCannotApply(t *testing.T
 	}{
 		{"a mode on a unilevel removal", treeTypeUnilevel, PruningHoldingTank},
 		{"an unknown mode on a matrix removal", treeTypeMatrix, "prune_all"},
-		{"an unsupported tree_type, as only a corrupt payload carries", "ternary", ""},
+		{"an unsupported tree_type", "ternary", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()

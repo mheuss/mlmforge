@@ -268,13 +268,15 @@ against each of them. Add shapes until every wrong rule fails at least one.
 
 A tank that lists two users twice shows it. The worker names the user whose
 second entry comes first. On A, B, B, A it names B. A scan from the end also
-names B. On A, B, A, B it names A. A count-first scan also names A. Each shape
-alone let one wrong rule through. The pair caught both.
+names B. On A, B, A, B it names A. A count-first scan also names A. That scan
+names the first user in tank order with more than one entry. Each shape alone
+let one wrong rule through. The pair caught both.
 
 A count works the same way. A shape where two rules give the same count does not
 pin the count. Add a shape where they differ.
 
-A mutation that survives means a shape is missing. It is not a reason to drop
-the mutation.
+A mutation that survives and changes an answer means a shape is missing. It is
+not a reason to drop the mutation. A mutation that changes no answer for any
+input needs no shape.
 
 Found in final review for HEU-1076 on 2026-11-18.

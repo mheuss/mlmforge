@@ -291,7 +291,7 @@ Count the distinct ids the statements return with `RETURNING` instead. A
 duplicate then leaves the distinct set one short, wherever its entries land.
 
 Found on HEU-1042, 2026-11-17. At a chunk size of 1, a list naming one user twice
-puts each entry in its own chunk. Each chunk updates the row, so the summed counts
+puts each entry in its own chunk. Each chunk updates the row. The summed counts
 make 2 against a length of 2. The distinct `RETURNING` set holds 1. Put a case
 with the duplicate on either side of a chunk boundary in the shared suite.
 

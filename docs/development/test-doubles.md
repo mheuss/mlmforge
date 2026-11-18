@@ -166,6 +166,12 @@ Dated examples, from HEU-948 on 2026-10-19:
   `TestTreeWriterReject_AFailedAppendLeavesTheOutcomeEmpty` were changed the
   same day to give the reply the worker gives for an absent sponsor.
 
+A test may script a reply after a transport failure. The failure must be one the
+real transport can recover from. A failure that ends the connection cannot be
+followed by a reply. Use a plain error that models a transient failure.
+
+Found in plan review for HEU-1067 on 2026-11-18.
+
 ## A double that ends the path leaves nothing past it to assert
 
 A double that fails the call ends the code path there. An assertion about

@@ -129,8 +129,7 @@ func (c *TreeEventConsumer) handleRootAdded(ctx context.Context, event platform.
 	}
 
 	reconcile := func(ctx context.Context, err error) (reconcileOutcome, error) {
-		if !isEngineCode(err, engineCodeUserAlreadyExists) &&
-			!isEngineCode(err, engineCodeRootAlreadyExists) {
+		if !isEngineCode(err, engineCodeRootAlreadyExists) {
 			return reconcileNotApplicable, nil
 		}
 		pos, perr := c.engine.GetPosition(ctx, payload.TreeID, payload.UserID)

@@ -228,3 +228,25 @@ snapshot and restores the re-encoded result unchanged. That catches a layout the
 helpers do not model.
 
 Used for HEU-1068 on 2026-11-18, for the writer fake's restore checks.
+
+## Pin a check's order with a shape two checks refuse
+
+A fake that refuses the right shapes can still run its checks in a different
+order from the worker. Then a snapshot with two faults gets a different answer
+from each engine. No test fails.
+
+To pin that check A runs before check B, build a shape that both refuse. Require
+the worker's answer for A from both engines. Edit only what A needs and leave
+B's fault in place.
+
+This row passes before and after the change it guards. Its evidence is a
+mutation: move A past B and watch the row fail. Record that run in the commit
+body. No test-first failure exists for it.
+
+Pin only the boundaries the worker's order makes observable. Do not pin the
+fake's own layout. An example is which of two loops runs first inside one worker
+check. Such a row breaks on a refactor that changes nothing the worker would
+answer.
+
+Used for HEU-1078 on 2026-11-18, for the writer fake's root-sponsor and
+sponsor-chain checks.

@@ -135,6 +135,21 @@ func (t *fakeEngineTree) checkRemoval(userID string) error {
 	return nil
 }
 
+// checkMatrixRemoval refuses a matrix removal of an absent user or of the root.
+func (t *fakeEngineTree) checkMatrixRemoval(userID string) error {
+	if _, ok := t.nodes[userID]; !ok {
+		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
+	}
+	if t.root == userID {
+		return fakeEngineError("CANNOT_REMOVE_ROOT", "cannot remove root node")
+	}
+	return nil
+}
+
+func fakeMissingPruningMode() error {
+	return fakeEngineError("MISSING_PARAM", `missing pruning_mode (must be "promote_earliest" or "holding_tank")`)
+}
+
 func (t *fakeEngineTree) childCount(userID string) int {
 	n := 0
 	for _, node := range t.nodes {
@@ -256,7 +271,7 @@ func (f *fakeWriterEngine) RemoveNode(_ context.Context, structure, userID strin
 		return nil, err
 	}
 	if t.treeType == treeTypeMatrix {
-		return nil, fakeEngineError("MISSING_PARAM", "a matrix remove_node needs pruning_mode")
+		return nil, fakeMissingPruningMode()
 	}
 	if err := t.checkRemoval(userID); err != nil {
 		return nil, err
@@ -275,11 +290,8 @@ func (f *fakeWriterEngine) RemoveMatrixNode(_ context.Context, structure, userID
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := t.nodes[userID]; !ok {
-		return nil, fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
-	}
-	if t.root == userID {
-		return nil, fakeEngineError("CANNOT_REMOVE_ROOT", "cannot remove root node")
+	if err := t.checkMatrixRemoval(userID); err != nil {
+		return nil, err
 	}
 	for _, n := range t.nodes {
 		if n.ParentUserID != nil && *n.ParentUserID == userID {
@@ -376,13 +388,15 @@ func (f *fakeWriterEngine) CheckMutation(_ context.Context, structure string, m 
 			return err
 		}
 	case "remove_node":
-		if _, ok := m.params["pruning_mode"]; t.treeType == treeTypeMatrix && !ok {
-			return fakeEngineError("MISSING_PARAM", "a matrix remove_node needs pruning_mode")
-		}
-		if t.treeType != treeTypeMatrix {
-			if err := t.checkRemoval(user); err != nil {
+		if t.treeType == treeTypeMatrix {
+			if _, ok := m.params["pruning_mode"]; !ok {
+				return fakeMissingPruningMode()
+			}
+			if err := t.checkMatrixRemoval(user); err != nil {
 				return err
 			}
+		} else if err := t.checkRemoval(user); err != nil {
+			return err
 		}
 	}
 	return f.checkErr

@@ -16,6 +16,7 @@ type agreementEngine interface {
 	AddNode(ctx context.Context, structure, userID, parentID, sponsorID string, enrolledAt int64, opts ...AddNodeOption) error
 	AddNodeAt(ctx context.Context, structure, userID, parentID, sponsorID string, position int, enrolledAt int64) error
 	RemoveNode(ctx context.Context, structure, userID string) ([]Responsored, error)
+	RemoveMatrixNode(ctx context.Context, structure, userID string, mode PruningMode) (*MatrixRemovalResult, error)
 	CheckMutation(ctx context.Context, structure string, m Mutation) error
 }
 
@@ -97,6 +98,15 @@ func removeNodeCase(name, code string, setup func(*testing.T, agreementEngine), 
 		}}
 }
 
+func removeMatrixNodeCase(name, code string, setup func(*testing.T, agreementEngine), user string) agreementCase {
+	return agreementCase{name: name, code: code, setup: setup,
+		check: CheckRemoveMatrixNode(user, PruningPromoteEarliest),
+		apply: func(e agreementEngine) error {
+			_, err := e.RemoveMatrixNode(context.Background(), writerTree, user, PruningPromoteEarliest)
+			return err
+		}}
+}
+
 func agreementCases() []agreementCase {
 	return []agreementCase{
 		addNodeCase("unilevel add_node of a held user", engineCodeUserAlreadyExists,
@@ -167,6 +177,12 @@ func agreementCases() []agreementCase {
 			agreementWithChild(treeTypeMatrix), writerOther, writerRoot, writerChild, 4),
 		addNodeCase("binary add_node of a held user at position 3", "INVALID_POSITION",
 			agreementWithChild(treeTypeBinary), writerChild, writerRoot, writerRoot, WithPosition(3)),
+		removeMatrixNodeCase("matrix remove_node of the root", "CANNOT_REMOVE_ROOT",
+			agreementWithChild(treeTypeMatrix), writerRoot),
+		removeMatrixNodeCase("matrix remove_node of a user the tree does not hold", engineCodeUserNotFound,
+			agreementRooted(treeTypeMatrix), writerOther),
+		removeNodeCase("matrix remove_node of an absent user with no mode", "MISSING_PARAM",
+			agreementRooted(treeTypeMatrix), writerOther),
 	}
 }
 

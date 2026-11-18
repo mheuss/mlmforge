@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"slices"
 	"strconv"
@@ -498,10 +499,17 @@ func generateMatrixTree(t *testing.T, es *platform.PostgresEventStore, engine *E
 	return tree
 }
 
-func TestMeasureMatrixRemovals(t *testing.T) {
+func TestMeasureMatrixRemovals(t *testing.T) { measureMatrixRemovals(t, 0) }
+
+// TestMeasureMatrixRemovalsUnsplit runs each removal step as one statement.
+func TestMeasureMatrixRemovalsUnsplit(t *testing.T) { measureMatrixRemovals(t, math.MaxInt32) }
+
+// measureMatrixRemovals times a near-root promotion and holding-tank removal with the store's removalChunk set to chunk.
+func measureMatrixRemovals(t *testing.T, chunk int) {
 	n := measureNodes(t)
 	m := matrixShape{width: measureMatrixWidth(t)}
 	es, store, engine, pool := newIntegrationDeps(t)
+	store.removalChunk = chunk
 	ctx := context.Background()
 
 	start := time.Now()
@@ -523,9 +531,18 @@ func TestMeasureMatrixRemovals(t *testing.T) {
 		outcome, err := call.apply(ctx, engine)
 		require.NoError(t, err)
 		projection := RemovalProjection{Users: outcome.removed, Responsored: outcome.responsored, Relocated: outcome.relocated}
+		eventID := nextEventUUID()
+		if r.mode == PruningPromoteEarliest {
+			one := relocationReplay(tree.id, projection.Relocated[:min(defaultRemovalChunk, len(projection.Relocated))])
+			at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+			one.prep = tombstoneRemovedSQL
+			one.prepArgs = func() []any { return []any{tree.id, projection.Users, eventID, at} }
+			plan := explainRolledBack(t, ctx, pool, one)
+			t.Logf("plan for one relocation chunk, before the timed run and rolled back:\n%s", strings.Join(plan, "\n"))
+		}
 		tree.version++
 		begin := time.Now()
-		require.NoError(t, store.ProjectRemoval(ctx, tree.id, projection, nextEventUUID(), tree.version))
+		require.NoError(t, store.ProjectRemoval(ctx, tree.id, projection, eventID, tree.version))
 		elapsed := time.Since(begin)
 		t.Logf("query TreeStore.ProjectRemoval (%s of node %d, generated subtree %d) first run, cache not controlled %8s ms: %d tombstoned, %d re-sponsored, %d relocated",
 			r.mode, r.user, m.subtreeSize(r.user, n), ms(elapsed), len(projection.Users), len(projection.Responsored), len(projection.Relocated))
@@ -551,4 +568,56 @@ func relocationReplay(treeID string, relocated []Relocation) *explainable {
 	return &explainable{sql: relocateSurvivorsSQL, args: func() []any {
 		return []any{treeID, users, parents, positions, depths, at}
 	}}
+}
+
+// TestMeasureMatrixRemovalChunkBreakdown times a near-root promotion's steps and relocation chunks at several chunk sizes.
+func TestMeasureMatrixRemovalChunkBreakdown(t *testing.T) {
+	n := measureNodes(t)
+	m := matrixShape{width: measureMatrixWidth(t)}
+	es, _, engine, pool := newIntegrationDeps(t)
+	ctx := context.Background()
+	tree := generateMatrixTree(t, es, engine, pool, m, n)
+	call, err := nodeRemovedCall(NodeRemovedPayload{TreeID: tree.id, UserID: measureUser(1), PruningMode: PruningPromoteEarliest}, treeTypeMatrix)
+	require.NoError(t, err)
+	outcome, err := call.apply(ctx, engine)
+	require.NoError(t, err)
+	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, chunk := range []int{len(outcome.relocated), 25_000, 50_000, 50_000, 25_000, len(outcome.relocated)} {
+		_, err := pool.Exec(ctx, "VACUUM tree_nodes")
+		require.NoError(t, err)
+		tx, err := pool.Begin(ctx)
+		require.NoError(t, err)
+		begin := time.Now()
+		_, err = tx.Exec(ctx, tombstoneRemovedSQL, tree.id, outcome.removed, nextEventUUID(), at)
+		require.NoError(t, err)
+		tombstone := time.Since(begin)
+		users, sponsors := make([]string, len(outcome.responsored)), make([]string, len(outcome.responsored))
+		for i, r := range outcome.responsored {
+			users[i], sponsors[i] = r.UserID, r.NewSponsorID
+		}
+		begin = time.Now()
+		_, err = collectUserIDs(ctx, tx, responsorRemovedSQL, tree.id, users, sponsors, at)
+		require.NoError(t, err)
+		responsor := time.Since(begin)
+		var chunks []string
+		var relocate time.Duration
+		for lo := 0; lo < len(outcome.relocated); lo += chunk {
+			hi := min(lo+chunk, len(outcome.relocated))
+			slice := outcome.relocated[lo:hi]
+			ids, parents := make([]string, len(slice)), make([]string, len(slice))
+			positions, depths := make([]int, len(slice)), make([]int, len(slice))
+			for i, r := range slice {
+				ids[i], parents[i], positions[i], depths[i] = r.UserID, r.ParentID, r.Position, r.Depth
+			}
+			begin = time.Now()
+			_, err = collectUserIDs(ctx, tx, relocateSurvivorsSQL, tree.id, ids, parents, positions, depths, at)
+			require.NoError(t, err)
+			took := time.Since(begin)
+			relocate += took
+			chunks = append(chunks, ms(took))
+		}
+		require.NoError(t, tx.Rollback(ctx))
+		t.Logf("breakdown chunk=%d: tombstone %s ms, re-sponsor %s ms, relocate %s ms over %d statements [%s]",
+			chunk, ms(tombstone), ms(responsor), ms(relocate), len(chunks), strings.Join(chunks, " "))
+	}
 }

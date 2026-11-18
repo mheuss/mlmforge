@@ -117,6 +117,20 @@ func countCalls(engine *fakeWriterEngine, op string) int {
 	return n
 }
 
+// engineUsers returns the users the fake engine holds in writerTree, or nil
+// when it holds no such tree.
+func engineUsers(engine *fakeWriterEngine) []string {
+	t, ok := engine.trees[writerTree]
+	if !ok {
+		return nil
+	}
+	users := make([]string, 0, len(t.nodes))
+	for user := range t.nodes {
+		users = append(users, user)
+	}
+	return users
+}
+
 // replayAtStage requires err to carry a TreeReplayError at stage, and returns it.
 func replayAtStage(t *testing.T, err error, stage TreeReplayStage) *TreeReplayError {
 	t.Helper()
@@ -209,6 +223,7 @@ func TestTreeWriterSnapshotLoad_RecoversFromAnEngineRefusalMidReplay(t *testing.
 	assert.Contains(t, res.Warnings[0], "INTERNAL_ERROR")
 	assert.Equal(t, 3, res.Nodes)
 	assert.False(t, snapshotStored(t, env))
+	assert.ElementsMatch(t, []string{writerRoot, writerChild, writerOther}, engineUsers(engine), "engine users after the load")
 }
 
 func TestTreeWriterSnapshotLoad_RecoversFromARefusedRestore(t *testing.T) {
@@ -231,6 +246,7 @@ func TestTreeWriterSnapshotLoad_RecoversFromARefusedRestore(t *testing.T) {
 	require.Len(t, res.Warnings, 1)
 	assert.Contains(t, res.Warnings[0], "INCONSISTENT_SNAPSHOT")
 	assert.False(t, snapshotStored(t, env))
+	assert.ElementsMatch(t, []string{writerRoot}, engineUsers(engine), "engine users after the load")
 }
 
 func TestTreeWriterSnapshotLoad_RecoversFromASnapshotThatDisagreesWithTheStore(t *testing.T) {
@@ -257,6 +273,7 @@ func TestTreeWriterSnapshotLoad_RecoversFromASnapshotThatDisagreesWithTheStore(t
 	require.Len(t, res.Warnings, 1)
 	assert.Contains(t, res.Warnings[0], "first user IDs only in the engine: ["+writerOther+"]")
 	assert.Equal(t, 2, res.Nodes)
+	assert.ElementsMatch(t, []string{writerRoot, writerChild}, engineUsers(engine), "engine users after the load")
 }
 
 func TestTreeWriterSnapshotLoad_FailsWhenTheFullReplayAlsoDisagrees(t *testing.T) {

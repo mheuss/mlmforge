@@ -14,7 +14,7 @@ import (
 // restoredTree is the structure an edited snapshot is restored as.
 var restoredTree = testTreeUUID(2)
 
-// workerArena is the arena a worker tree snapshot carries.
+// workerArena mirrors the arena field the test decodes.
 type workerArena struct {
 	Nodes    []workerNode   `json:"nodes"`
 	Index    map[string]int `json:"index"`
@@ -70,8 +70,9 @@ func editFakeSnapshot(t *testing.T, data json.RawMessage, edit func(*fakeSnapsho
 	return out
 }
 
-// restoreSetup places X under the root, sponsored by the root, and Y under the
-// root, sponsored by X. It then places Z under X and removes it.
+// restoreSetup places writerChild under the root, sponsored by the root, and
+// writerOther under the root, sponsored by writerChild. It then places
+// writerRemoved under writerChild and removes it.
 func restoreSetup(t *testing.T, e agreementEngine, treeType string) {
 	t.Helper()
 	agreementRooted(treeType)(t, e)
@@ -86,7 +87,7 @@ func restoreSetup(t *testing.T, e agreementEngine, treeType string) {
 	require.NoError(t, err)
 }
 
-// removeCheck builds the check for removing user under mode, or remove_node when mode is empty.
+// removeCheck builds the check for removing user under mode, or CheckRemoveNode's when mode is empty.
 func removeCheck(user string, mode PruningMode) Mutation {
 	if mode == "" {
 		return CheckRemoveNode(user)
@@ -110,8 +111,8 @@ func TestWorkerSnapshotEditor_RoundTripsTheWorkersArena(t *testing.T) {
 			data := editWorkerSnapshot(t, taken.Data, func(a *workerArena) { edited = *a })
 
 			require.NotNil(t, edited.Root, "the worker's root slot")
-			assert.Equal(t, edited.Index[writerRoot], *edited.Root, "the root slot")
-			assert.Len(t, edited.FreeList, 1, "the tombstone from removing Z")
+			assert.Equal(t, edited.slot(t, writerRoot), *edited.Root, "the root slot")
+			assert.Len(t, edited.FreeList, 1, "the tombstone from removing writerRemoved")
 			require.NoError(t, client.RestoreSnapshot(ctx, restoredTree, taken.TreeType, data), "the worker's restore")
 		})
 	}
@@ -155,8 +156,9 @@ func TestFakeWriterEngine_RefusesToRemoveASponsorlessUserWithRecruits(t *testing
 			assert.Equal(t, engineErrorOf(workerCheck), engineErrorOf(fakeCheck), "check")
 			assert.Equal(t, engineErrorOf(workerApply), engineErrorOf(fakeApply), "apply")
 			for _, e := range []removalAgreementEngine{client, fake} {
-				assert.Equal(t, "", sponsorOf(t, e, restoredTree, writerChild), "X's sponsor after the refusals")
-				assert.Equal(t, writerChild, sponsorOf(t, e, restoredTree, writerOther), "Y's sponsor after the refusals")
+				assert.Equal(t, "", sponsorOf(t, e, restoredTree, writerChild), "writerChild's sponsor after the refusals")
+				assert.Equal(t, writerChild, sponsorOf(t, e, restoredTree, writerOther),
+					"writerOther's sponsor after the refusals")
 			}
 		})
 	}
@@ -176,7 +178,7 @@ func setFakeSponsor(s *fakeSnapshot, user, sponsor string) {
 	s.Nodes[user] = n
 }
 
-// restoreShape is one snapshot shape the worker's restore refuses.
+// restoreShape pairs one worker edit with one fake edit.
 type restoreShape struct {
 	name        string
 	editWorker  func(*testing.T, *workerArena)
@@ -231,14 +233,14 @@ func restoreShapes() []restoreShape {
 				n.Depth = 0
 				s.Nodes[writerOther] = n
 			},
-			workerFault: `^node slot \d+ holds \S+ and names no parent; root names node slot \d+$`,
+			workerFault: `^node slot \d+ holds ` + writerOther + ` and names no parent; root names node slot \d+$`,
 			fakeMessage: "node " + writerOther + " names no parent and is not the root " + writerRoot,
 		},
 		{
 			name:        "nodes with no root",
 			editWorker:  func(_ *testing.T, a *workerArena) { a.Root = nil },
 			editFake:    func(s *fakeSnapshot) { s.Root = "" },
-			workerFault: `^the arena names no root; its live node count is \d+$`,
+			workerFault: `^the arena names no root; its live node count is 3$`,
 			fakeMessage: "the snapshot holds 3 nodes and names no root",
 		},
 		{
@@ -268,6 +270,17 @@ func restoreShapes() []restoreShape {
 			workerFault: `^sponsor on node slot \d+ names node slot \d+; sponsored on node slot \d+ does not name node slot \d+$`,
 			fakeMessage: writerOther + " names sponsor " + writerChild + "; the recruit list of " + writerChild +
 				" does not name it",
+		},
+		{
+			name:       "a recruit list naming a user with no sponsor",
+			editWorker: func(t *testing.T, a *workerArena) { a.Nodes[a.slot(t, writerChild)].Sponsor = nil },
+			editFake: func(s *fakeSnapshot) {
+				n := s.Nodes[writerChild]
+				n.SponsorUserID = nil
+				s.Nodes[writerChild] = n
+			},
+			workerFault: `^sponsored on node slot \d+ names node slot \d+; sponsor on node slot \d+ does not name node slot \d+$`,
+			fakeMessage: "the recruit list of " + writerRoot + " names " + writerChild + ", who has no sponsor",
 		},
 	}
 }

@@ -62,7 +62,7 @@ func placeInSlot(t *testing.T, e agreementEngine, treeType, user, parent, sponso
 	}
 }
 
-// removeUser removes user from structure under mode, or with remove_node when mode is empty.
+// removeUser removes user from structure under mode, or with RemoveNode when mode is empty.
 func removeUser(e agreementEngine, structure, user string, mode PruningMode) ([]Responsored, error) {
 	ctx := context.Background()
 	if mode == "" {
@@ -103,7 +103,7 @@ func requireHeldSponsors(t *testing.T, fake *fakeWriterEngine) {
 	nodes := fake.trees[writerTree].nodes
 	for _, id := range slices.Sorted(maps.Keys(nodes)) {
 		if sponsor := nodes[id].SponsorUserID; sponsor != nil {
-			assert.Contains(t, nodes, *sponsor, "the sponsor of %s", id)
+			require.Contains(t, nodes, *sponsor, "the sponsor of %s", id)
 		}
 	}
 }
@@ -181,7 +181,7 @@ func orderScenario(t *testing.T, e agreementEngine, treeType string) {
 	}
 }
 
-// orderScenarioLists is the fake's recruit map after A and then M are removed.
+// orderScenarioLists is the recruit map the test expects from the fake after A and then M are removed.
 func orderScenarioLists(treeType string) map[string][]string {
 	if treeType == treeTypeBinary {
 		return map[string][]string{writerRoot: {removalF, removalP, removalB}}
@@ -209,28 +209,36 @@ func TestFakeWriterEngine_KeepsTheWorkersRecruitOrderAcrossTwoRemovals(t *testin
 			t.Run(name, func(t *testing.T) {
 				client := startWorker(t)
 				fake := newFakeWriterEngine()
-				engines := []removalAgreementEngine{client, fake}
+				const worker, fakeIdx = 0, 1
+				engines := []removalAgreementEngine{worker: client, fakeIdx: fake}
+				names := []string{worker: "worker", fakeIdx: "fake"}
 				var first, second [2][]Responsored
 				for i, e := range engines {
 					orderScenario(t, e, tt.treeType)
 					var err error
 					first[i], err = removeUser(e, writerTree, removalA, tt.mode)
-					require.NoError(t, err)
+					require.NoError(t, err, "removing A on the %s", names[i])
 					if restore {
 						roundTrip(t, e)
 					}
 					second[i], err = removeUser(e, writerTree, removalM, tt.mode)
-					require.NoError(t, err)
+					require.NoError(t, err, "removing M on the %s", names[i])
 				}
 
-				require.Equal(t, []Responsored{{UserID: removalB, NewSponsorID: removalM}}, first[0],
+				require.Equal(t, []Responsored{{UserID: removalB, NewSponsorID: removalM}}, first[worker],
 					"the worker's responsored list on removing A")
 				require.Equal(t, []Responsored{
 					{UserID: removalP, NewSponsorID: writerRoot},
 					{UserID: removalB, NewSponsorID: writerRoot},
-				}, second[0], "the worker's responsored list on removing M")
-				assert.Equal(t, first[0], first[1], "responsored on removing A")
-				assert.Equal(t, second[0], second[1], "responsored on removing M")
+				}, second[worker], "the worker's responsored list on removing M")
+				assert.Equal(t, first[worker], first[fakeIdx], "responsored on removing A")
+				assert.Equal(t, second[worker], second[fakeIdx], "responsored on removing M")
+				for _, user := range []string{removalA, removalM} {
+					_, workerErr := client.GetPosition(context.Background(), writerTree, user)
+					_, fakeErr := fake.GetPosition(context.Background(), writerTree, user)
+					require.Error(t, workerErr, "the worker's position of removed user %s", user)
+					assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(fakeErr), "the position of removed user %s", user)
+				}
 				if !restore {
 					assert.Equal(t, orderScenarioLists(tt.treeType), fakeLists(t, fake))
 				}

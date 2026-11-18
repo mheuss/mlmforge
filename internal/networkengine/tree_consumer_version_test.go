@@ -12,7 +12,7 @@ import (
 
 func TestHandleRootAdded_CompensationRestoresTheProjectedVersion(t *testing.T) {
 	tr := &reconcileTransport{
-		mutationErr: &EngineError{Code: engineCodeUserAlreadyExists},
+		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists},
 		position:    &EnginePosition{UserID: posUser, Depth: 3, EnrolledAt: posEnrolled.Unix()},
 	}
 	c, store := newRootConsumer(tr)
@@ -30,7 +30,7 @@ func TestHandleRootAdded_CompensationRestoresTheProjectedVersion(t *testing.T) {
 
 func TestHandleRootAdded_CompensationRestoresTheVersionBeforeALaterRoot(t *testing.T) {
 	tr := &reconcileTransport{
-		mutationErr: &EngineError{Code: engineCodeUserAlreadyExists},
+		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists},
 		position:    &EnginePosition{UserID: posUser, Depth: 3, EnrolledAt: posEnrolled.Unix()},
 	}
 	c, store := newRootConsumer(tr)

@@ -1601,17 +1601,20 @@ func TestHandleNodePlaced_ReconcileDivergesWhenThePositionLookupFindsNoUser(t *t
 		positionErr: &EngineError{Code: engineCodeUserNotFound, Message: "lookup-marker"},
 	}
 	c, _ := newReconcileConsumer(t, tr)
+	ev := makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1)))
 
-	err := deliver(context.Background(), c, makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
+	err := deliver(context.Background(), c, ev)
 
 	require.Error(t, err)
 	assert.Len(t, tr.mutationOps, 1, "a not-found answer is not retried")
 	assert.Equal(t, 1, tr.positionOps)
 	assert.True(t, isEngineCode(err, engineCodeUserAlreadyExists), "the refused mutation is the error carried")
 	assert.Contains(t, err.Error(), "lookup-marker", "and the lookup's own error is kept")
-	for _, sentinel := range rejectionSentinels {
-		assert.NotErrorIs(t, err, sentinel)
-	}
+	w, _ := newWriterEnv().writer()
+	evidence, evErr := w.rejectionEvidence(context.Background(), writerTree, treeShape{treeType: treeTypeBinary}, ev,
+		caughtUpFailure(ev, err))
+	require.NoError(t, evErr)
+	assert.False(t, evidence, "rejectionEvidence returned true for this error wrapped as a catch-up failure")
 }
 
 // Any other engine failure is not reconcile's business, and inspecting it

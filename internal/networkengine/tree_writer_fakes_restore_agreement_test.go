@@ -164,6 +164,60 @@ func TestFakeWriterEngine_RefusesToRemoveASponsorlessUserWithRecruits(t *testing
 	}
 }
 
+// restoreSponsorlessMatrixParent builds a matrix on both engines in which
+// writerChild sponsors writerOther and has writerRemoved under it, then restores
+// it as restoredTree with writerChild's sponsor cleared. writerOther sits under
+// writerChild when recruitUnder is set, and under the root otherwise.
+func restoreSponsorlessMatrixParent(t *testing.T, client, fake removalAgreementEngine, recruitUnder bool) {
+	t.Helper()
+	ctx := context.Background()
+	for _, e := range []removalAgreementEngine{client, fake} {
+		agreementRooted(treeTypeMatrix)(t, e)
+		placeInSlot(t, e, treeTypeMatrix, writerChild, writerRoot, writerRoot, 0, 200)
+		placeInSlot(t, e, treeTypeMatrix, writerRemoved, writerChild, writerRoot, 0, 300)
+		if recruitUnder {
+			placeInSlot(t, e, treeTypeMatrix, writerOther, writerChild, writerChild, 1, 400)
+		} else {
+			placeInSlot(t, e, treeTypeMatrix, writerOther, writerRoot, writerChild, 1, 400)
+		}
+	}
+	workerTaken, err := client.TakeSnapshot(ctx, writerTree)
+	require.NoError(t, err)
+	fakeTaken, err := fake.TakeSnapshot(ctx, writerTree)
+	require.NoError(t, err)
+	workerData := editWorkerSnapshot(t, workerTaken.Data, func(a *workerArena) {
+		x, r := a.slot(t, writerChild), a.slot(t, writerRoot)
+		a.Nodes[x].Sponsor = nil
+		a.Nodes[r].Sponsored = slices.DeleteFunc(a.Nodes[r].Sponsored, func(s int) bool { return s == x })
+	})
+	fakeData := editFakeSnapshot(t, fakeTaken.Data, func(s *fakeSnapshot) {
+		n := s.Nodes[writerChild]
+		n.SponsorUserID = nil
+		s.Nodes[writerChild] = n
+		s.Sponsored[writerRoot] = slices.DeleteFunc(s.Sponsored[writerRoot], func(id string) bool { return id == writerChild })
+	})
+	require.NoError(t, client.RestoreSnapshot(ctx, restoredTree, workerTaken.TreeType, workerData), "the worker's restore")
+	require.NoError(t, fake.RestoreSnapshot(ctx, restoredTree, fakeTaken.TreeType, fakeData))
+}
+
+func TestFakeWriterEngine_RefusesASponsorlessMatrixParentBeforeItsChildren(t *testing.T) {
+	ctx := context.Background()
+	client := startWorker(t)
+	fake := newFakeWriterEngine()
+	restoreSponsorlessMatrixParent(t, client, fake, false)
+
+	check := removeCheck(writerChild, PruningPromoteEarliest)
+	workerCheck := client.CheckMutation(ctx, restoredTree, check)
+	fakeCheck := fake.CheckMutation(ctx, restoredTree, check)
+	_, workerApply := removeUser(client, restoredTree, writerChild, PruningPromoteEarliest)
+	_, fakeApply := removeUser(fake, restoredTree, writerChild, PruningPromoteEarliest)
+
+	require.Equal(t, "SPONSORLESS_WITH_RECRUITS", engineCodeOf(workerCheck), "the worker's check answer")
+	assert.Equal(t, engineErrorOf(workerCheck), engineErrorOf(workerApply), "the worker's apply against its check")
+	assert.Equal(t, engineErrorOf(workerCheck), engineErrorOf(fakeCheck), "check")
+	assert.Equal(t, engineErrorOf(workerApply), engineErrorOf(fakeApply), "apply")
+}
+
 // tombstone returns the one slot on the worker's free list.
 func (a *workerArena) tombstone(t *testing.T) int {
 	t.Helper()

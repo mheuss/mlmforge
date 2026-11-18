@@ -382,6 +382,16 @@ func restoreShapes() []restoreShape {
 			workerFault: `^the sponsor chain from node slot \d+ reaches node slot \d+ twice$`,
 			fakeMessage: "the sponsor chain from " + writerChild + " reaches " + writerOther + " twice",
 		},
+		{
+			name: "a sponsor cycle whose recruit lists were not updated",
+			editWorker: func(t *testing.T, a *workerArena) {
+				y := a.slot(t, writerOther)
+				a.Nodes[a.slot(t, writerChild)].Sponsor = &y
+			},
+			editFake:    func(s *fakeSnapshot) { setFakeSponsor(s, writerChild, writerOther) },
+			workerFault: `^sponsored on node slot \d+ names node slot \d+; sponsor on node slot \d+ does not name node slot \d+$`,
+			fakeMessage: "the recruit list of " + writerRoot + " names " + writerChild + ", whose sponsor is " + writerOther,
+		},
 	}
 }
 

@@ -856,7 +856,7 @@ func (f *fakeWriterEngine) DropStructure(_ context.Context, structure string) (b
 	return ok, nil
 }
 
-// checkRestored refuses a snapshot that fails one of its root, parent, sponsor, root-sponsor, recruit-list or sponsor-chain checks.
+// checkRestored refuses an inconsistent snapshot.
 func checkRestored(snap fakeSnapshot) error {
 	if _, ok := snap.Nodes[snap.Root]; snap.Root != "" && !ok {
 		return fakeEngineError("INCONSISTENT_SNAPSHOT", "root names %s; the snapshot holds no such node", snap.Root)

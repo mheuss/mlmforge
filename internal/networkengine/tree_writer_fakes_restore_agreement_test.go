@@ -330,6 +330,58 @@ func restoreShapes() []restoreShape {
 			workerFault: `^sponsor on node slot \d+ names node slot \d+; that slot is a tombstone$`,
 			fakeMessage: "sponsor on node " + writerRoot + " names " + writerRemoved + "; the snapshot holds no such node",
 		},
+		{
+			name: "two non-root nodes that sponsor each other",
+			editWorker: func(t *testing.T, a *workerArena) {
+				r, x, y := a.slot(t, writerRoot), a.slot(t, writerChild), a.slot(t, writerOther)
+				a.Nodes[x].Sponsor = &y
+				a.Nodes[y].Sponsored = []int{x}
+				a.Nodes[r].Sponsored = slices.DeleteFunc(a.Nodes[r].Sponsored, func(s int) bool { return s == x })
+			},
+			editFake: func(s *fakeSnapshot) {
+				setFakeSponsor(s, writerChild, writerOther)
+				s.Sponsored[writerOther] = []string{writerChild}
+				delete(s.Sponsored, writerRoot)
+			},
+			workerFault: `^the sponsor chain from node slot \d+ reaches node slot \d+ twice$`,
+			fakeMessage: "the sponsor chain from " + writerChild + " reaches " + writerChild + " twice",
+		},
+		{
+			name: "a non-root node that sponsors itself",
+			editWorker: func(t *testing.T, a *workerArena) {
+				y := a.slot(t, writerOther)
+				a.Nodes[y].Sponsor = &y
+				a.Nodes[y].Sponsored = []int{y}
+				a.Nodes[a.slot(t, writerChild)].Sponsored = []int{}
+			},
+			editFake: func(s *fakeSnapshot) {
+				setFakeSponsor(s, writerOther, writerOther)
+				s.Sponsored[writerOther] = []string{writerOther}
+				delete(s.Sponsored, writerChild)
+			},
+			workerFault: `^the sponsor chain from node slot \d+ reaches node slot \d+ twice$`,
+			fakeMessage: "the sponsor chain from " + writerOther + " reaches " + writerOther + " twice",
+		},
+		{
+			name: "a sponsor chain that enters a cycle",
+			editWorker: func(t *testing.T, a *workerArena) {
+				r, x, y := a.slot(t, writerRoot), a.slot(t, writerChild), a.slot(t, writerOther)
+				a.Nodes[x].Sponsor = &y
+				a.Nodes[x].Sponsored = []int{}
+				a.Nodes[y].Sponsor = &y
+				a.Nodes[y].Sponsored = []int{y, x}
+				a.Nodes[r].Sponsored = slices.DeleteFunc(a.Nodes[r].Sponsored, func(s int) bool { return s == x })
+			},
+			editFake: func(s *fakeSnapshot) {
+				setFakeSponsor(s, writerChild, writerOther)
+				setFakeSponsor(s, writerOther, writerOther)
+				s.Sponsored[writerOther] = []string{writerOther, writerChild}
+				delete(s.Sponsored, writerChild)
+				delete(s.Sponsored, writerRoot)
+			},
+			workerFault: `^the sponsor chain from node slot \d+ reaches node slot \d+ twice$`,
+			fakeMessage: "the sponsor chain from " + writerChild + " reaches " + writerOther + " twice",
+		},
 	}
 }
 

@@ -501,10 +501,10 @@ func generateMatrixTree(t *testing.T, es *platform.PostgresEventStore, engine *E
 
 func TestMeasureMatrixRemovals(t *testing.T) { measureMatrixRemovals(t, 0) }
 
-// TestMeasureMatrixRemovalsUnsplit measures the same removals with no chunking.
+// TestMeasureMatrixRemovalsUnsplit measures the matrix removals with no chunking.
 func TestMeasureMatrixRemovalsUnsplit(t *testing.T) { measureMatrixRemovals(t, math.MaxInt32) }
 
-// measureMatrixRemovals times a near-root promotion and a holding-tank removal at the given chunk size.
+// measureMatrixRemovals times a near-root promotion and a holding-tank removal.
 func measureMatrixRemovals(t *testing.T, chunk int) {
 	n := measureNodes(t)
 	m := matrixShape{width: measureMatrixWidth(t)}
@@ -557,17 +557,8 @@ func measureMatrixRemovals(t *testing.T, chunk int) {
 
 // relocationReplay is the relocation UPDATE with the given relocations as its arguments.
 func relocationReplay(treeID string, relocated []Relocation) *explainable {
-	users := make([]string, len(relocated))
-	parents := make([]string, len(relocated))
-	positions := make([]int, len(relocated))
-	depths := make([]int, len(relocated))
-	for i, r := range relocated {
-		users[i], parents[i], positions[i], depths[i] = r.UserID, r.ParentID, r.Position, r.Depth
-	}
-	at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	return &explainable{sql: relocateSurvivorsSQL, args: func() []any {
-		return []any{treeID, users, parents, positions, depths, at}
-	}}
+	args := relocateArgs(treeID, relocated, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	return &explainable{sql: relocateSurvivorsSQL, args: func() []any { return args }}
 }
 
 // TestMeasureMatrixRemovalChunkBreakdown times a near-root promotion's steps and relocation chunks at several chunk sizes.
@@ -609,22 +600,18 @@ func breakdownPass(t *testing.T, ctx context.Context, pool *pgxpool.Pool, treeID
 	ids, err := collectUserIDs(ctx, tx, responsorRemovedSQL, treeID, users, sponsors, at)
 	require.NoError(t, err)
 	responsor := time.Since(begin)
-	require.Len(t, ids, len(outcome.responsored), "rows re-sponsored")
+	require.Equal(t, len(outcome.responsored), len(ids), "rows re-sponsored")
 	var chunks []string
 	var relocate time.Duration
 	for lo := 0; lo < len(outcome.relocated); lo += chunk {
 		hi := min(lo+chunk, len(outcome.relocated))
 		slice := outcome.relocated[lo:hi]
-		movers, parents := make([]string, len(slice)), make([]string, len(slice))
-		positions, depths := make([]int, len(slice)), make([]int, len(slice))
-		for i, r := range slice {
-			movers[i], parents[i], positions[i], depths[i] = r.UserID, r.ParentID, r.Position, r.Depth
-		}
+		args := relocateArgs(treeID, slice, at)
 		begin = time.Now()
-		ids, err := collectUserIDs(ctx, tx, relocateSurvivorsSQL, treeID, movers, parents, positions, depths, at)
+		ids, err := collectUserIDs(ctx, tx, relocateSurvivorsSQL, args...)
 		require.NoError(t, err)
 		took := time.Since(begin)
-		require.Len(t, ids, len(slice), "rows relocated in %s", chunkRange(lo, hi, len(outcome.relocated)))
+		require.Equal(t, len(slice), len(ids), "rows relocated in %s", chunkRange(lo, hi, len(outcome.relocated)))
 		relocate += took
 		chunks = append(chunks, ms(took))
 	}

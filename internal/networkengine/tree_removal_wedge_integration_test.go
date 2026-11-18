@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A node count and a chunk size.
 const (
 	wedgeNodes = 16383
 	wedgeChunk = 128
@@ -65,6 +64,16 @@ func timeRelocation(t *testing.T, it *writerIntegration, treeID string, removed 
 	defer func() { _ = tx.Rollback(ctx) }()
 	_, err = tx.Exec(ctx, tombstoneRemovedSQL, treeID, removed, testNodeUUID(999_998), at)
 	require.NoError(t, err)
+	args := relocateArgs(treeID, moves, at)
+	start := time.Now()
+	_, err = collectUserIDs(ctx, tx, relocateSurvivorsSQL, args...)
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+	return elapsed
+}
+
+// relocateArgs returns the relocation UPDATE's arguments for moves, stamped at at.
+func relocateArgs(treeID string, moves []Relocation, at time.Time) []any {
 	users := make([]string, len(moves))
 	parents := make([]string, len(moves))
 	positions := make([]int, len(moves))
@@ -72,11 +81,7 @@ func timeRelocation(t *testing.T, it *writerIntegration, treeID string, removed 
 	for i, m := range moves {
 		users[i], parents[i], positions[i], depths[i] = m.UserID, m.ParentID, m.Position, m.Depth
 	}
-	start := time.Now()
-	_, err = collectUserIDs(ctx, tx, relocateSurvivorsSQL, treeID, users, parents, positions, depths, at)
-	elapsed := time.Since(start)
-	require.NoError(t, err)
-	return elapsed
+	return []any{treeID, users, parents, positions, depths, at}
 }
 
 // leafUnderNodeTwo returns the largest node index below n whose parent chain reaches node 2.

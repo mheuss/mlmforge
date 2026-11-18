@@ -807,3 +807,7 @@ func TestPostgresTreeStore_ARelocationChunkErrorNamesItsRows(t *testing.T) {
 		})
 	}
 }
+
+func TestPostgresTreeStore_DefaultsToRemovalChunksOf25000Rows(t *testing.T) {
+	assert.Equal(t, 25_000, NewPostgresTreeStore(nil).chunk())
+}

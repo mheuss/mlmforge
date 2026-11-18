@@ -1600,7 +1600,7 @@ The order matters. `idx_tree_nodes_tree_parent_position_active` is a unique inde
 
 Inside step 3 the row order is undefined. So a relocation that changes parent or slot has to target a slot that is free after step 1 and that no other relocation vacates. A relocation that changes only depth keeps its own slot, and no other relocation targets it. The Rust property test in `matrix_properties.rs` checks that against a model of the slot map. `TestTreeConsumer_SeededMatrixRemovalsKeepEveryRowOnTheEngine` checks it against the real index.
 
-Each step runs as set-based statements of a fixed size, all inside the one transaction. The removal's deadline grows with the rows it writes.
+Each step runs as set-based statements of at most a fixed size, all inside the one transaction. The removal's deadline grows with the rows it writes.
 
 The store does not show the holding tank. The engine rebuilt by replay or from a snapshot does.
 

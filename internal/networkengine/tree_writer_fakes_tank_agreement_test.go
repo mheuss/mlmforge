@@ -146,3 +146,173 @@ func TestFakeWriterEngine_IgnoresATankKeyOffAMatrixAsTheWorkerDoes(t *testing.T)
 		}
 	}
 }
+
+// tankLoop is a user no tree in these tests places.
+var tankLoop = testUserUUID(10)
+
+// tankEntry builds a tank entry for user, sponsored by sponsor when it is not empty.
+func tankEntry(user, sponsor string) HoldingTankEntryDTO {
+	entry := HoldingTankEntryDTO{UserID: user, EnrolledAt: 500}
+	if sponsor != "" {
+		entry.SponsorUserID = &sponsor
+	}
+	return entry
+}
+
+// tankShape is one tank, and an optional arena edit, that a restore must answer.
+type tankShape struct {
+	name        string
+	tank        []HoldingTankEntryDTO
+	editWorker  func(*testing.T, *workerArena)
+	editFake    func(*fakeSnapshot)
+	workerFault string
+	fakeMessage string
+}
+
+// tankShapes lists tanks a restore refuses, each over writerChild placed under
+// the root and writerOther sponsored by writerChild.
+func tankShapes() []tankShape {
+	return []tankShape{
+		{
+			name:        "a tanked user who is also placed",
+			tank:        []HoldingTankEntryDTO{tankEntry(writerChild, writerRoot)},
+			workerFault: `^the holding tank names ` + writerChild + `; that user is also placed at node slot \d+$`,
+			fakeMessage: "the holding tank names " + writerChild + "; the snapshot also places that user",
+		},
+		{
+			name:        "a user listed twice",
+			tank:        []HoldingTankEntryDTO{tankEntry(writerRemoved, ""), tankEntry(writerRemoved, "")},
+			workerFault: `^the holding tank lists ` + writerRemoved + ` more than once$`,
+			fakeMessage: "the holding tank lists " + writerRemoved + " more than once",
+		},
+		{
+			name:        "a placed user listed twice",
+			tank:        []HoldingTankEntryDTO{tankEntry(writerChild, ""), tankEntry(writerChild, "")},
+			workerFault: `^the holding tank names ` + writerChild + `; that user is also placed at node slot \d+$`,
+			fakeMessage: "the holding tank names " + writerChild + "; the snapshot also places that user",
+		},
+		{
+			name:        "a tank entry that sponsors itself",
+			tank:        []HoldingTankEntryDTO{tankEntry(writerRemoved, writerRemoved)},
+			workerFault: `^the holding tank's sponsor chain from ` + writerRemoved + ` reaches ` + writerRemoved + ` twice$`,
+			fakeMessage: "the holding tank's sponsor chain from " + writerRemoved + " reaches " + writerRemoved + " twice",
+		},
+		{
+			name:        "two tank entries that sponsor each other",
+			tank:        []HoldingTankEntryDTO{tankEntry(writerRemoved, tankLoop), tankEntry(tankLoop, writerRemoved)},
+			workerFault: `^the holding tank's sponsor chain from ` + writerRemoved + ` reaches ` + writerRemoved + ` twice$`,
+			fakeMessage: "the holding tank's sponsor chain from " + writerRemoved + " reaches " + writerRemoved + " twice",
+		},
+		{
+			name:        "a tank chain that enters a cycle",
+			tank:        []HoldingTankEntryDTO{tankEntry(writerRemoved, tankLoop), tankEntry(tankLoop, tankLoop)},
+			workerFault: `^the holding tank's sponsor chain from ` + writerRemoved + ` reaches ` + tankLoop + ` twice$`,
+			fakeMessage: "the holding tank's sponsor chain from " + writerRemoved + " reaches " + tankLoop + " twice",
+		},
+		{
+			name: "a user listed twice beside a tank cycle",
+			tank: []HoldingTankEntryDTO{tankEntry(writerRemoved, ""), tankEntry(writerRemoved, tankLoop),
+				tankEntry(tankLoop, writerRemoved)},
+			workerFault: `^the holding tank lists ` + writerRemoved + ` more than once$`,
+			fakeMessage: "the holding tank lists " + writerRemoved + " more than once",
+		},
+		{
+			name: "a tank fault beside a root with a sponsor",
+			tank: []HoldingTankEntryDTO{tankEntry(writerRemoved, ""), tankEntry(writerRemoved, "")},
+			editWorker: func(t *testing.T, a *workerArena) {
+				x := a.slot(t, writerChild)
+				a.Nodes[a.slot(t, writerRoot)].Sponsor = &x
+			},
+			editFake:    func(s *fakeSnapshot) { setFakeSponsor(s, writerRoot, writerChild) },
+			workerFault: `^the root at node slot \d+ holds ` + writerRoot + `, whose sponsor is node slot \d+$`,
+			fakeMessage: "the root " + writerRoot + " names sponsor " + writerChild,
+		},
+		{
+			name: "a tank fault beside a placed node that sponsors itself",
+			tank: []HoldingTankEntryDTO{tankEntry(writerRemoved, ""), tankEntry(writerRemoved, "")},
+			editWorker: func(t *testing.T, a *workerArena) {
+				y := a.slot(t, writerOther)
+				a.Nodes[y].Sponsor = &y
+				a.Nodes[y].Sponsored = []int{y}
+				a.Nodes[a.slot(t, writerChild)].Sponsored = []int{}
+			},
+			editFake: func(s *fakeSnapshot) {
+				setFakeSponsor(s, writerOther, writerOther)
+				s.Sponsored[writerOther] = []string{writerOther}
+				delete(s.Sponsored, writerChild)
+			},
+			workerFault: `^the sponsor chain from node slot \d+ reaches node slot \d+ twice$`,
+			fakeMessage: "the sponsor chain from " + writerOther + " reaches " + writerOther + " twice",
+		},
+	}
+}
+
+// tankRestoreSetup places writerChild under the root, sponsored by the root,
+// and writerOther under the root, sponsored by writerChild.
+func tankRestoreSetup(t *testing.T, e agreementEngine) {
+	t.Helper()
+	agreementRooted(treeTypeMatrix)(t, e)
+	placeInSlot(t, e, treeTypeMatrix, writerChild, writerRoot, writerRoot, 0, 200)
+	placeInSlot(t, e, treeTypeMatrix, writerOther, writerRoot, writerChild, 1, 300)
+}
+
+// restoreWithTank restores both engines' snapshots of writerTree as
+// restoredTree, with tank in place of each tank and the shape's arena edits.
+func restoreWithTank(t *testing.T, client, fake removalAgreementEngine, shape tankShape) (workerErr, fakeErr error) {
+	t.Helper()
+	ctx := context.Background()
+	workerTaken, err := client.TakeSnapshot(ctx, writerTree)
+	require.NoError(t, err)
+	fakeTaken, err := fake.TakeSnapshot(ctx, writerTree)
+	require.NoError(t, err)
+	workerData := editTank(t, workerTaken.Data, func(held *[]HoldingTankEntryDTO) { *held = shape.tank })
+	if shape.editWorker != nil {
+		workerData = editWorkerSnapshot(t, workerData, func(a *workerArena) { shape.editWorker(t, a) })
+	}
+	fakeData := editFakeSnapshot(t, fakeTaken.Data, func(s *fakeSnapshot) {
+		s.HoldingTank = shape.tank
+		if shape.editFake != nil {
+			shape.editFake(s)
+		}
+	})
+	return client.RestoreSnapshot(ctx, restoredTree, workerTaken.TreeType, workerData),
+		fake.RestoreSnapshot(ctx, restoredTree, fakeTaken.TreeType, fakeData)
+}
+
+func TestFakeWriterEngine_RefusesTheTanksTheWorkerRefuses(t *testing.T) {
+	for _, shape := range tankShapes() {
+		t.Run(shape.name, func(t *testing.T) {
+			client := startWorker(t)
+			fake := newFakeWriterEngine()
+			tankRestoreSetup(t, client)
+			tankRestoreSetup(t, fake)
+
+			workerErr, fakeErr := restoreWithTank(t, client, fake, shape)
+
+			var workerRefusal *EngineError
+			require.ErrorAs(t, workerErr, &workerRefusal, "the worker's answer")
+			require.Equal(t, "INCONSISTENT_SNAPSHOT", workerRefusal.Code, "the worker's code")
+			require.Regexp(t, shape.workerFault, workerRefusal.Message, "the worker's fault")
+			requireEngineRefusal(t, fakeErr, "INCONSISTENT_SNAPSHOT", shape.fakeMessage)
+			assert.NotContains(t, fake.trees, restoredTree)
+		})
+	}
+}
+
+func TestFakeWriterEngine_RestoresTankChainsThatEndAsTheWorkerDoes(t *testing.T) {
+	shape := tankShape{tank: []HoldingTankEntryDTO{
+		tankEntry(writerRemoved, tankLoop),
+		tankEntry(tankLoop, writerChild),
+		tankEntry(writerAbsentSponsor, testUserUUID(11)),
+		tankEntry(testUserUUID(12), ""),
+	}}
+	client := startWorker(t)
+	fake := newFakeWriterEngine()
+	tankRestoreSetup(t, client)
+	tankRestoreSetup(t, fake)
+
+	workerErr, fakeErr := restoreWithTank(t, client, fake, shape)
+
+	require.NoError(t, workerErr, "the worker's restore")
+	require.NoError(t, fakeErr)
+}

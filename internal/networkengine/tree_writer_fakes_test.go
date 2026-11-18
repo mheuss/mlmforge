@@ -1006,7 +1006,49 @@ func checkRestored(snap fakeSnapshot) error {
 				id, *sponsor, *sponsor)
 		}
 	}
-	return checkSponsorChainsEnd(snap, ids)
+	if err := checkSponsorChainsEnd(snap, ids); err != nil {
+		return err
+	}
+	return checkRestoredTank(snap)
+}
+
+// checkRestoredTank refuses a holding tank that names a placed user, names one
+// user twice, or holds a sponsor chain that revisits an entry. It does not
+// check for nil user or sponsor IDs.
+func checkRestoredTank(snap fakeSnapshot) error {
+	for _, entry := range snap.HoldingTank {
+		if _, ok := snap.Nodes[entry.UserID]; ok {
+			return fakeEngineError("INCONSISTENT_SNAPSHOT", "the holding tank names %s; the snapshot also places that user",
+				entry.UserID)
+		}
+	}
+	position := map[string]int{}
+	for i, entry := range snap.HoldingTank {
+		if _, ok := position[entry.UserID]; ok {
+			return fakeEngineError("INCONSISTENT_SNAPSHOT", "the holding tank lists %s more than once", entry.UserID)
+		}
+		position[entry.UserID] = i
+	}
+	done := make([]bool, len(snap.HoldingTank))
+	for start, entry := range snap.HoldingTank {
+		walk := map[int]bool{}
+		for at, ok := start, true; ok && !done[at]; {
+			if walk[at] {
+				return fakeEngineError("INCONSISTENT_SNAPSHOT", "the holding tank's sponsor chain from %s reaches %s twice",
+					entry.UserID, snap.HoldingTank[at].UserID)
+			}
+			walk[at] = true
+			sponsor := snap.HoldingTank[at].SponsorUserID
+			if sponsor == nil {
+				break
+			}
+			at, ok = position[*sponsor]
+		}
+		for at := range walk {
+			done[at] = true
+		}
+	}
+	return nil
 }
 
 // checkSponsorChainsEnd refuses a snapshot in which a sponsor chain revisits a node.

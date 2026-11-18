@@ -3,7 +3,9 @@ package networkengine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,8 +15,9 @@ import (
 )
 
 const (
-	wedgeNodes = 16383
-	wedgeChunk = 128
+	wedgeNodes       = 16383
+	wedgeChunk       = 128
+	wedgeCalibration = 5
 )
 
 // removalOnlyStore sends ProjectRemoval to removals and every other call to the embedded store.
@@ -100,24 +103,36 @@ func leafUnderNodeTwo(t *testing.T, m matrixShape, n int) int {
 	return 0
 }
 
+// calibrateWedge returns a statement_timeout at least 4× above the slowest chunk's relocation and 4× below the unsplit relocation.
+func calibrateWedge(t *testing.T, it *writerIntegration, treeID string, outcome engineOutcome) time.Duration {
+	t.Helper()
+	var attempts []string
+	for attempt := 1; attempt <= wedgeCalibration; attempt++ {
+		unsplit := timeRelocation(t, it, treeID, outcome.removed, outcome.relocated)
+		var slowest time.Duration
+		for lo := 0; lo < len(outcome.relocated); lo += wedgeChunk {
+			hi := min(lo+wedgeChunk, len(outcome.relocated))
+			slowest = max(slowest, timeRelocation(t, it, treeID, outcome.removed, outcome.relocated[lo:hi]))
+		}
+		ratio := float64(unsplit) / float64(slowest)
+		timeout := max(time.Duration(math.Sqrt(float64(unsplit)*float64(slowest))).Round(time.Millisecond), time.Millisecond)
+		line := fmt.Sprintf("attempt %d: timeout=%s unsplit=%s slowest chunk=%s ratio=%.1f", attempt, timeout, unsplit, slowest, ratio)
+		t.Logf("calibration: n=%d chunk=%d relocated=%d %s", wedgeNodes, wedgeChunk, len(outcome.relocated), line)
+		attempts = append(attempts, line)
+		if ratio >= 16 && unsplit >= 4*timeout && slowest <= timeout/4 {
+			return timeout
+		}
+	}
+	t.Fatalf("calibration never separated unsplit from the slowest chunk by 16x with unsplit >= 4 × timeout and slowest <= timeout / 4, in %d attempts:\n%s",
+		wedgeCalibration, strings.Join(attempts, "\n"))
+	return 0
+}
+
 func TestTreeWriter_ALargeRemovalProjectsUnderAStatementTimeoutInChunks(t *testing.T) {
 	it := newWriterIntegration(t)
 	ctx := context.Background()
 	tree, outcome := wedgeFixture(t, it)
-
-	unsplit := timeRelocation(t, it, tree.id, outcome.removed, outcome.relocated)
-	var slowest time.Duration
-	for lo := 0; lo < len(outcome.relocated); lo += wedgeChunk {
-		hi := min(lo+wedgeChunk, len(outcome.relocated))
-		slowest = max(slowest, timeRelocation(t, it, tree.id, outcome.removed, outcome.relocated[lo:hi]))
-	}
-	ratio := float64(unsplit) / float64(slowest)
-	timeout := max(time.Duration(math.Sqrt(float64(unsplit)*float64(slowest))).Round(time.Millisecond), time.Millisecond)
-	t.Logf("calibration: n=%d timeout=%s chunk=%d unsplit=%s slowest chunk=%s ratio=%.1f relocated=%d",
-		wedgeNodes, timeout, wedgeChunk, unsplit, slowest, ratio, len(outcome.relocated))
-	require.GreaterOrEqual(t, ratio, 16.0, "unsplit %s over slowest chunk %s", unsplit, slowest)
-	require.GreaterOrEqual(t, unsplit, 4*timeout, "unsplit relocation time, against 4 × statement_timeout")
-	require.LessOrEqual(t, slowest, timeout/4, "slowest chunk's relocation time, against statement_timeout / 4")
+	timeout := calibrateWedge(t, it, tree.id, outcome)
 
 	removals := removalOnlyStore{TreeStore: it.store, removals: timeoutStore(t, timeout, wedgeChunk)}
 	res, err := NewTreeWriter(it.events, removals, it.snapshots, it.engine(t), NewPostgresTreeLocker(it.dsn)).

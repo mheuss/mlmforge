@@ -124,6 +124,7 @@ func TestFakeWriterEngine_KeepsNoTankOffAMatrix(t *testing.T) {
 			}
 			require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, writeTime.Unix(), opts...))
 			_, _ = engine.RemoveMatrixNode(ctx, writerTree, writerChild, PruningHoldingTank)
+			require.NotContains(t, engine.trees[writerTree].nodes, writerChild, "the fake's nodes after the off-matrix removal")
 
 			require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, writeTime.Unix(), opts...))
 			assert.Empty(t, engine.trees[writerTree].tank)

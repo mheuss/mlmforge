@@ -70,8 +70,7 @@ type fakeEngineTree struct {
 	nodes    map[string]EnginePosition
 	// sponsored lists each sponsor's recruits in the order they were attached.
 	sponsored map[string][]string
-	// tank is the matrix holding tank, oldest entry first.
-	tank []HoldingTankEntryDTO
+	tank      []HoldingTankEntryDTO
 }
 
 // tanked reports whether userID waits in the holding tank.
@@ -827,12 +826,11 @@ func TestFakeWriterEngine_PlacesIntoARestoredRootOnlyTree(t *testing.T) {
 
 // fakeSnapshot is the fake engine's snapshot payload.
 type fakeSnapshot struct {
-	Width     int                       `json:"width,omitempty"`
-	Root      string                    `json:"root"`
-	Nodes     map[string]EnginePosition `json:"nodes"`
-	Sponsored map[string][]string       `json:"sponsored,omitempty"`
-	// HoldingTank is the matrix holding tank, oldest entry first.
-	HoldingTank []HoldingTankEntryDTO `json:"holding_tank,omitempty"`
+	Width       int                       `json:"width,omitempty"`
+	Root        string                    `json:"root"`
+	Nodes       map[string]EnginePosition `json:"nodes"`
+	Sponsored   map[string][]string       `json:"sponsored,omitempty"`
+	HoldingTank []HoldingTankEntryDTO     `json:"holding_tank,omitempty"`
 }
 
 func (f *fakeWriterEngine) TakeSnapshot(ctx context.Context, structure string) (*SnapshotResultDTO, error) {
@@ -1008,9 +1006,7 @@ func checkRestored(snap fakeSnapshot) error {
 	return checkRestoredTank(snap)
 }
 
-// checkRestoredTank refuses a holding tank that names a placed user, names one
-// user twice, or holds a sponsor chain that revisits an entry. It does not
-// check for nil user or sponsor IDs.
+// checkRestoredTank refuses an inconsistent holding tank.
 func checkRestoredTank(snap fakeSnapshot) error {
 	for _, entry := range snap.HoldingTank {
 		if _, ok := snap.Nodes[entry.UserID]; ok {

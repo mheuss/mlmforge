@@ -168,7 +168,7 @@ type tankShape struct {
 	fakeMessage string
 }
 
-// tankShapes lists tanks a restore refuses.
+// tankShapes lists tanks for the restore agreement test.
 func tankShapes() []tankShape {
 	return []tankShape{
 		{
@@ -272,8 +272,7 @@ func tankShapes() []tankShape {
 	}
 }
 
-// tankRestoreSetup places writerChild under the root, sponsored by the root,
-// and writerOther under the root, sponsored by writerChild.
+// tankRestoreSetup builds a rooted matrix with two placed users.
 func tankRestoreSetup(t *testing.T, e agreementEngine) {
 	t.Helper()
 	agreementRooted(treeTypeMatrix)(t, e)

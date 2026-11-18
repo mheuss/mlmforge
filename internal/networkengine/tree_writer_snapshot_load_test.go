@@ -324,7 +324,8 @@ func TestTreeWriterSnapshotLoad_FailsWhenTheDropIsRefused(t *testing.T) {
 	_, err := w.Load(context.Background(), loadRequest())
 
 	requireReplayStage(t, err, TreeReplayStageDrop)
-	assert.Regexp(t, "the drop followed: build tree "+writerTree+" at stage replay: .*INTERNAL_ERROR", err.Error())
+	assert.Regexp(t, `\[INTERNAL_ERROR\]: handler panicked unexpectedly; the drop followed: build tree `+writerTree+
+		" at stage replay: .*INTERNAL_ERROR", err.Error())
 	assert.NotContains(t, err.Error(), "\n")
 }
 

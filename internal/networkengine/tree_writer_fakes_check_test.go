@@ -112,3 +112,40 @@ func TestFakeWriterEngine_AcceptsAPlacementWhoseSponsorIsHeld(t *testing.T) {
 	require.NoError(t, engine.AddNode(context.Background(), writerTree, writerChild, writerRoot, writerRoot, writeTime.Unix()))
 	assert.Contains(t, engine.trees[writerTree].nodes, writerChild)
 }
+
+func TestFakeWriterEngine_KeepsNoTankOffAMatrix(t *testing.T) {
+	for _, treeType := range []string{treeTypeUnilevel, treeTypeBinary} {
+		t.Run(treeType, func(t *testing.T) {
+			ctx := context.Background()
+			engine := newRootedFakeEngine(t, treeType)
+			opts := []AddNodeOption{}
+			if treeType == treeTypeBinary {
+				opts = append(opts, WithPosition(0))
+			}
+			require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, writeTime.Unix(), opts...))
+			_, _ = engine.RemoveMatrixNode(ctx, writerTree, writerChild, PruningHoldingTank)
+			require.NotContains(t, engine.trees[writerTree].nodes, writerChild, "the fake's nodes after the off-matrix removal")
+
+			require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, writeTime.Unix(), opts...))
+			assert.Empty(t, engine.trees[writerTree].tank)
+		})
+	}
+}
+
+func TestFakeWriterEngine_RefusesAMatrixParentRemovalOnTheCheckAsOnTheApply(t *testing.T) {
+	for _, mode := range []PruningMode{PruningPromoteEarliest, PruningHoldingTank} {
+		t.Run(string(mode), func(t *testing.T) {
+			ctx := context.Background()
+			engine := newRootedFakeEngine(t, treeTypeMatrix)
+			require.NoError(t, engine.AddNodeAt(ctx, writerTree, writerChild, writerRoot, writerRoot, 0, writeTime.Unix()))
+			require.NoError(t, engine.AddNodeAt(ctx, writerTree, writerOther, writerChild, writerRoot, 0, writeTime.Unix()))
+
+			checkErr := engine.CheckMutation(ctx, writerTree, CheckRemoveMatrixNode(writerChild, mode))
+			_, applyErr := engine.RemoveMatrixNode(ctx, writerTree, writerChild, mode)
+
+			require.EqualError(t, applyErr, "fakeWriterEngine removes only a matrix leaf, and "+writerChild+" has children")
+			assert.Equal(t, applyErr, checkErr)
+			assert.Contains(t, engine.trees[writerTree].nodes, writerChild)
+		})
+	}
+}

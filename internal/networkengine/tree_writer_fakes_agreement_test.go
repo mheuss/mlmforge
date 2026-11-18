@@ -63,6 +63,17 @@ func agreementWithChild(treeType string) func(*testing.T, agreementEngine) {
 	}
 }
 
+// agreementTanked removes writerChild from a matrix in holding_tank mode, then
+// places writerOther at slot 1.
+func agreementTanked(t *testing.T, e agreementEngine) {
+	t.Helper()
+	ctx := context.Background()
+	agreementWithChild(treeTypeMatrix)(t, e)
+	_, err := e.RemoveMatrixNode(ctx, writerTree, writerChild, PruningHoldingTank)
+	require.NoError(t, err)
+	require.NoError(t, e.AddNodeAt(ctx, writerTree, writerOther, writerRoot, writerRoot, 1, 300))
+}
+
 func addNodeCase(name, code string, setup func(*testing.T, agreementEngine),
 	user, parent, sponsor string, opts ...AddNodeOption) agreementCase {
 	return agreementCase{name: name, code: code, setup: setup,
@@ -183,6 +194,20 @@ func agreementCases() []agreementCase {
 			agreementRooted(treeTypeMatrix), writerOther),
 		removeNodeCase("matrix remove_node of an absent user with no mode", "MISSING_PARAM",
 			agreementRooted(treeTypeMatrix), writerOther),
+		addNodeAtCase("matrix add_node_at of a tanked user", "USER_IN_HOLDING_TANK",
+			agreementTanked, writerChild, writerRoot, writerRoot, 0),
+		addNodeAtCase("matrix add_node_at of a tanked user past the width", "INVALID_POSITION",
+			agreementTanked, writerChild, writerRoot, writerRoot, 3),
+		addNodeAtCase("matrix add_node_at of a tanked user at a negative position", "MISSING_PARAM",
+			agreementTanked, writerChild, writerRoot, writerRoot, -1),
+		addNodeAtCase("matrix add_node_at of a tanked user under an absent parent", "USER_IN_HOLDING_TANK",
+			agreementTanked, writerChild, writerRemoved, writerRoot, 0),
+		addNodeAtCase("matrix add_node_at of a tanked user with an absent sponsor", "USER_IN_HOLDING_TANK",
+			agreementTanked, writerChild, writerRoot, writerAbsentSponsor, 0),
+		addNodeAtCase("matrix add_node_at of a tanked user at a held slot", "USER_IN_HOLDING_TANK",
+			agreementTanked, writerChild, writerRoot, writerRoot, 1),
+		addRootCase("add_root of a tanked user with a root held", engineCodeRootAlreadyExists,
+			agreementTanked, writerChild),
 	}
 }
 

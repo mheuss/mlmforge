@@ -70,6 +70,12 @@ type fakeEngineTree struct {
 	nodes    map[string]EnginePosition
 	// sponsored lists each sponsor's recruits in the order they were attached.
 	sponsored map[string][]string
+	tank      []HoldingTankEntryDTO
+}
+
+// tanked reports whether userID waits in the holding tank.
+func (t *fakeEngineTree) tanked(userID string) bool {
+	return slices.ContainsFunc(t.tank, func(e HoldingTankEntryDTO) bool { return e.UserID == userID })
 }
 
 // checkRoot refuses a root this tree cannot take.
@@ -79,6 +85,9 @@ func (t *fakeEngineTree) checkRoot(userID string) error {
 	}
 	if _, ok := t.nodes[userID]; ok {
 		return fakeEngineError(engineCodeUserAlreadyExists, "user %s already exists in tree", userID)
+	}
+	if t.tanked(userID) {
+		return fakeEngineError("USER_IN_HOLDING_TANK", "user %s is in the holding tank", userID)
 	}
 	return nil
 }
@@ -105,6 +114,9 @@ func (t *fakeEngineTree) checkPlacement(op, userID, parentID, sponsorID string, 
 	}
 	if _, ok := t.nodes[userID]; ok {
 		return fakeEngineError(engineCodeUserAlreadyExists, "user %s already exists in tree", userID)
+	}
+	if t.tanked(userID) {
+		return fakeEngineError("USER_IN_HOLDING_TANK", "user %s is in the holding tank", userID)
 	}
 	if _, ok := t.nodes[parentID]; !ok {
 		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", parentID)
@@ -138,23 +150,61 @@ func (t *fakeEngineTree) checkRemoval(userID string) error {
 	return t.checkSponsorless(userID)
 }
 
-// checkMatrixRemoval refuses a matrix removal this tree cannot make.
-func (t *fakeEngineTree) checkMatrixRemoval(userID string) error {
+// checkMatrixRemoval refuses a matrix removal this tree cannot make in mode.
+func (t *fakeEngineTree) checkMatrixRemoval(userID string, mode PruningMode) error {
 	if _, ok := t.nodes[userID]; !ok {
 		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
 	}
 	if t.root == userID {
 		return fakeEngineError("CANNOT_REMOVE_ROOT", "cannot remove root node")
 	}
-	return t.checkSponsorless(userID)
+	hasChildren := t.childCount(userID) > 0
+	outlive := len(t.sponsored[userID])
+	if mode == PruningHoldingTank && hasChildren {
+		under := t.subtree(userID)
+		outlive = 0
+		for _, recruit := range t.sponsored[userID] {
+			if !under[recruit] {
+				outlive++
+			}
+		}
+	}
+	if err := t.sponsorlessWith(userID, outlive); err != nil {
+		return err
+	}
+	if hasChildren {
+		return fmt.Errorf("fakeWriterEngine removes only a matrix leaf, and %s has children", userID)
+	}
+	return nil
+}
+
+// subtree returns userID and every node placed below it.
+func (t *fakeEngineTree) subtree(userID string) map[string]bool {
+	under := map[string]bool{userID: true}
+	for grew := true; grew; {
+		grew = false
+		for id, node := range t.nodes {
+			if !under[id] && node.ParentUserID != nil && under[*node.ParentUserID] {
+				under[id] = true
+				grew = true
+			}
+		}
+	}
+	return under
 }
 
 // checkSponsorless refuses the removal of a user who has recruits and no sponsor.
 func (t *fakeEngineTree) checkSponsorless(userID string) error {
-	if n := len(t.sponsored[userID]); n > 0 && t.nodes[userID].SponsorUserID == nil {
+	return t.sponsorlessWith(userID, len(t.sponsored[userID]))
+}
+
+// sponsorlessWith refuses the removal of a user with no sponsor whose removal
+// leaves outlive of its recruits behind.
+func (t *fakeEngineTree) sponsorlessWith(userID string, outlive int) error {
+	if outlive > 0 && t.nodes[userID].SponsorUserID == nil {
 		return fakeEngineError("SPONSORLESS_WITH_RECRUITS",
 			"cannot remove user %s: no node in its sponsor chain survives this removal. Recruits that outlive it: %d",
-			userID, n)
+			userID, outlive)
 	}
 	return nil
 }
@@ -331,20 +381,24 @@ func (f *fakeWriterEngine) RemoveNode(_ context.Context, structure, userID strin
 	return moved, nil
 }
 
-// RemoveMatrixNode removes a leaf. It refuses a node with children rather than
-// modelling promotion or the holding tank.
+// RemoveMatrixNode removes a matrix leaf, and in holding_tank mode puts it in
+// the holding tank.
 func (f *fakeWriterEngine) RemoveMatrixNode(_ context.Context, structure, userID string, mode PruningMode) (*MatrixRemovalResult, error) {
 	t, err := f.tree(structure)
 	if err != nil {
 		return nil, err
 	}
-	if err := t.checkMatrixRemoval(userID); err != nil {
+	if err := t.checkMatrixRemoval(userID, mode); err != nil {
 		return nil, err
 	}
-	for _, n := range t.nodes {
-		if n.ParentUserID != nil && *n.ParentUserID == userID {
-			return nil, fmt.Errorf("fakeWriterEngine removes only a matrix leaf, and %s has children", userID)
+	if mode == PruningHoldingTank && t.treeType == treeTypeMatrix {
+		removed := t.nodes[userID]
+		entry := HoldingTankEntryDTO{UserID: userID, EnrolledAt: removed.EnrolledAt}
+		if removed.SponsorUserID != nil {
+			sponsor := *removed.SponsorUserID
+			entry.SponsorUserID = &sponsor
 		}
+		t.tank = append(t.tank, entry)
 	}
 	moved := t.moveRecruits(userID)
 	delete(t.nodes, userID)
@@ -438,10 +492,11 @@ func (f *fakeWriterEngine) CheckMutation(_ context.Context, structure string, m 
 		}
 	case "remove_node":
 		if t.treeType == treeTypeMatrix {
-			if _, ok := m.params["pruning_mode"]; !ok {
+			mode, ok := m.params["pruning_mode"].(string)
+			if !ok {
 				return fakeMissingPruningMode()
 			}
-			if err := t.checkMatrixRemoval(user); err != nil {
+			if err := t.checkMatrixRemoval(user, PruningMode(mode)); err != nil {
 				return err
 			}
 		} else if err := t.checkRemoval(user); err != nil {
@@ -771,10 +826,11 @@ func TestFakeWriterEngine_PlacesIntoARestoredRootOnlyTree(t *testing.T) {
 
 // fakeSnapshot is the fake engine's snapshot payload.
 type fakeSnapshot struct {
-	Width     int                       `json:"width,omitempty"`
-	Root      string                    `json:"root"`
-	Nodes     map[string]EnginePosition `json:"nodes"`
-	Sponsored map[string][]string       `json:"sponsored,omitempty"`
+	Width       int                       `json:"width,omitempty"`
+	Root        string                    `json:"root"`
+	Nodes       map[string]EnginePosition `json:"nodes"`
+	Sponsored   map[string][]string       `json:"sponsored,omitempty"`
+	HoldingTank []HoldingTankEntryDTO     `json:"holding_tank,omitempty"`
 }
 
 func (f *fakeWriterEngine) TakeSnapshot(ctx context.Context, structure string) (*SnapshotResultDTO, error) {
@@ -797,7 +853,8 @@ func (f *fakeWriterEngine) TakeSnapshot(ctx context.Context, structure string) (
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(fakeSnapshot{Width: t.width, Root: t.root, Nodes: t.nodes, Sponsored: t.sponsored})
+	data, err := json.Marshal(fakeSnapshot{Width: t.width, Root: t.root, Nodes: t.nodes, Sponsored: t.sponsored,
+		HoldingTank: t.tank})
 	if err != nil {
 		return nil, err
 	}
@@ -812,6 +869,15 @@ func (f *fakeWriterEngine) RestoreSnapshot(_ context.Context, structure, treeTyp
 	if _, ok := f.trees[structure]; ok {
 		return fakeEngineError(engineCodeTreeExists,
 			"structure '%s' already exists; drop it with drop_structure before restoring", structure)
+	}
+	if treeType != treeTypeMatrix {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fields); err == nil {
+			delete(fields, "holding_tank")
+			if stripped, err := json.Marshal(fields); err == nil {
+				data = stripped
+			}
+		}
 	}
 	var snap fakeSnapshot
 	if err := json.Unmarshal(data, &snap); err != nil {
@@ -838,7 +904,7 @@ func (f *fakeWriterEngine) RestoreSnapshot(_ context.Context, structure, treeTyp
 		return err
 	}
 	f.trees[structure] = &fakeEngineTree{treeType: treeType, width: snap.Width, root: snap.Root, nodes: snap.Nodes,
-		sponsored: snap.Sponsored}
+		sponsored: snap.Sponsored, tank: snap.HoldingTank}
 	return nil
 }
 
@@ -934,7 +1000,47 @@ func checkRestored(snap fakeSnapshot) error {
 				id, *sponsor, *sponsor)
 		}
 	}
-	return checkSponsorChainsEnd(snap, ids)
+	if err := checkSponsorChainsEnd(snap, ids); err != nil {
+		return err
+	}
+	return checkRestoredTank(snap)
+}
+
+// checkRestoredTank refuses an inconsistent holding tank.
+func checkRestoredTank(snap fakeSnapshot) error {
+	for _, entry := range snap.HoldingTank {
+		if _, ok := snap.Nodes[entry.UserID]; ok {
+			return fakeEngineError("INCONSISTENT_SNAPSHOT", "the holding tank names %s; the snapshot also places that user",
+				entry.UserID)
+		}
+	}
+	position := map[string]int{}
+	for i, entry := range snap.HoldingTank {
+		if _, ok := position[entry.UserID]; ok {
+			return fakeEngineError("INCONSISTENT_SNAPSHOT", "the holding tank lists %s more than once", entry.UserID)
+		}
+		position[entry.UserID] = i
+	}
+	done := make([]bool, len(snap.HoldingTank))
+	for start, entry := range snap.HoldingTank {
+		walk := map[int]bool{}
+		for at, ok := start, true; ok && !done[at]; {
+			if walk[at] {
+				return fakeEngineError("INCONSISTENT_SNAPSHOT", "the holding tank's sponsor chain from %s reaches %s twice",
+					entry.UserID, snap.HoldingTank[at].UserID)
+			}
+			walk[at] = true
+			sponsor := snap.HoldingTank[at].SponsorUserID
+			if sponsor == nil {
+				break
+			}
+			at, ok = position[*sponsor]
+		}
+		for at := range walk {
+			done[at] = true
+		}
+	}
+	return nil
 }
 
 // checkSponsorChainsEnd refuses a snapshot in which a sponsor chain revisits a node.

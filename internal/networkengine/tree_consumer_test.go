@@ -1440,8 +1440,8 @@ func TestPositionMatchesProjection(t *testing.T) {
 	}
 }
 
-// reconcileTransport fails the mutation with a chosen error and answers
-// get_position separately.
+// reconcileTransport scripts the mutation's reply and answers get_position
+// separately.
 type reconcileTransport struct {
 	mutationErr      error
 	mutationErrs     []error

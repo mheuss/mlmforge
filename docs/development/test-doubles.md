@@ -116,6 +116,15 @@ Their seed helpers now insert the row, then set its removal time.
 Before you change what a double's write keeps or checks, find the fixtures that
 write through it. The next section is one way to find them.
 
+A search for literal fixtures misses the ones that start from the double's own
+output. A test can take a snapshot from the fake, decode it, edit it, and hand
+it back. That fixture was never written as a literal, so a grep for literals
+does not find it. Search for the decode of the double's type as well.
+
+Found in plan review for HEU-1068 on 2026-11-18. A count of hand-built fake
+snapshots covered the literals only. Two load tests decoded a taken snapshot and
+edited it. One of them would have been refused by the new restore check.
+
 ## Measure a new refusal with a probe that refuses nothing
 
 Before you make a double refuse an input, count who sends it. Copy the tree to
@@ -192,3 +201,24 @@ Found in final review for HEU-1058 on 2026-11-17. The fake's matrix removal
 check refused nothing once a pruning mode was set. Its own removal refused the
 root and an absent user, as the worker's check does. Agreement cases now pin
 it.
+
+## Pin a restore refusal against an edited worker snapshot
+
+A fake's snapshot format can differ from the worker's. Then the same bad shape
+cannot be sent to both as one payload. Build it twice instead.
+
+Take a real snapshot from the worker. Decode it with unknown fields refused, so
+a field the test does not model fails the decode. Edit it into the shape, and
+restore it under a fresh name. Restoring under the source's own name can be
+refused before the check you meant to reach. Then build the same shape in the
+fake's format and restore that.
+
+Require the worker's code and a regex anchored at both ends on its message. An
+edit that trips an earlier check then fails the pin rather than passing for the
+wrong reason. Require the fake's code and its own message separately.
+
+Before any pin uses the edit helpers, run one test that decodes a real worker
+snapshot and restores the re-encoded result unchanged. That catches a layout the
+helpers do not model.
+
+Used for HEU-1068 on 2026-11-18, for the writer fake's restore checks.

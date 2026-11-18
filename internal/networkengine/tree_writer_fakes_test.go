@@ -816,7 +816,9 @@ func TestFakeWriterEngine_RestoresWhatItSnapshotted(t *testing.T) {
 	assert.Equal(t, int64(1), pos.EnrolledAt)
 	assert.True(t, isEngineCode(engine.AddRoot(ctx, writerTree, writerOther, 2), engineCodeRootAlreadyExists))
 	assert.True(t, isEngineCode(engine.CheckMutation(ctx, writerTree,
-		CheckAddNodeAt(writerOther, writerRoot, writerRoot, 0, 2)), "INVALID_PARAMS"), "the restored tree is not unilevel")
+		CheckAddNodeAt(writerOther, writerRoot, writerRoot, 0, 2)), "INVALID_PARAMS"),
+		"add_node_at on the restored tree was not refused with INVALID_PARAMS; the restored tree type is %q",
+		engine.trees[writerTree].treeType)
 	err = engine.RestoreSnapshot(ctx, writerTree, taken.TreeType, taken.Data)
 	assert.True(t, isEngineCode(err, engineCodeTreeExists))
 }

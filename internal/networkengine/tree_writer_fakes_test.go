@@ -70,8 +70,7 @@ type fakeEngineTree struct {
 	nodes    map[string]EnginePosition
 	// sponsored lists each sponsor's recruits in the order they were attached.
 	sponsored map[string][]string
-	// tank lists the matrix users a holding_tank removal took out, in the
-	// order they went in.
+	// tank is the matrix holding tank, oldest entry first.
 	tank []HoldingTankEntryDTO
 }
 
@@ -149,20 +148,25 @@ func (t *fakeEngineTree) checkRemoval(userID string) error {
 	return t.checkSponsorless(userID)
 }
 
-// checkMatrixRemoval refuses a matrix removal this tree cannot make. It refuses
-// a node with children with a plain error rather than an engine code.
-func (t *fakeEngineTree) checkMatrixRemoval(userID string) error {
+// checkMatrixRemoval refuses a matrix removal this tree cannot make in mode. It
+// refuses a node with children with a plain error rather than an engine code,
+// and in holding_tank mode it does so before the sponsorless check.
+func (t *fakeEngineTree) checkMatrixRemoval(userID string, mode PruningMode) error {
 	if _, ok := t.nodes[userID]; !ok {
 		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
 	}
 	if t.root == userID {
 		return fakeEngineError("CANNOT_REMOVE_ROOT", "cannot remove root node")
 	}
+	parent := fmt.Errorf("fakeWriterEngine removes only a matrix leaf, and %s has children", userID)
+	if mode == PruningHoldingTank && t.childCount(userID) > 0 {
+		return parent
+	}
 	if err := t.checkSponsorless(userID); err != nil {
 		return err
 	}
 	if t.childCount(userID) > 0 {
-		return fmt.Errorf("fakeWriterEngine removes only a matrix leaf, and %s has children", userID)
+		return parent
 	}
 	return nil
 }
@@ -349,15 +353,14 @@ func (f *fakeWriterEngine) RemoveNode(_ context.Context, structure, userID strin
 	return moved, nil
 }
 
-// RemoveMatrixNode removes a leaf, and in holding_tank mode puts it in the
-// holding tank. It refuses a node with children rather than modelling
-// promotion or a subtree going to the tank.
+// RemoveMatrixNode removes a matrix leaf, and in holding_tank mode puts it in
+// the holding tank.
 func (f *fakeWriterEngine) RemoveMatrixNode(_ context.Context, structure, userID string, mode PruningMode) (*MatrixRemovalResult, error) {
 	t, err := f.tree(structure)
 	if err != nil {
 		return nil, err
 	}
-	if err := t.checkMatrixRemoval(userID); err != nil {
+	if err := t.checkMatrixRemoval(userID, mode); err != nil {
 		return nil, err
 	}
 	if mode == PruningHoldingTank {
@@ -461,10 +464,11 @@ func (f *fakeWriterEngine) CheckMutation(_ context.Context, structure string, m 
 		}
 	case "remove_node":
 		if t.treeType == treeTypeMatrix {
-			if _, ok := m.params["pruning_mode"]; !ok {
+			mode, ok := m.params["pruning_mode"].(string)
+			if !ok {
 				return fakeMissingPruningMode()
 			}
-			if err := t.checkMatrixRemoval(user); err != nil {
+			if err := t.checkMatrixRemoval(user, PruningMode(mode)); err != nil {
 				return err
 			}
 		} else if err := t.checkRemoval(user); err != nil {

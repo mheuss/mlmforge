@@ -218,6 +218,22 @@ func TestFakeWriterEngine_RefusesASponsorlessMatrixParentBeforeItsChildren(t *te
 	assert.Equal(t, engineErrorOf(workerApply), engineErrorOf(fakeApply), "apply")
 }
 
+func TestFakeWriterEngine_RefusesATankRemovalOfASponsorlessParentAsUnmodelled(t *testing.T) {
+	ctx := context.Background()
+	client := startWorker(t)
+	fake := newFakeWriterEngine()
+	restoreSponsorlessMatrixParent(t, client, fake, true)
+
+	check := removeCheck(writerChild, PruningHoldingTank)
+	workerCheck := client.CheckMutation(ctx, restoredTree, check)
+	fakeCheck := fake.CheckMutation(ctx, restoredTree, check)
+	_, fakeApply := removeUser(fake, restoredTree, writerChild, PruningHoldingTank)
+
+	require.NoError(t, workerCheck, "the worker's check answer")
+	require.EqualError(t, fakeCheck, "fakeWriterEngine removes only a matrix leaf, and "+writerChild+" has children")
+	assert.Equal(t, fakeCheck, fakeApply)
+}
+
 // tombstone returns the one slot on the worker's free list.
 func (a *workerArena) tombstone(t *testing.T) int {
 	t.Helper()

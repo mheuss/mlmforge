@@ -1689,7 +1689,7 @@ func TestHandleRootAdded_ReconcileConverges(t *testing.T) {
 // claims depth 0, and leaving it there gives the tree two depth-0 rows.
 func TestHandleRootAdded_ReconcileCompensatesWhenTheUserIsNotTheRoot(t *testing.T) {
 	tr := &reconcileTransport{
-		mutationErr: &EngineError{Code: engineCodeUserAlreadyExists},
+		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists},
 		position:    &EnginePosition{UserID: posUser, Depth: 3, EnrolledAt: posEnrolled.Unix()},
 	}
 	c, store := newRootConsumer(tr)

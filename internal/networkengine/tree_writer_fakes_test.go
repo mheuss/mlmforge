@@ -856,7 +856,7 @@ func (f *fakeWriterEngine) DropStructure(_ context.Context, structure string) (b
 	return ok, nil
 }
 
-// checkRestored refuses a snapshot that fails one of its root, parent, sponsor or recruit-list checks.
+// checkRestored refuses an inconsistent snapshot.
 func checkRestored(snap fakeSnapshot) error {
 	if _, ok := snap.Nodes[snap.Root]; snap.Root != "" && !ok {
 		return fakeEngineError("INCONSISTENT_SNAPSHOT", "root names %s; the snapshot holds no such node", snap.Root)
@@ -897,6 +897,9 @@ func checkRestored(snap fakeSnapshot) error {
 				owner)
 		}
 	}
+	if sponsor := snap.Nodes[snap.Root].SponsorUserID; snap.Root != "" && sponsor != nil {
+		return fakeEngineError("INCONSISTENT_SNAPSHOT", "the root %s names sponsor %s", snap.Root, *sponsor)
+	}
 	if snap.Root == "" && len(snap.Nodes) > 0 {
 		return fakeEngineError("INCONSISTENT_SNAPSHOT", "the snapshot holds %d nodes and names no root", len(snap.Nodes))
 	}
@@ -929,6 +932,29 @@ func checkRestored(snap fakeSnapshot) error {
 		if sponsor != nil && !slices.Contains(snap.Sponsored[*sponsor], id) {
 			return fakeEngineError("INCONSISTENT_SNAPSHOT", "%s names sponsor %s; the recruit list of %s does not name it",
 				id, *sponsor, *sponsor)
+		}
+	}
+	return checkSponsorChainsEnd(snap, ids)
+}
+
+// checkSponsorChainsEnd refuses a snapshot in which a sponsor chain revisits a node.
+func checkSponsorChainsEnd(snap fakeSnapshot, ids []string) error {
+	done := map[string]bool{}
+	for _, start := range ids {
+		walk := map[string]bool{}
+		for id := start; !done[id]; {
+			if walk[id] {
+				return fakeEngineError("INCONSISTENT_SNAPSHOT", "the sponsor chain from %s reaches %s twice", start, id)
+			}
+			walk[id] = true
+			sponsor := snap.Nodes[id].SponsorUserID
+			if sponsor == nil {
+				break
+			}
+			id = *sponsor
+		}
+		for id := range walk {
+			done[id] = true
 		}
 	}
 	return nil

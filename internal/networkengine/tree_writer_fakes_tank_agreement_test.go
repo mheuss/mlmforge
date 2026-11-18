@@ -228,6 +228,13 @@ func tankShapes() []tankShape {
 			fakeMessage: "the holding tank lists " + writerRemoved + " more than once",
 		},
 		{
+			name: "two users listed twice, the second repeated first",
+			tank: []HoldingTankEntryDTO{tankEntry(writerRemoved, ""), tankEntry(tankLoop, ""),
+				tankEntry(tankLoop, ""), tankEntry(writerRemoved, "")},
+			workerFault: `^the holding tank lists ` + tankLoop + ` more than once$`,
+			fakeMessage: "the holding tank lists " + tankLoop + " more than once",
+		},
+		{
 			name: "a user listed twice beside a tank cycle",
 			tank: []HoldingTankEntryDTO{tankEntry(writerRemoved, ""), tankEntry(writerRemoved, tankLoop),
 				tankEntry(tankLoop, writerRemoved)},
@@ -274,9 +281,8 @@ func tankRestoreSetup(t *testing.T, e agreementEngine) {
 	placeInSlot(t, e, treeTypeMatrix, writerOther, writerRoot, writerChild, 1, 300)
 }
 
-// restoreWithTank restores both engines' snapshots of writerTree as
-// restoredTree, with the shape's tank in place of each engine's tank and the
-// shape's arena edits.
+// restoreWithTank restores both engines' snapshots with the shape's tank and
+// arena edits applied.
 func restoreWithTank(t *testing.T, client, fake removalAgreementEngine, shape tankShape) (workerErr, fakeErr error) {
 	t.Helper()
 	ctx := context.Background()

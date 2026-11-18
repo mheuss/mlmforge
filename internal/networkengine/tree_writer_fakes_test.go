@@ -87,6 +87,9 @@ func (t *fakeEngineTree) checkRoot(userID string) error {
 	if _, ok := t.nodes[userID]; ok {
 		return fakeEngineError(engineCodeUserAlreadyExists, "user %s already exists in tree", userID)
 	}
+	if t.tanked(userID) {
+		return fakeEngineError("USER_IN_HOLDING_TANK", "user %s is in the holding tank", userID)
+	}
 	return nil
 }
 
@@ -802,6 +805,8 @@ type fakeSnapshot struct {
 	Root      string                    `json:"root"`
 	Nodes     map[string]EnginePosition `json:"nodes"`
 	Sponsored map[string][]string       `json:"sponsored,omitempty"`
+	// HoldingTank is the matrix holding tank, oldest entry first.
+	HoldingTank []HoldingTankEntryDTO `json:"holding_tank,omitempty"`
 }
 
 func (f *fakeWriterEngine) TakeSnapshot(ctx context.Context, structure string) (*SnapshotResultDTO, error) {
@@ -824,7 +829,8 @@ func (f *fakeWriterEngine) TakeSnapshot(ctx context.Context, structure string) (
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(fakeSnapshot{Width: t.width, Root: t.root, Nodes: t.nodes, Sponsored: t.sponsored})
+	data, err := json.Marshal(fakeSnapshot{Width: t.width, Root: t.root, Nodes: t.nodes, Sponsored: t.sponsored,
+		HoldingTank: t.tank})
 	if err != nil {
 		return nil, err
 	}
@@ -839,6 +845,15 @@ func (f *fakeWriterEngine) RestoreSnapshot(_ context.Context, structure, treeTyp
 	if _, ok := f.trees[structure]; ok {
 		return fakeEngineError(engineCodeTreeExists,
 			"structure '%s' already exists; drop it with drop_structure before restoring", structure)
+	}
+	if treeType != treeTypeMatrix {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fields); err == nil {
+			delete(fields, "holding_tank")
+			if stripped, err := json.Marshal(fields); err == nil {
+				data = stripped
+			}
+		}
 	}
 	var snap fakeSnapshot
 	if err := json.Unmarshal(data, &snap); err != nil {
@@ -865,7 +880,7 @@ func (f *fakeWriterEngine) RestoreSnapshot(_ context.Context, structure, treeTyp
 		return err
 	}
 	f.trees[structure] = &fakeEngineTree{treeType: treeType, width: snap.Width, root: snap.Root, nodes: snap.Nodes,
-		sponsored: snap.Sponsored}
+		sponsored: snap.Sponsored, tank: snap.HoldingTank}
 	return nil
 }
 

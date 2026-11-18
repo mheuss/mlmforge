@@ -2018,9 +2018,10 @@ func TestHandleRootAdded_CompensationTouchesOnlyThisEventsRow(t *testing.T) {
 	assert.NotNil(t, theirs, "the root that was already there survives")
 }
 
-// Attempt 0 fails in transit, and attempt 1 is refused with ROOT_ALREADY_EXISTS.
-// Compensation must still run exactly once.
-func TestHandleRootAdded_CompensatesOnceAcrossAttempts(t *testing.T) {
+// Attempt 0 fails in transit, so nothing is inspected or undone.
+// Attempt 1 is refused with ROOT_ALREADY_EXISTS by an engine whose root is
+// someone else, and compensation runs.
+func TestHandleRootAdded_ATransportFailureBeforeTheRefusalStillCompensates(t *testing.T) {
 	tr := &reconcileTransport{
 		mutationErrs: []error{
 			errors.New("simulated transport failure"),
@@ -2036,7 +2037,33 @@ func TestHandleRootAdded_CompensatesOnceAcrossAttempts(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Len(t, tr.mutationOps, 2, "the first failure retried, the second diverged")
-	assert.Len(t, store.deleted, 1, "compensation runs once, not once per attempt")
+	assert.Equal(t, 1, tr.positionOps, "get_position calls")
+	assert.Len(t, store.deleted, 1, "undo calls that returned nil")
+}
+
+// The first delivery compensates and leaves a tombstone carrying this event.
+// The second delivery is refused before the engine, and compensates nothing.
+func TestHandleRootAdded_ARedeliveryAfterACompensationDoesNotCompensateAgain(t *testing.T) {
+	tr := &reconcileTransport{
+		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists, Message: "tree already has a root node"},
+		position:    &EnginePosition{UserID: posOther, Depth: 0, EnrolledAt: posEnrolled.Unix()},
+	}
+	store := &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}
+	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
+	c.retryDelay = 0
+	ev := makeEvent(EventTypeRootAdded, rootPayload())
+
+	require.Error(t, deliver(context.Background(), c, ev))
+	require.Equal(t, []string{posUser}, store.deleted, "the first delivery compensated")
+	require.Len(t, tr.mutationOps, 1, "engine calls on the first delivery")
+
+	err := deliver(context.Background(), c, ev)
+
+	assert.ErrorIs(t, err, ErrReplayedPlacement)
+	assert.ErrorContains(t, err, "a row carrying event "+ev.ID+", removed at", "the refusal names this event's tombstone")
+	assert.Len(t, tr.mutationOps, 1, "the redelivery never reached the engine")
+	assert.Equal(t, []string{posUser}, store.attempts, "no second compensation was attempted")
+	assert.Equal(t, []string{posUser}, store.deleted, "no second compensation ran")
 }
 
 // A compensating action has to outlive the failure that triggered it. On the
@@ -2572,17 +2599,24 @@ func TestHandleRootAdded_SkippedInsertOfThisEventsActiveRowReachesTheEngine(t *t
 // active depth-0 row stops loading.
 func TestHandleRootAdded_ReplayKeepsTheStoredRowWhenTheEngineDisagrees(t *testing.T) {
 	tr := &reconcileTransport{
-		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists},
+		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists, Message: "tree already has a root node"},
 		position:    &EnginePosition{UserID: posUser, Depth: 0, EnrolledAt: posEnrolled.Unix() + 1},
 	}
-	c, store := newRootConsumer(tr)
+	store := &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore()}
+	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
+	c.retryDelay = 0
+	ctx := context.Background()
 	ev := makeEvent(EventTypeRootAdded, rootPayload())
-	seedRootRow(t, store, ev.ID, posUser, nil)
+	require.NoError(t, store.ProjectInsert(ctx, TreeNodeRow{
+		ID: ev.ID, TreeID: consumerTree, UserID: posUser, SponsorID: ptr(posSponsor), Depth: 0, EnrolledAt: posEnrolled,
+	}, ev.Version))
 
-	err := deliver(context.Background(), c, ev)
+	err := deliver(ctx, c, ev)
 
 	require.Error(t, err, "a disagreeing engine is still a divergence")
-	assert.NotNil(t, activeRow(t, store, posUser), "the stored row survives a replay this call did not insert")
+	assert.ErrorContains(t, err, "this delivery's insert was skipped")
+	assert.Empty(t, store.attempts, "undo calls")
+	assert.NotNil(t, activeRow(t, store.MemoryTreeStore, posUser), "the stored row survives a replay this call did not insert")
 }
 
 func TestHandleNodePlaced_SkippedInsertReportsAFailedRead(t *testing.T) {

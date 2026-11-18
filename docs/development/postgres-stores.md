@@ -290,10 +290,10 @@ updates the row once in each. The summed counts then match the list length.
 Count the distinct ids the statements return with `RETURNING` instead. A
 duplicate then leaves the distinct set one short, wherever its entries land.
 
-Observed on HEU-1042, 2026-11-17: at a chunk size of 1, summing the command tags
-for a list naming one user twice gave 2 against a length of 2. The distinct
-`RETURNING` set gave 1. Put a case with the duplicate on either side of a chunk
-boundary in the shared suite.
+Found on HEU-1042, 2026-11-17. At a chunk size of 1, a list naming one user twice
+puts each entry in its own chunk. Each chunk updates the row, so the summed counts
+make 2 against a length of 2. The distinct `RETURNING` set holds 1. Put a case
+with the duplicate on either side of a chunk boundary in the shared suite.
 
 ## Sampling live-heap peak measures GC pacing, not your code
 

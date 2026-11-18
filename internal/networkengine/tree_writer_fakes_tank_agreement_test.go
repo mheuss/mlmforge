@@ -147,7 +147,6 @@ func TestFakeWriterEngine_IgnoresATankKeyOffAMatrixAsTheWorkerDoes(t *testing.T)
 	}
 }
 
-// tankLoop is a user no tree in these tests places.
 var tankLoop = testUserUUID(10)
 
 // tankEntry builds a tank entry for user, sponsored by sponsor when it is not empty.
@@ -169,8 +168,7 @@ type tankShape struct {
 	fakeMessage string
 }
 
-// tankShapes lists tanks a restore refuses, each over writerChild placed under
-// the root and writerOther sponsored by writerChild.
+// tankShapes lists tanks a restore refuses.
 func tankShapes() []tankShape {
 	return []tankShape{
 		{
@@ -208,6 +206,26 @@ func tankShapes() []tankShape {
 			tank:        []HoldingTankEntryDTO{tankEntry(writerRemoved, tankLoop), tankEntry(tankLoop, tankLoop)},
 			workerFault: `^the holding tank's sponsor chain from ` + writerRemoved + ` reaches ` + tankLoop + ` twice$`,
 			fakeMessage: "the holding tank's sponsor chain from " + writerRemoved + " reaches " + tankLoop + " twice",
+		},
+		{
+			name: "a tank cycle found from a later entry",
+			tank: []HoldingTankEntryDTO{tankEntry(writerRemoved, ""), tankEntry(tankLoop, testUserUUID(11)),
+				tankEntry(testUserUUID(11), tankLoop)},
+			workerFault: `^the holding tank's sponsor chain from ` + tankLoop + ` reaches ` + tankLoop + ` twice$`,
+			fakeMessage: "the holding tank's sponsor chain from " + tankLoop + " reaches " + tankLoop + " twice",
+		},
+		{
+			name:        "two placed users in the tank",
+			tank:        []HoldingTankEntryDTO{tankEntry(writerChild, ""), tankEntry(writerOther, "")},
+			workerFault: `^the holding tank names ` + writerChild + `; that user is also placed at node slot \d+$`,
+			fakeMessage: "the holding tank names " + writerChild + "; the snapshot also places that user",
+		},
+		{
+			name: "two users listed twice",
+			tank: []HoldingTankEntryDTO{tankEntry(writerRemoved, ""), tankEntry(tankLoop, ""),
+				tankEntry(writerRemoved, ""), tankEntry(tankLoop, "")},
+			workerFault: `^the holding tank lists ` + writerRemoved + ` more than once$`,
+			fakeMessage: "the holding tank lists " + writerRemoved + " more than once",
 		},
 		{
 			name: "a user listed twice beside a tank cycle",
@@ -257,7 +275,8 @@ func tankRestoreSetup(t *testing.T, e agreementEngine) {
 }
 
 // restoreWithTank restores both engines' snapshots of writerTree as
-// restoredTree, with tank in place of each tank and the shape's arena edits.
+// restoredTree, with the shape's tank in place of each engine's tank and the
+// shape's arena edits.
 func restoreWithTank(t *testing.T, client, fake removalAgreementEngine, shape tankShape) (workerErr, fakeErr error) {
 	t.Helper()
 	ctx := context.Background()
@@ -305,6 +324,7 @@ func TestFakeWriterEngine_RestoresTankChainsThatEndAsTheWorkerDoes(t *testing.T)
 		tankEntry(tankLoop, writerChild),
 		tankEntry(writerAbsentSponsor, testUserUUID(11)),
 		tankEntry(testUserUUID(12), ""),
+		tankEntry(testUserUUID(13), tankLoop),
 	}}
 	client := startWorker(t)
 	fake := newFakeWriterEngine()

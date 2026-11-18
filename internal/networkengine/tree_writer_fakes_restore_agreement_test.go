@@ -87,7 +87,7 @@ func restoreSetup(t *testing.T, e agreementEngine, treeType string) {
 	require.NoError(t, err)
 }
 
-// removeCheck builds the check for removing user under mode, or with CheckRemoveNode when mode is empty.
+// removeCheck builds the check for removing user under mode.
 func removeCheck(user string, mode PruningMode) Mutation {
 	if mode == "" {
 		return CheckRemoveNode(user)

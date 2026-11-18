@@ -62,7 +62,7 @@ func placeInSlot(t *testing.T, e agreementEngine, treeType, user, parent, sponso
 	}
 }
 
-// removeUser removes user from structure under mode, or with RemoveNode when mode is empty.
+// removeUser removes user from structure under mode.
 func removeUser(e agreementEngine, structure, user string, mode PruningMode) ([]Responsored, error) {
 	ctx := context.Background()
 	if mode == "" {

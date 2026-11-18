@@ -185,7 +185,7 @@ type restoreShape struct {
 	fakeMessage string
 }
 
-// restoreShapes lists the snapshot shapes the restore pins cover.
+// restoreShapes lists edits that make a worker or fake snapshot inconsistent.
 func restoreShapes() []restoreShape {
 	return []restoreShape{
 		{

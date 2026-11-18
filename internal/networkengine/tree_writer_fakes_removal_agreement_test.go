@@ -11,14 +11,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Identifiers the removal agreement cases use.
 var (
 	removalA = testUserUUID(31)
 	removalB = testUserUUID(32)
 	removalC = testUserUUID(33)
 )
 
-// removalAgreementEngine is the surface the removal agreement cases drive.
+// removalAgreementEngine adds position, snapshot and drop calls to agreementEngine.
 type removalAgreementEngine interface {
 	agreementEngine
 	GetPosition(ctx context.Context, structure, userID string) (*EnginePosition, error)
@@ -27,7 +26,7 @@ type removalAgreementEngine interface {
 	DropStructure(ctx context.Context, structure string) (bool, error)
 }
 
-// removalTreeTypes are the tree types and pruning modes a removal case runs under.
+// removalTreeTypes pairs each tree type with the pruning mode used to remove from it.
 var removalTreeTypes = []struct {
 	name     string
 	treeType string
@@ -151,7 +150,6 @@ func TestFakeWriterEngine_ResponsorsAsTheWorkerDoes(t *testing.T) {
 	}
 }
 
-// Identifiers the order scenario adds.
 var (
 	removalM = testUserUUID(34)
 	removalP = testUserUUID(35)

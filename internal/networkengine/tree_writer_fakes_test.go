@@ -135,16 +135,26 @@ func (t *fakeEngineTree) checkRemoval(userID string) error {
 	if n := t.childCount(userID); n > 0 {
 		return fakeEngineError("HAS_CHILDREN", "cannot remove user %s: has %d children (must remove children first)", userID, n)
 	}
-	return nil
+	return t.checkSponsorless(userID)
 }
 
-// checkMatrixRemoval refuses a matrix removal of an absent user or of the root.
+// checkMatrixRemoval refuses a matrix removal this tree cannot make.
 func (t *fakeEngineTree) checkMatrixRemoval(userID string) error {
 	if _, ok := t.nodes[userID]; !ok {
 		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
 	}
 	if t.root == userID {
 		return fakeEngineError("CANNOT_REMOVE_ROOT", "cannot remove root node")
+	}
+	return t.checkSponsorless(userID)
+}
+
+// checkSponsorless refuses the removal of a user who has recruits and no sponsor.
+func (t *fakeEngineTree) checkSponsorless(userID string) error {
+	if n := len(t.sponsored[userID]); n > 0 && t.nodes[userID].SponsorUserID == nil {
+		return fakeEngineError("SPONSORLESS_WITH_RECRUITS",
+			"cannot remove user %s: no node in its sponsor chain survives this removal. Recruits that outlive it: %d",
+			userID, n)
 	}
 	return nil
 }

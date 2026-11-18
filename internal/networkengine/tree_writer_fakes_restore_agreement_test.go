@@ -217,6 +217,30 @@ func restoreShapes() []restoreShape {
 			workerFault: `^node slot \d+ is a tombstone and still holds a sponsored node$`,
 			fakeMessage: "a recruit list belongs to " + writerRemoved + "; the snapshot holds no such node",
 		},
+		{
+			name: "a non-root node with no parent",
+			editWorker: func(t *testing.T, a *workerArena) {
+				y, r := a.slot(t, writerOther), a.slot(t, writerRoot)
+				a.Nodes[y].Parent = nil
+				a.Nodes[y].Depth = 0
+				a.Nodes[r].Children = slices.DeleteFunc(a.Nodes[r].Children, func(c int) bool { return c == y })
+			},
+			editFake: func(s *fakeSnapshot) {
+				n := s.Nodes[writerOther]
+				n.ParentUserID = nil
+				n.Depth = 0
+				s.Nodes[writerOther] = n
+			},
+			workerFault: `^node slot \d+ holds \S+ and names no parent; root names node slot \d+$`,
+			fakeMessage: "node " + writerOther + " names no parent and is not the root " + writerRoot,
+		},
+		{
+			name:        "nodes with no root",
+			editWorker:  func(_ *testing.T, a *workerArena) { a.Root = nil },
+			editFake:    func(s *fakeSnapshot) { s.Root = "" },
+			workerFault: `^the arena names no root; its live node count is \d+$`,
+			fakeMessage: "the snapshot holds 3 nodes and names no root",
+		},
 	}
 }
 

@@ -897,6 +897,14 @@ func checkRestored(snap fakeSnapshot) error {
 				owner)
 		}
 	}
+	if snap.Root == "" && len(snap.Nodes) > 0 {
+		return fakeEngineError("INCONSISTENT_SNAPSHOT", "the snapshot holds %d nodes and names no root", len(snap.Nodes))
+	}
+	for _, id := range ids {
+		if snap.Nodes[id].ParentUserID == nil && id != snap.Root {
+			return fakeEngineError("INCONSISTENT_SNAPSHOT", "node %s names no parent and is not the root %s", id, snap.Root)
+		}
+	}
 	return nil
 }
 

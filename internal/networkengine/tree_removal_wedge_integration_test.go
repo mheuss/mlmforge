@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The wedge test's fixture size and the chunk size it projects with.
+// A node count and a chunk size.
 const (
 	wedgeNodes = 16383
 	wedgeChunk = 128

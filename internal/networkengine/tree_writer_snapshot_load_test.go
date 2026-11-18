@@ -260,6 +260,7 @@ func TestTreeWriterSnapshotLoad_RecoversFromASnapshotThatDisagreesWithTheStore(t
 	root := writerRoot
 	held.Nodes[writerOther] = EnginePosition{UserID: writerOther, ParentUserID: &root, SponsorUserID: &root,
 		Depth: 1, EnrolledAt: writeTime.Unix()}
+	held.Sponsored[writerRoot] = append(held.Sponsored[writerRoot], writerOther)
 	data, err := json.Marshal(held)
 	require.NoError(t, err)
 	snap.Data = data

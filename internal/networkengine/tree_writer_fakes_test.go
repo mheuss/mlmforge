@@ -905,6 +905,32 @@ func checkRestored(snap fakeSnapshot) error {
 			return fakeEngineError("INCONSISTENT_SNAPSHOT", "node %s names no parent and is not the root %s", id, snap.Root)
 		}
 	}
+	for _, owner := range owners {
+		seen := map[string]bool{}
+		for _, recruit := range snap.Sponsored[owner] {
+			if seen[recruit] {
+				return fakeEngineError("INCONSISTENT_SNAPSHOT", "the recruit list of %s names %s more than once",
+					owner, recruit)
+			}
+			seen[recruit] = true
+			sponsor := snap.Nodes[recruit].SponsorUserID
+			if sponsor == nil {
+				return fakeEngineError("INCONSISTENT_SNAPSHOT", "the recruit list of %s names %s, who has no sponsor",
+					owner, recruit)
+			}
+			if *sponsor != owner {
+				return fakeEngineError("INCONSISTENT_SNAPSHOT", "the recruit list of %s names %s, whose sponsor is %s",
+					owner, recruit, *sponsor)
+			}
+		}
+	}
+	for _, id := range ids {
+		sponsor := snap.Nodes[id].SponsorUserID
+		if sponsor != nil && !slices.Contains(snap.Sponsored[*sponsor], id) {
+			return fakeEngineError("INCONSISTENT_SNAPSHOT", "%s names sponsor %s; the recruit list of %s does not name it",
+				id, *sponsor, *sponsor)
+		}
+	}
 	return nil
 }
 

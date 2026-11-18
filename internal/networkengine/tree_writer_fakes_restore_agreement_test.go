@@ -241,6 +241,34 @@ func restoreShapes() []restoreShape {
 			workerFault: `^the arena names no root; its live node count is \d+$`,
 			fakeMessage: "the snapshot holds 3 nodes and names no root",
 		},
+		{
+			name: "a recruit list naming another sponsor's recruit",
+			editWorker: func(t *testing.T, a *workerArena) {
+				r := a.slot(t, writerRoot)
+				a.Nodes[r].Sponsored = append(a.Nodes[r].Sponsored, a.slot(t, writerOther))
+			},
+			editFake:    func(s *fakeSnapshot) { s.Sponsored[writerRoot] = append(s.Sponsored[writerRoot], writerOther) },
+			workerFault: `^sponsored on node slot \d+ names node slot \d+; sponsor on node slot \d+ does not name node slot \d+$`,
+			fakeMessage: "the recruit list of " + writerRoot + " names " + writerOther + ", whose sponsor is " + writerChild,
+		},
+		{
+			name: "a recruit list naming one user twice",
+			editWorker: func(t *testing.T, a *workerArena) {
+				y := a.slot(t, writerOther)
+				a.Nodes[a.slot(t, writerChild)].Sponsored = []int{y, y}
+			},
+			editFake:    func(s *fakeSnapshot) { s.Sponsored[writerChild] = []string{writerOther, writerOther} },
+			workerFault: `^sponsored on node slot \d+ names node slot \d+ more than once$`,
+			fakeMessage: "the recruit list of " + writerChild + " names " + writerOther + " more than once",
+		},
+		{
+			name:        "a node its sponsor's list omits",
+			editWorker:  func(t *testing.T, a *workerArena) { a.Nodes[a.slot(t, writerChild)].Sponsored = []int{} },
+			editFake:    func(s *fakeSnapshot) { delete(s.Sponsored, writerChild) },
+			workerFault: `^sponsor on node slot \d+ names node slot \d+; sponsored on node slot \d+ does not name node slot \d+$`,
+			fakeMessage: writerOther + " names sponsor " + writerChild + "; the recruit list of " + writerChild +
+				" does not name it",
+		},
 	}
 }
 

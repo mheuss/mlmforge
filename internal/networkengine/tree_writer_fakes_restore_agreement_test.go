@@ -161,3 +161,91 @@ func TestFakeWriterEngine_RefusesToRemoveASponsorlessUserWithRecruits(t *testing
 		})
 	}
 }
+
+// tombstone returns the one slot on the worker's free list.
+func (a *workerArena) tombstone(t *testing.T) int {
+	t.Helper()
+	require.Len(t, a.FreeList, 1, "the worker's free list")
+	return a.FreeList[0]
+}
+
+// setFakeSponsor sets user's sponsor in a fake snapshot.
+func setFakeSponsor(s *fakeSnapshot, user, sponsor string) {
+	n := s.Nodes[user]
+	n.SponsorUserID = &sponsor
+	s.Nodes[user] = n
+}
+
+// restoreShape is one snapshot shape the worker's restore refuses.
+type restoreShape struct {
+	name        string
+	editWorker  func(*testing.T, *workerArena)
+	editFake    func(*fakeSnapshot)
+	workerFault string
+	fakeMessage string
+}
+
+// restoreShapes lists the snapshot shapes the restore pins cover.
+func restoreShapes() []restoreShape {
+	return []restoreShape{
+		{
+			name: "a sponsor naming an absent node",
+			editWorker: func(t *testing.T, a *workerArena) {
+				tomb := a.tombstone(t)
+				a.Nodes[a.slot(t, writerChild)].Sponsor = &tomb
+			},
+			editFake:    func(s *fakeSnapshot) { setFakeSponsor(s, writerChild, writerRemoved) },
+			workerFault: `^sponsor on node slot \d+ names node slot \d+; that slot is a tombstone$`,
+			fakeMessage: "sponsor on node " + writerChild + " names " + writerRemoved + "; the snapshot holds no such node",
+		},
+		{
+			name: "a recruit list entry naming an absent user",
+			editWorker: func(t *testing.T, a *workerArena) {
+				r := a.slot(t, writerRoot)
+				a.Nodes[r].Sponsored = append(a.Nodes[r].Sponsored, a.tombstone(t))
+			},
+			editFake:    func(s *fakeSnapshot) { s.Sponsored[writerRoot] = append(s.Sponsored[writerRoot], writerRemoved) },
+			workerFault: `^sponsored on node slot \d+ names node slot \d+; that slot is a tombstone$`,
+			fakeMessage: "the recruit list of " + writerRoot + " names " + writerRemoved + "; the snapshot holds no such node",
+		},
+		{
+			name: "a recruit list owned by an absent user",
+			editWorker: func(t *testing.T, a *workerArena) {
+				a.Nodes[a.tombstone(t)].Sponsored = []int{a.slot(t, writerOther)}
+			},
+			editFake:    func(s *fakeSnapshot) { s.Sponsored[writerRemoved] = []string{writerOther} },
+			workerFault: `^node slot \d+ is a tombstone and still holds a sponsored node$`,
+			fakeMessage: "a recruit list belongs to " + writerRemoved + "; the snapshot holds no such node",
+		},
+	}
+}
+
+func TestFakeWriterEngine_RefusesTheSnapshotsTheWorkerRefuses(t *testing.T) {
+	ctx := context.Background()
+	for _, shape := range restoreShapes() {
+		for _, treeType := range []string{treeTypeUnilevel, treeTypeBinary, treeTypeMatrix} {
+			t.Run(shape.name+" "+treeType, func(t *testing.T) {
+				client := startWorker(t)
+				fake := newFakeWriterEngine()
+				restoreSetup(t, client, treeType)
+				restoreSetup(t, fake, treeType)
+				workerTaken, err := client.TakeSnapshot(ctx, writerTree)
+				require.NoError(t, err)
+				fakeTaken, err := fake.TakeSnapshot(ctx, writerTree)
+				require.NoError(t, err)
+
+				workerErr := client.RestoreSnapshot(ctx, restoredTree, workerTaken.TreeType,
+					editWorkerSnapshot(t, workerTaken.Data, func(a *workerArena) { shape.editWorker(t, a) }))
+				fakeErr := fake.RestoreSnapshot(ctx, restoredTree, fakeTaken.TreeType,
+					editFakeSnapshot(t, fakeTaken.Data, shape.editFake))
+
+				var workerRefusal *EngineError
+				require.ErrorAs(t, workerErr, &workerRefusal, "the worker's answer")
+				require.Equal(t, "INCONSISTENT_SNAPSHOT", workerRefusal.Code, "the worker's code")
+				require.Regexp(t, shape.workerFault, workerRefusal.Message, "the worker's fault")
+				requireEngineRefusal(t, fakeErr, "INCONSISTENT_SNAPSHOT", shape.fakeMessage)
+				assert.NotContains(t, fake.trees, restoredTree)
+			})
+		}
+	}
+}

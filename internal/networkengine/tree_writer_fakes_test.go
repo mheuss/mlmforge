@@ -856,13 +856,14 @@ func (f *fakeWriterEngine) DropStructure(_ context.Context, structure string) (b
 	return ok, nil
 }
 
-// checkRestored refuses a snapshot whose root or parent names a node it does
-// not hold.
+// checkRestored refuses a snapshot that is not one consistent tree.
 func checkRestored(snap fakeSnapshot) error {
 	if _, ok := snap.Nodes[snap.Root]; snap.Root != "" && !ok {
 		return fakeEngineError("INCONSISTENT_SNAPSHOT", "root names %s; the snapshot holds no such node", snap.Root)
 	}
-	for _, id := range slices.Sorted(maps.Keys(snap.Nodes)) {
+	ids := slices.Sorted(maps.Keys(snap.Nodes))
+	owners := slices.Sorted(maps.Keys(snap.Sponsored))
+	for _, id := range ids {
 		parent := snap.Nodes[id].ParentUserID
 		if parent == nil {
 			continue
@@ -870,6 +871,30 @@ func checkRestored(snap fakeSnapshot) error {
 		if _, ok := snap.Nodes[*parent]; !ok {
 			return fakeEngineError("INCONSISTENT_SNAPSHOT", "parent on node %s names %s; the snapshot holds no such node",
 				id, *parent)
+		}
+	}
+	for _, id := range ids {
+		sponsor := snap.Nodes[id].SponsorUserID
+		if sponsor == nil {
+			continue
+		}
+		if _, ok := snap.Nodes[*sponsor]; !ok {
+			return fakeEngineError("INCONSISTENT_SNAPSHOT", "sponsor on node %s names %s; the snapshot holds no such node",
+				id, *sponsor)
+		}
+	}
+	for _, owner := range owners {
+		for _, recruit := range snap.Sponsored[owner] {
+			if _, ok := snap.Nodes[recruit]; !ok {
+				return fakeEngineError("INCONSISTENT_SNAPSHOT",
+					"the recruit list of %s names %s; the snapshot holds no such node", owner, recruit)
+			}
+		}
+	}
+	for _, owner := range owners {
+		if _, ok := snap.Nodes[owner]; !ok {
+			return fakeEngineError("INCONSISTENT_SNAPSHOT", "a recruit list belongs to %s; the snapshot holds no such node",
+				owner)
 		}
 	}
 	return nil

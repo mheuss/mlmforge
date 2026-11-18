@@ -363,7 +363,7 @@ func (f *fakeWriterEngine) RemoveMatrixNode(_ context.Context, structure, userID
 	if err := t.checkMatrixRemoval(userID, mode); err != nil {
 		return nil, err
 	}
-	if mode == PruningHoldingTank {
+	if mode == PruningHoldingTank && t.treeType == treeTypeMatrix {
 		removed := t.nodes[userID]
 		entry := HoldingTankEntryDTO{UserID: userID, EnrolledAt: removed.EnrolledAt}
 		if removed.SponsorUserID != nil {

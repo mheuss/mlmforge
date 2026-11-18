@@ -113,6 +113,25 @@ func TestFakeWriterEngine_AcceptsAPlacementWhoseSponsorIsHeld(t *testing.T) {
 	assert.Contains(t, engine.trees[writerTree].nodes, writerChild)
 }
 
+func TestFakeWriterEngine_KeepsNoTankOffAMatrix(t *testing.T) {
+	for _, treeType := range []string{treeTypeUnilevel, treeTypeBinary} {
+		t.Run(treeType, func(t *testing.T) {
+			ctx := context.Background()
+			engine := newRootedFakeEngine(t, treeType)
+			opts := []AddNodeOption{}
+			if treeType == treeTypeBinary {
+				opts = append(opts, WithPosition(0))
+			}
+			require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, writeTime.Unix(), opts...))
+			_, err := engine.RemoveMatrixNode(ctx, writerTree, writerChild, PruningHoldingTank)
+			require.NoError(t, err)
+
+			require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, writeTime.Unix(), opts...))
+			assert.Empty(t, engine.trees[writerTree].tank)
+		})
+	}
+}
+
 func TestFakeWriterEngine_RefusesAMatrixParentRemovalOnTheCheckAsOnTheApply(t *testing.T) {
 	for _, mode := range []PruningMode{PruningPromoteEarliest, PruningHoldingTank} {
 		t.Run(string(mode), func(t *testing.T) {

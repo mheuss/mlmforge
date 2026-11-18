@@ -201,21 +201,25 @@ func restoreSponsorlessMatrixParent(t *testing.T, client, fake removalAgreementE
 }
 
 func TestFakeWriterEngine_RefusesASponsorlessMatrixParentBeforeItsChildren(t *testing.T) {
-	ctx := context.Background()
-	client := startWorker(t)
-	fake := newFakeWriterEngine()
-	restoreSponsorlessMatrixParent(t, client, fake, false)
+	for _, mode := range []PruningMode{PruningPromoteEarliest, PruningHoldingTank} {
+		t.Run(string(mode), func(t *testing.T) {
+			ctx := context.Background()
+			client := startWorker(t)
+			fake := newFakeWriterEngine()
+			restoreSponsorlessMatrixParent(t, client, fake, false)
 
-	check := removeCheck(writerChild, PruningPromoteEarliest)
-	workerCheck := client.CheckMutation(ctx, restoredTree, check)
-	fakeCheck := fake.CheckMutation(ctx, restoredTree, check)
-	_, workerApply := removeUser(client, restoredTree, writerChild, PruningPromoteEarliest)
-	_, fakeApply := removeUser(fake, restoredTree, writerChild, PruningPromoteEarliest)
+			check := removeCheck(writerChild, mode)
+			workerCheck := client.CheckMutation(ctx, restoredTree, check)
+			fakeCheck := fake.CheckMutation(ctx, restoredTree, check)
+			_, workerApply := removeUser(client, restoredTree, writerChild, mode)
+			_, fakeApply := removeUser(fake, restoredTree, writerChild, mode)
 
-	require.Equal(t, "SPONSORLESS_WITH_RECRUITS", engineCodeOf(workerCheck), "the worker's check answer")
-	assert.Equal(t, engineErrorOf(workerCheck), engineErrorOf(workerApply), "the worker's apply against its check")
-	assert.Equal(t, engineErrorOf(workerCheck), engineErrorOf(fakeCheck), "check")
-	assert.Equal(t, engineErrorOf(workerApply), engineErrorOf(fakeApply), "apply")
+			require.Equal(t, "SPONSORLESS_WITH_RECRUITS", engineCodeOf(workerCheck), "the worker's check answer")
+			assert.Equal(t, engineErrorOf(workerCheck), engineErrorOf(workerApply), "the worker's apply against its check")
+			assert.Equal(t, engineErrorOf(workerCheck), engineErrorOf(fakeCheck), "check")
+			assert.Equal(t, engineErrorOf(workerApply), engineErrorOf(fakeApply), "apply")
+		})
+	}
 }
 
 func TestFakeWriterEngine_RefusesATankRemovalOfASponsorlessParentAsUnmodelled(t *testing.T) {

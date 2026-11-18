@@ -152,8 +152,7 @@ func (t *fakeEngineTree) checkRemoval(userID string) error {
 }
 
 // checkMatrixRemoval refuses a matrix removal this tree cannot make in mode. It
-// refuses a node with children with a plain error rather than an engine code,
-// and in holding_tank mode it does so before the sponsorless check.
+// refuses a node with children with a plain error rather than an engine code.
 func (t *fakeEngineTree) checkMatrixRemoval(userID string, mode PruningMode) error {
 	if _, ok := t.nodes[userID]; !ok {
 		return fakeEngineError(engineCodeUserNotFound, "user %s not found in tree", userID)
@@ -163,6 +162,16 @@ func (t *fakeEngineTree) checkMatrixRemoval(userID string, mode PruningMode) err
 	}
 	parent := fmt.Errorf("fakeWriterEngine removes only a matrix leaf, and %s has children", userID)
 	if mode == PruningHoldingTank && t.childCount(userID) > 0 {
+		under := t.subtree(userID)
+		outlive := 0
+		for _, recruit := range t.sponsored[userID] {
+			if !under[recruit] {
+				outlive++
+			}
+		}
+		if err := t.sponsorlessWith(userID, outlive); err != nil {
+			return err
+		}
 		return parent
 	}
 	if err := t.checkSponsorless(userID); err != nil {
@@ -174,12 +183,33 @@ func (t *fakeEngineTree) checkMatrixRemoval(userID string, mode PruningMode) err
 	return nil
 }
 
+// subtree returns userID and every node placed below it.
+func (t *fakeEngineTree) subtree(userID string) map[string]bool {
+	under := map[string]bool{userID: true}
+	for grew := true; grew; {
+		grew = false
+		for id, node := range t.nodes {
+			if !under[id] && node.ParentUserID != nil && under[*node.ParentUserID] {
+				under[id] = true
+				grew = true
+			}
+		}
+	}
+	return under
+}
+
 // checkSponsorless refuses the removal of a user who has recruits and no sponsor.
 func (t *fakeEngineTree) checkSponsorless(userID string) error {
-	if n := len(t.sponsored[userID]); n > 0 && t.nodes[userID].SponsorUserID == nil {
+	return t.sponsorlessWith(userID, len(t.sponsored[userID]))
+}
+
+// sponsorlessWith refuses the removal of a user with no sponsor whose removal
+// leaves outlive of its recruits behind.
+func (t *fakeEngineTree) sponsorlessWith(userID string, outlive int) error {
+	if outlive > 0 && t.nodes[userID].SponsorUserID == nil {
 		return fakeEngineError("SPONSORLESS_WITH_RECRUITS",
 			"cannot remove user %s: no node in its sponsor chain survives this removal. Recruits that outlive it: %d",
-			userID, n)
+			userID, outlive)
 	}
 	return nil
 }

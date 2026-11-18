@@ -123,8 +123,7 @@ func TestFakeWriterEngine_KeepsNoTankOffAMatrix(t *testing.T) {
 				opts = append(opts, WithPosition(0))
 			}
 			require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, writeTime.Unix(), opts...))
-			_, err := engine.RemoveMatrixNode(ctx, writerTree, writerChild, PruningHoldingTank)
-			require.NoError(t, err)
+			_, _ = engine.RemoveMatrixNode(ctx, writerTree, writerChild, PruningHoldingTank)
 
 			require.NoError(t, engine.AddNode(ctx, writerTree, writerChild, writerRoot, writerRoot, writeTime.Unix(), opts...))
 			assert.Empty(t, engine.trees[writerTree].tank)

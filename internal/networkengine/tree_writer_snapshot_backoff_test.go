@@ -384,7 +384,7 @@ func TestTreeWriterSnapshotBackoff_ASnapshotEveryLoadDiscardsIsRetakenOncePerTho
 	env := backoffEnv(t)
 	refusingRestores := func() *fakeWriterEngine {
 		e := newFakeWriterEngine()
-		e.restoreErr = fakeEngineError("INCONSISTENT_SNAPSHOT", "refused by the test")
+		e.restoreErr = fakeHandlerPanic()
 		return e
 	}
 
@@ -435,7 +435,7 @@ func TestTreeWriterSnapshotBackoff_AOneOffDiscardWarnsOnEachSkippedWrite(t *test
 	env := backoffEnv(t)
 	refusingRestore := func() *fakeWriterEngine {
 		e := newFakeWriterEngine()
-		e.restoreErr = fakeEngineError("INCONSISTENT_SNAPSHOT", "refused by the test")
+		e.restoreErr = fakeHandlerPanic()
 		return e
 	}
 
@@ -488,7 +488,7 @@ func TestTreeWriterSnapshotBackoff_EachTakeTriggerTakesOnce(t *testing.T) {
 			"taking a snapshot of tree " + writerTree + " at version 1000 returned: worker gone"},
 		"a take of another type": {
 			func(env *writerEnv) SnapshotStore { return env.snapshots },
-			func() *fakeWriterEngine { e := newFakeWriterEngine(); e.snapshotType = treeTypeBinary; return e },
+			func() *fakeWriterEngine { e := newFakeWriterEngine(); e.retypeBeforeTake = treeTypeBinary; return e },
 			"take_snapshot for tree " + writerTree + " at version 1000 returned tree type binary, " +
 				"and version 1 records unilevel; no snapshot was stored"},
 	}

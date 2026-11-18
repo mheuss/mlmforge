@@ -510,7 +510,7 @@ func TestTreeWriterReject_RejectsACompensatedRoot(t *testing.T) {
 	env := newWriterEnv()
 	root := appendDirect(t, env.events, EventTypeRootAdded, rootAddedPayload())
 	trigger, engine := env.writer()
-	engine.failAdd[writerRoot] = fakeEngineError(engineCodeRootAlreadyExists, "tree already has a root node")
+	engine.failAdd[writerRoot] = fakeEngineError(engineCodeRootAlreadyExists, "scripted: compensated root")
 	second := testUserUUID(5)
 	addSecond := AddRootRequest{TreeID: writerTree, UserID: second, SponsorID: second, TreeType: treeTypeUnilevel, EnrolledAt: writeTime}
 	_, err := trigger.AddRoot(context.Background(), addSecond)
@@ -541,27 +541,26 @@ func TestTreeWriterReject_RejectsACompensatedRoot(t *testing.T) {
 	assert.Equal(t, int64(3), added.Version)
 }
 
-// refusingRemovalEngine refuses every RemoveNode with HAS_CHILDREN.
-type refusingRemovalEngine struct{ *fakeWriterEngine }
-
-func (refusingRemovalEngine) RemoveNode(context.Context, string, string) ([]Responsored, error) {
-	return nil, fakeEngineError("HAS_CHILDREN", "user has children")
-}
-
 func TestReject_RemovalLeavesUserActive(t *testing.T) {
 	env := newWriterEnv()
 	mustAddRoot(t, env, treeTypeUnilevel)
 	placed := mustPlace(t, env, writerChild, nil)
+	under, _ := env.writer()
+	grandchild, err := under.Place(context.Background(), PlaceRequest{
+		TreeID: writerTree, UserID: writerOther, ParentID: writerChild, SponsorID: writerChild, EnrolledAt: writeTime,
+	})
+	require.NoError(t, err)
+	require.NoError(t, grandchild.ProjectionErr)
 	removal := appendDirect(t, env.events, EventTypeNodeRemoved, NodeRemovedPayload{
 		TreeID: writerTree, UserID: writerChild, RemovedAt: writeTime,
 	})
-	w := NewTreeWriter(env.events, env.store, env.snapshots, refusingRemovalEngine{newFakeWriterEngine()}, env.locker)
+	w, _ := env.writer()
 
 	res, err := w.Reject(context.Background(), rejectRequest(removal.ID))
 
 	require.NoError(t, err)
 	require.NoError(t, res.ProjectionErr)
-	assert.Equal(t, int64(4), res.Version)
+	assert.Equal(t, int64(5), res.Version)
 	row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
 	require.NoError(t, err)
 	require.NotNil(t, row, "rejecting the removal took the user out of the tree")
@@ -572,13 +571,13 @@ func TestReject_RemovalLeavesUserActive(t *testing.T) {
 
 	next, _ := env.writer()
 	_, err = next.Place(context.Background(), PlaceRequest{
-		TreeID: writerTree, UserID: writerOther, ParentID: writerChild, SponsorID: writerChild, EnrolledAt: writeTime,
+		TreeID: writerTree, UserID: testUserUUID(4), ParentID: writerChild, SponsorID: writerChild, EnrolledAt: writeTime,
 	})
 	require.NoError(t, err)
 	loader, _ := env.writer()
 	loaded, err := loader.Load(context.Background(), loadRequest())
 	require.NoError(t, err)
-	assert.Equal(t, 3, loaded.Nodes)
+	assert.Equal(t, 4, loaded.Nodes)
 }
 
 func TestTreeWriterReject_RefusesWhenTheRetrySucceeds(t *testing.T) {
@@ -613,11 +612,6 @@ func TestTreeWriterReject_RefusesARetryErrorThatIsNotEvidence(t *testing.T) {
 		{"an engine INTERNAL_ERROR", func(env *writerEnv) *TreeWriter {
 			w, engine := env.writer()
 			engine.failAdd[writerChild] = fakeHandlerPanic()
-			return w
-		}},
-		{"an engine USER_ALREADY_EXISTS", func(env *writerEnv) *TreeWriter {
-			w, engine := env.writer()
-			engine.failAdd[writerChild] = fakeEngineError(engineCodeUserAlreadyExists, "user already exists in tree")
 			return w
 		}},
 		{"a transport error", func(env *writerEnv) *TreeWriter {
@@ -1206,8 +1200,8 @@ func TestTreeWriterReject_AFailedDropIsNotEvidence(t *testing.T) {
 	requireStored(t, ctx, env.snapshots, Snapshot{TreeID: writerTree, Version: 2, TreeType: taken.TreeType, Data: taken.Data})
 	before := streamEvents(t, env.events, TreeStreamName(writerTree))
 	w, engine := env.writer()
-	engine.restoreErr = fakeEngineError("INCONSISTENT_SNAPSHOT", "refused by the test")
-	engine.dropErr = fakeEngineError("HAS_CHILDREN", "refused by the test")
+	engine.restoreErr = fakeHandlerPanic()
+	engine.dropErr = fakeHandlerPanic()
 
 	res, err := w.Reject(ctx, rejectRequest(stuck.ID))
 

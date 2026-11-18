@@ -159,25 +159,22 @@ func (t *fakeEngineTree) checkMatrixRemoval(userID string, mode PruningMode) err
 	if t.root == userID {
 		return fakeEngineError("CANNOT_REMOVE_ROOT", "cannot remove root node")
 	}
-	parent := fmt.Errorf("fakeWriterEngine removes only a matrix leaf, and %s has children", userID)
-	if mode == PruningHoldingTank && t.childCount(userID) > 0 {
+	hasChildren := t.childCount(userID) > 0
+	outlive := len(t.sponsored[userID])
+	if mode == PruningHoldingTank && hasChildren {
 		under := t.subtree(userID)
-		outlive := 0
+		outlive = 0
 		for _, recruit := range t.sponsored[userID] {
 			if !under[recruit] {
 				outlive++
 			}
 		}
-		if err := t.sponsorlessWith(userID, outlive); err != nil {
-			return err
-		}
-		return parent
 	}
-	if err := t.checkSponsorless(userID); err != nil {
+	if err := t.sponsorlessWith(userID, outlive); err != nil {
 		return err
 	}
-	if t.childCount(userID) > 0 {
-		return parent
+	if hasChildren {
+		return fmt.Errorf("fakeWriterEngine removes only a matrix leaf, and %s has children", userID)
 	}
 	return nil
 }

@@ -164,22 +164,37 @@ func TestFakeWriterEngine_RefusesToRemoveASponsorlessUserWithRecruits(t *testing
 	}
 }
 
+// sponsorlessLayout says where writerChild's recruits sit.
+type sponsorlessLayout int
+
+const (
+	// recruitOutside: writerOther, under the root, is writerChild's one recruit.
+	recruitOutside sponsorlessLayout = iota
+	// recruitUnder: writerOther, under writerChild, is writerChild's one recruit.
+	recruitUnder
+	// recruitsMixed: writerRemoved under writerChild and writerOther under the
+	// root are both writerChild's recruits.
+	recruitsMixed
+)
+
 // restoreSponsorlessMatrixParent builds a matrix on both engines in which
-// writerChild sponsors writerOther and has writerRemoved under it, then restores
-// it as restoredTree with writerChild's sponsor cleared. writerOther sits under
-// writerChild when recruitUnder is set, and under the root otherwise.
-func restoreSponsorlessMatrixParent(t *testing.T, client, fake removalAgreementEngine, recruitUnder bool) {
+// writerChild has writerRemoved under it, then restores it as restoredTree with
+// writerChild's sponsor cleared.
+func restoreSponsorlessMatrixParent(t *testing.T, client, fake removalAgreementEngine, layout sponsorlessLayout) {
 	t.Helper()
 	ctx := context.Background()
+	removedSponsor, otherParent := writerRoot, writerRoot
+	switch layout {
+	case recruitUnder:
+		otherParent = writerChild
+	case recruitsMixed:
+		removedSponsor = writerChild
+	}
 	for _, e := range []removalAgreementEngine{client, fake} {
 		agreementRooted(treeTypeMatrix)(t, e)
 		placeInSlot(t, e, treeTypeMatrix, writerChild, writerRoot, writerRoot, 0, 200)
-		placeInSlot(t, e, treeTypeMatrix, writerRemoved, writerChild, writerRoot, 0, 300)
-		if recruitUnder {
-			placeInSlot(t, e, treeTypeMatrix, writerOther, writerChild, writerChild, 1, 400)
-		} else {
-			placeInSlot(t, e, treeTypeMatrix, writerOther, writerRoot, writerChild, 1, 400)
-		}
+		placeInSlot(t, e, treeTypeMatrix, writerRemoved, writerChild, removedSponsor, 0, 300)
+		placeInSlot(t, e, treeTypeMatrix, writerOther, otherParent, writerChild, 1, 400)
 	}
 	workerTaken, err := client.TakeSnapshot(ctx, writerTree)
 	require.NoError(t, err)
@@ -206,7 +221,7 @@ func TestFakeWriterEngine_RefusesASponsorlessMatrixParentBeforeItsChildren(t *te
 			ctx := context.Background()
 			client := startWorker(t)
 			fake := newFakeWriterEngine()
-			restoreSponsorlessMatrixParent(t, client, fake, false)
+			restoreSponsorlessMatrixParent(t, client, fake, recruitOutside)
 
 			check := removeCheck(writerChild, mode)
 			workerCheck := client.CheckMutation(ctx, restoredTree, check)
@@ -226,7 +241,7 @@ func TestFakeWriterEngine_RefusesATankRemovalOfASponsorlessParentAsUnmodelled(t 
 	ctx := context.Background()
 	client := startWorker(t)
 	fake := newFakeWriterEngine()
-	restoreSponsorlessMatrixParent(t, client, fake, true)
+	restoreSponsorlessMatrixParent(t, client, fake, recruitUnder)
 
 	check := removeCheck(writerChild, PruningHoldingTank)
 	workerCheck := client.CheckMutation(ctx, restoredTree, check)
@@ -236,6 +251,25 @@ func TestFakeWriterEngine_RefusesATankRemovalOfASponsorlessParentAsUnmodelled(t 
 	require.NoError(t, workerCheck, "the worker's check answer")
 	require.EqualError(t, fakeCheck, "fakeWriterEngine removes only a matrix leaf, and "+writerChild+" has children")
 	assert.Equal(t, fakeCheck, fakeApply)
+}
+
+func TestFakeWriterEngine_CountsOnlyTheRecruitsATankRemovalLeavesBehind(t *testing.T) {
+	ctx := context.Background()
+	client := startWorker(t)
+	fake := newFakeWriterEngine()
+	restoreSponsorlessMatrixParent(t, client, fake, recruitsMixed)
+
+	check := removeCheck(writerChild, PruningHoldingTank)
+	workerCheck := client.CheckMutation(ctx, restoredTree, check)
+	fakeCheck := fake.CheckMutation(ctx, restoredTree, check)
+	_, workerApply := removeUser(client, restoredTree, writerChild, PruningHoldingTank)
+	_, fakeApply := removeUser(fake, restoredTree, writerChild, PruningHoldingTank)
+
+	require.Equal(t, "SPONSORLESS_WITH_RECRUITS", engineCodeOf(workerCheck), "the worker's check answer")
+	require.Contains(t, engineErrorOf(workerCheck), "Recruits that outlive it: 1", "the worker's check answer")
+	assert.Equal(t, engineErrorOf(workerCheck), engineErrorOf(workerApply), "the worker's apply against its check")
+	assert.Equal(t, engineErrorOf(workerCheck), engineErrorOf(fakeCheck), "check")
+	assert.Equal(t, engineErrorOf(workerApply), engineErrorOf(fakeApply), "apply")
 }
 
 // tombstone returns the one slot on the worker's free list.

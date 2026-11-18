@@ -150,3 +150,103 @@ func TestFakeWriterEngine_ResponsorsAsTheWorkerDoes(t *testing.T) {
 		})
 	}
 }
+
+// Identifiers the order scenario adds.
+var (
+	removalM = testUserUUID(34)
+	removalP = testUserUUID(35)
+	removalF = testUserUUID(36)
+)
+
+// orderScenario sponsors M by the root, A by M, B by A and P by M, placed in
+// that order, with A and M left without children.
+func orderScenario(t *testing.T, e agreementEngine, treeType string) {
+	t.Helper()
+	agreementRooted(treeType)(t, e)
+	switch treeType {
+	case treeTypeBinary:
+		placeInSlot(t, e, treeType, removalF, writerRoot, writerRoot, 0, 150)
+		placeInSlot(t, e, treeType, removalM, writerRoot, writerRoot, 1, 200)
+		placeInSlot(t, e, treeType, removalA, removalF, removalM, 0, 300)
+		placeInSlot(t, e, treeType, removalB, removalF, removalA, 1, 400)
+		placeInSlot(t, e, treeType, removalP, removalB, removalM, 0, 500)
+	case treeTypeMatrix:
+		placeInSlot(t, e, treeType, removalM, writerRoot, writerRoot, 0, 200)
+		placeInSlot(t, e, treeType, removalA, writerRoot, removalM, 1, 300)
+		placeInSlot(t, e, treeType, removalB, writerRoot, removalA, 2, 400)
+		placeInSlot(t, e, treeType, removalP, removalB, removalM, 0, 500)
+	default:
+		placeInSlot(t, e, treeType, removalM, writerRoot, writerRoot, 0, 200)
+		placeInSlot(t, e, treeType, removalA, writerRoot, removalM, 0, 300)
+		placeInSlot(t, e, treeType, removalB, writerRoot, removalA, 0, 400)
+		placeInSlot(t, e, treeType, removalP, writerRoot, removalM, 0, 500)
+	}
+}
+
+// orderScenarioLists is the fake's recruit map after A and then M are removed.
+func orderScenarioLists(treeType string) map[string][]string {
+	if treeType == treeTypeBinary {
+		return map[string][]string{writerRoot: {removalF, removalP, removalB}}
+	}
+	return map[string][]string{writerRoot: {removalP, removalB}}
+}
+
+// fakeLists returns the recruit map from the fake's snapshot of writerTree.
+func fakeLists(t *testing.T, fake *fakeWriterEngine) map[string][]string {
+	t.Helper()
+	taken, err := fake.TakeSnapshot(context.Background(), writerTree)
+	require.NoError(t, err)
+	var snap fakeSnapshot
+	require.NoError(t, json.Unmarshal(taken.Data, &snap))
+	return snap.Sponsored
+}
+
+func TestFakeWriterEngine_KeepsTheWorkersRecruitOrderAcrossTwoRemovals(t *testing.T) {
+	for _, restore := range []bool{false, true} {
+		for _, tt := range removalTreeTypes {
+			name := tt.name
+			if restore {
+				name += " with a restore between"
+			}
+			t.Run(name, func(t *testing.T) {
+				client := startWorker(t)
+				fake := newFakeWriterEngine()
+				engines := []removalAgreementEngine{client, fake}
+				var first, second [2][]Responsored
+				for i, e := range engines {
+					orderScenario(t, e, tt.treeType)
+					var err error
+					first[i], err = removeUser(e, writerTree, removalA, tt.mode)
+					require.NoError(t, err)
+					if restore {
+						roundTrip(t, e)
+					}
+					second[i], err = removeUser(e, writerTree, removalM, tt.mode)
+					require.NoError(t, err)
+				}
+
+				require.Equal(t, []Responsored{{UserID: removalB, NewSponsorID: removalM}}, first[0],
+					"the worker's responsored list on removing A")
+				require.Equal(t, []Responsored{
+					{UserID: removalP, NewSponsorID: writerRoot},
+					{UserID: removalB, NewSponsorID: writerRoot},
+				}, second[0], "the worker's responsored list on removing M")
+				assert.Equal(t, first[0], first[1], "responsored on removing A")
+				assert.Equal(t, second[0], second[1], "responsored on removing M")
+				if !restore {
+					assert.Equal(t, orderScenarioLists(tt.treeType), fakeLists(t, fake))
+				}
+				survivors := []string{writerRoot, removalB, removalP}
+				if tt.treeType == treeTypeBinary {
+					survivors = append(survivors, removalF)
+				}
+				for _, user := range survivors {
+					assert.Equal(t, sponsorOf(t, client, writerTree, user), sponsorOf(t, fake, writerTree, user),
+						"the sponsor of %s", user)
+				}
+				requireHeldSponsors(t, fake)
+				roundTrip(t, fake)
+			})
+		}
+	}
+}

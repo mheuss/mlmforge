@@ -1441,7 +1441,7 @@ func TestPositionMatchesProjection(t *testing.T) {
 }
 
 // reconcileTransport fails the mutation with a chosen error and answers
-// get_position separately, which is the pairing every reconcile path needs.
+// get_position separately.
 type reconcileTransport struct {
 	mutationErr      error
 	mutationErrs     []error
@@ -2018,7 +2018,7 @@ func TestHandleRootAdded_CompensationTouchesOnlyThisEventsRow(t *testing.T) {
 	assert.NotNil(t, theirs, "the root that was already there survives")
 }
 
-// Attempt 0 fails in transit, and attempt 1 returns the code reconcile acts on.
+// Attempt 0 fails in transit, and attempt 1 is refused with ROOT_ALREADY_EXISTS.
 // Compensation must still run exactly once.
 func TestHandleRootAdded_CompensatesOnceAcrossAttempts(t *testing.T) {
 	tr := &reconcileTransport{

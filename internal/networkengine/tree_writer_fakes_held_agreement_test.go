@@ -14,10 +14,29 @@ type heldAgreementEngine interface {
 	agreementEngine
 	TakeSnapshot(ctx context.Context, structure string) (*SnapshotResultDTO, error)
 	RestoreSnapshot(ctx context.Context, structure, treeType string, data json.RawMessage) error
+	DropStructure(ctx context.Context, structure string) (bool, error)
 }
 
-// createLikeWriter makes the create call the writer's build makes for treeType.
-func createLikeWriter(e heldAgreementEngine, treeType string) error {
+// buildHeldTree builds writerTree in e and returns its snapshot, with a snapshot
+// of the root-only tree taken first.
+func buildHeldTree(t *testing.T, e heldAgreementEngine, treeType string) (held, rootOnly *SnapshotResultDTO) {
+	t.Helper()
+	ctx := context.Background()
+	agreementRooted(treeType)(t, e)
+	rootOnly, err := e.TakeSnapshot(ctx, writerTree)
+	require.NoError(t, err)
+	dropped, err := e.DropStructure(ctx, writerTree)
+	require.NoError(t, err)
+	require.True(t, dropped)
+	restoreSetup(t, e, treeType)
+	held, err = e.TakeSnapshot(ctx, writerTree)
+	require.NoError(t, err)
+	require.NotEqual(t, string(rootOnly.Data), string(held.Data))
+	return held, rootOnly
+}
+
+// createTreeOfType creates writerTree as a tree of treeType.
+func createTreeOfType(e heldAgreementEngine, treeType string) error {
 	if treeType == treeTypeMatrix {
 		return e.CreateMatrixTree(context.Background(), writerTree, 3, "breadth_first")
 	}
@@ -39,23 +58,19 @@ func TestFakeWriterEngine_RefusesAHeldStructureAsTheWorkerDoes(t *testing.T) {
 		t.Run(treeType, func(t *testing.T) {
 			client := startWorker(t)
 			fake := newFakeWriterEngine()
-			restoreSetup(t, client, treeType)
-			restoreSetup(t, fake, treeType)
-			workerBefore, err := client.TakeSnapshot(ctx, writerTree)
-			require.NoError(t, err)
-			fakeBefore, err := fake.TakeSnapshot(ctx, writerTree)
-			require.NoError(t, err)
+			workerBefore, workerRootOnly := buildHeldTree(t, client, treeType)
+			fakeBefore, fakeRootOnly := buildHeldTree(t, fake, treeType)
 
-			workerErr := createLikeWriter(client, treeType)
-			fakeErr := createLikeWriter(fake, treeType)
+			workerErr := createTreeOfType(client, treeType)
+			fakeErr := createTreeOfType(fake, treeType)
 
 			assert.Equal(t, engineCodeTreeExists, engineCodeOf(workerErr), "the worker's answer to create on a held structure")
 			assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(fakeErr), "create on a held structure")
 			assertHeldUnchanged(t, client, workerBefore, "worker", "create")
 			assertHeldUnchanged(t, fake, fakeBefore, "fake", "create")
 
-			workerErr = client.RestoreSnapshot(ctx, writerTree, workerBefore.TreeType, workerBefore.Data)
-			fakeErr = fake.RestoreSnapshot(ctx, writerTree, fakeBefore.TreeType, fakeBefore.Data)
+			workerErr = client.RestoreSnapshot(ctx, writerTree, workerRootOnly.TreeType, workerRootOnly.Data)
+			fakeErr = fake.RestoreSnapshot(ctx, writerTree, fakeRootOnly.TreeType, fakeRootOnly.Data)
 
 			assert.Equal(t, engineCodeTreeExists, engineCodeOf(workerErr), "the worker's answer to restore_snapshot on a held structure")
 			assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(fakeErr), "restore_snapshot on a held structure")

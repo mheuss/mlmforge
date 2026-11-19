@@ -595,6 +595,21 @@ func restoreShapes() []restoreShape {
 			workerFault: `^node slot \d+ holds ` + writerChild + ` at depth 0; its parent at node slot \d+ is at depth 4294967295$`,
 			fakeMessage: "node " + writerChild + " is at depth 0; its parent " + writerOther + " is at depth 4294967295",
 		},
+		{
+			name: "a non-root node with no parent at a depth other than 0",
+			editWorker: func(t *testing.T, a *workerArena) {
+				y, r := a.slot(t, writerOther), a.slot(t, writerRoot)
+				a.Nodes[y].Parent = nil
+				a.Nodes[r].Children = slices.DeleteFunc(a.Nodes[r].Children, func(c int) bool { return c == y })
+			},
+			editFake: func(s *fakeSnapshot) {
+				n := s.Nodes[writerOther]
+				n.ParentUserID = nil
+				s.Nodes[writerOther] = n
+			},
+			workerFault: `^node slot \d+ holds ` + writerOther + ` at depth 1 and names no parent$`,
+			fakeMessage: "node " + writerOther + " is at depth 1 and names no parent",
+		},
 	}
 }
 

@@ -1010,7 +1010,7 @@ func checkRestored(snap fakeSnapshot) error {
 	return checkRestoredTank(snap)
 }
 
-// checkRestoredDepths refuses a node whose depth does not follow from its parent's.
+// checkRestoredDepths refuses a parentless node not at depth 0, or a node not one below its parent.
 func checkRestoredDepths(snap fakeSnapshot, ids []string) error {
 	for _, id := range ids {
 		node := snap.Nodes[id]

@@ -97,6 +97,23 @@ A `Delete` added to the interface after this was written is not checked here.
 After you add a method to an interface, or merge a branch that did, search the
 shared suites for cases like this one and add the new methods.
 
+## A double's request log is not a record of what it changed
+
+A double can log some of its calls and not others. An assertion on that log
+says nothing about a call the log never records. It passes whether or not the
+call happened.
+
+A test that asserts "nothing was mutated" on a log that holds no removals
+cannot see a removal. The removal changes the double's state and leaves no
+entry.
+
+Wrap the double and record each mutating call before delegating it. Assert on
+that record. The wrapper has the same gap as a list of every method. Name every
+mutating method of the interface.
+
+HEU-1024 hit this. The first version of its pin asserted on a log that held no
+removals, so a removal reaching the engine went unseen.
+
 ## Check the double the same way as the code
 
 A double is code under test. Mutate the thing it is meant to detect and confirm

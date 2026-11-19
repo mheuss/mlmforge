@@ -688,3 +688,18 @@ before the restore, so the test does not rest on that assumption.
 HEU-1024 hit this. With the fake's held-structure check on restore disabled,
 the read-back assertion still passed. Only the error comparison failed. The
 read-back started failing too once the test restored a smaller snapshot.
+
+## An order mutation moves a check past everything in between
+
+2026-11-19.
+
+To pin that check A runs before check B, a mutation moves A to just after B. A
+then also runs after every check between them. Each of those order boundaries
+breaks too. Rows other than the one under test can fail.
+
+Name that set before the run. Read "fails while the rest pass" as every row
+outside the predicted set passing. A row outside the set that fails means the
+mutation did not land where you think. So does a row inside the set that passes.
+
+HEU-1082 hit this. Moving a depth check past a later check also moved it past a
+root-sponsor check. That order's row failed with the new one.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"math"
 	"slices"
 	"testing"
 
@@ -281,6 +282,20 @@ func setFakeSponsor(s *fakeSnapshot, user, sponsor string) {
 	s.Nodes[user] = n
 }
 
+// setFakeParent sets user's parent in a fake snapshot.
+func setFakeParent(s *fakeSnapshot, user, parent string) {
+	n := s.Nodes[user]
+	n.ParentUserID = &parent
+	s.Nodes[user] = n
+}
+
+// setFakeDepth sets user's depth in a fake snapshot.
+func setFakeDepth(s *fakeSnapshot, user string, depth uint32) {
+	n := s.Nodes[user]
+	n.Depth = depth
+	s.Nodes[user] = n
+}
+
 // restoreShape pairs one worker edit with one fake edit.
 type restoreShape struct {
 	name        string
@@ -494,6 +509,106 @@ func restoreShapes() []restoreShape {
 			editFake:    func(s *fakeSnapshot) { setFakeSponsor(s, writerChild, writerOther) },
 			workerFault: `^sponsored on node slot \d+ names node slot \d+; sponsor on node slot \d+ does not name node slot \d+$`,
 			fakeMessage: "the recruit list of " + writerRoot + " names " + writerChild + ", whose sponsor is " + writerOther,
+		},
+		{
+			name: "a root parented on its own child",
+			editWorker: func(t *testing.T, a *workerArena) {
+				r, x := a.slot(t, writerRoot), a.slot(t, writerChild)
+				a.Nodes[r].Parent = &x
+				a.Nodes[x].Children = append(a.Nodes[x].Children, r)
+			},
+			editFake:    func(s *fakeSnapshot) { setFakeParent(s, writerRoot, writerChild) },
+			workerFault: `^node slot \d+ holds ` + writerRoot + ` at depth 0; its parent at node slot \d+ is at depth 1$`,
+			fakeMessage: "node " + writerRoot + " is at depth 0; its parent " + writerChild + " is at depth 1",
+		},
+		{
+			name: "two non-root nodes parented on each other",
+			editWorker: func(t *testing.T, a *workerArena) {
+				r, x, y := a.slot(t, writerRoot), a.slot(t, writerChild), a.slot(t, writerOther)
+				a.Nodes[x].Parent = &y
+				a.Nodes[y].Parent = &x
+				a.Nodes[x].Children = []int{y}
+				a.Nodes[y].Children = []int{x}
+				a.Nodes[r].Children = slices.DeleteFunc(a.Nodes[r].Children, func(c int) bool { return c == x || c == y })
+			},
+			editFake: func(s *fakeSnapshot) {
+				setFakeParent(s, writerChild, writerOther)
+				setFakeParent(s, writerOther, writerChild)
+			},
+			workerFault: `^node slot \d+ holds ` + writerChild + ` at depth 1; its parent at node slot \d+ is at depth 1$`,
+			fakeMessage: "node " + writerChild + " is at depth 1; its parent " + writerOther + " is at depth 1",
+		},
+		{
+			name: "a root parented on and sponsored by its own child",
+			editWorker: func(t *testing.T, a *workerArena) {
+				r, x := a.slot(t, writerRoot), a.slot(t, writerChild)
+				a.Nodes[r].Parent = &x
+				a.Nodes[x].Children = append(a.Nodes[x].Children, r)
+				a.Nodes[r].Sponsor = &x
+				a.Nodes[x].Sponsored = append(a.Nodes[x].Sponsored, r)
+			},
+			editFake: func(s *fakeSnapshot) {
+				setFakeParent(s, writerRoot, writerChild)
+				setFakeSponsor(s, writerRoot, writerChild)
+				s.Sponsored[writerChild] = append(s.Sponsored[writerChild], writerRoot)
+			},
+			workerFault: `^node slot \d+ holds ` + writerRoot + ` at depth 0; its parent at node slot \d+ is at depth 1$`,
+			fakeMessage: "node " + writerRoot + " is at depth 0; its parent " + writerChild + " is at depth 1",
+		},
+		{
+			name: "a root at a depth other than 0",
+			editWorker: func(t *testing.T, a *workerArena) {
+				a.Nodes[a.slot(t, writerRoot)].Depth = 1
+				a.Nodes[a.slot(t, writerChild)].Depth = 2
+				a.Nodes[a.slot(t, writerOther)].Depth = 2
+			},
+			editFake: func(s *fakeSnapshot) {
+				setFakeDepth(s, writerRoot, 1)
+				setFakeDepth(s, writerChild, 2)
+				setFakeDepth(s, writerOther, 2)
+			},
+			workerFault: `^node slot \d+ holds ` + writerRoot + ` at depth 1 and names no parent$`,
+			fakeMessage: "node " + writerRoot + " is at depth 1 and names no parent",
+		},
+		{
+			name:        "a node whose depth skips a level",
+			editWorker:  func(t *testing.T, a *workerArena) { a.Nodes[a.slot(t, writerOther)].Depth = 5 },
+			editFake:    func(s *fakeSnapshot) { setFakeDepth(s, writerOther, 5) },
+			workerFault: `^node slot \d+ holds ` + writerOther + ` at depth 5; its parent at node slot \d+ is at depth 0$`,
+			fakeMessage: "node " + writerOther + " is at depth 5; its parent " + writerRoot + " is at depth 0",
+		},
+		{
+			name: "a node under a parent at the largest depth",
+			editWorker: func(t *testing.T, a *workerArena) {
+				r, x, y := a.slot(t, writerRoot), a.slot(t, writerChild), a.slot(t, writerOther)
+				a.Nodes[x].Parent = &y
+				a.Nodes[x].Depth = 0
+				a.Nodes[y].Depth = math.MaxUint32
+				a.Nodes[y].Children = []int{x}
+				a.Nodes[r].Children = slices.DeleteFunc(a.Nodes[r].Children, func(c int) bool { return c == x })
+			},
+			editFake: func(s *fakeSnapshot) {
+				setFakeParent(s, writerChild, writerOther)
+				setFakeDepth(s, writerChild, 0)
+				setFakeDepth(s, writerOther, math.MaxUint32)
+			},
+			workerFault: `^node slot \d+ holds ` + writerChild + ` at depth 0; its parent at node slot \d+ is at depth 4294967295$`,
+			fakeMessage: "node " + writerChild + " is at depth 0; its parent " + writerOther + " is at depth 4294967295",
+		},
+		{
+			name: "a non-root node with no parent at a depth other than 0",
+			editWorker: func(t *testing.T, a *workerArena) {
+				y, r := a.slot(t, writerOther), a.slot(t, writerRoot)
+				a.Nodes[y].Parent = nil
+				a.Nodes[r].Children = slices.DeleteFunc(a.Nodes[r].Children, func(c int) bool { return c == y })
+			},
+			editFake: func(s *fakeSnapshot) {
+				n := s.Nodes[writerOther]
+				n.ParentUserID = nil
+				s.Nodes[writerOther] = n
+			},
+			workerFault: `^node slot \d+ holds ` + writerOther + ` at depth 1 and names no parent$`,
+			fakeMessage: "node " + writerOther + " is at depth 1 and names no parent",
 		},
 	}
 }

@@ -297,3 +297,19 @@ not a reason to drop the mutation. A mutation that changes no answer for any
 input needs no shape.
 
 Found in final review for HEU-1076 on 2026-11-18.
+
+## Mirror checked arithmetic with an explicit guard
+
+The worker can add with an overflow check that refuses at the top of the range.
+Go's fixed-width addition wraps to 0 instead. A fake that copies the comparison
+without the check accepts a value the worker refuses.
+
+Guard the maximum before adding. Then pin the guard with a row where the wrap
+changes the fake's answer. The value at the maximum is often refused by another
+rule anyway. Then the guard only decides which node gets named. Build the row so
+that the node checked first sits below the maximum. Require the worker's named
+node from both engines.
+
+Found for HEU-1082 on 2026-11-19. The fake's depth check let a depth-0 child
+pass under a parent at the largest depth. It then named the parent instead of
+the child.

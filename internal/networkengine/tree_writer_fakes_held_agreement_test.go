@@ -17,8 +17,8 @@ type heldAgreementEngine interface {
 	DropStructure(ctx context.Context, structure string) (bool, error)
 }
 
-// buildHeldTree builds writerTree in e and returns its snapshot, with a snapshot
-// of the root-only tree taken first.
+// buildHeldTree builds writerTree in e and returns its snapshot and a snapshot
+// of the same tree holding only its root.
 func buildHeldTree(t *testing.T, e heldAgreementEngine, treeType string) (held, rootOnly *SnapshotResultDTO) {
 	t.Helper()
 	ctx := context.Background()
@@ -31,7 +31,7 @@ func buildHeldTree(t *testing.T, e heldAgreementEngine, treeType string) (held, 
 	restoreSetup(t, e, treeType)
 	held, err = e.TakeSnapshot(ctx, writerTree)
 	require.NoError(t, err)
-	require.NotEqual(t, string(rootOnly.Data), string(held.Data))
+	require.NotEqual(t, string(rootOnly.Data), string(held.Data), "the root-only snapshot against the held one")
 	return held, rootOnly
 }
 

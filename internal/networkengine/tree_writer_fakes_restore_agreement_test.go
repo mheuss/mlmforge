@@ -288,6 +288,13 @@ func setFakeParent(s *fakeSnapshot, user, parent string) {
 	s.Nodes[user] = n
 }
 
+// setFakeDepth sets user's depth in a fake snapshot.
+func setFakeDepth(s *fakeSnapshot, user string, depth uint32) {
+	n := s.Nodes[user]
+	n.Depth = depth
+	s.Nodes[user] = n
+}
+
 // restoreShape pairs one worker edit with one fake edit.
 type restoreShape struct {
 	name        string
@@ -546,6 +553,21 @@ func restoreShapes() []restoreShape {
 			},
 			workerFault: `^node slot \d+ holds ` + writerRoot + ` at depth 0; its parent at node slot \d+ is at depth 1$`,
 			fakeMessage: "node " + writerRoot + " is at depth 0; its parent " + writerChild + " is at depth 1",
+		},
+		{
+			name: "a root at a depth other than 0",
+			editWorker: func(t *testing.T, a *workerArena) {
+				a.Nodes[a.slot(t, writerRoot)].Depth = 1
+				a.Nodes[a.slot(t, writerChild)].Depth = 2
+				a.Nodes[a.slot(t, writerOther)].Depth = 2
+			},
+			editFake: func(s *fakeSnapshot) {
+				setFakeDepth(s, writerRoot, 1)
+				setFakeDepth(s, writerChild, 2)
+				setFakeDepth(s, writerOther, 2)
+			},
+			workerFault: `^node slot \d+ holds ` + writerRoot + ` at depth 1 and names no parent$`,
+			fakeMessage: "node " + writerRoot + " is at depth 1 and names no parent",
 		},
 	}
 }

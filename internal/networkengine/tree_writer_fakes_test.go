@@ -1014,6 +1014,9 @@ func checkRestoredDepths(snap fakeSnapshot, ids []string) error {
 	for _, id := range ids {
 		node := snap.Nodes[id]
 		if node.ParentUserID == nil {
+			if node.Depth != 0 {
+				return fakeEngineError("INCONSISTENT_SNAPSHOT", "node %s is at depth %d and names no parent", id, node.Depth)
+			}
 			continue
 		}
 		parentDepth := snap.Nodes[*node.ParentUserID].Depth

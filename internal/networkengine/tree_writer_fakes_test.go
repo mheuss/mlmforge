@@ -1,6 +1,7 @@
 package networkengine
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -159,39 +160,83 @@ func (t *fakeEngineTree) checkMatrixRemoval(userID string, mode PruningMode) err
 	if t.root == userID {
 		return fakeEngineError("CANNOT_REMOVE_ROOT", "cannot remove root node")
 	}
-	hasChildren := t.childCount(userID) > 0
-	outlive := len(t.sponsored[userID])
-	if mode == PruningHoldingTank && hasChildren {
-		under := t.subtree(userID)
-		outlive = 0
-		for _, recruit := range t.sponsored[userID] {
-			if !under[recruit] {
-				outlive++
-			}
-		}
-	}
-	if err := t.sponsorlessWith(userID, outlive); err != nil {
+	if err := t.checkSponsorsSurvive(t.removalSet(userID, mode)); err != nil {
 		return err
 	}
-	if hasChildren {
+	if t.childCount(userID) > 0 {
 		return fmt.Errorf("fakeWriterEngine removes only a matrix leaf, and %s has children", userID)
 	}
 	return nil
 }
 
-// subtree returns userID and every node placed below it.
-func (t *fakeEngineTree) subtree(userID string) map[string]bool {
-	under := map[string]bool{userID: true}
-	for grew := true; grew; {
-		grew = false
-		for id, node := range t.nodes {
-			if !under[id] && node.ParentUserID != nil && under[*node.ParentUserID] {
-				under[id] = true
-				grew = true
-			}
+// removalSet returns the users a removal of userID in mode takes out of the
+// tree, userID first and then breadth first.
+func (t *fakeEngineTree) removalSet(userID string, mode PruningMode) []string {
+	if t.treeType == treeTypeMatrix && mode == PruningHoldingTank {
+		return append([]string{userID}, t.descendants(userID)...)
+	}
+	return []string{userID}
+}
+
+// childrenBySlot returns userID's children in slot order.
+func (t *fakeEngineTree) childrenBySlot(userID string) []string {
+	var kids []string
+	for id, node := range t.nodes {
+		if node.ParentUserID != nil && *node.ParentUserID == userID {
+			kids = append(kids, id)
 		}
 	}
-	return under
+	slices.SortFunc(kids, func(a, b string) int {
+		return cmp.Or(cmp.Compare(t.nodes[a].Position, t.nodes[b].Position), cmp.Compare(a, b))
+	})
+	return kids
+}
+
+// descendants returns every node placed below userID, breadth first in slot order.
+func (t *fakeEngineTree) descendants(userID string) []string {
+	var found []string
+	queue := t.childrenBySlot(userID)
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		found = append(found, id)
+		queue = append(queue, t.childrenBySlot(id)...)
+	}
+	return found
+}
+
+// survivingSponsor returns the nearest sponsor up userID's chain that is not
+// in removed, or "" when the chain ends first.
+func (t *fakeEngineTree) survivingSponsor(userID string, removed map[string]bool) string {
+	sponsor := t.nodes[userID].SponsorUserID
+	for sponsor != nil && removed[*sponsor] {
+		sponsor = t.nodes[*sponsor].SponsorUserID
+	}
+	if sponsor == nil {
+		return ""
+	}
+	return *sponsor
+}
+
+// checkSponsorsSurvive refuses the removal of set when a member has a recruit
+// outside set and no surviving sponsor. It names the first such member.
+func (t *fakeEngineTree) checkSponsorsSurvive(set []string) error {
+	removed := make(map[string]bool, len(set))
+	for _, id := range set {
+		removed[id] = true
+	}
+	for _, id := range set {
+		outlive := 0
+		for _, recruit := range t.sponsored[id] {
+			if !removed[recruit] {
+				outlive++
+			}
+		}
+		if outlive > 0 && t.survivingSponsor(id, removed) == "" {
+			return sponsorlessError(id, outlive)
+		}
+	}
+	return nil
 }
 
 // checkSponsorless refuses the removal of a user who has recruits and no sponsor.
@@ -203,11 +248,16 @@ func (t *fakeEngineTree) checkSponsorless(userID string) error {
 // leaves outlive of its recruits behind.
 func (t *fakeEngineTree) sponsorlessWith(userID string, outlive int) error {
 	if outlive > 0 && t.nodes[userID].SponsorUserID == nil {
-		return fakeEngineError("SPONSORLESS_WITH_RECRUITS",
-			"cannot remove user %s: no node in its sponsor chain survives this removal. Recruits that outlive it: %d",
-			userID, outlive)
+		return sponsorlessError(userID, outlive)
 	}
 	return nil
+}
+
+// sponsorlessError refuses a removal that strands outlive recruits of userID.
+func sponsorlessError(userID string, outlive int) error {
+	return fakeEngineError("SPONSORLESS_WITH_RECRUITS",
+		"cannot remove user %s: no node in its sponsor chain survives this removal. Recruits that outlive it: %d",
+		userID, outlive)
 }
 
 func fakeMissingPruningMode() error {

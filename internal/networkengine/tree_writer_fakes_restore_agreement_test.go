@@ -569,6 +569,13 @@ func restoreShapes() []restoreShape {
 			workerFault: `^node slot \d+ holds ` + writerRoot + ` at depth 1 and names no parent$`,
 			fakeMessage: "node " + writerRoot + " is at depth 1 and names no parent",
 		},
+		{
+			name:        "a node whose depth skips a level",
+			editWorker:  func(t *testing.T, a *workerArena) { a.Nodes[a.slot(t, writerOther)].Depth = 5 },
+			editFake:    func(s *fakeSnapshot) { setFakeDepth(s, writerOther, 5) },
+			workerFault: `^node slot \d+ holds ` + writerOther + ` at depth 5; its parent at node slot \d+ is at depth 0$`,
+			fakeMessage: "node " + writerOther + " is at depth 5; its parent " + writerRoot + " is at depth 0",
+		},
 	}
 }
 

@@ -85,16 +85,30 @@ func TestFakeWriterEngine_RefusesAHeldStructureAsTheWorkerDoes(t *testing.T) {
 			assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(fakeErr),
 				"restore_snapshot of the held structure's own snapshot")
 
-			unreadable := json.RawMessage(`{"nodes":1}`)
-			workerErr = client.RestoreSnapshot(ctx, writerTree, treeType, unreadable)
-			fakeErr = fake.RestoreSnapshot(ctx, writerTree, treeType, unreadable)
+			payload := json.RawMessage(`{"nodes":1}`)
+			workerErr = client.RestoreSnapshot(ctx, writerTree, treeType, payload)
+			fakeErr = fake.RestoreSnapshot(ctx, writerTree, treeType, payload)
 
 			assert.Equal(t, engineCodeTreeExists, engineCodeOf(workerErr),
-				"the worker's answer to restore_snapshot of %s on a held structure", unreadable)
+				"the worker's answer to restore_snapshot of %s on a held structure", payload)
 			assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(fakeErr),
-				"restore_snapshot of %s on a held structure", unreadable)
-			assertHeldUnchanged(t, client, workerBefore, "worker", "restore_snapshot of an unreadable snapshot")
-			assertHeldUnchanged(t, fake, fakeBefore, "fake", "restore_snapshot of an unreadable snapshot")
+				"restore_snapshot of %s on a held structure", payload)
+			assertHeldUnchanged(t, client, workerBefore, "worker", "restore_snapshot of "+string(payload))
+			assertHeldUnchanged(t, fake, fakeBefore, "fake", "restore_snapshot of "+string(payload))
+
+			workerErr = client.RestoreSnapshot(ctx, restoredTree, treeType, payload)
+			fakeErr = fake.RestoreSnapshot(ctx, restoredTree, treeType, payload)
+
+			assert.NotEmpty(t, engineCodeOf(workerErr),
+				"the worker's answer to restore_snapshot of %s on an unheld structure", payload)
+			assert.Equal(t, engineCodeOf(workerErr), engineCodeOf(fakeErr),
+				"the codes for restore_snapshot of %s on an unheld structure", payload)
+			_, workerTakeErr := client.TakeSnapshot(ctx, restoredTree)
+			_, fakeTakeErr := fake.TakeSnapshot(ctx, restoredTree)
+			assert.Equal(t, "STRUCTURE_NOT_FOUND", engineCodeOf(workerTakeErr),
+				"the worker's answer to take_snapshot of %s after restore_snapshot of %s", restoredTree, payload)
+			assert.Equal(t, engineCodeOf(workerTakeErr), engineCodeOf(fakeTakeErr),
+				"the codes for take_snapshot of %s after restore_snapshot of %s", restoredTree, payload)
 		})
 	}
 }

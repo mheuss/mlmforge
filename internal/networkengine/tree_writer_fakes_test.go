@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 	"sync"
 	"testing"
@@ -1020,7 +1021,8 @@ func checkRestoredDepths(snap fakeSnapshot, ids []string) error {
 			continue
 		}
 		parentDepth := snap.Nodes[*node.ParentUserID].Depth
-		if node.Depth != parentDepth+1 {
+		// parentDepth+1 wraps to 0 at the maximum.
+		if parentDepth == math.MaxUint32 || node.Depth != parentDepth+1 {
 			return fakeEngineError("INCONSISTENT_SNAPSHOT", "node %s is at depth %d; its parent %s is at depth %d",
 				id, node.Depth, *node.ParentUserID, parentDepth)
 		}

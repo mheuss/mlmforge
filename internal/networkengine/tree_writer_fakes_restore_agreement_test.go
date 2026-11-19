@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"math"
 	"slices"
 	"testing"
 
@@ -575,6 +576,24 @@ func restoreShapes() []restoreShape {
 			editFake:    func(s *fakeSnapshot) { setFakeDepth(s, writerOther, 5) },
 			workerFault: `^node slot \d+ holds ` + writerOther + ` at depth 5; its parent at node slot \d+ is at depth 0$`,
 			fakeMessage: "node " + writerOther + " is at depth 5; its parent " + writerRoot + " is at depth 0",
+		},
+		{
+			name: "a node under a parent at the largest depth",
+			editWorker: func(t *testing.T, a *workerArena) {
+				r, x, y := a.slot(t, writerRoot), a.slot(t, writerChild), a.slot(t, writerOther)
+				a.Nodes[x].Parent = &y
+				a.Nodes[x].Depth = 0
+				a.Nodes[y].Depth = math.MaxUint32
+				a.Nodes[y].Children = []int{x}
+				a.Nodes[r].Children = slices.DeleteFunc(a.Nodes[r].Children, func(c int) bool { return c == x })
+			},
+			editFake: func(s *fakeSnapshot) {
+				setFakeParent(s, writerChild, writerOther)
+				setFakeDepth(s, writerChild, 0)
+				setFakeDepth(s, writerOther, math.MaxUint32)
+			},
+			workerFault: `^node slot \d+ holds ` + writerChild + ` at depth 0; its parent at node slot \d+ is at depth 4294967295$`,
+			fakeMessage: "node " + writerChild + " is at depth 0; its parent " + writerOther + " is at depth 4294967295",
 		},
 	}
 }

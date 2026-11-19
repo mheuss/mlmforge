@@ -8,37 +8,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// mutationRecordingEngine records each tree mutation call before delegating it.
+// mutationRecordingEngine records each placement and removal call before
+// delegating it.
 type mutationRecordingEngine struct {
 	*fakeWriterEngine
 	mutations []string
 }
 
 func (e *mutationRecordingEngine) AddRoot(ctx context.Context, structure, userID string, enrolledAt int64) error {
-	e.mutations = append(e.mutations, "add_root "+userID)
+	e.mutations = append(e.mutations, "add_root "+structure+" "+userID)
 	return e.fakeWriterEngine.AddRoot(ctx, structure, userID, enrolledAt)
 }
 
 func (e *mutationRecordingEngine) AddNode(ctx context.Context, structure, userID, parentID, sponsorID string,
 	enrolledAt int64, opts ...AddNodeOption) error {
-	e.mutations = append(e.mutations, "add_node "+userID)
+	e.mutations = append(e.mutations, "add_node "+structure+" "+userID)
 	return e.fakeWriterEngine.AddNode(ctx, structure, userID, parentID, sponsorID, enrolledAt, opts...)
 }
 
 func (e *mutationRecordingEngine) AddNodeAt(ctx context.Context, structure, userID, parentID, sponsorID string,
 	position int, enrolledAt int64) error {
-	e.mutations = append(e.mutations, "add_node_at "+userID)
+	e.mutations = append(e.mutations, "add_node_at "+structure+" "+userID)
 	return e.fakeWriterEngine.AddNodeAt(ctx, structure, userID, parentID, sponsorID, position, enrolledAt)
 }
 
 func (e *mutationRecordingEngine) RemoveNode(ctx context.Context, structure, userID string) ([]Responsored, error) {
-	e.mutations = append(e.mutations, "remove_node "+userID)
+	e.mutations = append(e.mutations, "remove_node "+structure+" "+userID)
 	return e.fakeWriterEngine.RemoveNode(ctx, structure, userID)
 }
 
 func (e *mutationRecordingEngine) RemoveMatrixNode(ctx context.Context, structure, userID string,
 	mode PruningMode) (*MatrixRemovalResult, error) {
-	e.mutations = append(e.mutations, "remove_matrix_node "+userID)
+	e.mutations = append(e.mutations, "remove_matrix_node "+structure+" "+userID)
 	return e.fakeWriterEngine.RemoveMatrixNode(ctx, structure, userID, mode)
 }
 
@@ -99,10 +100,10 @@ func TestTreeWriter_ASecondWriterOverOneEngineStopsAtTreeExists(t *testing.T) {
 				err = op.run(second, pendingID)
 
 				assert.Empty(t, recording.mutations,
-					"the tree mutations the second writer's %s sent to the engine's copy of tree %s, built by the first writer",
+					"the placements and removals the second writer's %s sent, after the first writer built tree %s",
 					op.name, writerTree)
 				assert.Equal(t, []string{build.call}, engine.calls[calls:],
-					"the create, check, snapshot, restore and drop requests the fake logged for the second writer's %s", op.name)
+					"the requests the fake logged for the second writer's %s", op.name)
 				assert.Equal(t, stream, streamEvents(t, env.events, TreeStreamName(writerTree)),
 					"the stream of tree %s after the second writer's %s", writerTree, op.name)
 				assert.Equal(t, engineCodeTreeExists, engineCodeOf(err),

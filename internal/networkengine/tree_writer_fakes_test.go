@@ -169,8 +169,8 @@ func (t *fakeEngineTree) checkMatrixRemoval(userID string, mode PruningMode) err
 	return nil
 }
 
-// removalSet returns the users a removal of userID in mode takes out of the
-// tree, userID first and then breadth first.
+// removalSet returns userID, followed in holding_tank mode on a matrix by
+// every node below it, breadth first.
 func (t *fakeEngineTree) removalSet(userID string, mode PruningMode) []string {
 	if t.treeType == treeTypeMatrix && mode == PruningHoldingTank {
 		return append([]string{userID}, t.descendants(userID)...)

@@ -47,9 +47,9 @@ func createTreeOfType(e heldAgreementEngine, treeType string) error {
 func assertHeldUnchanged(t *testing.T, e heldAgreementEngine, before *SnapshotResultDTO, side, call string) {
 	t.Helper()
 	after, err := e.TakeSnapshot(context.Background(), writerTree)
-	require.NoError(t, err, "%s: take_snapshot after the refused %s", side, call)
-	assert.Equal(t, before.TreeType, after.TreeType, "%s: the tree type of %s after the refused %s", side, writerTree, call)
-	assert.JSONEq(t, string(before.Data), string(after.Data), "%s: the snapshot of %s after the refused %s", side, writerTree, call)
+	require.NoError(t, err, "%s: take_snapshot after %s", side, call)
+	assert.Equal(t, before.TreeType, after.TreeType, "%s: the tree type of %s after %s", side, writerTree, call)
+	assert.JSONEq(t, string(before.Data), string(after.Data), "%s: the snapshot of %s after %s", side, writerTree, call)
 }
 
 func TestFakeWriterEngine_RefusesAHeldStructureAsTheWorkerDoes(t *testing.T) {

@@ -530,6 +530,23 @@ func restoreShapes() []restoreShape {
 			workerFault: `^node slot \d+ holds ` + writerChild + ` at depth 1; its parent at node slot \d+ is at depth 1$`,
 			fakeMessage: "node " + writerChild + " is at depth 1; its parent " + writerOther + " is at depth 1",
 		},
+		{
+			name: "a root parented on and sponsored by its own child",
+			editWorker: func(t *testing.T, a *workerArena) {
+				r, x := a.slot(t, writerRoot), a.slot(t, writerChild)
+				a.Nodes[r].Parent = &x
+				a.Nodes[x].Children = append(a.Nodes[x].Children, r)
+				a.Nodes[r].Sponsor = &x
+				a.Nodes[x].Sponsored = append(a.Nodes[x].Sponsored, r)
+			},
+			editFake: func(s *fakeSnapshot) {
+				setFakeParent(s, writerRoot, writerChild)
+				setFakeSponsor(s, writerRoot, writerChild)
+				s.Sponsored[writerChild] = append(s.Sponsored[writerChild], writerRoot)
+			},
+			workerFault: `^node slot \d+ holds ` + writerRoot + ` at depth 0; its parent at node slot \d+ is at depth 1$`,
+			fakeMessage: "node " + writerRoot + " is at depth 0; its parent " + writerChild + " is at depth 1",
+		},
 	}
 }
 

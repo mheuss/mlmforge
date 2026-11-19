@@ -963,6 +963,9 @@ func checkRestored(snap fakeSnapshot) error {
 				owner)
 		}
 	}
+	if err := checkRestoredDepths(snap, ids); err != nil {
+		return err
+	}
 	if sponsor := snap.Nodes[snap.Root].SponsorUserID; snap.Root != "" && sponsor != nil {
 		return fakeEngineError("INCONSISTENT_SNAPSHOT", "the root %s names sponsor %s", snap.Root, *sponsor)
 	}
@@ -1004,6 +1007,22 @@ func checkRestored(snap fakeSnapshot) error {
 		return err
 	}
 	return checkRestoredTank(snap)
+}
+
+// checkRestoredDepths refuses a node whose depth does not follow from its parent's.
+func checkRestoredDepths(snap fakeSnapshot, ids []string) error {
+	for _, id := range ids {
+		node := snap.Nodes[id]
+		if node.ParentUserID == nil {
+			continue
+		}
+		parentDepth := snap.Nodes[*node.ParentUserID].Depth
+		if node.Depth != parentDepth+1 {
+			return fakeEngineError("INCONSISTENT_SNAPSHOT", "node %s is at depth %d; its parent %s is at depth %d",
+				id, node.Depth, *node.ParentUserID, parentDepth)
+		}
+	}
+	return nil
 }
 
 // checkRestoredTank refuses an inconsistent holding tank.

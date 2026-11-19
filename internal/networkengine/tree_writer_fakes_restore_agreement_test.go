@@ -281,6 +281,13 @@ func setFakeSponsor(s *fakeSnapshot, user, sponsor string) {
 	s.Nodes[user] = n
 }
 
+// setFakeParent sets user's parent in a fake snapshot.
+func setFakeParent(s *fakeSnapshot, user, parent string) {
+	n := s.Nodes[user]
+	n.ParentUserID = &parent
+	s.Nodes[user] = n
+}
+
 // restoreShape pairs one worker edit with one fake edit.
 type restoreShape struct {
 	name        string
@@ -494,6 +501,34 @@ func restoreShapes() []restoreShape {
 			editFake:    func(s *fakeSnapshot) { setFakeSponsor(s, writerChild, writerOther) },
 			workerFault: `^sponsored on node slot \d+ names node slot \d+; sponsor on node slot \d+ does not name node slot \d+$`,
 			fakeMessage: "the recruit list of " + writerRoot + " names " + writerChild + ", whose sponsor is " + writerOther,
+		},
+		{
+			name: "a root parented on its own child",
+			editWorker: func(t *testing.T, a *workerArena) {
+				r, x := a.slot(t, writerRoot), a.slot(t, writerChild)
+				a.Nodes[r].Parent = &x
+				a.Nodes[x].Children = append(a.Nodes[x].Children, r)
+			},
+			editFake:    func(s *fakeSnapshot) { setFakeParent(s, writerRoot, writerChild) },
+			workerFault: `^node slot \d+ holds ` + writerRoot + ` at depth 0; its parent at node slot \d+ is at depth 1$`,
+			fakeMessage: "node " + writerRoot + " is at depth 0; its parent " + writerChild + " is at depth 1",
+		},
+		{
+			name: "two non-root nodes parented on each other",
+			editWorker: func(t *testing.T, a *workerArena) {
+				r, x, y := a.slot(t, writerRoot), a.slot(t, writerChild), a.slot(t, writerOther)
+				a.Nodes[x].Parent = &y
+				a.Nodes[y].Parent = &x
+				a.Nodes[x].Children = []int{y}
+				a.Nodes[y].Children = []int{x}
+				a.Nodes[r].Children = slices.DeleteFunc(a.Nodes[r].Children, func(c int) bool { return c == x || c == y })
+			},
+			editFake: func(s *fakeSnapshot) {
+				setFakeParent(s, writerChild, writerOther)
+				setFakeParent(s, writerOther, writerChild)
+			},
+			workerFault: `^node slot \d+ holds ` + writerChild + ` at depth 1; its parent at node slot \d+ is at depth 1$`,
+			fakeMessage: "node " + writerChild + " is at depth 1; its parent " + writerOther + " is at depth 1",
 		},
 	}
 }

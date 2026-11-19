@@ -76,6 +76,25 @@ func TestFakeWriterEngine_RefusesAHeldStructureAsTheWorkerDoes(t *testing.T) {
 			assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(fakeErr), "restore_snapshot on a held structure")
 			assertHeldUnchanged(t, client, workerBefore, "worker", "restore_snapshot")
 			assertHeldUnchanged(t, fake, fakeBefore, "fake", "restore_snapshot")
+
+			workerErr = client.RestoreSnapshot(ctx, writerTree, workerBefore.TreeType, workerBefore.Data)
+			fakeErr = fake.RestoreSnapshot(ctx, writerTree, fakeBefore.TreeType, fakeBefore.Data)
+
+			assert.Equal(t, engineCodeTreeExists, engineCodeOf(workerErr),
+				"the worker's answer to restore_snapshot of the held structure's own snapshot")
+			assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(fakeErr),
+				"restore_snapshot of the held structure's own snapshot")
+
+			unreadable := json.RawMessage(`{"nodes":1}`)
+			workerErr = client.RestoreSnapshot(ctx, writerTree, treeType, unreadable)
+			fakeErr = fake.RestoreSnapshot(ctx, writerTree, treeType, unreadable)
+
+			assert.Equal(t, engineCodeTreeExists, engineCodeOf(workerErr),
+				"the worker's answer to restore_snapshot of %s on a held structure", unreadable)
+			assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(fakeErr),
+				"restore_snapshot of %s on a held structure", unreadable)
+			assertHeldUnchanged(t, client, workerBefore, "worker", "restore_snapshot of an unreadable snapshot")
+			assertHeldUnchanged(t, fake, fakeBefore, "fake", "restore_snapshot of an unreadable snapshot")
 		})
 	}
 }

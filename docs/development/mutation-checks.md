@@ -675,6 +675,20 @@ holds its own `go.mod`, any name that starts with a dot or an underscore, and
 HEU-884 hit this. The main checkout's `docs/plans` held reviewer copies of the
 module, each with its own `go.mod`.
 
+## Restoring a structure's own snapshot cannot show the restore was refused
+
+A test that restores a snapshot onto a structure, then reads the structure
+back, passes on a refused restore. It also passes on an accepted one, when the
+snapshot is the structure's own. Both leave the same content.
+
+Restore a valid snapshot that differs from what the structure holds. An
+accepted restore then changes what the read-back sees. Check the two differ
+before the restore, so the test does not rest on that assumption.
+
+HEU-1024 hit this. With the fake's held-structure check on restore disabled,
+the read-back assertion still passed. Only the error comparison failed. The
+read-back started failing too once the test restored a smaller snapshot.
+
 ## An order mutation moves a check past everything in between
 
 2026-11-19.

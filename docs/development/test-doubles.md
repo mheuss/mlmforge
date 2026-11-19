@@ -103,12 +103,12 @@ A double can log some of its calls and not others. An assertion on that log
 says nothing about a call the log never records. It passes whether or not the
 call happened.
 
-A test that asserts "nothing was mutated" on a log of create and check calls
+A test that asserts "nothing was mutated" on a log that holds no removals
 cannot see a removal. The removal changes the double's state and leaves no
 entry.
 
 Wrap the double and record each mutating call before delegating it. Assert on
-that record. The wrapper then has the gap in the section above, so name every
+that record. The wrapper has the same gap as a list of every method. Name every
 mutating method of the interface.
 
 HEU-1024 hit this. The first version of its pin asserted on a log that held no

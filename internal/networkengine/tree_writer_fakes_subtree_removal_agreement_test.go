@@ -277,6 +277,8 @@ func promoteRows() []promoteRow {
 	tieLow, tieHigh := testUserUUID(64), testUserUUID(60)
 	y, z, c0, c1, c00 := testUserUUID(75), testUserUUID(76), testUserUUID(77), testUserUUID(78), testUserUUID(79)
 	k0, k1, k2, k0a, k0b := testUserUUID(80), testUserUUID(81), testUserUUID(82), testUserUUID(83), testUserUUID(84)
+	m, n, m0, m1, n0 := testUserUUID(85), testUserUUID(86), testUserUUID(87), testUserUUID(88), testUserUUID(89)
+	e, f, e1 := testUserUUID(90), testUserUUID(91), testUserUUID(92)
 	return []promoteRow{
 		{
 			name:  "a sibling spills breadth first past a full level",
@@ -386,7 +388,7 @@ func promoteRows() []promoteRow {
 			},
 		},
 		{
-			name:  "three siblings fill a promoted node in order",
+			name:  "each repositioned sibling takes the next free slot in turn",
 			width: 3,
 			layout: []subtreePlacement{
 				{writerChild, writerRoot, writerRoot, 0, 200},
@@ -404,6 +406,48 @@ func promoteRows() []promoteRow {
 					{UserID: k0b, ParentID: k0, Position: 1, Depth: 2},
 					{UserID: k1, ParentID: k0, Position: 2, Depth: 2},
 					{UserID: k2, ParentID: k0a, Position: 0, Depth: 3},
+				},
+				Responsored: []Responsored{},
+			},
+		},
+		{
+			name:  "a repositioned sibling's own children move down with it",
+			width: 2,
+			layout: []subtreePlacement{
+				{writerChild, writerRoot, writerRoot, 0, 200},
+				{m, writerChild, writerRoot, 0, 300},
+				{n, writerChild, writerRoot, 1, 400},
+				{m0, m, writerRoot, 0, 500},
+				{m1, m, writerRoot, 1, 510},
+				{n0, n, writerRoot, 0, 520},
+			},
+			want: MatrixRemovalResult{
+				Removed: writerChild, Promoted: &m, Repositioned: []string{n}, MovedToTank: []string{},
+				Relocated: []Relocation{
+					{UserID: m, ParentID: writerRoot, Position: 0, Depth: 1},
+					{UserID: m0, ParentID: m, Position: 0, Depth: 2},
+					{UserID: m1, ParentID: m, Position: 1, Depth: 2},
+					{UserID: n, ParentID: m0, Position: 0, Depth: 3},
+					{UserID: n0, ParentID: n, Position: 0, Depth: 4},
+				},
+				Responsored: []Responsored{},
+			},
+		},
+		{
+			name:  "a sibling takes the first empty slot below a gap",
+			width: 2,
+			layout: []subtreePlacement{
+				{writerChild, writerRoot, writerRoot, 0, 200},
+				{e, writerChild, writerRoot, 0, 300},
+				{f, writerChild, writerRoot, 1, 400},
+				{e1, e, writerRoot, 1, 500},
+			},
+			want: MatrixRemovalResult{
+				Removed: writerChild, Promoted: &e, Repositioned: []string{f}, MovedToTank: []string{},
+				Relocated: []Relocation{
+					{UserID: e, ParentID: writerRoot, Position: 0, Depth: 1},
+					{UserID: f, ParentID: e, Position: 0, Depth: 2},
+					{UserID: e1, ParentID: e, Position: 1, Depth: 2},
 				},
 				Responsored: []Responsored{},
 			},

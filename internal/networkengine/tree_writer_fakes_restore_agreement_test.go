@@ -233,20 +233,33 @@ func TestFakeWriterEngine_RefusesASponsorlessMatrixParentBeforeItsChildren(t *te
 	}
 }
 
-func TestFakeWriterEngine_RefusesATankRemovalOfASponsorlessParentAsUnmodelled(t *testing.T) {
+func TestFakeWriterEngine_TanksASponsorlessParentWhoseRecruitsAreAllBelowIt(t *testing.T) {
 	ctx := context.Background()
 	client := startWorker(t)
 	fake := newFakeWriterEngine()
 	restoreSponsorlessMatrixParent(t, client, fake, recruitUnder)
 
 	check := removeCheck(writerChild, PruningHoldingTank)
-	workerCheck := client.CheckMutation(ctx, restoredTree, check)
-	fakeCheck := fake.CheckMutation(ctx, restoredTree, check)
-	_, fakeApply := removeUser(fake, restoredTree, writerChild, PruningHoldingTank)
+	require.NoError(t, client.CheckMutation(ctx, restoredTree, check), "the worker's check answer")
+	require.NoError(t, fake.CheckMutation(ctx, restoredTree, check), "the fake's check answer")
+	workerRes, err := client.RemoveMatrixNode(ctx, restoredTree, writerChild, PruningHoldingTank)
+	require.NoError(t, err, "the worker's answer")
+	fakeRes, err := fake.RemoveMatrixNode(ctx, restoredTree, writerChild, PruningHoldingTank)
+	require.NoError(t, err)
 
-	require.NoError(t, workerCheck, "the worker's check answer")
-	require.EqualError(t, fakeCheck, "fakeWriterEngine removes only a matrix leaf, and "+writerChild+" has children")
-	assert.Equal(t, fakeCheck, fakeApply)
+	require.Equal(t, []string{writerRemoved, writerOther, writerChild}, workerRes.MovedToTank, "the worker's moved_to_tank")
+	assert.Equal(t, *workerRes, *fakeRes)
+
+	root, child := writerRoot, writerChild
+	workerTank := tankOf(t, client, restoredTree)
+	require.Equal(t, []HoldingTankEntryDTO{
+		{UserID: writerRemoved, SponsorUserID: &root, EnrolledAt: 300},
+		{UserID: writerOther, SponsorUserID: &child, EnrolledAt: 400},
+		{UserID: writerChild, EnrolledAt: 200},
+	}, workerTank, "the worker's tank")
+	assert.Equal(t, workerTank, tankOf(t, fake, restoredTree), "tank")
+	assert.Empty(t, workerLists(t, client, restoredTree), "the worker's recruit lists")
+	assert.Empty(t, fakeLists(t, fake, restoredTree), "the fake's recruit lists")
 }
 
 func TestFakeWriterEngine_CountsOnlyTheRecruitsATankRemovalLeavesBehind(t *testing.T) {

@@ -16,7 +16,7 @@ type subtreePlacement struct {
 	enrolledAt            int64
 }
 
-// placeLayout places each user in layout into writerTree on e, in order.
+// placeLayout places each user in layout into the tree on e, in order.
 func placeLayout(t *testing.T, e agreementEngine, layout []subtreePlacement) {
 	t.Helper()
 	for _, p := range layout {
@@ -24,8 +24,8 @@ func placeLayout(t *testing.T, e agreementEngine, layout []subtreePlacement) {
 	}
 }
 
-// restoreWithoutSponsor restores both engines' snapshots of writerTree as
-// restoredTree, with user's link to sponsor cut on both of its sides.
+// restoreWithoutSponsor restores a snapshot of the tree on both engines as a
+// second tree, with user's link to sponsor cut on both of its sides.
 func restoreWithoutSponsor(t *testing.T, client, fake removalAgreementEngine, user, sponsor string) {
 	t.Helper()
 	ctx := context.Background()
@@ -180,7 +180,7 @@ type placement struct {
 	depth  uint32
 }
 
-// placementOf returns user's placement in writerTree on e.
+// placementOf returns user's placement in the tree on e.
 func placementOf(t *testing.T, e removalAgreementEngine, user string) placement {
 	t.Helper()
 	pos, err := e.GetPosition(context.Background(), writerTree, user)

@@ -77,6 +77,7 @@ expect 1 "go-version parsed from 2" "a hidden step beside two parsed pins refuse
 expect 1 "go-version parsed from 1" "a setup-go step with uses: on its own line refused" wf-setup-go-uses-next-line.yml mod-ok
 expect 1 "go-version parsed from 1" "a setup-go step with a quoted uses key refused" wf-setup-go-quoted-key.yml mod-ok
 expect 1 "go-version parsed from 1" "a setup-go step in other letter case refused" wf-setup-go-capitalised.yml mod-ok
+expect 1 "go-version parsed from 2" "a trailing comment naming actions/setup-go refused" wf-setup-go-named-in-a-trailing-comment.yml mod-ok
 expect 0 "go-version 1.27.1" "a commented-out setup-go step is harmless" wf-commented-step.yml mod-ok
 
 expect 0 "go-version 1.27.1" "setup-go written as a named step"   wf-named-step.yml          mod-ok

@@ -31,10 +31,10 @@ func editTank(t *testing.T, data json.RawMessage, edit func(*[]HoldingTankEntryD
 	return out
 }
 
-// tankOf returns the holding tank in a snapshot of writerTree.
-func tankOf(t *testing.T, e removalAgreementEngine) []HoldingTankEntryDTO {
+// tankOf returns the holding tank in a snapshot of structure.
+func tankOf(t *testing.T, e removalAgreementEngine, structure string) []HoldingTankEntryDTO {
 	t.Helper()
-	taken, err := e.TakeSnapshot(context.Background(), writerTree)
+	taken, err := e.TakeSnapshot(context.Background(), structure)
 	require.NoError(t, err)
 	var tank []HoldingTankEntryDTO
 	editTank(t, taken.Data, func(held *[]HoldingTankEntryDTO) { tank = *held })
@@ -55,14 +55,14 @@ func TestFakeWriterEngine_SnapshotsTheTankTheWorkerSnapshots(t *testing.T) {
 		}
 	}
 
-	workerTank := tankOf(t, client)
+	workerTank := tankOf(t, client, writerTree)
 
 	child, root := writerChild, writerRoot
 	require.Equal(t, []HoldingTankEntryDTO{
 		{UserID: writerOther, SponsorUserID: &child, EnrolledAt: 300},
 		{UserID: writerChild, SponsorUserID: &root, EnrolledAt: 200},
 	}, workerTank, "the worker's tank")
-	assert.Equal(t, workerTank, tankOf(t, fake))
+	assert.Equal(t, workerTank, tankOf(t, fake, writerTree))
 }
 
 func TestFakeWriterEngine_RefusesATankedUserAfterARestore(t *testing.T) {

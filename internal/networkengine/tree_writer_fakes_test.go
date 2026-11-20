@@ -1,6 +1,7 @@
 package networkengine
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -159,39 +160,217 @@ func (t *fakeEngineTree) checkMatrixRemoval(userID string, mode PruningMode) err
 	if t.root == userID {
 		return fakeEngineError("CANNOT_REMOVE_ROOT", "cannot remove root node")
 	}
-	hasChildren := t.childCount(userID) > 0
-	outlive := len(t.sponsored[userID])
-	if mode == PruningHoldingTank && hasChildren {
-		under := t.subtree(userID)
-		outlive = 0
-		for _, recruit := range t.sponsored[userID] {
-			if !under[recruit] {
-				outlive++
-			}
-		}
-	}
-	if err := t.sponsorlessWith(userID, outlive); err != nil {
+	if err := t.checkSponsorsSurvive(t.removalSet(userID, mode)); err != nil {
 		return err
 	}
-	if hasChildren {
-		return fmt.Errorf("fakeWriterEngine removes only a matrix leaf, and %s has children", userID)
+	if t.childCount(userID) > 0 &&
+		(t.treeType != treeTypeMatrix || (mode != PruningHoldingTank && mode != PruningPromoteEarliest)) {
+		return fmt.Errorf("fakeWriterEngine does not model a %s removal of %s, which has children, from a %s tree",
+			mode, userID, t.treeType)
 	}
 	return nil
 }
 
-// subtree returns userID and every node placed below it.
-func (t *fakeEngineTree) subtree(userID string) map[string]bool {
-	under := map[string]bool{userID: true}
-	for grew := true; grew; {
-		grew = false
-		for id, node := range t.nodes {
-			if !under[id] && node.ParentUserID != nil && under[*node.ParentUserID] {
-				under[id] = true
-				grew = true
-			}
+// removalSet returns userID, followed in holding_tank mode on a matrix by
+// every node below it, breadth first.
+func (t *fakeEngineTree) removalSet(userID string, mode PruningMode) []string {
+	if t.treeType == treeTypeMatrix && mode == PruningHoldingTank {
+		return append([]string{userID}, t.descendants(userID)...)
+	}
+	return []string{userID}
+}
+
+// childrenBySlot returns userID's children in slot order.
+func (t *fakeEngineTree) childrenBySlot(userID string) []string {
+	var kids []string
+	for id, node := range t.nodes {
+		if node.ParentUserID != nil && *node.ParentUserID == userID {
+			kids = append(kids, id)
 		}
 	}
-	return under
+	slices.SortFunc(kids, func(a, b string) int {
+		return cmp.Or(cmp.Compare(t.nodes[a].Position, t.nodes[b].Position), cmp.Compare(a, b))
+	})
+	return kids
+}
+
+// descendants returns every node placed below userID, breadth first in slot order.
+func (t *fakeEngineTree) descendants(userID string) []string {
+	var found []string
+	queue := t.childrenBySlot(userID)
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		found = append(found, id)
+		queue = append(queue, t.childrenBySlot(id)...)
+	}
+	return found
+}
+
+// survivingSponsor returns the nearest sponsor up userID's chain that is not
+// in removed, or "" when the chain ends first.
+func (t *fakeEngineTree) survivingSponsor(userID string, removed map[string]bool) string {
+	sponsor := t.nodes[userID].SponsorUserID
+	for sponsor != nil && removed[*sponsor] {
+		sponsor = t.nodes[*sponsor].SponsorUserID
+	}
+	if sponsor == nil {
+		return ""
+	}
+	return *sponsor
+}
+
+// checkSponsorsSurvive refuses the removal of set when a member has a recruit
+// outside set and no surviving sponsor. It names the first such member.
+func (t *fakeEngineTree) checkSponsorsSurvive(set []string) error {
+	removed := make(map[string]bool, len(set))
+	for _, id := range set {
+		removed[id] = true
+	}
+	for _, id := range set {
+		outlive := 0
+		for _, recruit := range t.sponsored[id] {
+			if !removed[recruit] {
+				outlive++
+			}
+		}
+		if outlive > 0 && t.survivingSponsor(id, removed) == "" {
+			return sponsorlessError(id, outlive)
+		}
+	}
+	return nil
+}
+
+// tankSubtree moves userID and every node below it into the holding tank, and
+// returns what the removal changed.
+func (t *fakeEngineTree) tankSubtree(userID string) *MatrixRemovalResult {
+	set := t.removalSet(userID, PruningHoldingTank)
+	removed := make(map[string]bool, len(set))
+	for _, id := range set {
+		removed[id] = true
+	}
+	responsored := []Responsored{}
+	for _, id := range set {
+		target := t.survivingSponsor(id, removed)
+		for _, recruit := range t.sponsored[id] {
+			if removed[recruit] {
+				continue
+			}
+			pos := t.nodes[recruit]
+			newSponsor := target
+			pos.SponsorUserID = &newSponsor
+			t.nodes[recruit] = pos
+			t.sponsored[target] = append(t.sponsored[target], recruit)
+			responsored = append(responsored, Responsored{UserID: recruit, NewSponsorID: target})
+		}
+	}
+	moved := append(slices.Clone(set[1:]), userID)
+	for _, id := range moved {
+		node := t.nodes[id]
+		entry := HoldingTankEntryDTO{UserID: id, EnrolledAt: node.EnrolledAt}
+		if node.SponsorUserID != nil {
+			sponsor := *node.SponsorUserID
+			entry.SponsorUserID = &sponsor
+		}
+		t.tank = append(t.tank, entry)
+	}
+	for _, id := range set {
+		if sponsor := t.nodes[id].SponsorUserID; sponsor != nil && !removed[*sponsor] {
+			t.dropRecruit(*sponsor, id)
+		}
+		delete(t.sponsored, id)
+		delete(t.nodes, id)
+	}
+	return &MatrixRemovalResult{Removed: userID, Repositioned: []string{}, MovedToTank: moved,
+		Relocated: []Relocation{}, Responsored: responsored}
+}
+
+// setSlot places userID at slot under parentID.
+func (t *fakeEngineTree) setSlot(userID, parentID string, slot int) {
+	node := t.nodes[userID]
+	parent := parentID
+	node.ParentUserID, node.Position = &parent, slot
+	t.nodes[userID] = node
+}
+
+// freeSlot returns the first empty slot in start's subtree, breadth first and
+// left to right.
+func (t *fakeEngineTree) freeSlot(start string) (string, int) {
+	queue := []string{start}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		kids := t.childrenBySlot(id)
+		taken := make(map[int]bool, len(kids))
+		for _, kid := range kids {
+			taken[t.nodes[kid].Position] = true
+		}
+		for slot := range t.width {
+			if !taken[slot] {
+				return id, slot
+			}
+		}
+		queue = append(queue, kids...)
+	}
+	panic(fmt.Sprintf("fakeWriterEngine found no empty slot below %s at width %d", start, t.width))
+}
+
+// recomputeDepths sets the depth of start and every node below it.
+func (t *fakeEngineTree) recomputeDepths(start string) {
+	node := t.nodes[start]
+	node.Depth = t.nodes[*node.ParentUserID].Depth + 1
+	t.nodes[start] = node
+	for _, id := range t.descendants(start) {
+		child := t.nodes[id]
+		child.Depth = t.nodes[*child.ParentUserID].Depth + 1
+		t.nodes[id] = child
+	}
+}
+
+// relocations lists start and each node below it whose parent, slot or depth
+// differs from before, breadth first in slot order.
+func (t *fakeEngineTree) relocations(start string, before map[string]EnginePosition) []Relocation {
+	moved := []Relocation{}
+	for _, id := range append([]string{start}, t.descendants(start)...) {
+		now, was := t.nodes[id], before[id]
+		if *now.ParentUserID == *was.ParentUserID && now.Position == was.Position && now.Depth == was.Depth {
+			continue
+		}
+		moved = append(moved, Relocation{UserID: id, ParentID: *now.ParentUserID, Position: now.Position,
+			Depth: int(now.Depth)})
+	}
+	return moved
+}
+
+// promoteEarliest removes userID, which has children, and returns what the removal changed.
+func (t *fakeEngineTree) promoteEarliest(userID string) *MatrixRemovalResult {
+	removedNode := t.nodes[userID]
+	kids := t.childrenBySlot(userID)
+	promoted := kids[0]
+	for _, kid := range kids[1:] {
+		if t.nodes[kid].EnrolledAt < t.nodes[promoted].EnrolledAt {
+			promoted = kid
+		}
+	}
+	before := map[string]EnginePosition{}
+	for _, id := range t.descendants(userID) {
+		before[id] = t.nodes[id]
+	}
+	t.setSlot(promoted, *removedNode.ParentUserID, removedNode.Position)
+	repositioned := []string{}
+	for _, kid := range kids {
+		if kid == promoted {
+			continue
+		}
+		parent, slot := t.freeSlot(promoted)
+		t.setSlot(kid, parent, slot)
+		repositioned = append(repositioned, kid)
+	}
+	responsored := t.moveRecruits(userID)
+	delete(t.nodes, userID)
+	t.recomputeDepths(promoted)
+	return &MatrixRemovalResult{Removed: userID, Promoted: &promoted, Repositioned: repositioned,
+		MovedToTank: []string{}, Relocated: t.relocations(promoted, before), Responsored: responsored}
 }
 
 // checkSponsorless refuses the removal of a user who has recruits and no sponsor.
@@ -203,11 +382,16 @@ func (t *fakeEngineTree) checkSponsorless(userID string) error {
 // leaves outlive of its recruits behind.
 func (t *fakeEngineTree) sponsorlessWith(userID string, outlive int) error {
 	if outlive > 0 && t.nodes[userID].SponsorUserID == nil {
-		return fakeEngineError("SPONSORLESS_WITH_RECRUITS",
-			"cannot remove user %s: no node in its sponsor chain survives this removal. Recruits that outlive it: %d",
-			userID, outlive)
+		return sponsorlessError(userID, outlive)
 	}
 	return nil
+}
+
+// sponsorlessError refuses a removal that strands outlive recruits of userID.
+func sponsorlessError(userID string, outlive int) error {
+	return fakeEngineError("SPONSORLESS_WITH_RECRUITS",
+		"cannot remove user %s: no node in its sponsor chain survives this removal. Recruits that outlive it: %d",
+		userID, outlive)
 }
 
 func fakeMissingPruningMode() error {
@@ -382,8 +566,7 @@ func (f *fakeWriterEngine) RemoveNode(_ context.Context, structure, userID strin
 	return moved, nil
 }
 
-// RemoveMatrixNode removes a matrix leaf, and in holding_tank mode puts it in
-// the holding tank.
+// RemoveMatrixNode removes a matrix node in mode.
 func (f *fakeWriterEngine) RemoveMatrixNode(_ context.Context, structure, userID string, mode PruningMode) (*MatrixRemovalResult, error) {
 	t, err := f.tree(structure)
 	if err != nil {
@@ -393,13 +576,10 @@ func (f *fakeWriterEngine) RemoveMatrixNode(_ context.Context, structure, userID
 		return nil, err
 	}
 	if mode == PruningHoldingTank && t.treeType == treeTypeMatrix {
-		removed := t.nodes[userID]
-		entry := HoldingTankEntryDTO{UserID: userID, EnrolledAt: removed.EnrolledAt}
-		if removed.SponsorUserID != nil {
-			sponsor := *removed.SponsorUserID
-			entry.SponsorUserID = &sponsor
-		}
-		t.tank = append(t.tank, entry)
+		return t.tankSubtree(userID), nil
+	}
+	if mode == PruningPromoteEarliest && t.treeType == treeTypeMatrix && t.childCount(userID) > 0 {
+		return t.promoteEarliest(userID), nil
 	}
 	moved := t.moveRecruits(userID)
 	delete(t.nodes, userID)

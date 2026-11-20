@@ -260,3 +260,150 @@ func TestFakeWriterEngine_TanksASubtreeAsTheWorkerDoes(t *testing.T) {
 	requireHeldSponsors(t, fake)
 	roundTrip(t, fake)
 }
+
+// promoteRow is one promote_earliest removal of writerChild from a matrix of width.
+type promoteRow struct {
+	name   string
+	width  int
+	layout []subtreePlacement
+	want   MatrixRemovalResult
+}
+
+func promoteRows() []promoteRow {
+	p, q := testUserUUID(65), testUserUUID(66)
+	p0, p1, p00, p01 := testUserUUID(67), testUserUUID(68), testUserUUID(69), testUserUUID(70)
+	w, v, w0, w1 := testUserUUID(71), testUserUUID(72), testUserUUID(73), testUserUUID(74)
+	a, b, a0 := testUserUUID(61), testUserUUID(62), testUserUUID(63)
+	tieLow, tieHigh := testUserUUID(64), testUserUUID(60)
+	return []promoteRow{
+		{
+			name:  "a sibling spills breadth first past a full level",
+			width: 2,
+			layout: []subtreePlacement{
+				{writerChild, writerRoot, writerRoot, 0, 200},
+				{p, writerChild, writerRoot, 0, 300},
+				{q, writerChild, writerRoot, 1, 400},
+				{p0, p, writerRoot, 0, 500},
+				{p1, p, writerRoot, 1, 510},
+				{p00, p0, writerRoot, 0, 520},
+				{p01, p0, writerRoot, 1, 530},
+			},
+			want: MatrixRemovalResult{
+				Removed: writerChild, Promoted: &p, Repositioned: []string{q}, MovedToTank: []string{},
+				Relocated: []Relocation{
+					{UserID: p, ParentID: writerRoot, Position: 0, Depth: 1},
+					{UserID: p0, ParentID: p, Position: 0, Depth: 2},
+					{UserID: p1, ParentID: p, Position: 1, Depth: 2},
+					{UserID: p00, ParentID: p0, Position: 0, Depth: 3},
+					{UserID: p01, ParentID: p0, Position: 1, Depth: 3},
+					{UserID: q, ParentID: p1, Position: 0, Depth: 3},
+				},
+				Responsored: []Responsored{},
+			},
+		},
+		{
+			name:  "a sibling takes the third slot of a width-3 matrix",
+			width: 3,
+			layout: []subtreePlacement{
+				{writerChild, writerRoot, writerRoot, 0, 200},
+				{w, writerChild, writerRoot, 0, 300},
+				{v, writerChild, writerRoot, 1, 400},
+				{w0, w, writerRoot, 0, 500},
+				{w1, w, writerRoot, 1, 510},
+			},
+			want: MatrixRemovalResult{
+				Removed: writerChild, Promoted: &w, Repositioned: []string{v}, MovedToTank: []string{},
+				Relocated: []Relocation{
+					{UserID: w, ParentID: writerRoot, Position: 0, Depth: 1},
+					{UserID: w0, ParentID: w, Position: 0, Depth: 2},
+					{UserID: w1, ParentID: w, Position: 1, Depth: 2},
+					{UserID: v, ParentID: w, Position: 2, Depth: 2},
+				},
+				Responsored: []Responsored{},
+			},
+		},
+		{
+			name:  "the earliest-enrolled child is promoted from slot 1",
+			width: 2,
+			layout: []subtreePlacement{
+				{writerChild, writerRoot, writerRoot, 0, 200},
+				{a, writerChild, writerChild, 0, 400},
+				{b, writerChild, writerChild, 1, 300},
+				{a0, a, a, 0, 500},
+			},
+			want: MatrixRemovalResult{
+				Removed: writerChild, Promoted: &b, Repositioned: []string{a}, MovedToTank: []string{},
+				Relocated: []Relocation{
+					{UserID: b, ParentID: writerRoot, Position: 0, Depth: 1},
+					{UserID: a, ParentID: b, Position: 0, Depth: 2},
+				},
+				Responsored: []Responsored{
+					{UserID: a, NewSponsorID: writerRoot},
+					{UserID: b, NewSponsorID: writerRoot},
+				},
+			},
+		},
+		{
+			name:  "a tie goes to the lower slot",
+			width: 2,
+			layout: []subtreePlacement{
+				{writerChild, writerRoot, writerRoot, 0, 200},
+				{tieHigh, writerChild, writerRoot, 1, 300},
+				{tieLow, writerChild, writerRoot, 0, 300},
+			},
+			want: MatrixRemovalResult{
+				Removed: writerChild, Promoted: &tieLow, Repositioned: []string{tieHigh}, MovedToTank: []string{},
+				Relocated: []Relocation{
+					{UserID: tieLow, ParentID: writerRoot, Position: 0, Depth: 1},
+					{UserID: tieHigh, ParentID: tieLow, Position: 0, Depth: 2},
+				},
+				Responsored: []Responsored{},
+			},
+		},
+	}
+}
+
+func TestFakeWriterEngine_PromotesAsTheWorkerDoes(t *testing.T) {
+	for _, row := range promoteRows() {
+		t.Run(row.name, func(t *testing.T) {
+			ctx := context.Background()
+			client := startWorker(t)
+			fake := newFakeWriterEngine()
+			for _, e := range []removalAgreementEngine{client, fake} {
+				require.NoError(t, e.CreateMatrixTree(ctx, writerTree, row.width, "breadth_first"))
+				require.NoError(t, e.AddRoot(ctx, writerTree, writerRoot, 100))
+				placeLayout(t, e, row.layout)
+			}
+
+			check := removeCheck(writerChild, PruningPromoteEarliest)
+			workerCheck := client.CheckMutation(ctx, writerTree, check)
+			fakeCheck := fake.CheckMutation(ctx, writerTree, check)
+			workerRes, workerErr := client.RemoveMatrixNode(ctx, writerTree, writerChild, PruningPromoteEarliest)
+			fakeRes, fakeErr := fake.RemoveMatrixNode(ctx, writerTree, writerChild, PruningPromoteEarliest)
+
+			require.NoError(t, workerCheck, "the worker's check answer")
+			require.NoError(t, workerErr, "the worker's answer")
+			require.Equal(t, row.want, *workerRes, "the worker's result")
+			require.NoError(t, fakeCheck, "the fake's check answer")
+			require.NoError(t, fakeErr)
+			assert.Equal(t, *workerRes, *fakeRes, "result")
+			survivors := []string{writerRoot}
+			for _, placed := range row.layout {
+				if placed.user != writerChild {
+					survivors = append(survivors, placed.user)
+				}
+			}
+			for _, user := range survivors {
+				assert.Equal(t, placementOf(t, client, user), placementOf(t, fake, user), "the placement of %s", user)
+				assert.Equal(t, sponsorOf(t, client, writerTree, user), sponsorOf(t, fake, writerTree, user),
+					"the sponsor of %s", user)
+			}
+			_, workerPos := client.GetPosition(ctx, writerTree, writerChild)
+			_, fakePos := fake.GetPosition(ctx, writerTree, writerChild)
+			require.Error(t, workerPos, "the worker's position of the removed user")
+			assert.Equal(t, engineErrorOf(workerPos), engineErrorOf(fakePos), "the position of the removed user")
+			requireHeldSponsors(t, fake)
+			roundTrip(t, fake)
+		})
+	}
+}

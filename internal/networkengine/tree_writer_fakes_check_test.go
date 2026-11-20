@@ -131,22 +131,3 @@ func TestFakeWriterEngine_KeepsNoTankOffAMatrix(t *testing.T) {
 		})
 	}
 }
-
-func TestFakeWriterEngine_RefusesAMatrixParentRemovalOnTheCheckAsOnTheApply(t *testing.T) {
-	for _, mode := range []PruningMode{PruningPromoteEarliest} {
-		t.Run(string(mode), func(t *testing.T) {
-			ctx := context.Background()
-			engine := newRootedFakeEngine(t, treeTypeMatrix)
-			require.NoError(t, engine.AddNodeAt(ctx, writerTree, writerChild, writerRoot, writerRoot, 0, writeTime.Unix()))
-			require.NoError(t, engine.AddNodeAt(ctx, writerTree, writerOther, writerChild, writerRoot, 0, writeTime.Unix()))
-
-			checkErr := engine.CheckMutation(ctx, writerTree, CheckRemoveMatrixNode(writerChild, mode))
-			_, applyErr := engine.RemoveMatrixNode(ctx, writerTree, writerChild, mode)
-
-			require.EqualError(t, applyErr, "fakeWriterEngine does not model a "+string(mode)+" removal of "+writerChild+
-				", which has children, from a matrix tree")
-			assert.Equal(t, applyErr, checkErr)
-			assert.Contains(t, engine.trees[writerTree].nodes, writerChild)
-		})
-	}
-}

@@ -62,14 +62,13 @@ setup_go_pins() {
 ci_go=$(setup_go_pins "$wf")
 ci_go_lines=$(setup_go_pins "$wf" | grep -c '' || true)
 wf_go_version_lines=$(grep -cE '^[[:space:]]*go-version:' "$wf" || true)
-# Counted from the raw file rather than from setup_go_pins. A step whose first
-# key is not uses, name, run or id is invisible to that parser, and a bare dash
-# has no key at all, so a second pin could go uncompared and still report one.
-# The quote is optional here and not in the parser, because this count is only
-# useful if it is broader than what it backstops. Full-line comments are dropped
-# first, so commenting a step out stays harmless.
+# Counted from the raw file rather than from setup_go_pins. Any uncommented line
+# naming actions/setup-go counts, in any letter case, whether or not uses: sits
+# on that line. This count is only useful if it is broader than what it
+# backstops. Full-line comments are dropped first, so commenting a step out
+# stays harmless.
 wf_setup_go_lines=$(grep -v '^[[:space:]]*#' "$wf" \
-  | grep -cE 'uses:[[:space:]]*["'\''"]?actions/setup-go' || true)
+  | grep -ciF 'actions/setup-go' || true)
 
 mod_toolchain_raw=$(awk '/^toolchain /{print $2}' "$mod")
 mod_toolchain=${mod_toolchain_raw#go}

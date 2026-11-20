@@ -163,8 +163,9 @@ func (t *fakeEngineTree) checkMatrixRemoval(userID string, mode PruningMode) err
 	if err := t.checkSponsorsSurvive(t.removalSet(userID, mode)); err != nil {
 		return err
 	}
-	if t.childCount(userID) > 0 {
-		return fmt.Errorf("fakeWriterEngine removes only a matrix leaf, and %s has children", userID)
+	if t.childCount(userID) > 0 && (t.treeType != treeTypeMatrix || mode != PruningHoldingTank) {
+		return fmt.Errorf("fakeWriterEngine does not model a %s removal of %s, which has children, from a %s tree",
+			mode, userID, t.treeType)
 	}
 	return nil
 }
@@ -237,6 +238,50 @@ func (t *fakeEngineTree) checkSponsorsSurvive(set []string) error {
 		}
 	}
 	return nil
+}
+
+// tankSubtree moves userID and every node below it into the holding tank, and
+// returns what the removal changed.
+func (t *fakeEngineTree) tankSubtree(userID string) *MatrixRemovalResult {
+	set := t.removalSet(userID, PruningHoldingTank)
+	removed := make(map[string]bool, len(set))
+	for _, id := range set {
+		removed[id] = true
+	}
+	responsored := []Responsored{}
+	for _, id := range set {
+		target := t.survivingSponsor(id, removed)
+		for _, recruit := range t.sponsored[id] {
+			if removed[recruit] {
+				continue
+			}
+			pos := t.nodes[recruit]
+			newSponsor := target
+			pos.SponsorUserID = &newSponsor
+			t.nodes[recruit] = pos
+			t.sponsored[target] = append(t.sponsored[target], recruit)
+			responsored = append(responsored, Responsored{UserID: recruit, NewSponsorID: target})
+		}
+	}
+	moved := append(slices.Clone(set[1:]), userID)
+	for _, id := range moved {
+		node := t.nodes[id]
+		entry := HoldingTankEntryDTO{UserID: id, EnrolledAt: node.EnrolledAt}
+		if node.SponsorUserID != nil {
+			sponsor := *node.SponsorUserID
+			entry.SponsorUserID = &sponsor
+		}
+		t.tank = append(t.tank, entry)
+	}
+	for _, id := range set {
+		if sponsor := t.nodes[id].SponsorUserID; sponsor != nil && !removed[*sponsor] {
+			t.dropRecruit(*sponsor, id)
+		}
+		delete(t.sponsored, id)
+		delete(t.nodes, id)
+	}
+	return &MatrixRemovalResult{Removed: userID, Repositioned: []string{}, MovedToTank: moved,
+		Relocated: []Relocation{}, Responsored: responsored}
 }
 
 // checkSponsorless refuses the removal of a user who has recruits and no sponsor.
@@ -432,8 +477,8 @@ func (f *fakeWriterEngine) RemoveNode(_ context.Context, structure, userID strin
 	return moved, nil
 }
 
-// RemoveMatrixNode removes a matrix leaf, and in holding_tank mode puts it in
-// the holding tank.
+// RemoveMatrixNode removes a matrix node in mode. It does not model a
+// promote_earliest removal of a node with children, or SPONSOR_CYCLE.
 func (f *fakeWriterEngine) RemoveMatrixNode(_ context.Context, structure, userID string, mode PruningMode) (*MatrixRemovalResult, error) {
 	t, err := f.tree(structure)
 	if err != nil {
@@ -443,13 +488,7 @@ func (f *fakeWriterEngine) RemoveMatrixNode(_ context.Context, structure, userID
 		return nil, err
 	}
 	if mode == PruningHoldingTank && t.treeType == treeTypeMatrix {
-		removed := t.nodes[userID]
-		entry := HoldingTankEntryDTO{UserID: userID, EnrolledAt: removed.EnrolledAt}
-		if removed.SponsorUserID != nil {
-			sponsor := *removed.SponsorUserID
-			entry.SponsorUserID = &sponsor
-		}
-		t.tank = append(t.tank, entry)
+		return t.tankSubtree(userID), nil
 	}
 	moved := t.moveRecruits(userID)
 	delete(t.nodes, userID)

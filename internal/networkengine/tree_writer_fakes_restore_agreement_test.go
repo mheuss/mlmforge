@@ -233,20 +233,22 @@ func TestFakeWriterEngine_RefusesASponsorlessMatrixParentBeforeItsChildren(t *te
 	}
 }
 
-func TestFakeWriterEngine_RefusesATankRemovalOfASponsorlessParentAsUnmodelled(t *testing.T) {
+func TestFakeWriterEngine_TanksASponsorlessParentWhoseRecruitsAreAllBelowIt(t *testing.T) {
 	ctx := context.Background()
 	client := startWorker(t)
 	fake := newFakeWriterEngine()
 	restoreSponsorlessMatrixParent(t, client, fake, recruitUnder)
 
 	check := removeCheck(writerChild, PruningHoldingTank)
-	workerCheck := client.CheckMutation(ctx, restoredTree, check)
-	fakeCheck := fake.CheckMutation(ctx, restoredTree, check)
-	_, fakeApply := removeUser(fake, restoredTree, writerChild, PruningHoldingTank)
+	require.NoError(t, client.CheckMutation(ctx, restoredTree, check), "the worker's check answer")
+	require.NoError(t, fake.CheckMutation(ctx, restoredTree, check), "the fake's check answer")
+	workerRes, err := client.RemoveMatrixNode(ctx, restoredTree, writerChild, PruningHoldingTank)
+	require.NoError(t, err, "the worker's answer")
+	fakeRes, err := fake.RemoveMatrixNode(ctx, restoredTree, writerChild, PruningHoldingTank)
+	require.NoError(t, err)
 
-	require.NoError(t, workerCheck, "the worker's check answer")
-	require.EqualError(t, fakeCheck, "fakeWriterEngine removes only a matrix leaf, and "+writerChild+" has children")
-	assert.Equal(t, fakeCheck, fakeApply)
+	require.Equal(t, []string{writerRemoved, writerOther, writerChild}, workerRes.MovedToTank, "the worker's moved_to_tank")
+	assert.Equal(t, *workerRes, *fakeRes)
 }
 
 func TestFakeWriterEngine_CountsOnlyTheRecruitsATankRemovalLeavesBehind(t *testing.T) {

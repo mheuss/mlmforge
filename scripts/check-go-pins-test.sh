@@ -61,7 +61,7 @@ expect 1 "toolchain directive is \"\""   "toolchain directive missing"  wf-ok.ym
 expect 1 "go directive is \"\""          "go directive missing"         wf-ok.yml        mod-no-go-directive
 expect 1 "toolchain is \"default\""      "toolchain default"            wf-ok.yml        mod-toolchain-default
 expect 1 "no go-version line"            "no go-version line"           wf-no-pin.yml    mod-ok
-expect 0 "go-version 1.27.1"             "two agreeing pins accepted"   wf-two-pins.yml  mod-ok
+expect 1 "has 2 go-version lines"        "two go-version lines"         wf-two-pins.yml  mod-ok
 expect 1 "has an empty value"            "empty go-version value"       wf-empty.yml     mod-ok
 expect 1 "go-version is \"1.27\""        "partial version is drift"     wf-partial.yml   mod-ok
 expect 1 "under with: in an actions/setup-go step: 0" "go-version outside a setup-go step" wf-foreign-pin.yml mod-ok

@@ -261,7 +261,7 @@ func TestFakeWriterEngine_TanksASubtreeAsTheWorkerDoes(t *testing.T) {
 	roundTrip(t, fake)
 }
 
-// promoteRow is one promote_earliest removal of writerChild from a matrix of width.
+// promoteRow is one promote_earliest removal from a matrix, with the worker's expected result.
 type promoteRow struct {
 	name   string
 	width  int
@@ -275,6 +275,8 @@ func promoteRows() []promoteRow {
 	w, v, w0, w1 := testUserUUID(71), testUserUUID(72), testUserUUID(73), testUserUUID(74)
 	a, b, a0 := testUserUUID(61), testUserUUID(62), testUserUUID(63)
 	tieLow, tieHigh := testUserUUID(64), testUserUUID(60)
+	y, z, c0, c1, c00 := testUserUUID(75), testUserUUID(76), testUserUUID(77), testUserUUID(78), testUserUUID(79)
+	k0, k1, k2, k0a, k0b := testUserUUID(80), testUserUUID(81), testUserUUID(82), testUserUUID(83), testUserUUID(84)
 	return []promoteRow{
 		{
 			name:  "a sibling spills breadth first past a full level",
@@ -360,6 +362,52 @@ func promoteRows() []promoteRow {
 				Responsored: []Responsored{},
 			},
 		},
+		{
+			name:  "a node at depth 2 in slot 1 is promoted into",
+			width: 2,
+			layout: []subtreePlacement{
+				{z, writerRoot, writerRoot, 0, 150},
+				{y, writerRoot, writerRoot, 1, 160},
+				{writerChild, y, y, 1, 200},
+				{c0, writerChild, writerChild, 0, 600},
+				{c1, writerChild, writerChild, 1, 500},
+				{c00, c0, c0, 0, 700},
+			},
+			want: MatrixRemovalResult{
+				Removed: writerChild, Promoted: &c1, Repositioned: []string{c0}, MovedToTank: []string{},
+				Relocated: []Relocation{
+					{UserID: c1, ParentID: y, Position: 1, Depth: 2},
+					{UserID: c0, ParentID: c1, Position: 0, Depth: 3},
+				},
+				Responsored: []Responsored{
+					{UserID: c0, NewSponsorID: y},
+					{UserID: c1, NewSponsorID: y},
+				},
+			},
+		},
+		{
+			name:  "three siblings fill a promoted node in order",
+			width: 3,
+			layout: []subtreePlacement{
+				{writerChild, writerRoot, writerRoot, 0, 200},
+				{k0, writerChild, writerRoot, 0, 300},
+				{k1, writerChild, writerRoot, 1, 400},
+				{k2, writerChild, writerRoot, 2, 410},
+				{k0a, k0, writerRoot, 0, 500},
+				{k0b, k0, writerRoot, 1, 510},
+			},
+			want: MatrixRemovalResult{
+				Removed: writerChild, Promoted: &k0, Repositioned: []string{k1, k2}, MovedToTank: []string{},
+				Relocated: []Relocation{
+					{UserID: k0, ParentID: writerRoot, Position: 0, Depth: 1},
+					{UserID: k0a, ParentID: k0, Position: 0, Depth: 2},
+					{UserID: k0b, ParentID: k0, Position: 1, Depth: 2},
+					{UserID: k1, ParentID: k0, Position: 2, Depth: 2},
+					{UserID: k2, ParentID: k0a, Position: 0, Depth: 3},
+				},
+				Responsored: []Responsored{},
+			},
+		},
 	}
 }
 
@@ -387,6 +435,7 @@ func TestFakeWriterEngine_PromotesAsTheWorkerDoes(t *testing.T) {
 			require.NoError(t, fakeCheck, "the fake's check answer")
 			require.NoError(t, fakeErr)
 			assert.Equal(t, *workerRes, *fakeRes, "result")
+			assert.Equal(t, workerLists(t, client, writerTree), fakeLists(t, fake, writerTree), "recruit lists")
 			survivors := []string{writerRoot}
 			for _, placed := range row.layout {
 				if placed.user != writerChild {

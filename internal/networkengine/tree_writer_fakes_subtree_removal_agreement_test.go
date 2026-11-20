@@ -393,8 +393,8 @@ func promoteRows() []promoteRow {
 			layout: []subtreePlacement{
 				{writerChild, writerRoot, writerRoot, 0, 200},
 				{k0, writerChild, writerRoot, 0, 300},
-				{k1, writerChild, writerRoot, 1, 400},
-				{k2, writerChild, writerRoot, 2, 410},
+				{k1, writerChild, writerRoot, 1, 410},
+				{k2, writerChild, writerRoot, 2, 400},
 				{k0a, k0, writerRoot, 0, 500},
 				{k0b, k0, writerRoot, 1, 510},
 			},

@@ -9,7 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// writeLayout places each user in layout into writerTree through a writer over env, in order.
+// writeLayout places each user in layout into writerTree through a writer over env, in order,
+// enrolling each user enrolledAt seconds after writeTime.
 func writeLayout(t *testing.T, env *writerEnv, layout []subtreePlacement) {
 	t.Helper()
 	for _, p := range layout {

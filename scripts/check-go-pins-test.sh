@@ -73,6 +73,7 @@ expect 1 "setup-go pin 2 is \"1.27.9\"; setup-go pin 1 is \"1.27.1\"" "one disag
 expect 1 "setup-go pin 3 is \"1.27.9\"; setup-go pin 1 is \"1.27.1\"" "a third pin that disagrees refused" wf-three-pins-third-disagrees.yml mod-ok
 expect 1 "setup-go pin 2 is \"\"; setup-go pin 1 is \"1.27.1\"" "an empty last pin refused" wf-two-pins-second-empty.yml mod-ok
 expect 1 "go-version parsed from 1" "a hidden second pin refused even when it agrees" wf-two-setup-go-hidden-agree.yml mod-ok
+expect 1 "go-version parsed from 2" "a hidden step beside two parsed pins refused" wf-two-pins-and-a-hidden-step.yml mod-ok
 expect 0 "go-version 1.27.1" "a commented-out setup-go step is harmless" wf-commented-step.yml mod-ok
 
 expect 0 "go-version 1.27.1" "setup-go written as a named step"   wf-named-step.yml          mod-ok

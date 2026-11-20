@@ -61,7 +61,7 @@ jobs:
       - name: Test
         id: test
         run: |
-          go test ./... -json | tee "$RUNNER_TEMP/gotest.json" \
+          go test -race -timeout 60m ./... -json | tee "$RUNNER_TEMP/gotest.json" \
             | jq -j 'select(.Action == "output" or .Action == "build-output") | .Output'
 
       - name: Test summary

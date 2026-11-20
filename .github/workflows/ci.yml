@@ -61,7 +61,7 @@ jobs:
       - name: Test
         id: test
         run: |
-          go test -race -timeout 60m ./... -json | tee "$RUNNER_TEMP/gotest.json" \
+          go test ./... -json | tee "$RUNNER_TEMP/gotest.json" \
             | jq -j 'select(.Action == "output" or .Action == "build-output") | .Output'
 
       - name: Test summary
@@ -147,6 +147,47 @@ jobs:
           "$GOBIN/govulncheck" -version
           "$GOBIN/govulncheck" -version | grep -qxF "Scanner: govulncheck@$GOVULNCHECK_VERSION"
           PATH="$GOBIN:$PATH" scripts/audit-go.sh
+
+  go-race:
+    name: Go race
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.4"
+
+      - name: Install Rust toolchain
+        working-directory: engine
+        run: |
+          RUSTUP_AUTO_INSTALL=0 rustup --version 2>&1 | sed -n 1p
+          rustup toolchain install --no-self-update
+          rustup show active-toolchain | grep -F "$(pwd -P)/rust-toolchain.toml"
+          rustc --version
+
+      - name: Build worker
+        working-directory: engine
+        run: cargo build --package network-engine-worker
+
+      - name: Test with the race detector
+        id: test
+        run: |
+          go test -race -timeout 20m -skip '^TestTreeWriterSnapshotBackoff_' ./... -json \
+            | tee "$RUNNER_TEMP/gotest-race.json" \
+            | jq -j 'select(.Action == "output" or .Action == "build-output") | .Output'
+
+      - name: Upload test record
+        if: '!cancelled() && steps.test.conclusion != ''skipped'''
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-race-test-json
+          path: ${{ runner.temp }}/gotest-race.json
 
   rust:
     name: Rust

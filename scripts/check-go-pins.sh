@@ -113,14 +113,22 @@ mise_gotoolchain=${mise_gotoolchain_raw#go}
 mise_go_lines=$(mise_count "[tools]" go "$mise")
 mise_env_lines=$(mise_count "[env]" GOTOOLCHAIN "$mise")
 
-if [ "$ci_go_lines" -gt 1 ]; then
-  echo "\"$wf\" has $ci_go_lines go-version lines; this check reads one" >&2
+if [ "$ci_go_lines" -gt 0 ] && [ "$wf_setup_go_lines" -gt "$ci_go_lines" ]; then
+  echo "\"$wf\" has $wf_setup_go_lines uncommented lines naming actions/setup-go; go-version read from $ci_go_lines" >&2
   exit 1
 fi
 
-if [ "$wf_setup_go_lines" -gt 1 ]; then
-  echo "\"$wf\" has $wf_setup_go_lines uncommented lines naming actions/setup-go; this check reads one" >&2
-  exit 1
+if [ "$ci_go_lines" -gt 1 ]; then
+  first=$(printf '%s\n' "$ci_go" | sed -n 1p)
+  n=1
+  while IFS= read -r pin; do
+    if [ "$pin" != "$first" ]; then
+      echo "\"$wf\" setup-go pin 1 is \"$first\"; setup-go pin $n is \"$pin\"" >&2
+      exit 1
+    fi
+    n=$((n + 1))
+  done <<<"$ci_go"
+  ci_go=$first
 fi
 
 if [ "$ci_go_lines" -eq 0 ]; then

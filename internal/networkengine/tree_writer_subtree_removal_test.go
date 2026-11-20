@@ -9,8 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// writeLayout places each user in layout into the tree through a writer over env, in order,
-// enrolling each user at a time offset taken from its placement.
+// writeLayout places each user in layout into the tree through a writer over env.
 func writeLayout(t *testing.T, env *writerEnv, layout []subtreePlacement) {
 	t.Helper()
 	for _, p := range layout {

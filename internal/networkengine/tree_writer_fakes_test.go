@@ -315,8 +315,7 @@ func (t *fakeEngineTree) freeSlot(start string) (string, int) {
 	panic(fmt.Sprintf("fakeWriterEngine found no empty slot below %s at width %d", start, t.width))
 }
 
-// recomputeDepths sets the depth of start from its parent, and of every node
-// below start from its own parent.
+// recomputeDepths sets the depth of start and every node below it.
 func (t *fakeEngineTree) recomputeDepths(start string) {
 	node := t.nodes[start]
 	node.Depth = t.nodes[*node.ParentUserID].Depth + 1
@@ -343,8 +342,7 @@ func (t *fakeEngineTree) relocations(start string, before map[string]EnginePosit
 	return moved
 }
 
-// promoteEarliest removes userID, which has children, by moving its
-// earliest-enrolled child into its slot, and returns what the removal changed.
+// promoteEarliest removes userID, which has children, and returns what the removal changed.
 func (t *fakeEngineTree) promoteEarliest(userID string) *MatrixRemovalResult {
 	removedNode := t.nodes[userID]
 	kids := t.childrenBySlot(userID)

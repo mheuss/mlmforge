@@ -113,14 +113,21 @@ mise_gotoolchain=${mise_gotoolchain_raw#go}
 mise_go_lines=$(mise_count "[tools]" go "$mise")
 mise_env_lines=$(mise_count "[env]" GOTOOLCHAIN "$mise")
 
-if [ "$ci_go_lines" -gt 1 ]; then
-  echo "\"$wf\" has $ci_go_lines go-version lines; this check reads one" >&2
+if [ "$wf_setup_go_lines" -gt 1 ] && [ "$wf_setup_go_lines" -gt "$ci_go_lines" ]; then
+  echo "\"$wf\" has $wf_setup_go_lines uncommented lines naming actions/setup-go; go-version parsed from $ci_go_lines" >&2
   exit 1
 fi
 
-if [ "$wf_setup_go_lines" -gt 1 ]; then
-  echo "\"$wf\" has $wf_setup_go_lines uncommented lines naming actions/setup-go; this check reads one" >&2
-  exit 1
+if [ "$ci_go_lines" -gt 1 ]; then
+  # An array, because $(...) drops a trailing empty pin.
+  mapfile -t pins < <(setup_go_pins "$wf")
+  for i in "${!pins[@]}"; do
+    if [ "${pins[$i]}" != "${pins[0]}" ]; then
+      echo "\"$wf\" setup-go pin $((i + 1)) is \"${pins[$i]}\"; setup-go pin 1 is \"${pins[0]}\"" >&2
+      exit 1
+    fi
+  done
+  ci_go=${pins[0]}
 fi
 
 if [ "$ci_go_lines" -eq 0 ]; then

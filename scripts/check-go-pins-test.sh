@@ -61,7 +61,7 @@ expect 1 "toolchain directive is \"\""   "toolchain directive missing"  wf-ok.ym
 expect 1 "go directive is \"\""          "go directive missing"         wf-ok.yml        mod-no-go-directive
 expect 1 "toolchain is \"default\""      "toolchain default"            wf-ok.yml        mod-toolchain-default
 expect 1 "no go-version line"            "no go-version line"           wf-no-pin.yml    mod-ok
-expect 1 "has 2 go-version lines"        "two go-version lines"         wf-two-pins.yml  mod-ok
+expect 0 "go-version 1.27.1"             "two agreeing pins accepted"   wf-two-pins.yml  mod-ok
 expect 1 "has an empty value"            "empty go-version value"       wf-empty.yml     mod-ok
 expect 1 "go-version is \"1.27\""        "partial version is drift"     wf-partial.yml   mod-ok
 expect 1 "under with: in an actions/setup-go step: 0" "go-version outside a setup-go step" wf-foreign-pin.yml mod-ok
@@ -69,6 +69,15 @@ expect 1 "under with: in an actions/setup-go step: 0" "go-version under env in a
 expect 1 "uncommented lines naming actions/setup-go" "a second setup-go step the parser cannot see" wf-two-setup-go.yml mod-ok
 expect 1 "uncommented lines naming actions/setup-go" "a second setup-go step with a quoted uses" wf-two-setup-go-quoted.yml mod-ok
 expect 1 "uncommented lines naming actions/setup-go" "a second setup-go step in flow style"    wf-two-setup-go-flow.yml mod-ok
+expect 1 "setup-go pin 2 is \"1.27.9\"; setup-go pin 1 is \"1.27.1\"" "one disagreeing pin refused" wf-two-pins-disagree.yml mod-ok
+expect 1 "setup-go pin 3 is \"1.27.9\"; setup-go pin 1 is \"1.27.1\"" "a third pin that disagrees refused" wf-three-pins-third-disagrees.yml mod-ok
+expect 1 "setup-go pin 2 is \"\"; setup-go pin 1 is \"1.27.1\"" "an empty last pin refused" wf-two-pins-second-empty.yml mod-ok
+expect 1 "go-version parsed from 1" "a hidden second pin refused even when it agrees" wf-two-setup-go-hidden-agree.yml mod-ok
+expect 1 "go-version parsed from 2" "a hidden step beside two parsed pins refused" wf-two-pins-and-a-hidden-step.yml mod-ok
+expect 1 "go-version parsed from 1" "a setup-go step with uses: on its own line refused" wf-setup-go-uses-next-line.yml mod-ok
+expect 1 "go-version parsed from 1" "a setup-go step with a quoted uses key refused" wf-setup-go-quoted-key.yml mod-ok
+expect 1 "go-version parsed from 1" "a setup-go step in other letter case refused" wf-setup-go-capitalised.yml mod-ok
+expect 1 "go-version parsed from 2" "a trailing comment naming actions/setup-go refused" wf-setup-go-named-in-a-trailing-comment.yml mod-ok
 expect 0 "go-version 1.27.1" "a commented-out setup-go step is harmless" wf-commented-step.yml mod-ok
 
 expect 0 "go-version 1.27.1" "setup-go written as a named step"   wf-named-step.yml          mod-ok

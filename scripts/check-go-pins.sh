@@ -62,14 +62,13 @@ setup_go_pins() {
 ci_go=$(setup_go_pins "$wf")
 ci_go_lines=$(setup_go_pins "$wf" | grep -c '' || true)
 wf_go_version_lines=$(grep -cE '^[[:space:]]*go-version:' "$wf" || true)
-# Counted from the raw file rather than from setup_go_pins. A step whose first
-# key is not uses, name, run or id is invisible to that parser, and a bare dash
-# has no key at all, so a second pin could go uncompared and still report one.
-# The quote is optional here and not in the parser, because this count is only
-# useful if it is broader than what it backstops. Full-line comments are dropped
-# first, so commenting a step out stays harmless.
+# Counted from the raw file rather than from setup_go_pins. Any uncommented line
+# naming actions/setup-go counts, in any letter case, whether or not uses: sits
+# on that line. This count is only useful if it is broader than what it
+# backstops. Full-line comments are dropped first, so commenting a step out
+# stays harmless.
 wf_setup_go_lines=$(grep -v '^[[:space:]]*#' "$wf" \
-  | grep -cE 'uses:[[:space:]]*["'\''"]?actions/setup-go' || true)
+  | grep -ciF 'actions/setup-go' || true)
 
 mod_toolchain_raw=$(awk '/^toolchain /{print $2}' "$mod")
 mod_toolchain=${mod_toolchain_raw#go}
@@ -113,14 +112,21 @@ mise_gotoolchain=${mise_gotoolchain_raw#go}
 mise_go_lines=$(mise_count "[tools]" go "$mise")
 mise_env_lines=$(mise_count "[env]" GOTOOLCHAIN "$mise")
 
-if [ "$ci_go_lines" -gt 1 ]; then
-  echo "\"$wf\" has $ci_go_lines go-version lines; this check reads one" >&2
+if [ "$wf_setup_go_lines" -gt 1 ] && [ "$wf_setup_go_lines" -gt "$ci_go_lines" ]; then
+  echo "\"$wf\" has $wf_setup_go_lines uncommented lines naming actions/setup-go; go-version parsed from $ci_go_lines" >&2
   exit 1
 fi
 
-if [ "$wf_setup_go_lines" -gt 1 ]; then
-  echo "\"$wf\" has $wf_setup_go_lines uncommented lines naming actions/setup-go; this check reads one" >&2
-  exit 1
+if [ "$ci_go_lines" -gt 1 ]; then
+  # An array, because $(...) drops a trailing empty pin.
+  mapfile -t pins < <(setup_go_pins "$wf")
+  for i in "${!pins[@]}"; do
+    if [ "${pins[$i]}" != "${pins[0]}" ]; then
+      echo "\"$wf\" setup-go pin $((i + 1)) is \"${pins[$i]}\"; setup-go pin 1 is \"${pins[0]}\"" >&2
+      exit 1
+    fi
+  done
+  ci_go=${pins[0]}
 fi
 
 if [ "$ci_go_lines" -eq 0 ]; then

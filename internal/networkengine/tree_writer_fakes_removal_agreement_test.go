@@ -189,10 +189,10 @@ func orderScenarioLists(treeType string) map[string][]string {
 	return map[string][]string{writerRoot: {removalP, removalB}}
 }
 
-// fakeLists returns the recruit map from the fake's snapshot of writerTree.
-func fakeLists(t *testing.T, fake *fakeWriterEngine) map[string][]string {
+// fakeLists returns the recruit map from the fake's snapshot of structure.
+func fakeLists(t *testing.T, fake *fakeWriterEngine, structure string) map[string][]string {
 	t.Helper()
-	taken, err := fake.TakeSnapshot(context.Background(), writerTree)
+	taken, err := fake.TakeSnapshot(context.Background(), structure)
 	require.NoError(t, err)
 	var snap fakeSnapshot
 	require.NoError(t, json.Unmarshal(taken.Data, &snap))
@@ -240,7 +240,7 @@ func TestFakeWriterEngine_KeepsTheWorkersRecruitOrderAcrossTwoRemovals(t *testin
 					assert.Equal(t, engineErrorOf(workerErr), engineErrorOf(fakeErr), "the position of removed user %s", user)
 				}
 				if !restore {
-					assert.Equal(t, orderScenarioLists(tt.treeType), fakeLists(t, fake))
+					assert.Equal(t, orderScenarioLists(tt.treeType), fakeLists(t, fake, writerTree))
 				}
 				survivors := []string{writerRoot, removalB, removalP}
 				if tt.treeType == treeTypeBinary {

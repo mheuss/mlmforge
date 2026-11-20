@@ -153,11 +153,11 @@ var tankSubtreeLayout = []subtreePlacement{
 	{tankO2, tankT, tankC1, 1, 720},
 }
 
-// workerLists returns the recruit map from the worker's snapshot of writerTree,
+// workerLists returns the recruit map from the worker's snapshot of structure,
 // leaving out users with no recruits.
-func workerLists(t *testing.T, client *EngineClient) map[string][]string {
+func workerLists(t *testing.T, client *EngineClient, structure string) map[string][]string {
 	t.Helper()
-	taken, err := client.TakeSnapshot(context.Background(), writerTree)
+	taken, err := client.TakeSnapshot(context.Background(), structure)
 	require.NoError(t, err)
 	lists := map[string][]string{}
 	editWorkerSnapshot(t, taken.Data, func(a *workerArena) {
@@ -225,22 +225,22 @@ func TestFakeWriterEngine_TanksASubtreeAsTheWorkerDoes(t *testing.T) {
 	assert.Equal(t, *workerRes, *fakeRes, "result")
 
 	x, s, t1, c0 := tankX, tankS, tankT, tankC0
-	workerTank := tankOf(t, client)
+	workerTank := tankOf(t, client, writerTree)
 	require.Equal(t, []HoldingTankEntryDTO{
 		{UserID: tankC0, SponsorUserID: &x, EnrolledAt: 600},
 		{UserID: tankC1, SponsorUserID: &t1, EnrolledAt: 400},
 		{UserID: tankG, SponsorUserID: &c0, EnrolledAt: 500},
 		{UserID: tankX, SponsorUserID: &s, EnrolledAt: 300},
 	}, workerTank, "the worker's tank")
-	assert.Equal(t, workerTank, tankOf(t, fake), "tank")
+	assert.Equal(t, workerTank, tankOf(t, fake, writerTree), "tank")
 
-	workerRecruits := workerLists(t, client)
+	workerRecruits := workerLists(t, client, writerTree)
 	require.Equal(t, map[string][]string{
 		writerRoot: {tankS, tankT},
 		tankS:      {tankO3, tankO1},
 		tankT:      {tankO2},
 	}, workerRecruits, "the worker's recruit lists")
-	assert.Equal(t, workerRecruits, fakeLists(t, fake), "recruit lists")
+	assert.Equal(t, workerRecruits, fakeLists(t, fake, writerTree), "recruit lists")
 
 	for _, user := range []string{writerRoot, tankS, tankT, tankO1, tankO2, tankO3} {
 		assert.Equal(t, placementOf(t, client, user), placementOf(t, fake, user), "the placement of %s", user)

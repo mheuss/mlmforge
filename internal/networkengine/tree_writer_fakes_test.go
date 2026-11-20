@@ -477,8 +477,7 @@ func (f *fakeWriterEngine) RemoveNode(_ context.Context, structure, userID strin
 	return moved, nil
 }
 
-// RemoveMatrixNode removes a matrix node in mode. It does not model a
-// promote_earliest removal of a node with children, or SPONSOR_CYCLE.
+// RemoveMatrixNode removes a matrix node in mode.
 func (f *fakeWriterEngine) RemoveMatrixNode(_ context.Context, structure, userID string, mode PruningMode) (*MatrixRemovalResult, error) {
 	t, err := f.tree(structure)
 	if err != nil {

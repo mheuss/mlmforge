@@ -249,6 +249,17 @@ func TestFakeWriterEngine_TanksASponsorlessParentWhoseRecruitsAreAllBelowIt(t *t
 
 	require.Equal(t, []string{writerRemoved, writerOther, writerChild}, workerRes.MovedToTank, "the worker's moved_to_tank")
 	assert.Equal(t, *workerRes, *fakeRes)
+
+	root, child := writerRoot, writerChild
+	workerTank := tankOf(t, client, restoredTree)
+	require.Equal(t, []HoldingTankEntryDTO{
+		{UserID: writerRemoved, SponsorUserID: &root, EnrolledAt: 300},
+		{UserID: writerOther, SponsorUserID: &child, EnrolledAt: 400},
+		{UserID: writerChild, EnrolledAt: 200},
+	}, workerTank, "the worker's tank")
+	assert.Equal(t, workerTank, tankOf(t, fake, restoredTree), "tank")
+	assert.Empty(t, workerLists(t, client, restoredTree), "the worker's recruit lists")
+	assert.Empty(t, fakeLists(t, fake, restoredTree), "the fake's recruit lists")
 }
 
 func TestFakeWriterEngine_CountsOnlyTheRecruitsATankRemovalLeavesBehind(t *testing.T) {

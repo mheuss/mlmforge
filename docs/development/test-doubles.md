@@ -301,6 +301,32 @@ Found in final review for HEU-1076 on 2026-11-18.
 Used for HEU-1083 on 2026-11-19, for the writer fake's subtree removals in both
 pruning modes.
 
+## Take an agreement row's expected value from the worker
+
+An agreement row holds a literal the worker must return. Write that literal from
+your reading of the worker and the row can pin a wrong answer. The fake then
+copies the same mistake and both sides pass.
+
+Read the value from the worker first. Add a throwaway probe test through
+`go test -overlay` that builds the row's layout on the worker and prints the
+result. Hard-code what it printed. The row's worker-side assertion then checks
+the literal on every run.
+
+Found in review for HEU-1083 on 2026-11-20. Each row added during review took
+its value from the worker.
+
+## A lenient decode in a probe hides a shape difference
+
+A probe can decode a snapshot into a struct and compare by length or printed
+value. That comparison cannot tell a missing key from an empty list. The two
+engines can write different shapes and the probe still reports agreement.
+
+When the shape matters, compare the raw keys as well as the decoded values.
+
+Found in final review for HEU-1083 on 2026-11-20. A generated sweep compared the
+fake's holding tank with the worker's this way. It missed that the fake leaves
+the key out where the worker writes an empty list. Filed as HEU-1092.
+
 ## Mirror checked arithmetic with an explicit guard
 
 The worker can add with an overflow check that refuses at the top of the range.

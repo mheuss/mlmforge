@@ -298,6 +298,8 @@ input needs no shape.
 
 Found in final review for HEU-1076 on 2026-11-18.
 
+Used for HEU-1083 on 2026-11-19, for the writer fake's subtree removals in both pruning modes.
+
 ## Mirror checked arithmetic with an explicit guard
 
 The worker can add with an overflow check that refuses at the top of the range.

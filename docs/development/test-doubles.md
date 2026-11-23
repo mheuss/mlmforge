@@ -295,9 +295,9 @@ the two messages would still differ in form. Decided for HEU-1087 on
 
 So the rows in the shared table of refused restore shapes rely on a setup that
 places users in user-ID order. The test that runs that table checks this before
-it edits each worker snapshot. It fails when a live slot holds a lower user ID than a live slot before it, or when
-a freed slot comes before a live one. Its message lists the user ID in each
-slot.
+it edits each worker snapshot. It fails when a live slot holds a lower user ID
+than a live slot before it, or when a freed slot comes before a live one. Its
+message lists the user ID in each slot.
 
 A shape whose slot order differs from its user-ID order is not supported.
 HEU-1087's shape is one. It places …0003 before …0002 and puts both at a bad

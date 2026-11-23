@@ -280,6 +280,38 @@ answer.
 Used for HEU-1078 on 2026-11-18, for the writer fake's root-sponsor and
 sponsor-chain checks.
 
+## Two offenders on one restore check need the setup's placement order
+
+Take a restore check that walks the arena slot by slot. When two nodes fail it,
+the worker names the node in the earlier slot. The writer fake has no slots. It
+names the one with the lower user ID. The two agree only while slot order
+matches user-ID order.
+
+The fake keeps user-ID order. Matching the worker would mean copying its slot
+allocation into the fake. That includes how the worker reuses a freed slot, on
+every path that adds or removes a node. That is a second place for the fake to
+drift. The two messages would still differ in form. Decided for HEU-1087 on
+2026-11-23.
+
+So the rows in the shared table of refused restore shapes rely on a setup that
+places users in user-ID order. The test that runs that table checks this before
+it edits each worker snapshot. It fails when a live slot holds a lower user ID
+than a live slot before it, or when a freed slot comes before a live one. Its
+message lists the user ID in each slot.
+
+A shape whose slot order differs from its user-ID order is not supported.
+HEU-1087's shape is one. It places …0003 before …0002 and puts both at a bad
+depth. The worker names …0003 and the fake names …0002. Where a row can be
+reduced to one offender, reduce it. A sponsor cycle cannot be, because a walk
+from any node on it fails. A parent at the largest depth cannot be reduced
+either, because that parent fails the depth check too.
+
+Order across faults on different nodes matters as well. The worker checks every
+edge of one node before it moves to the next. The fake does the same in one
+loop. A fake that checked every parent edge before any sponsor edge named a
+later node's bad parent ahead of an earlier node's bad sponsor. HEU-1120 found
+this on 2026-11-23.
+
 ## Pin a rule with shapes that separate the wrong rules
 
 One shape pins one answer. Several wrong rules can give that same answer, so the

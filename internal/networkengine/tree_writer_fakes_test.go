@@ -1118,31 +1118,25 @@ func (f *fakeWriterEngine) DropStructure(_ context.Context, structure string) (b
 func checkRestored(snap fakeSnapshot) error {
 	ids := slices.Sorted(maps.Keys(snap.Nodes))
 	owners := slices.Sorted(maps.Keys(snap.Sponsored))
+	// One loop, not one per edge kind: a snapshot with faults on two nodes is
+	// refused for the earlier node's fault, whichever kind of edge it is.
 	for _, id := range ids {
-		parent := snap.Nodes[id].ParentUserID
-		if parent == nil {
-			continue
+		if parent := snap.Nodes[id].ParentUserID; parent != nil {
+			if _, ok := snap.Nodes[*parent]; !ok {
+				return fakeEngineError("INCONSISTENT_SNAPSHOT", "parent on node %s names %s; the snapshot holds no such node",
+					id, *parent)
+			}
 		}
-		if _, ok := snap.Nodes[*parent]; !ok {
-			return fakeEngineError("INCONSISTENT_SNAPSHOT", "parent on node %s names %s; the snapshot holds no such node",
-				id, *parent)
+		if sponsor := snap.Nodes[id].SponsorUserID; sponsor != nil {
+			if _, ok := snap.Nodes[*sponsor]; !ok {
+				return fakeEngineError("INCONSISTENT_SNAPSHOT", "sponsor on node %s names %s; the snapshot holds no such node",
+					id, *sponsor)
+			}
 		}
-	}
-	for _, id := range ids {
-		sponsor := snap.Nodes[id].SponsorUserID
-		if sponsor == nil {
-			continue
-		}
-		if _, ok := snap.Nodes[*sponsor]; !ok {
-			return fakeEngineError("INCONSISTENT_SNAPSHOT", "sponsor on node %s names %s; the snapshot holds no such node",
-				id, *sponsor)
-		}
-	}
-	for _, owner := range owners {
-		for _, recruit := range snap.Sponsored[owner] {
+		for _, recruit := range snap.Sponsored[id] {
 			if _, ok := snap.Nodes[recruit]; !ok {
 				return fakeEngineError("INCONSISTENT_SNAPSHOT",
-					"the recruit list of %s names %s; the snapshot holds no such node", owner, recruit)
+					"the recruit list of %s names %s; the snapshot holds no such node", id, recruit)
 			}
 		}
 	}

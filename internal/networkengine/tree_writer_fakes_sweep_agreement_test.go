@@ -17,7 +17,6 @@ import (
 )
 
 const (
-	sweepTestName            = "TestFakeWriterEngine_SweepsMatrixRemovalsAsTheWorkerDoes"
 	sweepSeedsEnv            = "FAKE_SWEEP_SEEDS"
 	sweepDefaultFirst        = 1
 	sweepDefaultLast         = 200
@@ -37,6 +36,9 @@ func parseSweepSeeds(value string) (int, int, error) {
 	a, b, ok := strings.Cut(value, "-")
 	first, errFirst := strconv.Atoi(a)
 	last, errLast := strconv.Atoi(b)
+	if ok && (errors.Is(errFirst, strconv.ErrRange) || errors.Is(errLast, strconv.ErrRange)) {
+		return 0, 0, fmt.Errorf("%s=%q holds a number that does not fit in an int", sweepSeedsEnv, value)
+	}
 	if !ok || errFirst != nil || errLast != nil {
 		return 0, 0, fmt.Errorf("%s=%q is not two integers joined by -", sweepSeedsEnv, value)
 	}
@@ -198,12 +200,13 @@ func sweepSeed(t *testing.T, client *EngineClient, seed int, stats *sweepStats, 
 		if !t.Failed() {
 			return
 		}
+		testName, _, _ := strings.Cut(t.Name(), "/")
 		kind := "biased"
 		if c.unbiased {
 			kind = "unbiased"
 		}
 		t.Logf("seed %d (%s), width %d\n  %s\nrerun: %s=%d-%d go test -run '^%s$/^seed_%d$' ./internal/networkengine/",
-			c.seed, kind, c.width, strings.Join(c.log, "\n  "), sweepSeedsEnv, c.seed, c.seed, sweepTestName, c.seed)
+			c.seed, kind, c.width, strings.Join(c.log, "\n  "), sweepSeedsEnv, c.seed, c.seed, testName, c.seed)
 	})
 
 	var n int
@@ -445,6 +448,7 @@ func TestParseSweepSeeds(t *testing.T) {
 		{"1-2-3", `FAKE_SWEEP_SEEDS="1-2-3" is not two integers joined by -`},
 		{"0-5", `FAKE_SWEEP_SEEDS="0-5" holds a number below 1`},
 		{"1-0", `FAKE_SWEEP_SEEDS="1-0" holds a number below 1`},
+		{"1-99999999999999999999", `FAKE_SWEEP_SEEDS="1-99999999999999999999" holds a number that does not fit in an int`},
 		{"5-1", `FAKE_SWEEP_SEEDS="5-1" has 5 above 1`},
 	} {
 		_, _, err := parseSweepSeeds(row.value)

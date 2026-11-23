@@ -284,8 +284,8 @@ sponsor-chain checks.
 
 When two nodes fail the same restore check, and that check walks the arena slot
 by slot, the worker names the node in the earlier slot. The writer fake has no
-slots. It names the one with the
-lower user ID. The two agree only while slot order matches user-ID order.
+slots. It names the one with the lower user ID. The two agree only while slot
+order matches user-ID order.
 
 The fake keeps user-ID order. Matching the worker would mean copying its slot
 allocation into the fake, including how it reuses a freed slot, on every path
@@ -293,9 +293,9 @@ that adds or removes a node. That is a second place for the fake to drift, and
 the two messages would still differ in form. Decided for HEU-1087 on
 2026-11-23.
 
-So the restore agreement rows rely on a setup that places users in user-ID
-order. The refusal test checks this before it edits each worker snapshot. It
-fails when a live slot holds a lower user ID than a live slot before it, or when
+So the rows in the shared table of refused restore shapes rely on a setup that
+places users in user-ID order. The test that runs that table checks this before
+it edits each worker snapshot. It fails when a live slot holds a lower user ID than a live slot before it, or when
 a freed slot comes before a live one. Its message lists the user ID in each
 slot.
 

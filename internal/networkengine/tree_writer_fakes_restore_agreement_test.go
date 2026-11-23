@@ -385,6 +385,35 @@ func restoreShapes() []restoreShape {
 			fakeMessage: "the recruit list of " + writerRoot + " names " + writerRemoved + "; the snapshot holds no such node",
 		},
 		{
+			name: "a parent naming an absent node, and a later node's sponsor naming an absent node",
+			editWorker: func(t *testing.T, a *workerArena) {
+				tomb := a.tombstone(t)
+				a.Nodes[a.slot(t, writerChild)].Parent = &tomb
+				a.Nodes[a.slot(t, writerOther)].Sponsor = &tomb
+			},
+			editFake: func(s *fakeSnapshot) {
+				setFakeParent(s, writerChild, writerRemoved)
+				setFakeSponsor(s, writerOther, writerRemoved)
+			},
+			workerFault: `^parent on node slot \d+ names node slot \d+; that slot is a tombstone$`,
+			fakeMessage: "parent on node " + writerChild + " names " + writerRemoved + "; the snapshot holds no such node",
+		},
+		{
+			name: "a node whose parent and sponsor both name an absent node",
+			editWorker: func(t *testing.T, a *workerArena) {
+				tomb := a.tombstone(t)
+				y := a.slot(t, writerOther)
+				a.Nodes[y].Parent = &tomb
+				a.Nodes[y].Sponsor = &tomb
+			},
+			editFake: func(s *fakeSnapshot) {
+				setFakeParent(s, writerOther, writerRemoved)
+				setFakeSponsor(s, writerOther, writerRemoved)
+			},
+			workerFault: `^parent on node slot \d+ names node slot \d+; that slot is a tombstone$`,
+			fakeMessage: "parent on node " + writerOther + " names " + writerRemoved + "; the snapshot holds no such node",
+		},
+		{
 			name: "a recruit list entry naming an absent user",
 			editWorker: func(t *testing.T, a *workerArena) {
 				r := a.slot(t, writerRoot)

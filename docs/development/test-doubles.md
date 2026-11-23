@@ -267,6 +267,11 @@ This row passes before and after the change it guards. Its evidence is a
 mutation: move A past B and watch the row fail. Record that run in the commit
 body. No test-first failure exists for it.
 
+An order row does not show that B exists. Delete B and the row still gets A's
+answer from both engines. Pair it with a row that only B refuses. HEU-1086 found
+this on 2026-11-23. Its two order rows passed with the root check deleted, and
+only the lone-root row failed.
+
 Pin only the boundaries the worker's order makes observable. Do not pin the
 fake's own layout. An example is which of two loops runs first inside one worker
 check. Such a row breaks on a refactor that changes nothing the worker would

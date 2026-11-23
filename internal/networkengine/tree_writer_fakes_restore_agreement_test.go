@@ -623,6 +623,44 @@ func restoreShapes() []restoreShape {
 			workerFault: `^node slot \d+ holds ` + writerOther + ` at depth 1 and names no parent$`,
 			fakeMessage: "node " + writerOther + " is at depth 1 and names no parent",
 		},
+		{
+			name: "a root naming an absent node",
+			editWorker: func(t *testing.T, a *workerArena) {
+				tomb := a.tombstone(t)
+				a.Root = &tomb
+			},
+			editFake:    func(s *fakeSnapshot) { s.Root = writerRemoved },
+			workerFault: `^root names node slot \d+; that slot is a tombstone$`,
+			fakeMessage: "root names " + writerRemoved + "; the snapshot holds no such node",
+		},
+		{
+			name: "a root naming an absent node, and a node whose depth skips a level",
+			editWorker: func(t *testing.T, a *workerArena) {
+				tomb := a.tombstone(t)
+				a.Root = &tomb
+				a.Nodes[a.slot(t, writerOther)].Depth = 5
+			},
+			editFake: func(s *fakeSnapshot) {
+				s.Root = writerRemoved
+				setFakeDepth(s, writerOther, 5)
+			},
+			workerFault: `^node slot \d+ holds ` + writerOther + ` at depth 5; its parent at node slot \d+ is at depth 0$`,
+			fakeMessage: "node " + writerOther + " is at depth 5; its parent " + writerRoot + " is at depth 0",
+		},
+		{
+			name: "a root naming an absent node, and a sponsor naming an absent node",
+			editWorker: func(t *testing.T, a *workerArena) {
+				tomb := a.tombstone(t)
+				a.Root = &tomb
+				a.Nodes[a.slot(t, writerChild)].Sponsor = &tomb
+			},
+			editFake: func(s *fakeSnapshot) {
+				s.Root = writerRemoved
+				setFakeSponsor(s, writerChild, writerRemoved)
+			},
+			workerFault: `^sponsor on node slot \d+ names node slot \d+; that slot is a tombstone$`,
+			fakeMessage: "sponsor on node " + writerChild + " names " + writerRemoved + "; the snapshot holds no such node",
+		},
 	}
 }
 

@@ -1116,9 +1116,6 @@ func (f *fakeWriterEngine) DropStructure(_ context.Context, structure string) (b
 
 // checkRestored refuses an inconsistent snapshot.
 func checkRestored(snap fakeSnapshot) error {
-	if _, ok := snap.Nodes[snap.Root]; snap.Root != "" && !ok {
-		return fakeEngineError("INCONSISTENT_SNAPSHOT", "root names %s; the snapshot holds no such node", snap.Root)
-	}
 	ids := slices.Sorted(maps.Keys(snap.Nodes))
 	owners := slices.Sorted(maps.Keys(snap.Sponsored))
 	for _, id := range ids {
@@ -1157,6 +1154,9 @@ func checkRestored(snap fakeSnapshot) error {
 	}
 	if err := checkRestoredDepths(snap, ids); err != nil {
 		return err
+	}
+	if _, ok := snap.Nodes[snap.Root]; snap.Root != "" && !ok {
+		return fakeEngineError("INCONSISTENT_SNAPSHOT", "root names %s; the snapshot holds no such node", snap.Root)
 	}
 	if sponsor := snap.Nodes[snap.Root].SponsorUserID; snap.Root != "" && sponsor != nil {
 		return fakeEngineError("INCONSISTENT_SNAPSHOT", "the root %s names sponsor %s", snap.Root, *sponsor)

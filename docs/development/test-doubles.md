@@ -282,15 +282,15 @@ sponsor-chain checks.
 
 ## Two offenders on one restore check need the setup's placement order
 
-When two nodes fail the same restore check, and that check walks the arena slot
-by slot, the worker names the node in the earlier slot. The writer fake has no
-slots. It names the one with the lower user ID. The two agree only while slot
-order matches user-ID order.
+Take a restore check that walks the arena slot by slot. When two nodes fail it,
+the worker names the node in the earlier slot. The writer fake has no slots. It
+names the one with the lower user ID. The two agree only while slot order
+matches user-ID order.
 
 The fake keeps user-ID order. Matching the worker would mean copying its slot
-allocation into the fake, including how it reuses a freed slot, on every path
-that adds or removes a node. That is a second place for the fake to drift, and
-the two messages would still differ in form. Decided for HEU-1087 on
+allocation into the fake. That includes how the worker reuses a freed slot, on
+every path that adds or removes a node. That is a second place for the fake to
+drift. The two messages would still differ in form. Decided for HEU-1087 on
 2026-11-23.
 
 So the rows in the shared table of refused restore shapes rely on a setup that
@@ -303,8 +303,8 @@ A shape whose slot order differs from its user-ID order is not supported.
 HEU-1087's shape is one. It places …0003 before …0002 and puts both at a bad
 depth. The worker names …0003 and the fake names …0002. Where a row can be
 reduced to one offender, reduce it. A sponsor cycle cannot be, because a walk
-from any node on it fails. Nor can a parent at the largest depth, because that
-parent fails the depth check too.
+from any node on it fails. A parent at the largest depth cannot be reduced
+either, because that parent fails the depth check too.
 
 Order across faults on different nodes matters as well. The worker checks every
 edge of one node before it moves to the next. The fake does the same in one

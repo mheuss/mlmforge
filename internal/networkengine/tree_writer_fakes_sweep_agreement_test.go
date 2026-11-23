@@ -60,6 +60,7 @@ type sweepPosition struct {
 type sweepStats struct {
 	accepted map[PruningMode]int
 	nonLeaf  map[PruningMode]int
+	refused  int
 }
 
 // sweepCase is one seed's tree on both engines and the log of what was done to it.
@@ -75,7 +76,12 @@ type sweepCase struct {
 	stopped   *bool
 }
 
-func sweepShort(user string) string { return user[24:] }
+func sweepShort(user string) string {
+	if len(user) < 24 {
+		return user
+	}
+	return user[24:]
+}
 
 // checkWorker fails the seed and marks the run stopped when err carries no engine code.
 func (c *sweepCase) checkWorker(t *testing.T, call string, err error) {
@@ -214,6 +220,12 @@ func sweepSeed(t *testing.T, client *EngineClient, seed int, stats *sweepStats, 
 			return
 		}
 		dropped, err := client.DropStructure(ctx, c.structure)
+		var engineErr *EngineError
+		if err != nil && !errors.As(err, &engineErr) {
+			*c.stopped = true
+			t.Errorf("seed %d: the worker's DropStructure returned an error with no engine code: %v", c.seed, err)
+			return
+		}
 		if err != nil || !dropped {
 			t.Errorf("seed %d: the worker's DropStructure returned dropped=%v, err=%v", c.seed, dropped, err)
 		}
@@ -324,8 +336,14 @@ func sweepSeed(t *testing.T, client *EngineClient, seed int, stats *sweepStats, 
 				stats.nonLeaf[mode]++
 			}
 			if !reflect.DeepEqual(workerResult, fakeResult) {
-				stepDiffs = append(stepDiffs, fmt.Sprintf("result:\n    worker %s\n    fake   %s", sweepResult(workerResult), sweepResult(fakeResult)))
+				workerText, fakeText := sweepResult(workerResult), sweepResult(fakeResult)
+				if workerText == fakeText {
+					workerText, fakeText = fmt.Sprintf("%#v", *workerResult), fmt.Sprintf("%#v", *fakeResult)
+				}
+				stepDiffs = append(stepDiffs, fmt.Sprintf("result:\n    worker %s\n    fake   %s", workerText, fakeText))
 			}
+		} else {
+			stats.refused++
 		}
 		compared, next := c.compare(t)
 		stepDiffs = append(stepDiffs, compared...)
@@ -387,7 +405,7 @@ func TestFakeWriterEngine_SweepsMatrixRemovalsAsTheWorkerDoes(t *testing.T) {
 
 	client := startWorker(t)
 	stats, ran := runMatrixRemovalSweep(t, client, first, last)
-	t.Logf("ran %d seeds. Accepted removals: %v, of which non-leaf: %v", ran, stats.accepted, stats.nonLeaf)
+	t.Logf("ran %d seeds. Accepted removals: %v, of which non-leaf: %v. Refused: %d", ran, stats.accepted, stats.nonLeaf, stats.refused)
 	if !fromEnv && ran == last-first+1 {
 		require.GreaterOrEqual(t, stats.nonLeaf[PruningPromoteEarliest], sweepNonLeafPromoteFloor,
 			"accepted non-leaf promote_earliest removals over seeds %d-%d", first, last)
@@ -413,6 +431,7 @@ func TestParseSweepSeeds(t *testing.T) {
 		{"a-3", `FAKE_SWEEP_SEEDS="a-3" is not two integers joined by -`},
 		{"1-2-3", `FAKE_SWEEP_SEEDS="1-2-3" is not two integers joined by -`},
 		{"0-5", `FAKE_SWEEP_SEEDS="0-5" holds a number below 1`},
+		{"1-0", `FAKE_SWEEP_SEEDS="1-0" holds a number below 1`},
 		{"5-1", `FAKE_SWEEP_SEEDS="5-1" has 5 above 1`},
 	} {
 		_, _, err := parseSweepSeeds(row.value)

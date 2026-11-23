@@ -8,6 +8,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -288,6 +289,19 @@ func (a *workerArena) tombstone(t *testing.T) int {
 	return a.FreeList[0]
 }
 
+// requireSlotsInUserIDOrder requires every live slot to hold a higher user ID
+// than the live slots before it, and every tombstone to follow every live slot.
+func requireSlotsInUserIDOrder(t *testing.T, a *workerArena) {
+	t.Helper()
+	held := make([]string, len(a.Nodes))
+	for i, n := range a.Nodes {
+		held[i] = n.UserID
+	}
+	live := slices.DeleteFunc(slices.Clone(held), func(id string) bool { return id == uuid.Nil.String() })
+	require.True(t, slices.IsSorted(live) && slices.Equal(held[:len(live)], live),
+		"the worker's arena holds these user IDs, by slot: %v", held)
+}
+
 // setFakeSponsor sets user's sponsor in a fake snapshot.
 func setFakeSponsor(s *fakeSnapshot, user, sponsor string) {
 	n := s.Nodes[user]
@@ -330,6 +344,45 @@ func restoreShapes() []restoreShape {
 			editFake:    func(s *fakeSnapshot) { setFakeSponsor(s, writerChild, writerRemoved) },
 			workerFault: `^sponsor on node slot \d+ names node slot \d+; that slot is a tombstone$`,
 			fakeMessage: "sponsor on node " + writerChild + " names " + writerRemoved + "; the snapshot holds no such node",
+		},
+		{
+			name: "a parent naming an absent node",
+			editWorker: func(t *testing.T, a *workerArena) {
+				tomb := a.tombstone(t)
+				a.Nodes[a.slot(t, writerOther)].Parent = &tomb
+			},
+			editFake:    func(s *fakeSnapshot) { setFakeParent(s, writerOther, writerRemoved) },
+			workerFault: `^parent on node slot \d+ names node slot \d+; that slot is a tombstone$`,
+			fakeMessage: "parent on node " + writerOther + " names " + writerRemoved + "; the snapshot holds no such node",
+		},
+		{
+			name: "a sponsor naming an absent node, and a later node's parent naming an absent node",
+			editWorker: func(t *testing.T, a *workerArena) {
+				tomb := a.tombstone(t)
+				a.Nodes[a.slot(t, writerChild)].Sponsor = &tomb
+				a.Nodes[a.slot(t, writerOther)].Parent = &tomb
+			},
+			editFake: func(s *fakeSnapshot) {
+				setFakeSponsor(s, writerChild, writerRemoved)
+				setFakeParent(s, writerOther, writerRemoved)
+			},
+			workerFault: `^sponsor on node slot \d+ names node slot \d+; that slot is a tombstone$`,
+			fakeMessage: "sponsor on node " + writerChild + " names " + writerRemoved + "; the snapshot holds no such node",
+		},
+		{
+			name: "a recruit list entry naming an absent user, and a later node's parent naming an absent node",
+			editWorker: func(t *testing.T, a *workerArena) {
+				tomb := a.tombstone(t)
+				r := a.slot(t, writerRoot)
+				a.Nodes[r].Sponsored = append(a.Nodes[r].Sponsored, tomb)
+				a.Nodes[a.slot(t, writerOther)].Parent = &tomb
+			},
+			editFake: func(s *fakeSnapshot) {
+				s.Sponsored[writerRoot] = append(s.Sponsored[writerRoot], writerRemoved)
+				setFakeParent(s, writerOther, writerRemoved)
+			},
+			workerFault: `^sponsored on node slot \d+ names node slot \d+; that slot is a tombstone$`,
+			fakeMessage: "the recruit list of " + writerRoot + " names " + writerRemoved + "; the snapshot holds no such node",
 		},
 		{
 			name: "a recruit list entry naming an absent user",
@@ -543,13 +596,15 @@ func restoreShapes() []restoreShape {
 				a.Nodes[x].Children = []int{y}
 				a.Nodes[y].Children = []int{x}
 				a.Nodes[r].Children = slices.DeleteFunc(a.Nodes[r].Children, func(c int) bool { return c == x || c == y })
+				a.Nodes[x].Depth = 2
 			},
 			editFake: func(s *fakeSnapshot) {
 				setFakeParent(s, writerChild, writerOther)
 				setFakeParent(s, writerOther, writerChild)
+				setFakeDepth(s, writerChild, 2)
 			},
-			workerFault: `^node slot \d+ holds ` + writerChild + ` at depth 1; its parent at node slot \d+ is at depth 1$`,
-			fakeMessage: "node " + writerChild + " is at depth 1; its parent " + writerOther + " is at depth 1",
+			workerFault: `^node slot \d+ holds ` + writerOther + ` at depth 1; its parent at node slot \d+ is at depth 2$`,
+			fakeMessage: "node " + writerOther + " is at depth 1; its parent " + writerChild + " is at depth 2",
 		},
 		{
 			name: "a root parented on and sponsored by its own child",
@@ -679,7 +734,10 @@ func TestFakeWriterEngine_RefusesTheSnapshotsTheWorkerRefuses(t *testing.T) {
 				require.NoError(t, err)
 
 				workerErr := client.RestoreSnapshot(ctx, restoredTree, workerTaken.TreeType,
-					editWorkerSnapshot(t, workerTaken.Data, func(a *workerArena) { shape.editWorker(t, a) }))
+					editWorkerSnapshot(t, workerTaken.Data, func(a *workerArena) {
+						requireSlotsInUserIDOrder(t, a)
+						shape.editWorker(t, a)
+					}))
 				fakeErr := fake.RestoreSnapshot(ctx, restoredTree, fakeTaken.TreeType,
 					editFakeSnapshot(t, fakeTaken.Data, shape.editFake))
 

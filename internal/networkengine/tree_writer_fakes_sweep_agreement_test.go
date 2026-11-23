@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,6 +22,7 @@ const (
 	sweepDefaultFirst        = 1
 	sweepDefaultLast         = 200
 	sweepNonLeafPromoteFloor = 600
+	sweepMostChildrenFloor   = 500
 	sweepNonLeafPct          = 90
 	sweepMostChildrenPct     = 75
 	sweepPromotePct          = 90
@@ -56,11 +58,12 @@ type sweepPosition struct {
 	Err             string
 }
 
-// sweepStats counts the removals both engines accepted.
+// sweepStats counts the sweep's removals by outcome and by the shape of their target.
 type sweepStats struct {
-	accepted map[PruningMode]int
-	nonLeaf  map[PruningMode]int
-	refused  int
+	accepted     map[PruningMode]int
+	nonLeaf      map[PruningMode]int
+	mostChildren int
+	refused      int
 }
 
 // sweepCase is one seed's tree on both engines and the log of what was done to it.
@@ -313,6 +316,10 @@ func sweepSeed(t *testing.T, client *EngineClient, seed int, stats *sweepStats, 
 			mode = PruningPromoteEarliest
 		}
 		hasKids := kids[x] > 0
+		mostAmongCands := 0
+		for _, u := range cands {
+			mostAmongCands = max(mostAmongCands, kids[u])
+		}
 		c.log = append(c.log, fmt.Sprintf("remove %s mode=%s", sweepShort(x), mode))
 
 		check := CheckRemoveMatrixNode(x, mode)
@@ -332,6 +339,9 @@ func sweepSeed(t *testing.T, client *EngineClient, seed int, stats *sweepStats, 
 		}
 		if workerErr == nil && fakeErr == nil {
 			stats.accepted[mode]++
+			if hasKids && kids[x] == mostAmongCands {
+				stats.mostChildren++
+			}
 			if hasKids {
 				stats.nonLeaf[mode]++
 			}
@@ -405,10 +415,13 @@ func TestFakeWriterEngine_SweepsMatrixRemovalsAsTheWorkerDoes(t *testing.T) {
 
 	client := startWorker(t)
 	stats, ran := runMatrixRemovalSweep(t, client, first, last)
-	t.Logf("ran %d seeds. Accepted removals: %v, of which non-leaf: %v. Refused: %d", ran, stats.accepted, stats.nonLeaf, stats.refused)
+	t.Logf("ran %d seeds. Accepted removals: %v, of which non-leaf: %v, of which the target had the most children: %d. Refused: %d",
+		ran, stats.accepted, stats.nonLeaf, stats.mostChildren, stats.refused)
 	if !fromEnv && ran == last-first+1 {
-		require.GreaterOrEqual(t, stats.nonLeaf[PruningPromoteEarliest], sweepNonLeafPromoteFloor,
+		assert.GreaterOrEqual(t, stats.nonLeaf[PruningPromoteEarliest], sweepNonLeafPromoteFloor,
 			"accepted non-leaf promote_earliest removals over seeds %d-%d", first, last)
+		assert.GreaterOrEqual(t, stats.mostChildren, sweepMostChildrenFloor,
+			"accepted removals whose target had the most children among the candidates, over seeds %d-%d", first, last)
 	}
 }
 

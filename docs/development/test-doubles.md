@@ -334,7 +334,8 @@ one.
 Guard each bias with a floor. Count the cases the bias exists to produce, and
 fail the run when that count drops. A drifted bias can leave every mutant at the
 bar and every other floor passing. On HEU-1090, with the most-children bias
-turned off, M2 failed exactly 5 seeds and the non-leaf floor still passed.
+turned off, the mutant whose free-slot search skipped repositioned siblings'
+subtrees failed exactly 5 seeds, and the non-leaf floor still passed.
 
 Choose each step from the real engine's state, never the fake's. A mutated fake
 then gets the same cases as the real one, and its counts can be compared.

@@ -404,6 +404,16 @@ func restoreShapes() []restoreShape {
 			fakeMessage: "a recruit list belongs to " + writerRemoved + "; the snapshot holds no such node",
 		},
 		{
+			name: "a recruit list owned by an absent user naming an absent user",
+			editWorker: func(t *testing.T, a *workerArena) {
+				tomb := a.tombstone(t)
+				a.Nodes[tomb].Sponsored = []int{tomb}
+			},
+			editFake:    func(s *fakeSnapshot) { s.Sponsored[writerRemoved] = []string{writerRemoved} },
+			workerFault: `^node slot \d+ is a tombstone and still holds a sponsored node$`,
+			fakeMessage: "a recruit list belongs to " + writerRemoved + "; the snapshot holds no such node",
+		},
+		{
 			name: "a non-root node with no parent",
 			editWorker: func(t *testing.T, a *workerArena) {
 				y, r := a.slot(t, writerOther), a.slot(t, writerRoot)

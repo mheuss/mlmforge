@@ -282,9 +282,9 @@ sponsor-chain checks.
 
 ## Two offenders on one restore check need the setup's placement order
 
-When two nodes fail the same restore check, the worker names the one in the
-earlier arena slot. Its first pass, over the user index, is the exception. It
-names the lower user ID. The writer fake has no slots. It names the one with the
+When two nodes fail the same restore check, and that check walks the arena slot
+by slot, the worker names the node in the earlier slot. The writer fake has no
+slots. It names the one with the
 lower user ID. The two agree only while slot order matches user-ID order.
 
 The fake keeps user-ID order. Matching the worker would mean copying its slot

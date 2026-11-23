@@ -315,6 +315,34 @@ the literal on every run.
 Found in review for HEU-1083 on 2026-11-20. Each row added during review took
 its value from the worker.
 
+## Check a generated sweep against the mutants it is for
+
+A sweep that passes on the real fake says nothing about its bounds. Its draws
+can miss the shapes a wrong rule needs. Then the sweep passes on that wrong rule
+too.
+
+Keep the mutants that got past the hand-written rows. Run each one against the
+sweep through `go test -overlay`. Count the seeds each one fails, not only
+whether any did. Require every mutant to fail at least 5 seeds of the fixed
+range CI runs. One failing seed is a margin a small change to the generator can
+lose.
+
+Bias the draws toward the shapes those mutants need. Keep a share of the seeds
+unbiased. A generator tuned only to the mutants you know cannot find the next
+one.
+
+Guard each bias with a floor. Count the cases the bias exists to produce, and
+fail the run when that count drops. A drifted bias can leave every mutant at the
+bar and every other floor passing. On HEU-1090, with the most-children bias
+turned off, M2 failed exactly 5 seeds and the non-leaf floor still passed.
+
+Choose each step from the real engine's state, never the fake's. A mutated fake
+then gets the same cases as the real one, and its counts can be compared.
+
+Used for HEU-1090 on 2026-11-23. The HEU-1083 sweep caught one mutant on 2
+seeds in 300. Aiming removals at the nodes with the most children raised that to
+12 in 200. One seed in four stays unbiased.
+
 ## A lenient decode in a probe hides a shape difference
 
 A probe can decode a snapshot into a struct and compare by length or printed

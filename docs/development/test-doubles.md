@@ -331,19 +331,19 @@ Bias the draws toward the shapes those mutants need. Keep a share of the seeds
 unbiased. A generator tuned only to the mutants you know cannot find the next
 one.
 
-Guard each bias with a floor. Count the cases the bias exists to produce, and
-fail the run when that count falls below the floor. A drifted bias can leave a
-mutant just at the bar and every other floor passing. On HEU-1090, with the
-most-children bias turned off, the mutant whose free-slot search skipped
-repositioned siblings' subtrees failed exactly 5 seeds, and the non-leaf floor
-still passed.
+Guard each bias with a floor. Count the cases the bias exists to produce. Fail
+the run when that count falls below the floor. A drifted bias can leave a mutant
+just at the bar and every other floor passing. On HEU-1090, one run turned the
+most-children bias off. In that run, the mutant whose free-slot search skipped
+repositioned siblings' subtrees failed exactly 5 seeds. The non-leaf floor still
+passed.
 
 Choose each step from the real engine's state, never the fake's. A mutated fake
-then gets the same cases as the real one, and its counts can be compared.
+then gets the same cases as the real one. Its counts can be compared.
 
 Used for HEU-1090 on 2026-11-23. The HEU-1083 sweep caught its weakest mutant on
-2 seeds in 300. Aiming removals at the nodes with the most children raised that to
-12 in 200. One seed in four stays unbiased.
+2 seeds in 300. Aiming removals at the nodes with the most children raised that
+to 12 in 200. One seed in four stays unbiased.
 
 ## A lenient decode in a probe hides a shape difference
 

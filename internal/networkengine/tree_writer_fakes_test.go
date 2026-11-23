@@ -1034,8 +1034,19 @@ func (f *fakeWriterEngine) TakeSnapshot(ctx context.Context, structure string) (
 	if err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(fakeSnapshot{Width: t.width, Root: t.root, Nodes: t.nodes, Sponsored: t.sponsored,
-		HoldingTank: t.tank})
+	snap := fakeSnapshot{Width: t.width, Root: t.root, Nodes: t.nodes, Sponsored: t.sponsored, HoldingTank: t.tank}
+	var encoded any = snap
+	if t.treeType == treeTypeMatrix {
+		tank := t.tank
+		if tank == nil {
+			tank = []HoldingTankEntryDTO{}
+		}
+		encoded = struct {
+			fakeSnapshot
+			HoldingTank []HoldingTankEntryDTO `json:"holding_tank"`
+		}{snap, tank}
+	}
+	data, err := json.Marshal(encoded)
 	if err != nil {
 		return nil, err
 	}

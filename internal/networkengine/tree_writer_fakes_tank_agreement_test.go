@@ -340,3 +340,43 @@ func TestFakeWriterEngine_RestoresTankChainsThatEndAsTheWorkerDoes(t *testing.T)
 	require.NoError(t, workerErr, "the worker's restore")
 	require.NoError(t, fakeErr)
 }
+
+func TestFakeWriterEngine_WritesTheHoldingTankKeyAsTheWorkerDoes(t *testing.T) {
+	ctx := context.Background()
+	for _, row := range []struct {
+		name      string
+		treeType  string
+		tankChild bool
+		want      string
+	}{
+		{"unilevel", treeTypeUnilevel, false, ""},
+		{"binary", treeTypeBinary, false, ""},
+		{"matrix with an empty tank", treeTypeMatrix, false, "[]"},
+		{"matrix with one tanked user", treeTypeMatrix, true,
+			`[{"user_id":"00000000-0000-0000-0000-000000000002","sponsor_user_id":"00000000-0000-0000-0000-000000000001","enrolled_at":200}]`},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			client := startWorker(t)
+			fake := newFakeWriterEngine()
+			for _, e := range []removalAgreementEngine{client, fake} {
+				agreementWithChild(row.treeType)(t, e)
+				if row.tankChild {
+					_, err := e.RemoveMatrixNode(ctx, writerTree, writerChild, PruningHoldingTank)
+					require.NoError(t, err)
+				}
+			}
+			assert.Equal(t, row.want, tankKeyOf(t, client, writerTree), "the worker's holding_tank")
+			assert.Equal(t, row.want, tankKeyOf(t, fake, writerTree), "the fake's holding_tank")
+		})
+	}
+}
+
+// tankKeyOf returns the raw holding_tank value in e's snapshot of structure, or "" when the key is absent.
+func tankKeyOf(t *testing.T, e removalAgreementEngine, structure string) string {
+	t.Helper()
+	taken, err := e.TakeSnapshot(context.Background(), structure)
+	require.NoError(t, err)
+	var tree map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(taken.Data, &tree))
+	return string(tree["holding_tank"])
+}

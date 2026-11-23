@@ -155,6 +155,17 @@ separates a stale match from a mutation that ran. Re-read the not-applied
 rows after every edit to the code under mutation: a stale expression and a
 genuinely unreachable one look identical.
 
+A whole-file overlay mutant reverts every later commit to that file. The mutant
+is a full copy of the file as it stood when the harness wrote it. Commit a fix
+to the same file and the overlay replaces it with the old copy plus the
+mutation. Every case the fix touched then fails for the wrong reason, and the
+count reads as a catch.
+
+Worked case, HEU-1090 on 2026-11-23. The M1 to M6 copies predated the
+holding_tank fix, so every seed would have failed on the tank key.
+
+**Regenerate a whole-file mutant after every commit to its file.**
+
 **Re-run every row after every fix.** The cost is one suite run per mutation.
 The alternative is a guard that reads as pinned and is not.
 

@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"testing"
 
@@ -159,8 +160,15 @@ func workerLists(t *testing.T, client *EngineClient, structure string) map[strin
 	t.Helper()
 	taken, err := client.TakeSnapshot(context.Background(), structure)
 	require.NoError(t, err)
+	return workerListsOf(t, taken.Data)
+}
+
+// workerListsOf returns the recruit map from a worker snapshot, leaving out
+// users with no recruits.
+func workerListsOf(t *testing.T, data json.RawMessage) map[string][]string {
+	t.Helper()
 	lists := map[string][]string{}
-	editWorkerSnapshot(t, taken.Data, func(a *workerArena) {
+	editWorkerSnapshot(t, data, func(a *workerArena) {
 		for slot, node := range a.Nodes {
 			if slices.Contains(a.FreeList, slot) {
 				continue

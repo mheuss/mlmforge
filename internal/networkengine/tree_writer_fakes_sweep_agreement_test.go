@@ -415,7 +415,7 @@ func TestFakeWriterEngine_SweepsMatrixRemovalsAsTheWorkerDoes(t *testing.T) {
 
 	client := startWorker(t)
 	stats, ran := runMatrixRemovalSweep(t, client, first, last)
-	t.Logf("ran %d seeds. Accepted removals: %v, of which non-leaf: %v, of which the target had the most children: %d. Refused: %d",
+	t.Logf("ran %d seeds. Accepted removals: %v, of which non-leaf: %v, of which the target had the most children: %d. Refused by either engine: %d",
 		ran, stats.accepted, stats.nonLeaf, stats.mostChildren, stats.refused)
 	if !fromEnv && ran == last-first+1 {
 		assert.GreaterOrEqual(t, stats.nonLeaf[PruningPromoteEarliest], sweepNonLeafPromoteFloor,

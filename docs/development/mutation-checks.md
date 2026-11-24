@@ -719,12 +719,12 @@ root-sponsor check. That order's row failed with the new one.
 
 A round-trip test serializes a structure, restores it, and compares the
 re-export with the original. Both sides go through the same serializer. A field
-the snapshot never writes is missing from both, so the comparison passes. The
-restored structure still lacks that state, and its next mutation can go a
+the snapshot never writes is missing from both. The comparison passes. The
+restored structure still lacks that state. Its next mutation can go a
 different way.
 
 Restore a copy partway through a sequence of operations. Run the remaining
-operations on the copy and on the original, and compare the two after each one.
+operations on the copy and on the original. Compare the two after each one.
 
 Prove each half with its own mutation. Skip a field on deserialize only, and the
 re-export comparison fails. Skip it in both directions, and only the replay

@@ -277,8 +277,8 @@ fake's own layout. An example is which of two loops runs first inside one worker
 check. Such a row breaks on a refactor that changes nothing the worker would
 answer.
 
-A row that must not depend on the order needs the opposite: a setup that every
-other check accepts. Confirm it with a control request that succeeds.
+A row that must not depend on the order needs a setup that every other check
+accepts. Confirm it with a control request that succeeds.
 
 Used for HEU-1078 on 2026-11-18, for the writer fake's root-sponsor and
 sponsor-chain checks.
@@ -417,8 +417,9 @@ the child.
 
 A refusal message often names one of several ids from the request. A
 `message_contains` that stops before the id still passes when the code names
-the wrong one. Pin through the id, and give the setup distinct ids so a swap
+the wrong one. Pin through the id. Give the setup distinct ids so a swap
 shows.
 
 Stop the pin before any value the message computes. A computed value can be
-wrong today, and its fix should not break the fixture. HEU-1132 tracks one.
+wrong today. Its fix should not break the fixture. HEU-1132 tracks one such
+value.

@@ -20,8 +20,7 @@ import (
 const handleEventWriterFile = writerPackageDir + "/tree_writer.go"
 
 // handleEventWriterReferences is how many references to HandleEvent
-// handleEventWriterFile may hold. Pinned, so that adding one fails this test
-// and has to change this line.
+// handleEventWriterFile may hold.
 const handleEventWriterReferences = 2
 
 // consumerFile is the module-relative path of the one non-test file allowed to
@@ -92,7 +91,9 @@ func findHandleEventReferences(root string) (handleEventScan, error) {
 			switch {
 			case name == "HandleEvent" && rel == handleEventWriterFile:
 				scan.inWriter++
-			case name == "HandleEvent", consumerHandlers[name] && rel != consumerFile:
+			case name == "HandleEvent":
+				scan.others = append(scan.others, fmt.Sprintf("%s:%d: %s", rel, fset.Position(sel.Pos()).Line, name))
+			case consumerHandlers[name] && rel != consumerFile:
 				scan.others = append(scan.others, fmt.Sprintf("%s:%d: %s", rel, fset.Position(sel.Pos()).Line, name))
 			}
 			return true
@@ -192,19 +193,22 @@ func TestHandleEventGuardFailures_EachRuleFailsOnItsOwn(t *testing.T) {
 				consumerFile + "; found:\ninternal/networkengine/tree_replay.go:4: handleNodePlaced",
 		}, handleEventGuardFailures(scan))
 	})
-	t.Run("one reference too many in the writer", func(t *testing.T) {
-		scan := handleEventScan{inWriter: handleEventWriterReferences + 1}
+	for _, found := range []int{handleEventWriterReferences - 1, handleEventWriterReferences + 1} {
+		t.Run(fmt.Sprintf("writer count %d", found), func(t *testing.T) {
+			scan := handleEventScan{inWriter: found}
 
-		assert.Equal(t, []string{
-			fmt.Sprintf("expected 2 HandleEvent references in %s; found 3", handleEventWriterFile),
-		}, handleEventGuardFailures(scan))
-	})
+			assert.Equal(t, []string{
+				fmt.Sprintf("expected %d HandleEvent references in %s; found %d",
+					handleEventWriterReferences, handleEventWriterFile, found),
+			}, handleEventGuardFailures(scan))
+		})
+	}
 	t.Run("both rules hold", func(t *testing.T) {
 		assert.Empty(t, handleEventGuardFailures(handleEventScan{inWriter: handleEventWriterReferences}))
 	})
 }
 
-func TestNoProductionCodeCallsHandleEventOutsideTheWriter(t *testing.T) {
+func TestHandleEventGuardHoldsOnTheModule(t *testing.T) {
 	scan, err := findHandleEventReferences(moduleRoot(t))
 
 	require.NoError(t, err)

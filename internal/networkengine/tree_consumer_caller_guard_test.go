@@ -3,9 +3,7 @@ package networkengine
 import (
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,38 +48,7 @@ type handleEventScan struct {
 // alike.
 func findHandleEventReferences(root string) (handleEventScan, error) {
 	var scan handleEventScan
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		name := d.Name()
-		if d.IsDir() {
-			if path == root {
-				return nil
-			}
-			skip, err := isSkippedDir(path, name)
-			if err != nil {
-				return err
-			}
-			if skip {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") ||
-			!strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		fset := token.NewFileSet()
-		file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
-		if err != nil {
-			return err
-		}
+	err := walkModuleGoFiles(root, func(rel string, fset *token.FileSet, file *ast.File) error {
 		ast.Inspect(file, func(n ast.Node) bool {
 			sel, ok := n.(*ast.SelectorExpr)
 			if !ok {

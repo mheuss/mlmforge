@@ -110,12 +110,10 @@ func isSkippedDir(path, name string) (bool, error) {
 	return false, err
 }
 
-// findRejectionProducers reports each place a non-test Go file in the module
-// at root builds a tree.event_rejected event or its payload, and counts the
-// builds inside the Reject method on *TreeWriter in the writer's package.
-func findRejectionProducers(root string) (rejectionScan, error) {
-	var scan rejectionScan
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+// walkModuleGoFiles parses each non-test Go file of the module at root and
+// passes it to visit with its module-relative, slash-separated path.
+func walkModuleGoFiles(root string, visit func(rel string, fset *token.FileSet, file *ast.File) error) error {
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -141,12 +139,21 @@ func findRejectionProducers(root string) (rejectionScan, error) {
 		if err != nil {
 			return err
 		}
-		rel = filepath.ToSlash(rel)
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 		if err != nil {
 			return err
 		}
+		return visit(filepath.ToSlash(rel), fset, file)
+	})
+}
+
+// findRejectionProducers reports each place a non-test Go file in the module
+// at root builds a tree.event_rejected event or its payload, and counts the
+// builds inside the Reject method on *TreeWriter in the writer's package.
+func findRejectionProducers(root string) (rejectionScan, error) {
+	var scan rejectionScan
+	err := walkModuleGoFiles(root, func(rel string, fset *token.FileSet, file *ast.File) error {
 		inWriterPackage := filepath.ToSlash(filepath.Dir(rel)) == writerPackageDir
 		for _, decl := range file.Decls {
 			fn, isFunc := decl.(*ast.FuncDecl)

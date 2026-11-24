@@ -245,7 +245,8 @@ proptest! {
         prop_assert_eq!(restored.validate_restored(), Ok(()));
         prop_assert_eq!(
             serde_json::to_value(&restored).unwrap(),
-            serde_json::to_value(&tree).unwrap()
+            serde_json::to_value(&tree).unwrap(),
+            "the restored re-export differs from the original"
         );
     }
 
@@ -268,7 +269,8 @@ proptest! {
         prop_assert_eq!(restored.validate_restored(), Ok(()));
         prop_assert_eq!(
             serde_json::to_value(&restored).unwrap(),
-            serde_json::to_value(&tree).unwrap()
+            serde_json::to_value(&tree).unwrap(),
+            "the restored re-export differs from the original"
         );
     }
 
@@ -291,7 +293,8 @@ proptest! {
         prop_assert_eq!(restored.validate_restored(), Ok(()));
         prop_assert_eq!(
             serde_json::to_value(&restored).unwrap(),
-            serde_json::to_value(&tree).unwrap()
+            serde_json::to_value(&tree).unwrap(),
+            "the restored re-export differs from the original"
         );
     }
 

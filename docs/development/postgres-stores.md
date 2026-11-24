@@ -95,8 +95,10 @@ a `jsonb` column rejects it with `22P02 invalid input syntax for type json`.
 pool.Exec(ctx, sql, id, json.RawMessage{})
 ```
 
-Normalize `len(x) == 0` to nil before the write. Do it in one helper both
-implementations call, or the two disagree on a value the shared suite compares.
+Normalize `len(x) == 0` to nil, or refuse it, in one helper both
+implementations call. Otherwise the two disagree on a value the shared suite
+compares. The event store refuses an empty non-nil slice in a validator both
+twins call.
 
 ## jsonb does not preserve key order
 
@@ -119,19 +121,27 @@ reformatted (`1e21` becomes `1000000000000000000000`).
 
 ## Go's json decoder is not Postgres's jsonb parser
 
-Four known divergences. None is theoretical; all were reproduced.
+These divergences are known. None is theoretical. All were reproduced.
 
 | Input | Go | Postgres |
 |---|---|---|
 | `\u0000` escape in a string | accepts | rejects — text cannot hold NUL |
 | unpaired surrogate (`\ud800`) | accepts, substitutes U+FFFD | rejects |
 | raw invalid UTF-8 byte | accepts, substitutes U+FFFD | rejects at the encoding layer |
+| nesting past 10000 levels | `json.Valid` **rejects** | accepts, up to its stack depth limit (HEU-1149) |
 | number beyond float64 (`1e400`) | **rejects** | accepts as `numeric` |
 
-The last one reverses: Go is stricter. Fix it with `json.Decoder` +
-`UseNumber()`, which keeps the literal text instead of parsing to float64.
-Catch raw invalid UTF-8 with `utf8.Valid`. The two escape-sequence cases are
-not worth reimplementing jsonb's parser for — document them instead.
+The depth and number rows reverse: Go is stricter. Fix the number row with
+`json.Decoder` + `UseNumber()`, which keeps the literal text instead of parsing
+to float64. `json.SyntaxError.Offset` is a count, not a byte index. On go1.27
+its meaning varies by error, and it is 0 for `5.`.
+Catch raw invalid UTF-8 with `utf8.Valid`. The event store's validator refuses
+both escape-sequence cases without reimplementing jsonb's parser. It scans a
+value's escapes once `json.Valid` passes it. Postgres refuses a number outside
+`numeric` range. The memory event store accepts it. HEU-1146 asks whether
+the validator should refuse it. The memory event store returns the bytes it was
+given. Postgres returns normalised jsonb. HEU-1147 asks how the two
+stores' readback should compare.
 
 `utf8.Valid` does not catch the unpaired surrogate. The escape `\ud800` is six
 ASCII bytes, so the raw input is valid UTF-8. Go then decodes it to U+FFFD with
@@ -142,9 +152,10 @@ spelled out directly.
 
 Go's decoder also keeps the last of two repeated member names and reports no
 error. Decoding `{"left":9,"left":1,"right":1}` into a map gave `left` 1.
-Observed in Go's decoder only, in HEU-594. What jsonb does with the same input
-was not tested. HEU-594's reader refuses a repeated name by walking the object
-with `Token()` and checking each name before decoding its value.
+Observed in Go's decoder in HEU-594. jsonb also keeps the last one. In
+HEU-1112, a stored `{"a":1,"a":2}` read back as `{"a": 2}`. HEU-594's reader
+refuses a repeated name by walking the object with `Token()` and checking each
+name before decoding its value.
 
 A value Go writes is not always a value Go can read back. `dec.Parse` refuses
 canonical text over 64 bytes, and `dec.Amount.UnmarshalJSON` goes through it.

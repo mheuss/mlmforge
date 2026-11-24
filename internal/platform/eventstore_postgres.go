@@ -166,6 +166,9 @@ func (s *PostgresEventStore) ReadLastEvent(ctx context.Context, stream string) (
 // ReadCategory returns events across streams matching a category prefix.
 // Pass limit=0 to read all matching events.
 func (s *PostgresEventStore) ReadCategory(ctx context.Context, category string, afterPosition int64, limit int64) ([]Event, error) {
+	if err := validateCategory(category); err != nil {
+		return nil, err
+	}
 	var (
 		rows pgx.Rows
 		err  error

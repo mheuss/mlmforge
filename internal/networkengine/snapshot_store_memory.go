@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"unicode/utf8"
+
+	"github.com/mlmforge/mlmforge/internal/platform"
 )
 
 // Compile-time check.
@@ -27,18 +29,27 @@ func (s *MemorySnapshotStore) Get(ctx context.Context, treeID string) (Snapshot,
 	if err := ctx.Err(); err != nil {
 		return Snapshot{}, false, err
 	}
+	key, err := snapshotTreeKey("get", treeID)
+	if err != nil {
+		return Snapshot{}, false, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	snap, ok := s.snapshots[treeID]
+	snap, ok := s.snapshots[key]
 	if !ok {
 		return Snapshot{}, false, nil
 	}
+	snap.TreeID = treeID
 	snap.Data = bytes.Clone(snap.Data)
 	return snap, true, nil
 }
 
 func (s *MemorySnapshotStore) Put(ctx context.Context, snap Snapshot) (bool, error) {
 	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	key, err := snapshotTreeKey("put", snap.TreeID)
+	if err != nil {
 		return false, err
 	}
 	if snap.Version < 1 {
@@ -52,11 +63,11 @@ func (s *MemorySnapshotStore) Put(ctx context.Context, snap Snapshot) (bool, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cur, ok := s.snapshots[snap.TreeID]; ok && cur.Version >= snap.Version {
+	if cur, ok := s.snapshots[key]; ok && cur.Version >= snap.Version {
 		return false, nil
 	}
 	snap.Data = bytes.Clone(snap.Data)
-	s.snapshots[snap.TreeID] = snap
+	s.snapshots[key] = snap
 	return true, nil
 }
 
@@ -64,10 +75,14 @@ func (s *MemorySnapshotStore) Delete(ctx context.Context, treeID string, version
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	key, err := snapshotTreeKey("delete", treeID)
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cur, ok := s.snapshots[treeID]; ok && cur.Version == version {
-		delete(s.snapshots, treeID)
+	if cur, ok := s.snapshots[key]; ok && cur.Version == version {
+		delete(s.snapshots, key)
 	}
 	return nil
 }
@@ -76,14 +91,26 @@ func (s *MemorySnapshotStore) LastAttempt(ctx context.Context, treeID string) (S
 	if err := ctx.Err(); err != nil {
 		return SnapshotAttempt{}, false, err
 	}
+	key, err := snapshotTreeKey("last attempt", treeID)
+	if err != nil {
+		return SnapshotAttempt{}, false, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	a, ok := s.attempts[treeID]
-	return a, ok, nil
+	a, ok := s.attempts[key]
+	if !ok {
+		return SnapshotAttempt{}, false, nil
+	}
+	a.TreeID = treeID
+	return a, true, nil
 }
 
 func (s *MemorySnapshotStore) RecordAttempt(ctx context.Context, a SnapshotAttempt) error {
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	key, err := snapshotTreeKey("record attempt", a.TreeID)
+	if err != nil {
 		return err
 	}
 	if a.Version < 1 {
@@ -99,9 +126,18 @@ func (s *MemorySnapshotStore) RecordAttempt(ctx context.Context, a SnapshotAttem
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cur, ok := s.attempts[a.TreeID]; ok && a.Version < cur.Version && (!cur.Stored || a.Stored) {
+	if cur, ok := s.attempts[key]; ok && a.Version < cur.Version && (!cur.Stored || a.Stored) {
 		return nil
 	}
-	s.attempts[a.TreeID] = a
+	s.attempts[key] = a
 	return nil
+}
+
+// snapshotTreeKey returns treeID in canonical form, or an error naming op when it is not a UUID.
+func snapshotTreeKey(op, treeID string) (string, error) {
+	key, ok := platform.CanonicalUUID(treeID)
+	if !ok {
+		return "", fmt.Errorf("snapshot %s: tree id %q is not a UUID", op, treeID)
+	}
+	return key, nil
 }

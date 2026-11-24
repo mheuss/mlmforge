@@ -21,6 +21,8 @@ func TestValidateStreamName(t *testing.T) {
 		{name: "hyphen only", stream: "-", wantErr: true},
 		{name: "empty category", stream: "-abc", wantErr: true},
 		{name: "empty id", stream: "order-", wantErr: true},
+		{name: "NUL byte", stream: "order-a\x00b", wantErr: true},
+		{name: "invalid UTF-8", stream: "order-a\xffb", wantErr: true},
 	}
 
 	for _, tt := range tests {

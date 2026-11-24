@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -864,6 +865,222 @@ func testAppendRefusals(t *testing.T, newStore func(t *testing.T) EventStore) {
 		require.NoError(t, err)
 		assert.Empty(t, got)
 	})
+}
+
+// unstorableEvent is one Append input the event store must refuse.
+type unstorableEvent struct {
+	name   string
+	stream string
+	event  NewEvent
+	want   string
+}
+
+// unstorableEvents returns the Append inputs the event store must refuse.
+func unstorableEvents() []unstorableEvent {
+	const id = "00000000-0000-0000-0000-000000000001"
+	event := func(typ, payload string) NewEvent {
+		return NewEvent{ID: id, Type: typ, Payload: json.RawMessage(payload)}
+	}
+	withMetadata := func(metadata json.RawMessage) NewEvent {
+		return NewEvent{ID: id, Type: "OrderCreated", Payload: json.RawMessage(`{}`), Metadata: metadata}
+	}
+	return []unstorableEvent{
+		{"a Payload that is not JSON", "order-abc", event("OrderCreated", `{`), "index 0 has Payload that encoding/json refused: unexpected end of JSON input (offset 1)"},
+		{"an empty non-nil Payload", "order-abc", NewEvent{ID: id, Type: "OrderCreated", Payload: json.RawMessage{}}, "index 0 has Payload that is empty"},
+		{"a Payload that is not UTF-8", "order-abc", event("OrderCreated", "{\"a\":\"\xff\"}"), "index 0 has Payload that is not valid UTF-8 at byte 6"},
+		{"a NUL escape in a Payload value", "order-abc", event("OrderCreated", `{"a":"\u0000"}`), `index 0 has Payload that holds a \u0000 escape at byte 6`},
+		{"a NUL escape in a Payload key", "order-abc", event("OrderCreated", `{"\u0000":1}`), `holds a \u0000 escape at byte 2`},
+		{"a NUL escape after an escaped backslash", "order-abc", event("OrderCreated", `{"a":"\\\u0000"}`), `holds a \u0000 escape at byte 8`},
+		{"a NUL escape inside a longer string", "order-abc", event("OrderCreated", `{"a":"x\u0000y"}`), `holds a \u0000 escape at byte 7`},
+		{"a lone high surrogate", "order-abc", event("OrderCreated", `{"a":"\ud800"}`), "index 0 has Payload that holds an unpaired surrogate escape at byte 6"},
+		{"a high surrogate before plain text", "order-abc", event("OrderCreated", `{"a":"\ud800x"}`), "holds an unpaired surrogate escape at byte 6"},
+		{"two high surrogates", "order-abc", event("OrderCreated", `{"a":"\ud800\ud800"}`), "holds an unpaired surrogate escape at byte 6"},
+		{"a lone low surrogate", "order-abc", event("OrderCreated", `{"a":"\udc00"}`), "holds an unpaired surrogate escape at byte 6"},
+		{"an uppercase lone low surrogate", "order-abc", event("OrderCreated", `{"a":"\uDC00"}`), "holds an unpaired surrogate escape at byte 6"},
+		{"a surrogate pair in the wrong order", "order-abc", event("OrderCreated", `{"a":"\ude00\ud83d"}`), "holds an unpaired surrogate escape at byte 6"},
+		{"a Metadata that is not JSON", "order-abc", withMetadata(json.RawMessage(`{`)), "index 0 has Metadata that encoding/json refused: unexpected end of JSON input (offset 1)"},
+		{"an empty non-nil Metadata", "order-abc", withMetadata(json.RawMessage{}), "index 0 has Metadata that is empty"},
+		{"a Metadata that is not UTF-8", "order-abc", withMetadata(json.RawMessage("{\"a\":\"\xff\"}")), "index 0 has Metadata that is not valid UTF-8 at byte 6"},
+		{"an unpaired surrogate in Metadata", "order-abc", withMetadata(json.RawMessage(`{"a":"\ud800"}`)), "index 0 has Metadata that holds an unpaired surrogate escape at byte 6"},
+		{"a NUL escape in Metadata", "order-abc", withMetadata(json.RawMessage(`{"a":"\u0000"}`)), `index 0 has Metadata that holds a \u0000 escape at byte 6`},
+		{"a NUL in Type", "order-abc", event("Order\x00Created", `{}`), `index 0 has Type "Order\x00Created", which holds a NUL byte`},
+		{"a Type that is not UTF-8", "order-abc", event("Order\xffCreated", `{}`), `index 0 has Type "Order\xffCreated", which is not valid UTF-8`},
+		{"a NUL in the stream name", "order-a\x00b", event("OrderCreated", `{}`), `invalid stream name: "order-a\x00b" holds a NUL byte`},
+		{"a stream name that is not UTF-8", "order-a\xffb", event("OrderCreated", `{}`), `invalid stream name: "order-a\xffb" is not valid UTF-8`},
+	}
+}
+
+// testUnstorableEvents checks that Append refuses each listed input and writes nothing.
+func testUnstorableEvents(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	const id = "00000000-0000-0000-0000-000000000001"
+	t.Run("the unedited event is accepted and written", func(t *testing.T) {
+		s := newStore(t)
+
+		require.NoError(t, s.Append(ctx, "order-abc", 0, []NewEvent{{ID: id, Type: "OrderCreated", Payload: json.RawMessage(`{}`)}}))
+
+		got, err := s.ReadCategory(ctx, "order", 0, 0)
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, "order-abc", got[0].Stream)
+		assert.Equal(t, "OrderCreated", got[0].Type)
+	})
+	deep := strings.Repeat("[", 10001) + strings.Repeat("]", 10001)
+	cases := append(unstorableEvents(), unstorableEvent{
+		"JSON nested past encoding/json's depth limit", "order-abc",
+		NewEvent{ID: id, Type: "OrderCreated", Payload: json.RawMessage(deep)},
+		"index 0 has Payload that encoding/json refused: exceeded max depth (offset 10001)",
+	})
+	for _, tc := range cases {
+		t.Run(tc.name+" is refused and writes nothing", func(t *testing.T) {
+			s := newStore(t)
+
+			err := s.Append(ctx, tc.stream, 0, []NewEvent{tc.event})
+
+			require.ErrorContains(t, err, tc.want)
+			got, err := s.ReadCategory(ctx, "order", 0, 0)
+			require.NoError(t, err)
+			assert.Empty(t, got)
+		})
+	}
+}
+
+func TestMemoryEventStore_UnstorableEvents(t *testing.T) {
+	testUnstorableEvents(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_UnstorableEvents(t *testing.T) {
+	testUnstorableEvents(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}
+
+// testStorableEvents checks that Append accepts each listed value as Payload and Metadata.
+func testStorableEvents(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	for _, raw := range []string{
+		`1`, `"x"`, `null`, `true`, ` {} `, "\t[1,{\"a\":[]}]\n", `-0`, `1E+2`, `{"a":1,"a":2}`,
+		`{"a":"\\u0000"}`,
+		`{"a":"\\\\u0000"}`,
+		`{"a":"\u0001"}`,
+		`{"a":"\u00e9"}`,
+		`{"a":"\ud83d` + `\ude00"}`,
+		`{"a":"\uD83D` + `\uDE00"}`,
+	} {
+		t.Run(fmt.Sprintf("%q is accepted as Payload and Metadata", raw), func(t *testing.T) {
+			s := newStore(t)
+
+			require.NoError(t, s.Append(ctx, "order-abc", 0, []NewEvent{{
+				ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated",
+				Payload: json.RawMessage(raw), Metadata: json.RawMessage(raw),
+			}}))
+
+			got, err := s.ReadStream(ctx, "order-abc", 1, 0)
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			assert.JSONEq(t, raw, string(got[0].Payload))
+			assert.JSONEq(t, raw, string(got[0].Metadata))
+		})
+	}
+}
+
+func TestMemoryEventStore_StorableEvents(t *testing.T) {
+	testStorableEvents(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_StorableEvents(t *testing.T) {
+	testStorableEvents(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}
+
+// unstorableName is one stream name and one category the event store must refuse.
+type unstorableName struct{ name, stream, category, want string }
+
+// unstorableNames returns the names the event store must refuse.
+func unstorableNames() []unstorableName {
+	return []unstorableName{
+		{"a NUL", "order-a\x00b", "ord\x00er", "holds a NUL byte"},
+		{"invalid UTF-8", "order-a\xffb", "ord\xffer", "is not valid UTF-8"},
+	}
+}
+
+// testUnstorableNames checks that Append and the reads refuse each listed name.
+func testUnstorableNames(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	for _, tc := range unstorableNames() {
+		t.Run("a stream name holding "+tc.name+" is refused by Append, ReadStream and ReadLastEvent", func(t *testing.T) {
+			s := newStore(t)
+
+			err := s.Append(ctx, tc.stream, 0, []NewEvent{{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)}})
+			require.ErrorIs(t, err, ErrInvalidStreamName)
+			require.ErrorContains(t, err, tc.want)
+			_, err = s.ReadStream(ctx, tc.stream, 1, 0)
+			require.ErrorIs(t, err, ErrInvalidStreamName)
+			require.ErrorContains(t, err, tc.want)
+			_, err = s.ReadLastEvent(ctx, tc.stream)
+			require.ErrorIs(t, err, ErrInvalidStreamName)
+			require.ErrorContains(t, err, tc.want)
+		})
+		t.Run("a category holding "+tc.name+" is refused by ReadCategory", func(t *testing.T) {
+			s := newStore(t)
+
+			_, err := s.ReadCategory(ctx, tc.category, 0, 0)
+
+			require.ErrorContains(t, err, fmt.Sprintf("eventstore: category %q %s", tc.category, tc.want))
+		})
+	}
+}
+
+func TestMemoryEventStore_UnstorableNames(t *testing.T) {
+	testUnstorableNames(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_UnstorableNames(t *testing.T) {
+	testUnstorableNames(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}
+
+// testCancelledContext checks Append and the reads under a cancelled context,
+// and that an invalid argument is reported first.
+func testCancelledContext(t *testing.T, newStore func(t *testing.T) EventStore) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	t.Run("Append and the reads return context.Canceled and Append writes nothing", func(t *testing.T) {
+		s := newStore(t)
+
+		err := s.Append(cancelled, "order-abc", 0, []NewEvent{{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)}})
+		assert.ErrorIs(t, err, context.Canceled, "Append")
+		_, err = s.ReadStream(cancelled, "order-abc", 1, 0)
+		assert.ErrorIs(t, err, context.Canceled, "ReadStream")
+		_, err = s.ReadLastEvent(cancelled, "order-abc")
+		assert.ErrorIs(t, err, context.Canceled, "ReadLastEvent")
+		_, err = s.ReadCategory(cancelled, "order", 0, 0)
+		assert.ErrorIs(t, err, context.Canceled, "ReadCategory")
+
+		got, err := s.ReadCategory(context.Background(), "order", 0, 0)
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("an invalid argument is reported ahead of the cancelled context", func(t *testing.T) {
+		s := newStore(t)
+
+		assert.ErrorIs(t, s.Append(cancelled, "order-abc", 0, nil), ErrEmptyAppend, "Append")
+		assert.ErrorContains(t, s.Append(cancelled, "order-abc", 0, []NewEvent{{ID: "00000000-0000-0000-0000-000000000001", Type: "", Payload: json.RawMessage(`{}`)}}),
+			"index 0 has empty Type", "Append with an invalid event")
+		_, err := s.ReadStream(cancelled, "singleton", 1, 0)
+		assert.ErrorIs(t, err, ErrInvalidStreamName, "ReadStream")
+		_, err = s.ReadLastEvent(cancelled, "singleton")
+		assert.ErrorIs(t, err, ErrInvalidStreamName, "ReadLastEvent")
+		_, err = s.ReadCategory(cancelled, "ord\x00er", 0, 0)
+		assert.ErrorContains(t, err, "eventstore: category", "ReadCategory")
+		assert.NotErrorIs(t, err, context.Canceled, "ReadCategory")
+	})
+}
+
+func TestMemoryEventStore_CancelledContext(t *testing.T) {
+	testCancelledContext(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_CancelledContext(t *testing.T) {
+	testCancelledContext(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
 }
 
 func TestMemoryEventStore_AppendRefusals(t *testing.T) {

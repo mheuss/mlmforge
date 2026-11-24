@@ -3,26 +3,33 @@ package platform
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // ErrEmptyAppend is returned when Append is called with an empty events slice.
 var ErrEmptyAppend = errors.New("eventstore: cannot append zero events")
 
-// ErrInvalidStreamName is returned when a stream name does not match the
-// required {category}-{id} format. Use errors.Is to check for this error.
+// ErrInvalidStreamName is returned when a stream name is refused. Use errors.Is
+// to check for this error.
 var ErrInvalidStreamName = errors.New("eventstore: invalid stream name")
 
-// ValidateStreamName checks that a stream name follows the {category}-{id}
-// convention documented in ADR-016. The category is the part before the first
-// hyphen. Both category and id must be non-empty.
+// ValidateStreamName checks that a stream name is valid UTF-8 with no NUL
+// byte, in {category}-{id} form. The category is the part before the first
+// hyphen, and both parts must be non-empty.
 func ValidateStreamName(stream string) error {
 	if stream == "" {
 		return fmt.Errorf("%w: must not be empty", ErrInvalidStreamName)
+	}
+	if problem := textProblem(stream); problem != "" {
+		return fmt.Errorf("%w: %q %s", ErrInvalidStreamName, stream, problem)
 	}
 	cat, id, ok := strings.Cut(stream, "-")
 	if !ok {
@@ -37,8 +44,16 @@ func ValidateStreamName(stream string) error {
 	return nil
 }
 
-// ValidateNewEvent checks that required fields on a NewEvent are populated.
-// Returns an error describing the first missing field.
+// validateCategory checks that a category is storable text.
+func validateCategory(category string) error {
+	if problem := textProblem(category); problem != "" {
+		return fmt.Errorf("eventstore: category %q %s", category, problem)
+	}
+	return nil
+}
+
+// ValidateNewEvent checks that a NewEvent's fields are present and storable.
+// Returns an error describing the first field that fails.
 func ValidateNewEvent(e NewEvent, index int) error {
 	if e.ID == "" {
 		return fmt.Errorf("eventstore: event at index %d has empty ID", index)
@@ -46,10 +61,99 @@ func ValidateNewEvent(e NewEvent, index int) error {
 	if e.Type == "" {
 		return fmt.Errorf("eventstore: event at index %d has empty Type", index)
 	}
+	if problem := textProblem(e.Type); problem != "" {
+		return fmt.Errorf("eventstore: event at index %d has Type %q, which %s", index, e.Type, problem)
+	}
 	if e.Payload == nil {
 		return fmt.Errorf("eventstore: event at index %d has nil Payload", index)
 	}
+	if problem := jsonbProblem(e.Payload); problem != "" {
+		return fmt.Errorf("eventstore: event at index %d has Payload that %s", index, problem)
+	}
+	if e.Metadata != nil {
+		if problem := jsonbProblem(e.Metadata); problem != "" {
+			return fmt.Errorf("eventstore: event at index %d has Metadata that %s", index, problem)
+		}
+	}
 	return nil
+}
+
+// textProblem describes why s is not storable text, or returns "".
+func textProblem(s string) string {
+	if !utf8.ValidString(s) {
+		return "is not valid UTF-8"
+	}
+	if strings.ContainsRune(s, 0) {
+		return "holds a NUL byte"
+	}
+	return ""
+}
+
+// jsonbProblem describes why raw is refused for storage, or returns "".
+func jsonbProblem(raw []byte) string {
+	if len(raw) == 0 {
+		return "is empty"
+	}
+	if !utf8.Valid(raw) {
+		return fmt.Sprintf("is not valid UTF-8 at byte %d", firstInvalidUTF8(raw))
+	}
+	if !json.Valid(raw) {
+		var v json.RawMessage
+		var se *json.SyntaxError
+		if err := json.Unmarshal(raw, &v); errors.As(err, &se) {
+			return fmt.Sprintf("encoding/json refused: %s (offset %d)", se, se.Offset)
+		}
+		return "encoding/json refused"
+	}
+	// Valid JSON holds a backslash only inside a string, where it starts an
+	// escape. Skipping each two-byte escape whole keeps an escaped backslash
+	// followed by u0000 from reading as a NUL escape.
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		r, ok := unicodeEscapeAt(raw, i)
+		if !ok {
+			i++
+			continue
+		}
+		switch {
+		case r == 0:
+			return fmt.Sprintf(`holds a \u0000 escape at byte %d`, i)
+		case utf16.IsSurrogate(r):
+			lo, ok := unicodeEscapeAt(raw, i+6)
+			if !ok || utf16.DecodeRune(r, lo) == utf8.RuneError {
+				return fmt.Sprintf("holds an unpaired surrogate escape at byte %d", i)
+			}
+			i += 6
+		}
+		i += 5
+	}
+	return ""
+}
+
+// firstInvalidUTF8 returns the offset of the first byte that starts no valid UTF-8 sequence.
+func firstInvalidUTF8(b []byte) int {
+	for i := 0; i < len(b); {
+		r, size := utf8.DecodeRune(b[i:])
+		if r == utf8.RuneError && size == 1 {
+			return i
+		}
+		i += size
+	}
+	return len(b)
+}
+
+// unicodeEscapeAt reads the six-byte unicode escape that starts at raw[i].
+func unicodeEscapeAt(raw []byte, i int) (rune, bool) {
+	if i+6 > len(raw) || raw[i] != '\\' || raw[i+1] != 'u' {
+		return 0, false
+	}
+	var b [2]byte
+	if _, err := hex.Decode(b[:], raw[i+2:i+6]); err != nil {
+		return 0, false
+	}
+	return rune(b[0])<<8 | rune(b[1]), true
 }
 
 // Compile-time check: MemoryEventStore implements EventStore.
@@ -72,7 +176,7 @@ func NewMemoryEventStore() *MemoryEventStore {
 }
 
 // Append writes events to a stream atomically with optimistic concurrency.
-func (m *MemoryEventStore) Append(_ context.Context, stream string, expectedVersion int64, events []NewEvent) error {
+func (m *MemoryEventStore) Append(ctx context.Context, stream string, expectedVersion int64, events []NewEvent) error {
 	if err := ValidateStreamName(stream); err != nil {
 		return err
 	}
@@ -83,6 +187,9 @@ func (m *MemoryEventStore) Append(_ context.Context, stream string, expectedVers
 		if err := ValidateNewEvent(e, i); err != nil {
 			return err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	m.mu.Lock()
@@ -138,8 +245,11 @@ func (m *MemoryEventStore) Append(_ context.Context, stream string, expectedVers
 
 // ReadStream returns events from a single stream starting at fromVersion.
 // Pass limit=0 to read all matching events.
-func (m *MemoryEventStore) ReadStream(_ context.Context, stream string, fromVersion int64, limit int64) ([]Event, error) {
+func (m *MemoryEventStore) ReadStream(ctx context.Context, stream string, fromVersion int64, limit int64) ([]Event, error) {
 	if err := ValidateStreamName(stream); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -164,8 +274,11 @@ func (m *MemoryEventStore) ReadStream(_ context.Context, stream string, fromVers
 }
 
 // ReadLastEvent returns the stream's last event, or nil for an empty stream.
-func (m *MemoryEventStore) ReadLastEvent(_ context.Context, stream string) (*Event, error) {
+func (m *MemoryEventStore) ReadLastEvent(ctx context.Context, stream string) (*Event, error) {
 	if err := ValidateStreamName(stream); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -185,7 +298,13 @@ func (m *MemoryEventStore) ReadLastEvent(_ context.Context, stream string) (*Eve
 // ReadCategory returns events across all streams matching a category prefix.
 // Category is the part before the first hyphen, matching PostgreSQL's
 // split_part(stream, '-', 1). Pass limit=0 to read all matching events.
-func (m *MemoryEventStore) ReadCategory(_ context.Context, category string, afterPosition int64, limit int64) ([]Event, error) {
+func (m *MemoryEventStore) ReadCategory(ctx context.Context, category string, afterPosition int64, limit int64) ([]Event, error) {
+	if err := validateCategory(category); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

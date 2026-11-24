@@ -885,7 +885,7 @@ func unstorableEvents() []unstorableEvent {
 		return NewEvent{ID: id, Type: "OrderCreated", Payload: json.RawMessage(`{}`), Metadata: metadata}
 	}
 	return []unstorableEvent{
-		{"a Payload that is not JSON", "order-abc", event("OrderCreated", `{`), "index 0 has Payload that is not valid JSON: unexpected end of JSON input (encoding/json offset 1)"},
+		{"a Payload that is not JSON", "order-abc", event("OrderCreated", `{`), "index 0 has Payload that encoding/json refused: unexpected end of JSON input (offset 1)"},
 		{"an empty non-nil Payload", "order-abc", NewEvent{ID: id, Type: "OrderCreated", Payload: json.RawMessage{}}, "index 0 has Payload that is empty"},
 		{"a Payload that is not UTF-8", "order-abc", event("OrderCreated", "{\"a\":\"\xff\"}"), "index 0 has Payload that is not valid UTF-8 at byte 6"},
 		{"a NUL escape in a Payload value", "order-abc", event("OrderCreated", `{"a":"\u0000"}`), `index 0 has Payload that holds a \u0000 escape at byte 6`},
@@ -898,7 +898,7 @@ func unstorableEvents() []unstorableEvent {
 		{"a lone low surrogate", "order-abc", event("OrderCreated", `{"a":"\udc00"}`), "holds an unpaired surrogate escape at byte 6"},
 		{"an uppercase lone low surrogate", "order-abc", event("OrderCreated", `{"a":"\uDC00"}`), "holds an unpaired surrogate escape at byte 6"},
 		{"a surrogate pair in the wrong order", "order-abc", event("OrderCreated", `{"a":"\ude00\ud83d"}`), "holds an unpaired surrogate escape at byte 6"},
-		{"a Metadata that is not JSON", "order-abc", withMetadata(json.RawMessage(`{`)), "index 0 has Metadata that is not valid JSON: unexpected end of JSON input (encoding/json offset 1)"},
+		{"a Metadata that is not JSON", "order-abc", withMetadata(json.RawMessage(`{`)), "index 0 has Metadata that encoding/json refused: unexpected end of JSON input (offset 1)"},
 		{"an empty non-nil Metadata", "order-abc", withMetadata(json.RawMessage{}), "index 0 has Metadata that is empty"},
 		{"a Metadata that is not UTF-8", "order-abc", withMetadata(json.RawMessage("{\"a\":\"\xff\"}")), "index 0 has Metadata that is not valid UTF-8 at byte 6"},
 		{"an unpaired surrogate in Metadata", "order-abc", withMetadata(json.RawMessage(`{"a":"\ud800"}`)), "index 0 has Metadata that holds an unpaired surrogate escape at byte 6"},
@@ -927,7 +927,7 @@ func testUnstorableEvents(t *testing.T, newStore func(t *testing.T) EventStore) 
 	cases := append(unstorableEvents(), unstorableEvent{
 		"JSON nested past encoding/json's depth limit", "order-abc",
 		NewEvent{ID: id, Type: "OrderCreated", Payload: json.RawMessage(deep)},
-		"index 0 has Payload that is not valid JSON: exceeded max depth (encoding/json offset 10001)",
+		"index 0 has Payload that encoding/json refused: exceeded max depth (offset 10001)",
 	})
 	for _, tc := range cases {
 		t.Run(tc.name+" is refused and writes nothing", func(t *testing.T) {

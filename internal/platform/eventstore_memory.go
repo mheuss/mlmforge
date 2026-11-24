@@ -101,9 +101,9 @@ func jsonbProblem(raw []byte) string {
 		var v json.RawMessage
 		var se *json.SyntaxError
 		if err := json.Unmarshal(raw, &v); errors.As(err, &se) {
-			return fmt.Sprintf("is not valid JSON: %s (encoding/json offset %d)", se, se.Offset)
+			return fmt.Sprintf("encoding/json refused: %s (offset %d)", se, se.Offset)
 		}
-		return "is not valid JSON"
+		return "encoding/json refused"
 	}
 	// Valid JSON holds a backslash only inside a string, where it starts an
 	// escape. Skipping each two-byte escape whole keeps an escaped backslash

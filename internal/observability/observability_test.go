@@ -13,7 +13,6 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
-	"go.opentelemetry.io/otel/log/global"
 	lognoop "go.opentelemetry.io/otel/log/noop"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
@@ -28,7 +27,7 @@ import (
 func restoreProviders(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
-		global.SetLoggerProvider(lognoop.NewLoggerProvider())
+		otel.SetLoggerProvider(lognoop.NewLoggerProvider())
 		otel.SetMeterProvider(metricnoop.NewMeterProvider())
 		otel.SetTracerProvider(tracenoop.NewTracerProvider())
 	})
@@ -40,7 +39,7 @@ func restoreProviders(t *testing.T) {
 func assertProvidersWired(t *testing.T) {
 	t.Helper()
 
-	assert.IsType(t, &sdklog.LoggerProvider{}, global.GetLoggerProvider(),
+	assert.IsType(t, &sdklog.LoggerProvider{}, otel.GetLoggerProvider(),
 		"global logger provider should be the SDK provider")
 	assert.IsType(t, &sdkmetric.MeterProvider{}, otel.GetMeterProvider(),
 		"global meter provider should be the SDK provider")
@@ -186,7 +185,7 @@ func TestInit_LogsDisabled(t *testing.T) {
 	var rec otellog.Record
 	rec.SetBody(attribute.StringValue("dropped"))
 	rec.SetSeverity(otellog.SeverityInfo)
-	global.Logger("test").Emit(context.Background(), rec)
+	otel.Logger("test").Emit(context.Background(), rec)
 }
 
 func TestInit_LogsToFile(t *testing.T) {
@@ -205,7 +204,7 @@ func TestInit_LogsToFile(t *testing.T) {
 	var rec otellog.Record
 	rec.SetBody(attribute.StringValue("hello from a record"))
 	rec.SetSeverity(otellog.SeverityWarn)
-	global.Logger("test").Emit(context.Background(), rec)
+	otel.Logger("test").Emit(context.Background(), rec)
 
 	// Shutdown flushes the simple processor and closes the file.
 	require.NoError(t, shutdown(context.Background()))

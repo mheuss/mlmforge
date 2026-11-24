@@ -95,9 +95,14 @@ func jsonbProblem(raw []byte) string {
 		return "is empty"
 	}
 	if !utf8.Valid(raw) {
-		return "is not valid UTF-8"
+		return fmt.Sprintf("is not valid UTF-8 at byte %d", firstInvalidUTF8(raw))
 	}
 	if !json.Valid(raw) {
+		var v json.RawMessage
+		var se *json.SyntaxError
+		if err := json.Unmarshal(raw, &v); errors.As(err, &se) {
+			return fmt.Sprintf("is not valid JSON: %s at byte %d", se, se.Offset)
+		}
 		return "is not valid JSON"
 	}
 	// Valid JSON holds a backslash only inside a string, where it starts an
@@ -125,6 +130,18 @@ func jsonbProblem(raw []byte) string {
 		i += 5
 	}
 	return ""
+}
+
+// firstInvalidUTF8 returns the offset of the first byte that starts no valid UTF-8 sequence.
+func firstInvalidUTF8(b []byte) int {
+	for i := 0; i < len(b); {
+		r, size := utf8.DecodeRune(b[i:])
+		if r == utf8.RuneError && size == 1 {
+			return i
+		}
+		i += size
+	}
+	return len(b)
 }
 
 // unicodeEscapeAt reads the six-byte unicode escape that starts at raw[i].

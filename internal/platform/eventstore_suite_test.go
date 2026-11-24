@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 
@@ -866,9 +867,16 @@ func testAppendRefusals(t *testing.T, newStore func(t *testing.T) EventStore) {
 	})
 }
 
-// testUnstorableEvents checks that Append refuses values the events table cannot hold, and writes nothing.
-func testUnstorableEvents(t *testing.T, newStore func(t *testing.T) EventStore) {
-	ctx := context.Background()
+// unstorableEvent is one Append input that both event store twins refuse.
+type unstorableEvent struct {
+	name   string
+	stream string
+	event  NewEvent
+	want   string
+}
+
+// unstorableEvents returns Append inputs that Postgres refuses when they reach it.
+func unstorableEvents() []unstorableEvent {
 	const id = "00000000-0000-0000-0000-000000000001"
 	event := func(typ, payload string) NewEvent {
 		return NewEvent{ID: id, Type: typ, Payload: json.RawMessage(payload)}
@@ -876,24 +884,10 @@ func testUnstorableEvents(t *testing.T, newStore func(t *testing.T) EventStore) 
 	withMetadata := func(metadata json.RawMessage) NewEvent {
 		return NewEvent{ID: id, Type: "OrderCreated", Payload: json.RawMessage(`{}`), Metadata: metadata}
 	}
-	t.Run("the unedited event is accepted and written", func(t *testing.T) {
-		s := newStore(t)
-
-		require.NoError(t, s.Append(ctx, "order-abc", 0, []NewEvent{event("OrderCreated", `{}`)}))
-
-		got, err := s.ReadCategory(ctx, "order", 0, 0)
-		require.NoError(t, err)
-		assert.Len(t, got, 1)
-	})
-	for _, tc := range []struct {
-		name   string
-		stream string
-		event  NewEvent
-		want   string
-	}{
-		{"a Payload that is not JSON", "order-abc", event("OrderCreated", `{`), "index 0 has Payload that is not valid JSON"},
+	return []unstorableEvent{
+		{"a Payload that is not JSON", "order-abc", event("OrderCreated", `{`), "index 0 has Payload that is not valid JSON: unexpected end of JSON input at byte 1"},
 		{"an empty non-nil Payload", "order-abc", NewEvent{ID: id, Type: "OrderCreated", Payload: json.RawMessage{}}, "index 0 has Payload that is empty"},
-		{"a Payload that is not UTF-8", "order-abc", event("OrderCreated", "{\"a\":\"\xff\"}"), "index 0 has Payload that is not valid UTF-8"},
+		{"a Payload that is not UTF-8", "order-abc", event("OrderCreated", "{\"a\":\"\xff\"}"), "index 0 has Payload that is not valid UTF-8 at byte 6"},
 		{"a NUL escape in a Payload value", "order-abc", event("OrderCreated", `{"a":"\u0000"}`), `index 0 has Payload that holds a \u0000 escape at byte 6`},
 		{"a NUL escape in a Payload key", "order-abc", event("OrderCreated", `{"\u0000":1}`), `holds a \u0000 escape at byte 2`},
 		{"a NUL escape after an escaped backslash", "order-abc", event("OrderCreated", `{"a":"\\\u0000"}`), `holds a \u0000 escape at byte 8`},
@@ -904,14 +898,38 @@ func testUnstorableEvents(t *testing.T, newStore func(t *testing.T) EventStore) 
 		{"a lone low surrogate", "order-abc", event("OrderCreated", `{"a":"\udc00"}`), "holds an unpaired surrogate escape at byte 6"},
 		{"an uppercase lone low surrogate", "order-abc", event("OrderCreated", `{"a":"\uDC00"}`), "holds an unpaired surrogate escape at byte 6"},
 		{"a surrogate pair in the wrong order", "order-abc", event("OrderCreated", `{"a":"\ude00\ud83d"}`), "holds an unpaired surrogate escape at byte 6"},
-		{"a Metadata that is not JSON", "order-abc", withMetadata(json.RawMessage(`{`)), "index 0 has Metadata that is not valid JSON"},
+		{"a Metadata that is not JSON", "order-abc", withMetadata(json.RawMessage(`{`)), "index 0 has Metadata that is not valid JSON: unexpected end of JSON input at byte 1"},
 		{"an empty non-nil Metadata", "order-abc", withMetadata(json.RawMessage{}), "index 0 has Metadata that is empty"},
+		{"a Metadata that is not UTF-8", "order-abc", withMetadata(json.RawMessage("{\"a\":\"\xff\"}")), "index 0 has Metadata that is not valid UTF-8 at byte 6"},
+		{"an unpaired surrogate in Metadata", "order-abc", withMetadata(json.RawMessage(`{"a":"\ud800"}`)), "index 0 has Metadata that holds an unpaired surrogate escape at byte 6"},
 		{"a NUL escape in Metadata", "order-abc", withMetadata(json.RawMessage(`{"a":"\u0000"}`)), `index 0 has Metadata that holds a \u0000 escape at byte 6`},
 		{"a NUL in Type", "order-abc", event("Order\x00Created", `{}`), `index 0 has Type "Order\x00Created", which holds a NUL byte`},
 		{"a Type that is not UTF-8", "order-abc", event("Order\xffCreated", `{}`), `index 0 has Type "Order\xffCreated", which is not valid UTF-8`},
 		{"a NUL in the stream name", "order-a\x00b", event("OrderCreated", `{}`), `invalid stream name: "order-a\x00b" holds a NUL byte`},
 		{"a stream name that is not UTF-8", "order-a\xffb", event("OrderCreated", `{}`), `invalid stream name: "order-a\xffb" is not valid UTF-8`},
-	} {
+	}
+}
+
+// testUnstorableEvents checks that Append refuses each listed input and writes nothing.
+func testUnstorableEvents(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	const id = "00000000-0000-0000-0000-000000000001"
+	t.Run("the unedited event is accepted and written", func(t *testing.T) {
+		s := newStore(t)
+
+		require.NoError(t, s.Append(ctx, "order-abc", 0, []NewEvent{{ID: id, Type: "OrderCreated", Payload: json.RawMessage(`{}`)}}))
+
+		got, err := s.ReadCategory(ctx, "order", 0, 0)
+		require.NoError(t, err)
+		assert.Len(t, got, 1)
+	})
+	deep := strings.Repeat("[", 10001) + strings.Repeat("]", 10001)
+	cases := append(unstorableEvents(), unstorableEvent{
+		"JSON nested past encoding/json's depth limit", "order-abc",
+		NewEvent{ID: id, Type: "OrderCreated", Payload: json.RawMessage(deep)},
+		"index 0 has Payload that is not valid JSON: exceeded max depth at byte 10001",
+	})
+	for _, tc := range cases {
 		t.Run(tc.name+" is refused and writes nothing", func(t *testing.T) {
 			s := newStore(t)
 
@@ -933,7 +951,7 @@ func TestPostgresEventStore_UnstorableEvents(t *testing.T) {
 	testUnstorableEvents(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
 }
 
-// testStorableEvents checks that Append accepts values the events table holds.
+// testStorableEvents checks that Append accepts each listed value as Payload and Metadata.
 func testStorableEvents(t *testing.T, newStore func(t *testing.T) EventStore) {
 	ctx := context.Background()
 	for _, raw := range []string{
@@ -970,17 +988,28 @@ func TestPostgresEventStore_StorableEvents(t *testing.T) {
 	testStorableEvents(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
 }
 
-// testUnstorableNames checks that the reads refuse names the events table cannot hold.
-func testUnstorableNames(t *testing.T, newStore func(t *testing.T) EventStore) {
-	ctx := context.Background()
-	for _, tc := range []struct{ name, stream, category, want string }{
+// unstorableName is one stream name and one category that both event store twins refuse.
+type unstorableName struct{ name, stream, category, want string }
+
+// unstorableNames returns names that Postgres refuses when they reach it.
+func unstorableNames() []unstorableName {
+	return []unstorableName{
 		{"a NUL", "order-a\x00b", "ord\x00er", "holds a NUL byte"},
 		{"invalid UTF-8", "order-a\xffb", "ord\xffer", "is not valid UTF-8"},
-	} {
-		t.Run("a stream name holding "+tc.name+" is refused by ReadStream and ReadLastEvent", func(t *testing.T) {
+	}
+}
+
+// testUnstorableNames checks that Append and the reads refuse each listed name.
+func testUnstorableNames(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	for _, tc := range unstorableNames() {
+		t.Run("a stream name holding "+tc.name+" is refused by Append, ReadStream and ReadLastEvent", func(t *testing.T) {
 			s := newStore(t)
 
-			_, err := s.ReadStream(ctx, tc.stream, 1, 0)
+			err := s.Append(ctx, tc.stream, 0, []NewEvent{{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)}})
+			require.ErrorIs(t, err, ErrInvalidStreamName)
+			require.ErrorContains(t, err, tc.want)
+			_, err = s.ReadStream(ctx, tc.stream, 1, 0)
 			require.ErrorIs(t, err, ErrInvalidStreamName)
 			require.ErrorContains(t, err, tc.want)
 			_, err = s.ReadLastEvent(ctx, tc.stream)

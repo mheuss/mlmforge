@@ -1499,6 +1499,22 @@ mod tests {
     }
 
     #[test]
+    fn validate_restored_rejects_a_slot_vector_longer_than_width() {
+        let (mut tree, _) = matrix_pair();
+        let root = tree.arena.resolve(test_uuid(1)).unwrap();
+        tree.slots.get_mut(&root).unwrap().push(None);
+
+        assert_eq!(
+            tree.validate_restored(),
+            Err(SnapshotConsistencyError::ChildSlotWidthMismatch {
+                slot: root.0,
+                found: 3,
+                width: 2,
+            })
+        );
+    }
+
+    #[test]
     fn validate_restored_accepts_a_tree_after_promoting_out_an_internal_node() {
         let mut tree = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
         tree.add_root(test_uuid(1), 0).unwrap();

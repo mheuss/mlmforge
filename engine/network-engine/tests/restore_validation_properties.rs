@@ -8,6 +8,8 @@ use network_engine::tree::binary::BinaryTree;
 use network_engine::tree::matrix::{MatrixTree, PruningMode};
 use network_engine::tree::unilevel::UnilevelTree;
 use proptest::prelude::*;
+use proptest::test_runner::TestCaseError;
+use serde::{Serialize, de::DeserializeOwned};
 use uuid::Uuid;
 
 /// One random operation: a kind and three random picks.
@@ -177,6 +179,52 @@ fn streamline_step(engine: &mut StreamlineEngine, live: &mut Vec<Uuid>, next: &m
     live.retain(|u| engine.contains_member(*u));
 }
 
+/// Asserts that a tree restored mid-sequence stays equal to the original under
+/// the remaining ops.
+fn assert_restored_twin_tracks_original<T>(
+    mut tree: T,
+    ops: &[Op],
+    split: usize,
+    step: fn(&mut T, &mut Vec<Uuid>, &mut usize, Op),
+) -> Result<(), TestCaseError>
+where
+    T: Serialize + DeserializeOwned,
+{
+    let split = split % (ops.len() + 1);
+    let (mut live, mut next) = (Vec::new(), 0);
+    for &op in &ops[..split] {
+        step(&mut tree, &mut live, &mut next, op);
+    }
+    let snapshot = serde_json::to_string(&tree).unwrap();
+    let mut twin: T = serde_json::from_str(&snapshot).unwrap();
+    prop_assert_eq!(
+        serde_json::to_value(&twin).unwrap(),
+        serde_json::to_value(&tree).unwrap(),
+        "state differs right after restore from {}",
+        snapshot
+    );
+    let (mut twin_live, mut twin_next) = (live.clone(), next);
+    for &op in &ops[split..] {
+        step(&mut tree, &mut live, &mut next, op);
+        step(&mut twin, &mut twin_live, &mut twin_next, op);
+        prop_assert_eq!(
+            &twin_live,
+            &live,
+            "live users differ after {:?}; restored from {}",
+            op,
+            snapshot
+        );
+        prop_assert_eq!(
+            serde_json::to_value(&twin).unwrap(),
+            serde_json::to_value(&tree).unwrap(),
+            "state differs after {:?}; restored from {}",
+            op,
+            snapshot
+        );
+    }
+    Ok(())
+}
+
 proptest! {
     #[test]
     fn unilevel_mutators_leave_a_restorable_tree(ops in ops()) {
@@ -195,6 +243,11 @@ proptest! {
         let restored: UnilevelTree =
             serde_json::from_str(&serde_json::to_string(&tree).unwrap()).unwrap();
         prop_assert_eq!(restored.validate_restored(), Ok(()));
+        prop_assert_eq!(
+            serde_json::to_value(&restored).unwrap(),
+            serde_json::to_value(&tree).unwrap(),
+            "the restored re-export differs from the original"
+        );
     }
 
     #[test]
@@ -214,6 +267,11 @@ proptest! {
         let restored: BinaryTree =
             serde_json::from_str(&serde_json::to_string(&tree).unwrap()).unwrap();
         prop_assert_eq!(restored.validate_restored(), Ok(()));
+        prop_assert_eq!(
+            serde_json::to_value(&restored).unwrap(),
+            serde_json::to_value(&tree).unwrap(),
+            "the restored re-export differs from the original"
+        );
     }
 
     #[test]
@@ -233,6 +291,31 @@ proptest! {
         let restored: MatrixTree =
             serde_json::from_str(&serde_json::to_string(&tree).unwrap()).unwrap();
         prop_assert_eq!(restored.validate_restored(), Ok(()));
+        prop_assert_eq!(
+            serde_json::to_value(&restored).unwrap(),
+            serde_json::to_value(&tree).unwrap(),
+            "the restored re-export differs from the original"
+        );
+    }
+
+    #[test]
+    fn unilevel_restored_tree_tracks_the_original(ops in ops(), split in 0usize..80) {
+        assert_restored_twin_tracks_original(UnilevelTree::new(), &ops, split, unilevel_step)?;
+    }
+
+    #[test]
+    fn binary_restored_tree_tracks_the_original(ops in ops(), split in 0usize..80) {
+        assert_restored_twin_tracks_original(BinaryTree::new(), &ops, split, binary_step)?;
+    }
+
+    #[test]
+    fn matrix_restored_tree_tracks_the_original(
+        width in 2u8..5,
+        ops in ops(),
+        split in 0usize..80,
+    ) {
+        let tree = MatrixTree::new(width, SpilloverDirection::BreadthFirst).unwrap();
+        assert_restored_twin_tracks_original(tree, &ops, split, matrix_step)?;
     }
 
     #[test]

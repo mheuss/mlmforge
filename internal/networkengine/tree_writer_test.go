@@ -687,7 +687,7 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 			assert.Equal(t, tc.mutation, engine.checks[0].op)
 			if tc.matrix {
 				assert.Equal(t, string(PruningPromoteEarliest), engine.checks[0].params["pruning_mode"],
-					"the check is the matrix removal's")
+					"pruning_mode of the check")
 			}
 			assert.Len(t, streamEvents(t, env.events, stream), before)
 		})
@@ -768,7 +768,7 @@ func TestTreeWriterPlace_ReportsAFailedReadBackWithoutProjecting(t *testing.T) {
 
 	res, err := w.Place(context.Background(), placeRequest(writerChild, nil))
 
-	require.NoError(t, err, "a confirmed append is a success")
+	require.NoError(t, err, "error from Place")
 	require.EqualError(t, res.ProjectionErr, "read back event "+res.EventID+" at version 2 in stream "+stream+
 		": read-back-marker")
 	assert.ErrorIs(t, res.ProjectionErr, readErr)
@@ -786,7 +786,7 @@ func TestTreeWriterPlace_ReportsAnEmptyReadBackWithoutProjecting(t *testing.T) {
 
 	res, err := w.Place(context.Background(), placeRequest(writerChild, nil))
 
-	require.NoError(t, err, "a confirmed append is a success")
+	require.NoError(t, err, "error from Place")
 	require.EqualError(t, res.ProjectionErr, "read back at version 2 in stream "+stream+
 		" found no event; event "+res.EventID+" was not projected")
 	row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
@@ -808,7 +808,7 @@ func TestTreeWriterPlace_ReportsAReadBackAtAnotherVersionWithoutProjecting(t *te
 
 	res, err := w.Place(context.Background(), placeRequest(writerChild, nil))
 
-	require.NoError(t, err, "a confirmed append is a success")
+	require.NoError(t, err, "error from Place")
 	require.EqualError(t, res.ProjectionErr, "read back at version 2 in stream "+stream+
 		" returned event dddddddd-dddd-dddd-dddd-000000000003 at version 3; event "+res.EventID+" was not projected")
 	row, err := env.store.GetNode(context.Background(), writerTree, writerChild)

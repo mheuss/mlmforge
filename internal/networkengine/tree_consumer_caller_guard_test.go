@@ -111,6 +111,8 @@ func main() { _ = consumer.HandleEvent(ctx, shape, ev) }
 	write("internal/x/testdata/fixture.go", caller)
 	write(".hidden/y.go", caller)
 	write("_skip/y.go", caller)
+	write("internal/networkengine/_ignored.go", caller)
+	write("internal/networkengine/.dotfile.go", caller)
 	write("docs/copy/go.mod", "module copy\n")
 	write("docs/copy/internal/networkengine/n.go", caller)
 

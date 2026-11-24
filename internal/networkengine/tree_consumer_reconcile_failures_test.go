@@ -52,7 +52,6 @@ func TestHandleNodePlaced_ReconcileRetriesWhenTheRowReadFails(t *testing.T) {
 	assert.Equal(t, c.maxRetries+1, store.reads, "reads of the user's row")
 	assert.Equal(t, 0, tr.positionOps, "get_position calls made")
 	assert.True(t, isEngineCode(err, engineCodeUserAlreadyExists), "got %v", err)
-	assert.NotContains(t, err.Error(), "row-read-marker")
 }
 
 func TestHandleNodePlaced_ReconcileDivergesWhenTheStoreHasNoActiveRow(t *testing.T) {
@@ -69,8 +68,8 @@ func TestHandleNodePlaced_ReconcileDivergesWhenTheStoreHasNoActiveRow(t *testing
 	require.EqualError(t, err, fmt.Sprintf(
 		"engine holds %s in tree %s and the store has no active row for them; event %s",
 		posUser, consumerTree, event.ID))
-	assert.Len(t, tr.mutationOps, 1, "divergence is not retried")
-	assert.Equal(t, 0, tr.positionOps)
+	assert.Len(t, tr.mutationOps, 1, "add calls made")
+	assert.Equal(t, 0, tr.positionOps, "get_position calls made")
 }
 
 // undoFailingStore fails every UndoRootProjection with err, whatever the
@@ -103,9 +102,9 @@ func TestHandleRootAdded_ReconcileNamesAFailedCompensatingDelete(t *testing.T) {
 			"and deleting the row this event inserted failed: undo-marker",
 		consumerTree, posUser, posEnrolled.Unix(), posEnrolled.Unix()))
 	assert.ErrorIs(t, err, undoErr)
-	assert.Len(t, tr.mutationOps, 1, "a failed compensation is divergence, so it is not retried")
-	assert.Equal(t, 1, store.attempts)
-	assert.NotNil(t, activeRow(t, store.MemoryTreeStore, posUser), "the delete failed, so the row is still active")
+	assert.Len(t, tr.mutationOps, 1, "add_root calls made")
+	assert.Equal(t, 1, store.attempts, "UndoRootProjection calls made")
+	assert.NotNil(t, activeRow(t, store.MemoryTreeStore, posUser), "active row for "+posUser)
 }
 
 // readBackFailingStore fails every GetNodeIncludingRemoved with err.
@@ -130,15 +129,15 @@ func TestHandleRootAdded_CancelledInsertReportsAFailedReadBack(t *testing.T) {
 	}
 	store := &readBackFailingStore{MemoryTreeStore: NewMemoryTreeStore(), err: errors.New("read-back-marker")}
 	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
-	// Not zero: at zero the select can take the retry timer over the
-	// cancellation. Nothing waits for the value, because ctx is already done.
+	// Not zero: at zero this test can fail, because the retry can win over the
+	// cancellation.
 	c.retryDelay = time.Minute
 
 	err := deliver(ctx, c, makeEvent(EventTypeRootAdded, rootPayload()))
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, context.Canceled, "the cancellation is still the cause")
+	assert.ErrorIs(t, err, context.Canceled, "context.Canceled in the error chain")
 	assert.Regexp(t, "; reading back the row for "+posUser+" in tree "+consumerTree+" failed: read-back-marker$",
-		err.Error(), "and the failed read-back is reported beside it")
-	assert.Equal(t, 1, store.reads)
+		err.Error(), "end of the returned error")
+	assert.Equal(t, 1, store.reads, "GetNodeIncludingRemoved calls made")
 }

@@ -32,15 +32,16 @@ func orNone(id *string) string {
 	return *id
 }
 
-// requireRowsMatchEngine fails unless every active row in tree agrees with the
-// engine's position for that user on parent and depth, and every non-root row
-// on position and sponsor.
 // treeLister is an engine a test can read a whole tree from.
 type treeLister interface {
 	TreeInspector
 	GetDownline(ctx context.Context, structure, userID string, depth uint32) ([]EngineNode, error)
 }
 
+// requireRowsMatchEngine fails unless the users the engine holds from the root
+// down are exactly the users with an active row in tree, and every active row
+// agrees with the engine's position for that user on parent and depth, and
+// every non-root row on position and sponsor.
 func requireRowsMatchEngine(t *testing.T, store TreeStore, engine treeLister, tree string) {
 	t.Helper()
 	ctx := context.Background()

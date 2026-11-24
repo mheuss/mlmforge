@@ -31,7 +31,7 @@ func TestPostgresRefusesUnstorableValuesDirectly(t *testing.T) {
 		_, err := pool.Exec(ctx, `INSERT INTO events (id, stream, type, version, payload, metadata) VALUES ($1, $2, $3, 1, $4, $5)`,
 			e.ID, stream, e.Type, e.Payload, e.Metadata)
 
-		require.ErrorContains(t, err, "SQLSTATE")
+		require.ErrorContains(t, err, "(SQLSTATE 22")
 		var n int
 		require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM events`).Scan(&n))
 		assert.Zero(t, n, "rows in events after a refused insert")
@@ -50,6 +50,13 @@ func TestPostgresRefusesUnstorableValuesDirectly(t *testing.T) {
 			insert(t, tc.stream, tc.event)
 		})
 	}
+	t.Run("a clean stream name and category are read", func(t *testing.T) {
+		pool := pgContainer.NewPool(t)
+		var n int
+
+		require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM events WHERE stream = $1`, "order-abc").Scan(&n))
+		require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM events WHERE split_part(stream, '-', 1) = $1`, "order").Scan(&n))
+	})
 	for _, tc := range unstorableNames() {
 		t.Run("a stream name holding "+tc.name+" is refused by Postgres itself", func(t *testing.T) {
 			pool := pgContainer.NewPool(t)
@@ -57,7 +64,7 @@ func TestPostgresRefusesUnstorableValuesDirectly(t *testing.T) {
 
 			err := pool.QueryRow(ctx, `SELECT count(*) FROM events WHERE stream = $1`, tc.stream).Scan(&n)
 
-			require.ErrorContains(t, err, "SQLSTATE")
+			require.ErrorContains(t, err, "(SQLSTATE 22")
 		})
 		t.Run("a category holding "+tc.name+" is refused by Postgres itself", func(t *testing.T) {
 			pool := pgContainer.NewPool(t)
@@ -65,7 +72,7 @@ func TestPostgresRefusesUnstorableValuesDirectly(t *testing.T) {
 
 			err := pool.QueryRow(ctx, `SELECT count(*) FROM events WHERE split_part(stream, '-', 1) = $1`, tc.category).Scan(&n)
 
-			require.ErrorContains(t, err, "SQLSTATE")
+			require.ErrorContains(t, err, "(SQLSTATE 22")
 		})
 	}
 }

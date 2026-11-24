@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -114,36 +116,44 @@ func TestFakeWriterEngine_RefusesATankedUserAsARestoredRoot(t *testing.T) {
 	assert.Equal(t, engineErrorOf(workerApply), engineErrorOf(fakeApply), "apply")
 }
 
-func TestFakeWriterEngine_IgnoresATankKeyOffAMatrixAsTheWorkerDoes(t *testing.T) {
+func TestFakeWriterEngine_RefusesAnotherTreeTypesKeyAsTheWorkerDoes(t *testing.T) {
 	ctx := context.Background()
-	tanks := map[string]string{
-		"a list naming the user":  `[{"user_id":"` + writerOther + `","sponsor_user_id":null,"enrolled_at":1}]`,
-		"a value that is no list": `"not a tank"`,
+	tankList := `[{"user_id":"` + writerOther + `","sponsor_user_id":null,"enrolled_at":1}]`
+	cases := []struct {
+		name     string
+		treeType string
+		added    map[string]string
+		named    string
+	}{
+		{"unilevel with a tank list", treeTypeUnilevel, map[string]string{"holding_tank": tankList}, "holding_tank"},
+		{"unilevel with a tank that is no list", treeTypeUnilevel, map[string]string{"holding_tank": `"not a tank"`}, "holding_tank"},
+		{"binary with a tank list", treeTypeBinary, map[string]string{"holding_tank": tankList}, "holding_tank"},
+		{"binary with a tank that is no list", treeTypeBinary, map[string]string{"holding_tank": `"not a tank"`}, "holding_tank"},
+		{"unilevel with slots", treeTypeUnilevel, map[string]string{"slots": `{}`}, "slots"},
+		{"binary with width and spillover", treeTypeBinary, map[string]string{"width": `2`, "spillover": `"breadth_first"`}, "spillover, width"},
 	}
-	for _, treeType := range []string{treeTypeUnilevel, treeTypeBinary} {
-		for name, tank := range tanks {
-			t.Run(treeType+" "+name, func(t *testing.T) {
-				client := startWorker(t)
-				fake := newFakeWriterEngine()
-				for _, e := range []removalAgreementEngine{client, fake} {
-					agreementRooted(treeType)(t, e)
-					taken, err := e.TakeSnapshot(ctx, writerTree)
-					require.NoError(t, err)
-					var tree map[string]json.RawMessage
-					require.NoError(t, json.Unmarshal(taken.Data, &tree))
-					tree["holding_tank"] = json.RawMessage(tank)
-					data, err := json.Marshal(tree)
-					require.NoError(t, err)
-
-					require.NoError(t, e.RestoreSnapshot(ctx, restoredTree, taken.TreeType, data))
-					opts := []AddNodeOption{}
-					if treeType == treeTypeBinary {
-						opts = append(opts, WithPosition(0))
-					}
-					assert.NoError(t, e.AddNode(ctx, restoredTree, writerOther, writerRoot, writerRoot, 300, opts...))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			want := "INVALID_PARAMS: snapshot data carries fields a " + tc.treeType + " snapshot does not have: " + tc.named
+			engines := map[string]removalAgreementEngine{"worker": startWorker(t), "fake": newFakeWriterEngine()}
+			for label, e := range engines {
+				agreementRooted(tc.treeType)(t, e)
+				taken, err := e.TakeSnapshot(ctx, writerTree)
+				require.NoError(t, err)
+				var tree map[string]json.RawMessage
+				require.NoError(t, json.Unmarshal(taken.Data, &tree))
+				for key, value := range tc.added {
+					tree[key] = json.RawMessage(value)
 				}
-			})
-		}
+				data, err := json.Marshal(tree)
+				require.NoError(t, err)
+
+				restoreErr := e.RestoreSnapshot(ctx, restoredTree, taken.TreeType, data)
+				assert.Equal(t, want, engineErrorOf(restoreErr), "%s restore", label)
+				_, err = e.TakeSnapshot(ctx, restoredTree)
+				assert.Equal(t, "STRUCTURE_NOT_FOUND", engineCodeOf(err), "%s take_snapshot of the refused name", label)
+			}
+		})
 	}
 }
 
@@ -379,4 +389,41 @@ func tankKeyOf(t *testing.T, e removalAgreementEngine, structure string) string 
 	var tree map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(taken.Data, &tree))
 	return string(tree["holding_tank"])
+}
+
+func TestFakeWriterEngine_TreeFieldListsMatchTheWorkersSnapshots(t *testing.T) {
+	ctx := context.Background()
+	for treeType, fields := range workerTreeFields {
+		t.Run(treeType, func(t *testing.T) {
+			client := startWorker(t)
+			agreementRooted(treeType)(t, client)
+			taken, err := client.TakeSnapshot(ctx, writerTree)
+			require.NoError(t, err)
+			var tree map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(taken.Data, &tree))
+			assert.Equal(t, slices.Sorted(slices.Values(fields)), slices.Sorted(maps.Keys(tree)),
+				"workerTreeFields against the top-level keys of the worker's %s snapshot", treeType)
+		})
+	}
+}
+
+func TestFakeWriterEngine_IgnoresAKeyNoTreeTypeOwnsAsTheWorkerDoes(t *testing.T) {
+	ctx := context.Background()
+	for _, treeType := range []string{treeTypeUnilevel, treeTypeBinary, treeTypeMatrix} {
+		t.Run(treeType, func(t *testing.T) {
+			engines := map[string]removalAgreementEngine{"worker": startWorker(t), "fake": newFakeWriterEngine()}
+			for label, e := range engines {
+				agreementRooted(treeType)(t, e)
+				taken, err := e.TakeSnapshot(ctx, writerTree)
+				require.NoError(t, err)
+				var tree map[string]json.RawMessage
+				require.NoError(t, json.Unmarshal(taken.Data, &tree))
+				tree["junk"] = json.RawMessage(`[[1]]`)
+				data, err := json.Marshal(tree)
+				require.NoError(t, err)
+
+				assert.NoError(t, e.RestoreSnapshot(ctx, restoredTree, taken.TreeType, data), "%s restore", label)
+			}
+		})
+	}
 }

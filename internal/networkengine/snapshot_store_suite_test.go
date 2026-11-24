@@ -2,6 +2,7 @@ package networkengine
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -326,6 +327,64 @@ func runSnapshotStoreSuite(t *testing.T, newStore func(t *testing.T) SnapshotSto
 		assert.ErrorIs(t, lastErr, context.Canceled)
 		assert.ErrorIs(t, s.RecordAttempt(ctx, attempt(1000, true, "")), context.Canceled)
 	})
+
+	for _, bad := range []string{notAUUID, "urn:uuid:" + tree} {
+		t.Run("every method refuses tree id "+bad+" and writes nothing", func(t *testing.T) {
+			s := newStore(t)
+			ctx := context.Background()
+			requireStored(t, ctx, s, snap(1000, `"x"`))
+			require.NoError(t, s.RecordAttempt(ctx, attempt(1000, true, "")))
+
+			stored, err := s.Put(ctx, Snapshot{TreeID: bad, Version: 2000, TreeType: treeTypeUnilevel, Data: []byte(`"y"`)})
+			assert.Error(t, err, "Put")
+			assert.False(t, stored, "Put")
+			_, found, err := s.Get(ctx, bad)
+			assert.Error(t, err, "Get")
+			assert.False(t, found, "Get")
+			assert.Error(t, s.Delete(ctx, bad, 1000), "Delete")
+			assert.Error(t, s.RecordAttempt(ctx, SnapshotAttempt{TreeID: bad, Version: 2000, Observed: "seen"}), "RecordAttempt")
+			_, found, err = s.LastAttempt(ctx, bad)
+			assert.Error(t, err, "LastAttempt")
+			assert.False(t, found, "LastAttempt")
+
+			got, found, err := s.Get(ctx, tree)
+			require.NoError(t, err)
+			require.True(t, found, "the snapshot of tree %s", tree)
+			assert.Equal(t, snap(1000, `"x"`), got)
+			requireAttempt(t, s, attempt(1000, true, ""))
+		})
+	}
+
+	for _, spelling := range []string{strings.ToUpper(tree), "{" + tree + "}", strings.ReplaceAll(tree, "-", "")} {
+		t.Run("tree id spelling "+spelling+" reaches the same snapshot and attempt", func(t *testing.T) {
+			s := newStore(t)
+			ctx := context.Background()
+			requireStored(t, ctx, s, snap(1000, `"x"`))
+			require.NoError(t, s.RecordAttempt(ctx, attempt(1000, true, "")))
+
+			got, found, err := s.Get(ctx, spelling)
+			require.NoError(t, err)
+			require.True(t, found, "Get")
+			assert.Equal(t, Snapshot{TreeID: spelling, Version: 1000, TreeType: treeTypeUnilevel, Data: []byte(`"x"`)}, got)
+			last, found, err := s.LastAttempt(ctx, spelling)
+			require.NoError(t, err)
+			require.True(t, found, "LastAttempt")
+			assert.Equal(t, SnapshotAttempt{TreeID: spelling, Version: 1000, Stored: true}, last)
+
+			requireStored(t, ctx, s, Snapshot{TreeID: spelling, Version: 2000, TreeType: treeTypeUnilevel, Data: []byte(`"y"`)})
+			require.NoError(t, s.RecordAttempt(ctx, SnapshotAttempt{TreeID: spelling, Version: 2000, Observed: "seen"}))
+			got, found, err = s.Get(ctx, tree)
+			require.NoError(t, err)
+			require.True(t, found, "Get after a Put by spelling %s", spelling)
+			assert.Equal(t, snap(2000, `"y"`), got)
+			requireAttempt(t, s, SnapshotAttempt{TreeID: tree, Version: 2000, Observed: "seen"})
+
+			require.NoError(t, s.Delete(ctx, spelling, 2000))
+			_, found, err = s.Get(ctx, tree)
+			require.NoError(t, err)
+			assert.False(t, found, "Get after a Delete by spelling %s", spelling)
+		})
+	}
 }
 
 func TestMemorySnapshotStore_Suite(t *testing.T) {

@@ -921,7 +921,9 @@ func testUnstorableEvents(t *testing.T, newStore func(t *testing.T) EventStore) 
 
 		got, err := s.ReadCategory(ctx, "order", 0, 0)
 		require.NoError(t, err)
-		assert.Len(t, got, 1)
+		require.Len(t, got, 1)
+		assert.Equal(t, "order-abc", got[0].Stream)
+		assert.Equal(t, "OrderCreated", got[0].Type)
 	})
 	deep := strings.Repeat("[", 10001) + strings.Repeat("]", 10001)
 	cases := append(unstorableEvents(), unstorableEvent{
@@ -1034,12 +1036,13 @@ func TestPostgresEventStore_UnstorableNames(t *testing.T) {
 	testUnstorableNames(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
 }
 
-// testCancelledContext checks Append and the reads under a cancelled context, and that an invalid argument is reported first.
+// testCancelledContext checks Append and the reads under a cancelled context,
+// and that an invalid argument is reported first.
 func testCancelledContext(t *testing.T, newStore func(t *testing.T) EventStore) {
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	t.Run("every method returns context.Canceled and Append writes nothing", func(t *testing.T) {
+	t.Run("Append and the reads return context.Canceled and Append writes nothing", func(t *testing.T) {
 		s := newStore(t)
 
 		err := s.Append(cancelled, "order-abc", 0, []NewEvent{{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)}})

@@ -17,13 +17,13 @@ import (
 // ErrEmptyAppend is returned when Append is called with an empty events slice.
 var ErrEmptyAppend = errors.New("eventstore: cannot append zero events")
 
-// ErrInvalidStreamName is returned when a stream name does not match the
-// required {category}-{id} format. Use errors.Is to check for this error.
+// ErrInvalidStreamName is returned when a stream name is refused. Use errors.Is
+// to check for this error.
 var ErrInvalidStreamName = errors.New("eventstore: invalid stream name")
 
-// ValidateStreamName checks that a stream name follows the {category}-{id}
-// convention documented in ADR-016. The category is the part before the first
-// hyphen. Both category and id must be non-empty.
+// ValidateStreamName checks that a stream name is storable text in
+// {category}-{id} form. The category is the part before the first hyphen, and
+// both parts must be non-empty.
 func ValidateStreamName(stream string) error {
 	if stream == "" {
 		return fmt.Errorf("%w: must not be empty", ErrInvalidStreamName)

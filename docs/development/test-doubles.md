@@ -418,7 +418,8 @@ the child.
 A refusal message often names one of several ids from the request. A
 `message_contains` that stops before the id still passes when the code names
 the wrong one. Pin through the id. Give the setup distinct ids so a swap
-shows.
+shows. Use ids of one fixed width, such as full UUIDs, so one id cannot match
+the start of another.
 
 Stop the pin before any value the message computes. A computed value can be
 wrong today. Its fix should not break the fixture. HEU-1132 tracks one such

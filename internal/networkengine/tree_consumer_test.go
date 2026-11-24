@@ -1760,7 +1760,8 @@ type deleteRecordingStore struct {
 	attempts        []string
 	responsors      []string
 	wroteResponsors []string
-	// undoErr, when set, is returned in place of the undo.
+	// undoErr, when set, is returned in place of the undo once the context
+	// check passes.
 	undoErr error
 }
 

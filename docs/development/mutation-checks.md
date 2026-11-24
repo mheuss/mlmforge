@@ -727,3 +727,7 @@ dropped looks the same as no change.
 
 Give an exact-count rule one fixture row below the count and one above it. Set
 up each row so the other rules hold. Then the row fails on the count alone.
+
+A pinned count of zero has no row below it. A count cannot be negative. With a
+pinned count of zero, `!=` and `>` give the same result. The row above the
+count is enough.

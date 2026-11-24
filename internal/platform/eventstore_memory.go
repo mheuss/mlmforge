@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // ErrEmptyAppend is returned when Append is called with an empty events slice.
@@ -24,6 +25,9 @@ func ValidateStreamName(stream string) error {
 	if stream == "" {
 		return fmt.Errorf("%w: must not be empty", ErrInvalidStreamName)
 	}
+	if problem := textProblem(stream); problem != "" {
+		return fmt.Errorf("%w: %q %s", ErrInvalidStreamName, stream, problem)
+	}
 	cat, id, ok := strings.Cut(stream, "-")
 	if !ok {
 		return fmt.Errorf("%w: %q missing category-id separator '-'", ErrInvalidStreamName, stream)
@@ -37,8 +41,16 @@ func ValidateStreamName(stream string) error {
 	return nil
 }
 
-// ValidateNewEvent checks that required fields on a NewEvent are populated.
-// Returns an error describing the first missing field.
+// validateCategory checks that a category is storable text.
+func validateCategory(category string) error {
+	if problem := textProblem(category); problem != "" {
+		return fmt.Errorf("eventstore: category %q %s", category, problem)
+	}
+	return nil
+}
+
+// ValidateNewEvent checks that a NewEvent's fields are present and storable.
+// Returns an error describing the first field that fails.
 func ValidateNewEvent(e NewEvent, index int) error {
 	if e.ID == "" {
 		return fmt.Errorf("eventstore: event at index %d has empty ID", index)
@@ -46,10 +58,24 @@ func ValidateNewEvent(e NewEvent, index int) error {
 	if e.Type == "" {
 		return fmt.Errorf("eventstore: event at index %d has empty Type", index)
 	}
+	if problem := textProblem(e.Type); problem != "" {
+		return fmt.Errorf("eventstore: event at index %d has Type %q, which %s", index, e.Type, problem)
+	}
 	if e.Payload == nil {
 		return fmt.Errorf("eventstore: event at index %d has nil Payload", index)
 	}
 	return nil
+}
+
+// textProblem describes why s is not storable text, or returns "".
+func textProblem(s string) string {
+	if !utf8.ValidString(s) {
+		return "is not valid UTF-8"
+	}
+	if strings.ContainsRune(s, 0) {
+		return "holds a NUL byte"
+	}
+	return ""
 }
 
 // Compile-time check: MemoryEventStore implements EventStore.
@@ -186,6 +212,9 @@ func (m *MemoryEventStore) ReadLastEvent(_ context.Context, stream string) (*Eve
 // Category is the part before the first hyphen, matching PostgreSQL's
 // split_part(stream, '-', 1). Pass limit=0 to read all matching events.
 func (m *MemoryEventStore) ReadCategory(_ context.Context, category string, afterPosition int64, limit int64) ([]Event, error) {
+	if err := validateCategory(category); err != nil {
+		return nil, err
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 

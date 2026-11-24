@@ -866,6 +866,89 @@ func testAppendRefusals(t *testing.T, newStore func(t *testing.T) EventStore) {
 	})
 }
 
+// testUnstorableEvents checks that Append refuses values the events table cannot hold, and writes nothing.
+func testUnstorableEvents(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	const id = "00000000-0000-0000-0000-000000000001"
+	event := func(typ, payload string) NewEvent {
+		return NewEvent{ID: id, Type: typ, Payload: json.RawMessage(payload)}
+	}
+	t.Run("the unedited event is accepted and written", func(t *testing.T) {
+		s := newStore(t)
+
+		require.NoError(t, s.Append(ctx, "order-abc", 0, []NewEvent{event("OrderCreated", `{}`)}))
+
+		got, err := s.ReadCategory(ctx, "order", 0, 0)
+		require.NoError(t, err)
+		assert.Len(t, got, 1)
+	})
+	for _, tc := range []struct {
+		name   string
+		stream string
+		event  NewEvent
+		want   string
+	}{
+		{"a NUL in Type", "order-abc", event("Order\x00Created", `{}`), `index 0 has Type "Order\x00Created", which holds a NUL byte`},
+		{"a Type that is not UTF-8", "order-abc", event("Order\xffCreated", `{}`), `index 0 has Type "Order\xffCreated", which is not valid UTF-8`},
+		{"a NUL in the stream name", "order-a\x00b", event("OrderCreated", `{}`), `invalid stream name: "order-a\x00b" holds a NUL byte`},
+		{"a stream name that is not UTF-8", "order-a\xffb", event("OrderCreated", `{}`), `invalid stream name: "order-a\xffb" is not valid UTF-8`},
+	} {
+		t.Run(tc.name+" is refused and writes nothing", func(t *testing.T) {
+			s := newStore(t)
+
+			err := s.Append(ctx, tc.stream, 0, []NewEvent{tc.event})
+
+			require.ErrorContains(t, err, tc.want)
+			got, err := s.ReadCategory(ctx, "order", 0, 0)
+			require.NoError(t, err)
+			assert.Empty(t, got)
+		})
+	}
+}
+
+func TestMemoryEventStore_UnstorableEvents(t *testing.T) {
+	testUnstorableEvents(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_UnstorableEvents(t *testing.T) {
+	testUnstorableEvents(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}
+
+// testUnstorableNames checks that the reads refuse names the events table cannot hold.
+func testUnstorableNames(t *testing.T, newStore func(t *testing.T) EventStore) {
+	ctx := context.Background()
+	for _, tc := range []struct{ name, stream, category, want string }{
+		{"a NUL", "order-a\x00b", "ord\x00er", "holds a NUL byte"},
+		{"invalid UTF-8", "order-a\xffb", "ord\xffer", "is not valid UTF-8"},
+	} {
+		t.Run("a stream name holding "+tc.name+" is refused by ReadStream and ReadLastEvent", func(t *testing.T) {
+			s := newStore(t)
+
+			_, err := s.ReadStream(ctx, tc.stream, 1, 0)
+			require.ErrorIs(t, err, ErrInvalidStreamName)
+			require.ErrorContains(t, err, tc.want)
+			_, err = s.ReadLastEvent(ctx, tc.stream)
+			require.ErrorIs(t, err, ErrInvalidStreamName)
+			require.ErrorContains(t, err, tc.want)
+		})
+		t.Run("a category holding "+tc.name+" is refused by ReadCategory", func(t *testing.T) {
+			s := newStore(t)
+
+			_, err := s.ReadCategory(ctx, tc.category, 0, 0)
+
+			require.ErrorContains(t, err, fmt.Sprintf("eventstore: category %q %s", tc.category, tc.want))
+		})
+	}
+}
+
+func TestMemoryEventStore_UnstorableNames(t *testing.T) {
+	testUnstorableNames(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_UnstorableNames(t *testing.T) {
+	testUnstorableNames(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}
+
 func TestMemoryEventStore_AppendRefusals(t *testing.T) {
 	testAppendRefusals(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
 }

@@ -95,8 +95,10 @@ a `jsonb` column rejects it with `22P02 invalid input syntax for type json`.
 pool.Exec(ctx, sql, id, json.RawMessage{})
 ```
 
-The event store refuses an empty non-nil slice. The check sits in a validator
-both twins call, so the twins agree on it.
+Normalize `len(x) == 0` to nil, or refuse it, in one helper both
+implementations call. Otherwise the two disagree on a value the shared suite
+compares. The event store refuses an empty non-nil slice in a validator both
+twins call.
 
 ## jsonb does not preserve key order
 
@@ -147,9 +149,10 @@ spelled out directly.
 
 Go's decoder also keeps the last of two repeated member names and reports no
 error. Decoding `{"left":9,"left":1,"right":1}` into a map gave `left` 1.
-Observed in Go's decoder only, in HEU-594. What jsonb does with the same input
-was not tested. HEU-594's reader refuses a repeated name by walking the object
-with `Token()` and checking each name before decoding its value.
+Observed in Go's decoder in HEU-594. jsonb also keeps the last one. Storing
+`{"a":1,"a":2}` read back as `{"a": 2}` in HEU-1112. HEU-594's reader refuses a
+repeated name by walking the object with `Token()` and checking each name
+before decoding its value.
 
 A value Go writes is not always a value Go can read back. `dec.Parse` refuses
 canonical text over 64 bytes, and `dec.Amount.UnmarshalJSON` goes through it.

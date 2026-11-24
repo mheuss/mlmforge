@@ -195,6 +195,10 @@ proptest! {
         let restored: UnilevelTree =
             serde_json::from_str(&serde_json::to_string(&tree).unwrap()).unwrap();
         prop_assert_eq!(restored.validate_restored(), Ok(()));
+        prop_assert_eq!(
+            serde_json::to_value(&restored).unwrap(),
+            serde_json::to_value(&tree).unwrap()
+        );
     }
 
     #[test]
@@ -214,6 +218,10 @@ proptest! {
         let restored: BinaryTree =
             serde_json::from_str(&serde_json::to_string(&tree).unwrap()).unwrap();
         prop_assert_eq!(restored.validate_restored(), Ok(()));
+        prop_assert_eq!(
+            serde_json::to_value(&restored).unwrap(),
+            serde_json::to_value(&tree).unwrap()
+        );
     }
 
     #[test]
@@ -233,6 +241,10 @@ proptest! {
         let restored: MatrixTree =
             serde_json::from_str(&serde_json::to_string(&tree).unwrap()).unwrap();
         prop_assert_eq!(restored.validate_restored(), Ok(()));
+        prop_assert_eq!(
+            serde_json::to_value(&restored).unwrap(),
+            serde_json::to_value(&tree).unwrap()
+        );
     }
 
     #[test]

@@ -1,5 +1,5 @@
 {
-    "description": "place_from_tank refuses a tanked user into a slot its parent already fills",
+    "description": "place_from_tank refuses a tanked user into a parent slot another child already fills",
     "setup": [
         {"id": "s-1", "op": "create_tree", "params": {"structure": "test", "tree_type": "matrix", "width": 2, "spillover": "breadth_first"}},
         {"id": "s-2", "op": "add_root", "params": {"structure": "test", "user_id": "00000000-0000-0000-0000-000000000001", "enrolled_at": 1000}},
@@ -17,5 +17,5 @@
             "position": 0
         }
     },
-    "expected_response": {"id": "pf-occupied", "ok": false, "error": {"code": "POSITION_OCCUPIED", "message_contains": "position 0 already occupied"}}
+    "expected_response": {"id": "pf-occupied", "ok": false, "error": {"code": "POSITION_OCCUPIED", "message_contains": "position 0 already occupied for user 00000000-0000-0000-0000-000000000001"}}
 }

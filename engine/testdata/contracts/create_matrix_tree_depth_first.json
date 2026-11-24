@@ -1,0 +1,21 @@
+{
+    "description": "create_tree rejects a matrix with depth_first spillover with INVALID_PARAMS",
+    "request": {
+        "id": "cm-depth-first",
+        "op": "create_tree",
+        "params": {
+            "structure": "test",
+            "tree_type": "matrix",
+            "width": 2,
+            "spillover": "depth_first"
+        }
+    },
+    "expected_response": {
+        "id": "cm-depth-first",
+        "ok": false,
+        "error": {
+            "code": "INVALID_PARAMS",
+            "message_contains": "unsupported spillover: depth_first"
+        }
+    }
+}

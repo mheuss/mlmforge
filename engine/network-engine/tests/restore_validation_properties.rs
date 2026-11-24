@@ -197,11 +197,23 @@ where
     }
     let snapshot = serde_json::to_string(&tree).unwrap();
     let mut twin: T = serde_json::from_str(&snapshot).unwrap();
+    prop_assert_eq!(
+        serde_json::to_value(&twin).unwrap(),
+        serde_json::to_value(&tree).unwrap(),
+        "state differs right after restore from {}",
+        snapshot
+    );
     let (mut twin_live, mut twin_next) = (live.clone(), next);
     for &op in &ops[split..] {
         step(&mut tree, &mut live, &mut next, op);
         step(&mut twin, &mut twin_live, &mut twin_next, op);
-        prop_assert_eq!(&twin_live, &live, "live users differ after {:?}", op);
+        prop_assert_eq!(
+            &twin_live,
+            &live,
+            "live users differ after {:?}; restored from {}",
+            op,
+            snapshot
+        );
         prop_assert_eq!(
             serde_json::to_value(&twin).unwrap(),
             serde_json::to_value(&tree).unwrap(),

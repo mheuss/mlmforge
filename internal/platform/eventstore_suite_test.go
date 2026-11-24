@@ -1034,6 +1034,49 @@ func TestPostgresEventStore_UnstorableNames(t *testing.T) {
 	testUnstorableNames(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
 }
 
+// testCancelledContext checks that every EventStore method refuses a cancelled context.
+func testCancelledContext(t *testing.T, newStore func(t *testing.T) EventStore) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	t.Run("every method returns context.Canceled and Append writes nothing", func(t *testing.T) {
+		s := newStore(t)
+
+		err := s.Append(cancelled, "order-abc", 0, []NewEvent{{ID: "00000000-0000-0000-0000-000000000001", Type: "OrderCreated", Payload: json.RawMessage(`{}`)}})
+		assert.ErrorIs(t, err, context.Canceled, "Append")
+		_, err = s.ReadStream(cancelled, "order-abc", 1, 0)
+		assert.ErrorIs(t, err, context.Canceled, "ReadStream")
+		_, err = s.ReadLastEvent(cancelled, "order-abc")
+		assert.ErrorIs(t, err, context.Canceled, "ReadLastEvent")
+		_, err = s.ReadCategory(cancelled, "order", 0, 0)
+		assert.ErrorIs(t, err, context.Canceled, "ReadCategory")
+
+		got, err := s.ReadCategory(context.Background(), "order", 0, 0)
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("an invalid argument is reported ahead of the cancelled context", func(t *testing.T) {
+		s := newStore(t)
+
+		assert.ErrorIs(t, s.Append(cancelled, "order-abc", 0, nil), ErrEmptyAppend, "Append")
+		_, err := s.ReadStream(cancelled, "singleton", 1, 0)
+		assert.ErrorIs(t, err, ErrInvalidStreamName, "ReadStream")
+		_, err = s.ReadLastEvent(cancelled, "singleton")
+		assert.ErrorIs(t, err, ErrInvalidStreamName, "ReadLastEvent")
+		_, err = s.ReadCategory(cancelled, "ord\x00er", 0, 0)
+		assert.ErrorContains(t, err, "eventstore: category", "ReadCategory")
+	})
+}
+
+func TestMemoryEventStore_CancelledContext(t *testing.T) {
+	testCancelledContext(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
+}
+
+func TestPostgresEventStore_CancelledContext(t *testing.T) {
+	testCancelledContext(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
+}
+
 func TestMemoryEventStore_AppendRefusals(t *testing.T) {
 	testAppendRefusals(t, func(*testing.T) EventStore { return NewMemoryEventStore() })
 }

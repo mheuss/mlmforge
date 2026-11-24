@@ -176,7 +176,7 @@ func NewMemoryEventStore() *MemoryEventStore {
 }
 
 // Append writes events to a stream atomically with optimistic concurrency.
-func (m *MemoryEventStore) Append(_ context.Context, stream string, expectedVersion int64, events []NewEvent) error {
+func (m *MemoryEventStore) Append(ctx context.Context, stream string, expectedVersion int64, events []NewEvent) error {
 	if err := ValidateStreamName(stream); err != nil {
 		return err
 	}
@@ -187,6 +187,9 @@ func (m *MemoryEventStore) Append(_ context.Context, stream string, expectedVers
 		if err := ValidateNewEvent(e, i); err != nil {
 			return err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	m.mu.Lock()
@@ -242,8 +245,11 @@ func (m *MemoryEventStore) Append(_ context.Context, stream string, expectedVers
 
 // ReadStream returns events from a single stream starting at fromVersion.
 // Pass limit=0 to read all matching events.
-func (m *MemoryEventStore) ReadStream(_ context.Context, stream string, fromVersion int64, limit int64) ([]Event, error) {
+func (m *MemoryEventStore) ReadStream(ctx context.Context, stream string, fromVersion int64, limit int64) ([]Event, error) {
 	if err := ValidateStreamName(stream); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -268,8 +274,11 @@ func (m *MemoryEventStore) ReadStream(_ context.Context, stream string, fromVers
 }
 
 // ReadLastEvent returns the stream's last event, or nil for an empty stream.
-func (m *MemoryEventStore) ReadLastEvent(_ context.Context, stream string) (*Event, error) {
+func (m *MemoryEventStore) ReadLastEvent(ctx context.Context, stream string) (*Event, error) {
 	if err := ValidateStreamName(stream); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -289,8 +298,11 @@ func (m *MemoryEventStore) ReadLastEvent(_ context.Context, stream string) (*Eve
 // ReadCategory returns events across all streams matching a category prefix.
 // Category is the part before the first hyphen, matching PostgreSQL's
 // split_part(stream, '-', 1). Pass limit=0 to read all matching events.
-func (m *MemoryEventStore) ReadCategory(_ context.Context, category string, afterPosition int64, limit int64) ([]Event, error) {
+func (m *MemoryEventStore) ReadCategory(ctx context.Context, category string, afterPosition int64, limit int64) ([]Event, error) {
 	if err := validateCategory(category); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	m.mu.RLock()

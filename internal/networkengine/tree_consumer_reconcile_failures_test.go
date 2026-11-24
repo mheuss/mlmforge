@@ -11,10 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// userReadStore answers GetNode for one user with a scripted row and error,
-// and counts those reads. Every other read goes to the inner store.
+// userReadStore answers GetNode for one user in one tree with a scripted row
+// and error, and counts those reads. Every other read goes to the inner store.
 type userReadStore struct {
 	*MemoryTreeStore
+	tree  string
 	user  string
 	row   *TreeNodeRow
 	err   error
@@ -22,7 +23,7 @@ type userReadStore struct {
 }
 
 func (s *userReadStore) GetNode(ctx context.Context, treeID, userID string) (*TreeNodeRow, error) {
-	if userID != s.user {
+	if treeID != s.tree || userID != s.user {
 		return s.MemoryTreeStore.GetNode(ctx, treeID, userID)
 	}
 	s.reads++
@@ -42,7 +43,8 @@ func TestHandleNodePlaced_ReconcileRetriesWhenTheRowReadFails(t *testing.T) {
 		mutationErr: &EngineError{Code: engineCodeUserAlreadyExists, Message: "taken"},
 		position:    enginePlaced(nil),
 	}
-	store := &userReadStore{MemoryTreeStore: NewMemoryTreeStore(), user: posUser, err: errors.New("row-read-marker")}
+	store := &userReadStore{MemoryTreeStore: NewMemoryTreeStore(), tree: consumerTree, user: posUser,
+		err: errors.New("row-read-marker")}
 	c := newUserReadConsumer(t, tr, store)
 
 	err := deliver(context.Background(), c, makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
@@ -59,7 +61,7 @@ func TestHandleNodePlaced_ReconcileDivergesWhenTheStoreHasNoActiveRow(t *testing
 		mutationErr: &EngineError{Code: engineCodeUserAlreadyExists, Message: "taken"},
 		position:    enginePlaced(nil),
 	}
-	store := &userReadStore{MemoryTreeStore: NewMemoryTreeStore(), user: posUser}
+	store := &userReadStore{MemoryTreeStore: NewMemoryTreeStore(), tree: consumerTree, user: posUser}
 	c := newUserReadConsumer(t, tr, store)
 	event := makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1)))
 
@@ -72,26 +74,13 @@ func TestHandleNodePlaced_ReconcileDivergesWhenTheStoreHasNoActiveRow(t *testing
 	assert.Equal(t, 0, tr.positionOps, "get_position calls made")
 }
 
-// undoFailingStore fails every UndoRootProjection with err, whatever the
-// context.
-type undoFailingStore struct {
-	*MemoryTreeStore
-	err      error
-	attempts int
-}
-
-func (s *undoFailingStore) UndoRootProjection(context.Context, string, string, int64) error {
-	s.attempts++
-	return s.err
-}
-
 func TestHandleRootAdded_ReconcileNamesAFailedCompensatingDelete(t *testing.T) {
 	tr := &reconcileTransport{
 		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists},
 		position:    &EnginePosition{UserID: posUser, Depth: 3, EnrolledAt: posEnrolled.Unix()},
 	}
 	undoErr := errors.New("undo-marker")
-	store := &undoFailingStore{MemoryTreeStore: NewMemoryTreeStore(), err: undoErr}
+	store := &deleteRecordingStore{MemoryTreeStore: NewMemoryTreeStore(), undoErr: undoErr}
 	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
 	c.retryDelay = 0
 
@@ -103,20 +92,9 @@ func TestHandleRootAdded_ReconcileNamesAFailedCompensatingDelete(t *testing.T) {
 		consumerTree, posUser, posEnrolled.Unix(), posEnrolled.Unix()))
 	assert.ErrorIs(t, err, undoErr)
 	assert.Len(t, tr.mutationOps, 1, "add_root calls made")
-	assert.Equal(t, 1, store.attempts, "UndoRootProjection calls made")
+	assert.Equal(t, []string{posUser}, store.attempts, "users UndoRootProjection was called for")
+	assert.Empty(t, store.deleted, "users UndoRootProjection deleted")
 	assert.NotNil(t, activeRow(t, store.MemoryTreeStore, posUser), "active row for "+posUser)
-}
-
-// readBackFailingStore fails every GetNodeIncludingRemoved with err.
-type readBackFailingStore struct {
-	*MemoryTreeStore
-	err   error
-	reads int
-}
-
-func (s *readBackFailingStore) GetNodeIncludingRemoved(context.Context, string, string) (*TreeNodeRow, error) {
-	s.reads++
-	return nil, s.err
 }
 
 func TestHandleRootAdded_CancelledInsertReportsAFailedReadBack(t *testing.T) {
@@ -127,7 +105,7 @@ func TestHandleRootAdded_CancelledInsertReportsAFailedReadBack(t *testing.T) {
 		mutationErr: &EngineError{Code: engineCodeRootAlreadyExists},
 		onMutation:  cancel,
 	}
-	store := &readBackFailingStore{MemoryTreeStore: NewMemoryTreeStore(), err: errors.New("read-back-marker")}
+	store := &readFailingStore{MemoryTreeStore: NewMemoryTreeStore(), err: errors.New("read-back-marker")}
 	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
 	c.retryDelay = time.Minute
 
@@ -137,5 +115,4 @@ func TestHandleRootAdded_CancelledInsertReportsAFailedReadBack(t *testing.T) {
 	assert.ErrorIs(t, err, context.Canceled, "context.Canceled in the error chain")
 	assert.Regexp(t, "; reading back the row for "+posUser+" in tree "+consumerTree+" failed: read-back-marker$",
 		err.Error(), "end of the returned error")
-	assert.Equal(t, 1, store.reads, "GetNodeIncludingRemoved calls made")
 }

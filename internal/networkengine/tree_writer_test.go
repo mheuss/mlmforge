@@ -624,7 +624,7 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 		run            func(*TreeWriter) (WriteResult, error)
 		message        string
 		scripted       bool
-		matrix         bool
+		matrixRemoval  bool
 	}{
 		{"add_root", "ROOT_ALREADY_EXISTS", rooted(treeTypeUnilevel), addOtherRoot, "tree already has a root node", false, false},
 		{"add_node", "USER_ALREADY_EXISTS", placed(treeTypeBinary, writerOther, 1), placeOther,
@@ -663,7 +663,7 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 	}
 	for _, tc := range cases {
 		name := tc.mutation + " " + tc.code
-		if tc.matrix {
+		if tc.matrixRemoval {
 			name = "matrix " + name
 		}
 		t.Run(name, func(t *testing.T) {
@@ -685,7 +685,7 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 			assert.Contains(t, err.Error(), "nothing was appended")
 			require.Len(t, engine.checks, 1)
 			assert.Equal(t, tc.mutation, engine.checks[0].op)
-			if tc.matrix {
+			if tc.matrixRemoval {
 				assert.Equal(t, string(PruningPromoteEarliest), engine.checks[0].params["pruning_mode"],
 					"pruning_mode of the check")
 			}

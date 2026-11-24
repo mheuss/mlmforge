@@ -17,5 +17,5 @@
             "position": 2
         }
     },
-    "expected_response": {"id": "pf-invalid-position", "ok": false, "error": {"code": "INVALID_POSITION", "message_contains": "position 2 out of range"}}
+    "expected_response": {"id": "pf-invalid-position", "ok": false, "error": {"code": "INVALID_POSITION", "message_contains": "position 2 out of range for user 00000000-0000-0000-0000-000000000001"}}
 }

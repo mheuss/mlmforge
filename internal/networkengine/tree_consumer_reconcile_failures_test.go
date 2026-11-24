@@ -129,8 +129,6 @@ func TestHandleRootAdded_CancelledInsertReportsAFailedReadBack(t *testing.T) {
 	}
 	store := &readBackFailingStore{MemoryTreeStore: NewMemoryTreeStore(), err: errors.New("read-back-marker")}
 	c := NewTreeEventConsumer(store, newEngineClientWithTransport(tr))
-	// Not zero: at zero this test can fail, because the retry can win over the
-	// cancellation.
 	c.retryDelay = time.Minute
 
 	err := deliver(ctx, c, makeEvent(EventTypeRootAdded, rootPayload()))

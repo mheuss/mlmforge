@@ -20,15 +20,15 @@ import (
 const handleEventWriterFile = writerPackageDir + "/tree_writer.go"
 
 // handleEventWriterReferences is how many references to HandleEvent
-// handleEventWriterFile holds. A new one there is a new path into the
-// consumer, so a change to it is meant to be seen in review.
+// handleEventWriterFile may hold. Pinned, so that adding one fails this test
+// and has to change this line.
 const handleEventWriterReferences = 2
 
 // consumerFile is the module-relative path of the one non-test file allowed to
 // refer to the consumer's per-type handlers.
 const consumerFile = writerPackageDir + "/tree_consumer.go"
 
-// consumerHandlers are the per-type handlers behind HandleEvent.
+// consumerHandlers names the methods only consumerFile may refer to.
 var consumerHandlers = map[string]bool{
 	"handleRootAdded":     true,
 	"handleNodePlaced":    true,

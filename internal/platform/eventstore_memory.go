@@ -21,9 +21,9 @@ var ErrEmptyAppend = errors.New("eventstore: cannot append zero events")
 // to check for this error.
 var ErrInvalidStreamName = errors.New("eventstore: invalid stream name")
 
-// ValidateStreamName checks that a stream name is storable text in
-// {category}-{id} form. The category is the part before the first hyphen, and
-// both parts must be non-empty.
+// ValidateStreamName checks that a stream name is valid UTF-8 with no NUL
+// byte, in {category}-{id} form. The category is the part before the first
+// hyphen, and both parts must be non-empty.
 func ValidateStreamName(stream string) error {
 	if stream == "" {
 		return fmt.Errorf("%w: must not be empty", ErrInvalidStreamName)

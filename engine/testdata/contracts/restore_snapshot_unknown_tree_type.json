@@ -1,0 +1,20 @@
+{
+    "description": "restore_snapshot rejects a tree_type the worker does not know with INVALID_PARAMS",
+    "request": {
+        "id": "rs-unknown-tree-type",
+        "op": "restore_snapshot",
+        "params": {
+            "structure": "Restored",
+            "tree_type": "ternary",
+            "data": {}
+        }
+    },
+    "expected_response": {
+        "id": "rs-unknown-tree-type",
+        "ok": false,
+        "error": {
+            "code": "INVALID_PARAMS",
+            "message_contains": "unknown tree_type: ternary"
+        }
+    }
+}

@@ -277,6 +277,9 @@ fake's own layout. An example is which of two loops runs first inside one worker
 check. Such a row breaks on a refactor that changes nothing the worker would
 answer.
 
+A row that must not depend on the order needs a setup that every other check
+accepts. Confirm it with a control request that succeeds.
+
 Used for HEU-1078 on 2026-11-18, for the writer fake's root-sponsor and
 sponsor-chain checks.
 
@@ -409,3 +412,15 @@ node from both engines.
 Found for HEU-1082 on 2026-11-19. The fake's depth check let a depth-0 child
 pass under a parent at the largest depth. It then named the parent instead of
 the child.
+
+## Pin the id a refusal message carries
+
+A refusal message often names one of several ids from the request. A
+`message_contains` that stops before the id still passes when the code names
+the wrong one. Pin through the id. Give the setup distinct ids so a swap
+shows. Use ids of one fixed width, such as full UUIDs, so one id cannot match
+the start of another.
+
+Stop the pin before any value the message computes. A computed value can be
+wrong today. Its fix should not break the fixture. HEU-1132 tracks one such
+value.

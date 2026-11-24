@@ -2912,6 +2912,40 @@ func TestEngineClient_AddNodeAt_WireParams(t *testing.T) {
 	}`, string(mock.lastParams))
 }
 
+// TestEngineClient_PlaceFromTank_WireParams pins the wire op and keys PlaceFromTank sends.
+func TestEngineClient_PlaceFromTank_WireParams(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"placed":true}`)}
+	client := newEngineClientWithTransport(mock)
+
+	err := client.PlaceFromTank(context.Background(), "m-tree", "user-tanked", "user-parent", 1)
+	require.NoError(t, err)
+
+	assert.Equal(t, "place_from_tank", mock.lastOp)
+	assert.JSONEq(t, `{
+		"structure": "m-tree",
+		"user_id":   "user-tanked",
+		"parent_id": "user-parent",
+		"position":  1
+	}`, string(mock.lastParams))
+}
+
+// TestEngineClient_AddMatrixNode_WireParams pins the wire op and keys AddMatrixNode sends.
+func TestEngineClient_AddMatrixNode_WireParams(t *testing.T) {
+	mock := &mockTransport{response: json.RawMessage(`{"added":true}`)}
+	client := newEngineClientWithTransport(mock)
+
+	err := client.AddMatrixNode(context.Background(), "m-tree", "user-child", "user-sponsor", 1700000000)
+	require.NoError(t, err)
+
+	assert.Equal(t, "add_node", mock.lastOp)
+	assert.JSONEq(t, `{
+		"structure":   "m-tree",
+		"user_id":     "user-child",
+		"sponsor_id":  "user-sponsor",
+		"enrolled_at": 1700000000
+	}`, string(mock.lastParams))
+}
+
 // --- Nil collection wire shapes (HEU-626) ---
 //
 // A nil Go map or slice marshals to JSON null, not {} or []. These pin the

@@ -95,8 +95,8 @@ a `jsonb` column rejects it with `22P02 invalid input syntax for type json`.
 pool.Exec(ctx, sql, id, json.RawMessage{})
 ```
 
-Normalize `len(x) == 0` to nil before the write. Do it in one helper both
-implementations call, or the two disagree on a value the shared suite compares.
+The event store refuses an empty non-nil slice. The check sits in a validator
+both twins call, so the twins agree on it.
 
 ## jsonb does not preserve key order
 
@@ -130,8 +130,10 @@ Four known divergences. None is theoretical; all were reproduced.
 
 The last one reverses: Go is stricter. Fix it with `json.Decoder` +
 `UseNumber()`, which keeps the literal text instead of parsing to float64.
-Catch raw invalid UTF-8 with `utf8.Valid`. The two escape-sequence cases are
-not worth reimplementing jsonb's parser for — document them instead.
+Catch raw invalid UTF-8 with `utf8.Valid`. The event store validators refuse
+both escape-sequence cases without reimplementing jsonb's parser. They scan a
+value's escapes once `json.Valid` passes it. Numbers outside `numeric` range
+are HEU-1146. Readback bytes that differ between the twins are HEU-1147.
 
 `utf8.Valid` does not catch the unpaired surrogate. The escape `\ud800` is six
 ASCII bytes, so the raw input is valid UTF-8. Go then decodes it to U+FFFD with

@@ -1034,7 +1034,7 @@ func TestPostgresEventStore_UnstorableNames(t *testing.T) {
 	testUnstorableNames(t, func(t *testing.T) EventStore { return newTestPostgresStore(t) })
 }
 
-// testCancelledContext checks that every EventStore method refuses a cancelled context.
+// testCancelledContext checks Append and the reads under a cancelled context, and that an invalid argument is reported first.
 func testCancelledContext(t *testing.T, newStore func(t *testing.T) EventStore) {
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -1060,12 +1060,15 @@ func testCancelledContext(t *testing.T, newStore func(t *testing.T) EventStore) 
 		s := newStore(t)
 
 		assert.ErrorIs(t, s.Append(cancelled, "order-abc", 0, nil), ErrEmptyAppend, "Append")
+		assert.ErrorContains(t, s.Append(cancelled, "order-abc", 0, []NewEvent{{ID: "00000000-0000-0000-0000-000000000001", Type: "", Payload: json.RawMessage(`{}`)}}),
+			"index 0 has empty Type", "Append with an invalid event")
 		_, err := s.ReadStream(cancelled, "singleton", 1, 0)
 		assert.ErrorIs(t, err, ErrInvalidStreamName, "ReadStream")
 		_, err = s.ReadLastEvent(cancelled, "singleton")
 		assert.ErrorIs(t, err, ErrInvalidStreamName, "ReadLastEvent")
 		_, err = s.ReadCategory(cancelled, "ord\x00er", 0, 0)
 		assert.ErrorContains(t, err, "eventstore: category", "ReadCategory")
+		assert.NotErrorIs(t, err, context.Canceled, "ReadCategory")
 	})
 }
 

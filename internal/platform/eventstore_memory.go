@@ -89,7 +89,7 @@ func textProblem(s string) string {
 	return ""
 }
 
-// jsonbProblem describes why raw is not storable as jsonb, or returns "".
+// jsonbProblem describes why raw is refused for storage, or returns "".
 func jsonbProblem(raw []byte) string {
 	if len(raw) == 0 {
 		return "is empty"

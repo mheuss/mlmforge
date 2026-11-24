@@ -714,3 +714,16 @@ mutation did not land where you think. So does a row inside the set that passes.
 
 HEU-1082 hit this. Moving a depth check past a later check also moved it past a
 root-sponsor check. That order's row failed with the new one.
+
+## A pinned count needs a fixture row on each side
+
+2026-11-24.
+
+A guard that requires an exact count can pass a mutation that keeps only one
+bound. A fixture row one above the count fails under `!=` and under `>` alike.
+With only that row, the guard can be loosened to `>` and every test stays
+green. The loosened guard then misses the count falling. A call that gets
+dropped looks the same as no change.
+
+Give an exact-count rule one fixture row below the count and one above it. Set
+up each row so the other rules hold. Then the row fails on the count alone.

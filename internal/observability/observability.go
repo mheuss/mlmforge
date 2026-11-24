@@ -24,7 +24,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
 	otellog "go.opentelemetry.io/otel/log"
-	"go.opentelemetry.io/otel/log/global"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -54,7 +53,7 @@ func Init(_ context.Context) (shutdown func(context.Context) error, err error) {
 		lpOpts = append(lpOpts, sdklog.WithProcessor(logProcessor))
 	}
 	loggerProvider := sdklog.NewLoggerProvider(lpOpts...)
-	global.SetLoggerProvider(loggerProvider)
+	otel.SetLoggerProvider(loggerProvider)
 
 	// Dormant: no reader/exporter attached, so these produce no output but keep
 	// the global providers real (not no-ops), ready for a future exporter (D2).
@@ -107,7 +106,7 @@ type Observer struct {
 // writes to the configured pipeline.
 func NewObserver(lp otellog.LoggerProvider) *Observer {
 	if lp == nil {
-		lp = global.GetLoggerProvider()
+		lp = otel.GetLoggerProvider()
 	}
 	return &Observer{logger: lp.Logger(signalLoggerName)}
 }

@@ -25,7 +25,7 @@ const handleEventWriterFile = writerPackageDir + "/tree_writer.go"
 const handleEventWriterReferences = 2
 
 // consumerFile is the module-relative path of the one non-test file allowed to
-// refer to the consumer's per-type handlers.
+// refer to consumerHandlers.
 const consumerFile = writerPackageDir + "/tree_consumer.go"
 
 // consumerHandlers names the methods only consumerFile may refer to.

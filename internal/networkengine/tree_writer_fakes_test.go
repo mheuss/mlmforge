@@ -778,6 +778,10 @@ type scriptedEvents struct {
 	// readAs replaces what ReadStream returns when read from readAsVersion.
 	readAs        *platform.Event
 	readAsVersion int64
+	// readAtErr and readAtEmpty make a ReadStream from readAsVersion return
+	// that error, or no events. They take precedence over readAs.
+	readAtErr   error
+	readAtEmpty bool
 	// appendErr is what the next Append returns. commitFirst writes its events
 	// to the inner store before returning it.
 	appendErr   error
@@ -823,6 +827,12 @@ func (s *scriptedEvents) ReadStream(ctx context.Context, stream string, from, li
 		err := s.readErr
 		s.readErr = nil
 		return nil, err
+	}
+	if s.readAtErr != nil && from == s.readAsVersion {
+		return nil, s.readAtErr
+	}
+	if s.readAtEmpty && from == s.readAsVersion {
+		return nil, nil
 	}
 	if s.readAs != nil && from == s.readAsVersion {
 		return []platform.Event{*s.readAs}, nil

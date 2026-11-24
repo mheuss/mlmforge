@@ -612,44 +612,61 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 			return w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: user, RemovedAt: writeTime})
 		}
 	}
+	removeMatrix := func(user string) func(*TreeWriter) (WriteResult, error) {
+		return func(w *TreeWriter) (WriteResult, error) {
+			return w.Remove(context.Background(), RemoveRequest{TreeID: writerTree, UserID: user, RemovedAt: writeTime,
+				PruningMode: PruningPromoteEarliest})
+		}
+	}
 	cases := []struct {
 		mutation, code string
 		setup          func(*testing.T, *writerEnv)
 		run            func(*TreeWriter) (WriteResult, error)
 		message        string
 		scripted       bool
+		matrix         bool
 	}{
-		{"add_root", "ROOT_ALREADY_EXISTS", rooted(treeTypeUnilevel), addOtherRoot, "tree already has a root node", false},
+		{"add_root", "ROOT_ALREADY_EXISTS", rooted(treeTypeUnilevel), addOtherRoot, "tree already has a root node", false, false},
 		{"add_node", "USER_ALREADY_EXISTS", placed(treeTypeBinary, writerOther, 1), placeOther,
-			"user " + writerOther + " already exists in tree", false},
+			"user " + writerOther + " already exists in tree", false, false},
 		{"add_node", "USER_NOT_FOUND", rooted(treeTypeBinary), placeAt(absentParent, writerRoot, 0),
-			"user " + absentParent + " not found in tree", false},
+			"user " + absentParent + " not found in tree", false, false},
 		{"add_node", "POSITION_OCCUPIED", placed(treeTypeBinary, writerChild, 0), placeOther,
-			"position 0 already occupied for user " + writerRoot, false},
+			"position 0 already occupied for user " + writerRoot, false, false},
 		{"add_node", "INVALID_POSITION", rooted(treeTypeBinary), placeOther,
-			"scripted: pass-through", true},
-		{"add_node_at", "TREE_EMPTY", rejectedMatrixRoot, placeOther, "tree has no root node", false},
+			"scripted: pass-through", true, false},
+		{"add_node_at", "TREE_EMPTY", rejectedMatrixRoot, placeOther, "tree has no root node", false, false},
 		{"add_node_at", "INVALID_POSITION", rooted(treeTypeMatrix), placeAt(writerRoot, writerRoot, 3),
-			"position 3 out of range for user " + writerRoot + " (has 3 children)", false},
+			"position 3 out of range for user " + writerRoot + " (has 3 children)", false, false},
 		{"add_node_at", "USER_ALREADY_EXISTS", placed(treeTypeMatrix, writerOther, 1), placeOther,
-			"user " + writerOther + " already exists in tree", false},
+			"user " + writerOther + " already exists in tree", false, false},
 		{"add_node_at", "USER_NOT_FOUND", rooted(treeTypeMatrix), placeAt(absentParent, writerRoot, 0),
-			"user " + absentParent + " not found in tree", false},
+			"user " + absentParent + " not found in tree", false, false},
 		{"add_node_at", "SPONSOR_NOT_FOUND", rooted(treeTypeMatrix), placeAt(writerRoot, writerAbsentSponsor, 0),
-			"sponsor " + writerAbsentSponsor + " not found in tree", false},
+			"sponsor " + writerAbsentSponsor + " not found in tree", false, false},
 		{"add_node_at", "POSITION_OCCUPIED", placed(treeTypeMatrix, writerChild, 0), placeOther,
-			"position 0 already occupied for user " + writerRoot, false},
+			"position 0 already occupied for user " + writerRoot, false, false},
 		{"remove_node", "USER_NOT_FOUND", rooted(treeTypeUnilevel), remove(writerOther),
-			"user " + writerOther + " not found in tree", false},
+			"user " + writerOther + " not found in tree", false, false},
 		{"remove_node", "HAS_CHILDREN", withChild, remove(writerRoot),
-			"cannot remove user " + writerRoot + ": has 1 children (must remove children first)", false},
+			"cannot remove user " + writerRoot + ": has 1 children (must remove children first)", false, false},
 		{"remove_node", "SPONSORLESS_WITH_RECRUITS", withChild, remove(writerChild),
-			"scripted: pass-through", true},
+			"scripted: pass-through", true, false},
 		{"remove_node", "SPONSOR_CYCLE", withChild, remove(writerChild),
-			"scripted: pass-through", true},
+			"scripted: pass-through", true, false},
+		{"remove_node", "CANNOT_REMOVE_ROOT", rooted(treeTypeMatrix), removeMatrix(writerRoot),
+			"cannot remove root node", false, true},
+		{"remove_node", "USER_IN_HOLDING_TANK", placed(treeTypeMatrix, writerChild, 0), removeMatrix(writerChild),
+			"scripted: pass-through", true, true},
+		{"remove_node", "SUBTREE_FULL", placed(treeTypeMatrix, writerChild, 0), removeMatrix(writerChild),
+			"scripted: pass-through", true, true},
 	}
 	for _, tc := range cases {
-		t.Run(tc.mutation+" "+tc.code, func(t *testing.T) {
+		name := tc.mutation + " " + tc.code
+		if tc.matrix {
+			name = "matrix " + name
+		}
+		t.Run(name, func(t *testing.T) {
 			env := newWriterEnv()
 			tc.setup(t, env)
 			stream := TreeStreamName(writerTree)
@@ -668,6 +685,10 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 			assert.Contains(t, err.Error(), "nothing was appended")
 			require.Len(t, engine.checks, 1)
 			assert.Equal(t, tc.mutation, engine.checks[0].op)
+			if tc.matrix {
+				assert.Equal(t, string(PruningPromoteEarliest), engine.checks[0].params["pruning_mode"],
+					"the check is the matrix removal's")
+			}
 			assert.Len(t, streamEvents(t, env.events, stream), before)
 		})
 	}
@@ -732,6 +753,64 @@ func TestTreeWriterPlace_ReportsAnotherEventAtItsVersionWithoutProjecting(t *tes
 	require.EqualError(t, res.ProjectionErr, "stream "+stream+
 		" holds event dddddddd-dddd-dddd-dddd-000000000001 at version 2, where event "+res.EventID+
 		" was appended; nothing was projected")
+	row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
+	require.NoError(t, err)
+	assert.Nil(t, row)
+}
+
+func TestTreeWriterPlace_ReportsAFailedReadBackWithoutProjecting(t *testing.T) {
+	env, scripted := scriptedEnv(t)
+	stream := TreeStreamName(writerTree)
+	readErr := errors.New("read-back-marker")
+	scripted.readAsVersion = 2
+	scripted.afterAppend = func() { scripted.readAtErr = readErr }
+	w, _ := env.writer()
+
+	res, err := w.Place(context.Background(), placeRequest(writerChild, nil))
+
+	require.NoError(t, err, "a confirmed append is a success")
+	require.EqualError(t, res.ProjectionErr, "read back event "+res.EventID+" at version 2 in stream "+stream+
+		": read-back-marker")
+	assert.ErrorIs(t, res.ProjectionErr, readErr)
+	row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
+	require.NoError(t, err)
+	assert.Nil(t, row)
+}
+
+func TestTreeWriterPlace_ReportsAnEmptyReadBackWithoutProjecting(t *testing.T) {
+	env, scripted := scriptedEnv(t)
+	stream := TreeStreamName(writerTree)
+	scripted.readAsVersion = 2
+	scripted.afterAppend = func() { scripted.readAtEmpty = true }
+	w, _ := env.writer()
+
+	res, err := w.Place(context.Background(), placeRequest(writerChild, nil))
+
+	require.NoError(t, err, "a confirmed append is a success")
+	require.EqualError(t, res.ProjectionErr, "read back at version 2 in stream "+stream+
+		" found no event; event "+res.EventID+" was not projected")
+	row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
+	require.NoError(t, err)
+	assert.Nil(t, row)
+}
+
+func TestTreeWriterPlace_ReportsAReadBackAtAnotherVersionWithoutProjecting(t *testing.T) {
+	env, scripted := scriptedEnv(t)
+	stream := TreeStreamName(writerTree)
+	scripted.readAsVersion = 2
+	scripted.afterAppend = func() {
+		scripted.readAs = &platform.Event{
+			ID: "dddddddd-dddd-dddd-dddd-000000000003", Stream: stream,
+			Type: EventTypeNodePlaced, Version: 3, Payload: json.RawMessage(`{}`),
+		}
+	}
+	w, _ := env.writer()
+
+	res, err := w.Place(context.Background(), placeRequest(writerChild, nil))
+
+	require.NoError(t, err, "a confirmed append is a success")
+	require.EqualError(t, res.ProjectionErr, "read back at version 2 in stream "+stream+
+		" returned event dddddddd-dddd-dddd-dddd-000000000003 at version 3; event "+res.EventID+" was not projected")
 	row, err := env.store.GetNode(context.Background(), writerTree, writerChild)
 	require.NoError(t, err)
 	assert.Nil(t, row)

@@ -82,6 +82,45 @@ pub(crate) fn handle_take_snapshot(state: &WorkerState, request: &Request) -> Re
 /// an offset into the request line.
 const POSITION_NOTE: &str = "(the position counts into the snapshot payload, not the request line)";
 
+/// Top-level fields of a unilevel snapshot's data.
+const UNILEVEL_FIELDS: &[&str] = &["arena"];
+
+/// Top-level fields of a binary snapshot's data.
+const BINARY_FIELDS: &[&str] = &["arena", "slots"];
+
+/// Top-level fields of a matrix snapshot's data.
+const MATRIX_FIELDS: &[&str] = &["arena", "holding_tank", "slots", "spillover", "width"];
+
+/// Returns the top-level fields a `tree_type` snapshot carries, or None outside unilevel, binary and matrix.
+fn tree_fields(tree_type: &str) -> Option<&'static [&'static str]> {
+    match tree_type {
+        "unilevel" => Some(UNILEVEL_FIELDS),
+        "binary" => Some(BINARY_FIELDS),
+        "matrix" => Some(MATRIX_FIELDS),
+        _ => None,
+    }
+}
+
+/// Names the fields in `data` that another tree type's snapshot carries and a `tree_type` snapshot does not.
+fn foreign_tree_fields(tree_type: &str, data: &serde_json::value::RawValue) -> Vec<&'static str> {
+    let Some(own) = tree_fields(tree_type) else {
+        return Vec::new();
+    };
+    let Ok(keys) = serde_json::from_str::<std::collections::BTreeMap<String, serde::de::IgnoredAny>>(
+        data.get(),
+    ) else {
+        return Vec::new();
+    };
+    let mut foreign: Vec<&'static str> = [UNILEVEL_FIELDS, BINARY_FIELDS, MATRIX_FIELDS]
+        .concat()
+        .into_iter()
+        .filter(|field| !own.contains(field) && keys.contains_key(*field))
+        .collect();
+    foreign.sort_unstable();
+    foreign.dedup();
+    foreign
+}
+
 /// Restores a structure from a snapshot under a name not already in use.
 ///
 /// Params: structure, tree_type, data.
@@ -111,6 +150,19 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
             format!(
                 "structure '{}' already exists; drop it with drop_structure before restoring",
                 params.structure
+            ),
+        );
+    }
+
+    let foreign = foreign_tree_fields(&params.tree_type, &params.data);
+    if !foreign.is_empty() {
+        return Response::error(
+            request.id.clone(),
+            "INVALID_PARAMS",
+            format!(
+                "snapshot data carries fields a {} snapshot does not have: {}",
+                params.tree_type,
+                foreign.join(", ")
             ),
         );
     }
@@ -222,4 +274,47 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
 
     state.trees.insert(params.structure, instance);
     Response::success(request.id.clone(), serde_json::json!({"restored": true}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use network_engine::config::matrix::SpilloverDirection;
+
+    /// Returns the sorted top-level keys of `tree`'s serialized form.
+    fn top_level_keys(tree: &impl serde::Serialize) -> Vec<String> {
+        let value = serde_json::to_value(tree).expect("a tree serializes to JSON");
+        let mut keys: Vec<String> = value
+            .as_object()
+            .expect("a tree serializes as a JSON object")
+            .keys()
+            .cloned()
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    /// Returns `fields` as sorted owned strings.
+    fn sorted(fields: &[&str]) -> Vec<String> {
+        let mut out: Vec<String> = fields.iter().map(|f| f.to_string()).collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn tree_field_lists_match_each_tree_types_snapshot() {
+        assert_eq!(
+            top_level_keys(&UnilevelTree::new()),
+            sorted(UNILEVEL_FIELDS),
+            "unilevel"
+        );
+        assert_eq!(
+            top_level_keys(&BinaryTree::new()),
+            sorted(BINARY_FIELDS),
+            "binary"
+        );
+        let matrix = MatrixTree::new(2, SpilloverDirection::BreadthFirst)
+            .expect("a width-2 breadth-first matrix builds");
+        assert_eq!(top_level_keys(&matrix), sorted(MATRIX_FIELDS), "matrix");
+    }
 }

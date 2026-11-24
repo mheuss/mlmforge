@@ -9,6 +9,7 @@ import (
 	"maps"
 	"math"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1063,6 +1064,35 @@ func (f *fakeWriterEngine) TakeSnapshot(ctx context.Context, structure string) (
 	return &SnapshotResultDTO{TreeType: t.treeType, Data: data}, nil
 }
 
+// workerTreeFields holds the top-level fields of each worker tree snapshot's data.
+var workerTreeFields = map[string][]string{
+	treeTypeUnilevel: {"arena"},
+	treeTypeBinary:   {"arena", "slots"},
+	treeTypeMatrix:   {"arena", "holding_tank", "slots", "spillover", "width"},
+}
+
+// foreignTreeFields names the fields in data that another worker tree type owns and treeType does not, sorted.
+func foreignTreeFields(treeType string, data json.RawMessage) []string {
+	own, ok := workerTreeFields[treeType]
+	if !ok {
+		return nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil
+	}
+	var foreign []string
+	for _, owned := range workerTreeFields {
+		for _, name := range owned {
+			if _, held := fields[name]; held && !slices.Contains(own, name) && !slices.Contains(foreign, name) {
+				foreign = append(foreign, name)
+			}
+		}
+	}
+	slices.Sort(foreign)
+	return foreign
+}
+
 func (f *fakeWriterEngine) RestoreSnapshot(_ context.Context, structure, treeType string, data json.RawMessage) error {
 	f.calls = append(f.calls, "restore_snapshot")
 	if f.restoreErr != nil {
@@ -1072,14 +1102,9 @@ func (f *fakeWriterEngine) RestoreSnapshot(_ context.Context, structure, treeTyp
 		return fakeEngineError(engineCodeTreeExists,
 			"structure '%s' already exists; drop it with drop_structure before restoring", structure)
 	}
-	if treeType != treeTypeMatrix {
-		var fields map[string]json.RawMessage
-		if err := json.Unmarshal(data, &fields); err == nil {
-			delete(fields, "holding_tank")
-			if stripped, err := json.Marshal(fields); err == nil {
-				data = stripped
-			}
-		}
+	if foreign := foreignTreeFields(treeType, data); len(foreign) > 0 {
+		return fakeEngineError("INVALID_PARAMS", "snapshot data carries fields a %s snapshot does not have: %s",
+			treeType, strings.Join(foreign, ", "))
 	}
 	var snap fakeSnapshot
 	if err := json.Unmarshal(data, &snap); err != nil {

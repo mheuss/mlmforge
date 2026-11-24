@@ -96,7 +96,7 @@ fn ping_returns_protocol_version() {
 
     let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
     assert_eq!(parsed["id"], "1");
-    assert_eq!(parsed["result"]["protocol_version"], 31);
+    assert_eq!(parsed["result"]["protocol_version"], 32);
 
     drop(child.stdin.take());
     child.wait().unwrap();
@@ -8143,6 +8143,246 @@ fn restore_snapshot_accepts_deep_nesting_under_an_ignored_field() {
         resp.contains(r#""ok":true"#),
         "expected the restore to succeed, got: {resp}"
     );
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+// ---- restore_snapshot under another tree type --------------------------------
+
+/// Builds a width-2 matrix with CHILD in slot 0 and GRANDCHILD in the holding
+/// tank, and returns its snapshot data.
+fn tanked_matrix_snapshot(worker: &mut std::process::Child) -> serde_json::Value {
+    create_matrix_tree_with_width(worker, TREE_NAME, 2);
+    for req in [
+        format!(
+            r#"{{"id":"m-1","op":"add_root","params":{{"structure":"{TREE_NAME}","user_id":"{ROOT}","enrolled_at":100}}}}"#
+        ),
+        format!(
+            r#"{{"id":"m-2","op":"add_node_at","params":{{"structure":"{TREE_NAME}","user_id":"{CHILD}","sponsor_id":"{ROOT}","parent_id":"{ROOT}","position":0,"enrolled_at":200}}}}"#
+        ),
+        format!(
+            r#"{{"id":"m-3","op":"add_node_at","params":{{"structure":"{TREE_NAME}","user_id":"{GRANDCHILD}","sponsor_id":"{ROOT}","parent_id":"{ROOT}","position":1,"enrolled_at":300}}}}"#
+        ),
+        format!(
+            r#"{{"id":"m-4","op":"remove_node","params":{{"structure":"{TREE_NAME}","user_id":"{GRANDCHILD}","pruning_mode":"holding_tank"}}}}"#
+        ),
+    ] {
+        let resp = common::send_receive(worker, &req);
+        assert!(resp.contains(r#""ok":true"#), "setup failed: {resp}");
+    }
+    take_snapshot_data(worker, TREE_NAME)
+}
+
+/// Builds a binary tree named `name` with CHILD in the right slot under ROOT,
+/// and returns its snapshot data.
+fn right_slot_binary_snapshot(worker: &mut std::process::Child, name: &str) -> serde_json::Value {
+    create_binary_tree(worker, name);
+    for req in [
+        format!(
+            r#"{{"id":"b-1","op":"add_root","params":{{"structure":"{name}","user_id":"{ROOT}","enrolled_at":100}}}}"#
+        ),
+        format!(
+            r#"{{"id":"b-2","op":"add_node","params":{{"structure":"{name}","user_id":"{CHILD}","sponsor_id":"{ROOT}","parent_id":"{ROOT}","position":1,"enrolled_at":200}}}}"#
+        ),
+    ] {
+        let resp = common::send_receive(worker, &req);
+        assert!(resp.contains(r#""ok":true"#), "setup failed: {resp}");
+    }
+    take_snapshot_data(worker, name)
+}
+
+/// Asserts `resp` is an INVALID_PARAMS refusal whose message is exactly `message`.
+fn assert_invalid_params_message(resp: &str, message: &str) {
+    let parsed: serde_json::Value = serde_json::from_str(resp).unwrap();
+    assert_eq!(parsed["ok"], false, "expected a refusal, got: {resp}");
+    assert_eq!(parsed["error"]["code"], "INVALID_PARAMS", "got: {resp}");
+    assert_eq!(parsed["error"]["message"], message, "got: {resp}");
+}
+
+/// Asserts the worker holds no structure named `name`.
+fn assert_not_restored(worker: &mut std::process::Child, name: &str) {
+    let resp = snapshot_response(worker, name);
+    assert_eq!(
+        resp["error"]["code"], "STRUCTURE_NOT_FOUND",
+        "take_snapshot of {name} after the refused restore returned: {resp}"
+    );
+}
+
+#[test]
+fn restore_snapshot_refuses_a_matrix_snapshot_sent_as_unilevel() {
+    let mut worker = common::spawn_worker();
+    let data = tanked_matrix_snapshot(&mut worker);
+
+    let resp = restore_under(&mut worker, "Restored", "unilevel", data);
+
+    assert_invalid_params_message(
+        &resp,
+        "snapshot data carries fields a unilevel snapshot does not have: holding_tank, slots, spillover, width",
+    );
+    assert_not_restored(&mut worker, "Restored");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_snapshot_refuses_a_matrix_snapshot_sent_as_binary() {
+    let mut worker = common::spawn_worker();
+    let data = tanked_matrix_snapshot(&mut worker);
+
+    let resp = restore_under(&mut worker, "Restored", "binary", data);
+
+    assert_invalid_params_message(
+        &resp,
+        "snapshot data carries fields a binary snapshot does not have: holding_tank, spillover, width",
+    );
+    assert_not_restored(&mut worker, "Restored");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_snapshot_refuses_a_binary_snapshot_sent_as_unilevel() {
+    let mut worker = common::spawn_worker();
+    let data = right_slot_binary_snapshot(&mut worker, TREE_NAME);
+
+    let resp = restore_under(&mut worker, "Restored", "unilevel", data);
+
+    assert_invalid_params_message(
+        &resp,
+        "snapshot data carries fields a unilevel snapshot does not have: slots",
+    );
+    assert_not_restored(&mut worker, "Restored");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_snapshot_refuses_a_wide_matrix_snapshot_sent_as_binary() {
+    let mut worker = common::spawn_worker();
+    create_matrix_tree(&mut worker, TREE_NAME);
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"w-1","op":"add_root","params":{{"structure":"{TREE_NAME}","user_id":"{ROOT}","enrolled_at":100}}}}"#
+        ),
+    );
+    assert!(resp.contains(r#""ok":true"#), "setup failed: {resp}");
+    let data = take_snapshot_data(&mut worker, TREE_NAME);
+
+    let resp = restore_under(&mut worker, "Restored", "binary", data);
+
+    assert_invalid_params_message(
+        &resp,
+        "snapshot data carries fields a binary snapshot does not have: holding_tank, spillover, width",
+    );
+    assert_not_restored(&mut worker, "Restored");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_snapshot_keeps_missing_field_messages_for_a_poorer_snapshot() {
+    let mut worker = common::spawn_worker();
+    build_three_node_chain(&mut worker);
+    let unilevel = take_snapshot_data(&mut worker, TREE_NAME);
+    let binary = right_slot_binary_snapshot(&mut worker, "Bin");
+
+    for (data, tree_type, expected) in [
+        (
+            &unilevel,
+            "matrix",
+            "failed to deserialize matrix snapshot: missing field `width`",
+        ),
+        (
+            &unilevel,
+            "binary",
+            "failed to deserialize binary snapshot: missing field `slots`",
+        ),
+        (
+            &binary,
+            "matrix",
+            "failed to deserialize matrix snapshot: missing field `width`",
+        ),
+    ] {
+        let resp = restore_under(&mut worker, "Restored", tree_type, data.clone());
+        assert!(
+            resp.contains(r#""ok":false"#)
+                && resp.contains("INVALID_PARAMS")
+                && resp.contains(expected),
+            "sent as {tree_type}: expected INVALID_PARAMS containing {expected:?}, got: {resp}"
+        );
+    }
+    assert_not_restored(&mut worker, "Restored");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_snapshot_answers_tree_exists_before_a_field_mismatch() {
+    let mut worker = common::spawn_worker();
+    let data = tanked_matrix_snapshot(&mut worker);
+
+    let resp = restore_under(&mut worker, TREE_NAME, "unilevel", data);
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(parsed["error"]["code"], "TREE_EXISTS", "got: {resp}");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_snapshot_refuses_an_escaped_foreign_key() {
+    let mut worker = common::spawn_worker();
+    build_three_node_chain(&mut worker);
+    let data = take_snapshot_data(&mut worker, TREE_NAME).to_string();
+    let fields = data
+        .strip_prefix('{')
+        .and_then(|d| d.strip_suffix('}'))
+        .expect("snapshot data is a JSON object");
+    let escaped_key = format!("holding\\u{:04x}tank", '_' as u32);
+
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"esc","op":"restore_snapshot","params":{{"structure":"Restored","tree_type":"unilevel","data":{{{fields},"{escaped_key}":[]}}}}}}"#
+        ),
+    );
+
+    assert_invalid_params_message(
+        &resp,
+        "snapshot data carries fields a unilevel snapshot does not have: holding_tank",
+    );
+    assert_not_restored(&mut worker, "Restored");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_snapshot_leaves_an_unowned_key_out_of_the_named_fields() {
+    let mut worker = common::spawn_worker();
+    build_three_node_chain(&mut worker);
+    let mut data = take_snapshot_data(&mut worker, TREE_NAME);
+    let object = data
+        .as_object_mut()
+        .expect("snapshot data is a JSON object");
+    object.insert("junk".to_string(), serde_json::json!(1));
+    object.insert("width".to_string(), serde_json::json!(2));
+
+    let resp = restore_under(&mut worker, "Restored", "unilevel", data);
+
+    assert_invalid_params_message(
+        &resp,
+        "snapshot data carries fields a unilevel snapshot does not have: width",
+    );
+    assert_not_restored(&mut worker, "Restored");
 
     drop(worker.stdin.take());
     worker.wait().unwrap();

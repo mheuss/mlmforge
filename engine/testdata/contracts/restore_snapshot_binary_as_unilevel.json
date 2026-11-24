@@ -1,0 +1,63 @@
+{
+    "description": "restore_snapshot refuses a binary snapshot whose only child sits in the right slot, sent as tree_type unilevel. It answers INVALID_PARAMS and names slots. Before HEU-1111 this restored with ok:true, and the child's position moved from 1 to 0. Protocol 32 carries the change.",
+    "request": {
+        "id": "rs-binary-as-unilevel",
+        "op": "restore_snapshot",
+        "params": {
+            "structure": "Restored",
+            "tree_type": "unilevel",
+            "data": {
+                "arena": {
+                    "nodes": [
+                        {
+                            "user_id": "00000000-0000-0000-0000-000000000001",
+                            "parent": null,
+                            "children": [
+                                1
+                            ],
+                            "sponsor": null,
+                            "sponsored": [
+                                1
+                            ],
+                            "depth": 0,
+                            "enrolled_at": 1000
+                        },
+                        {
+                            "user_id": "00000000-0000-0000-0000-000000000002",
+                            "parent": 0,
+                            "children": [],
+                            "sponsor": 0,
+                            "sponsored": [],
+                            "depth": 1,
+                            "enrolled_at": 2000
+                        }
+                    ],
+                    "index": {
+                        "00000000-0000-0000-0000-000000000001": 0,
+                        "00000000-0000-0000-0000-000000000002": 1
+                    },
+                    "free_list": [],
+                    "root": 0
+                },
+                "slots": {
+                    "0": [
+                        null,
+                        1
+                    ],
+                    "1": [
+                        null,
+                        null
+                    ]
+                }
+            }
+        }
+    },
+    "expected_response": {
+        "id": "rs-binary-as-unilevel",
+        "ok": false,
+        "error": {
+            "code": "INVALID_PARAMS",
+            "message_contains": "snapshot data carries fields a unilevel snapshot does not have: slots"
+        }
+    }
+}

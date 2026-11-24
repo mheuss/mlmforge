@@ -1,0 +1,49 @@
+{
+    "description": "restore_snapshot refuses a width-3 matrix snapshot sent as tree_type binary. It answers INVALID_PARAMS and names the matrix fields a binary snapshot does not have. Before HEU-1111 this was refused with a deserialize message about trailing characters, because a binary slot holds two entries.",
+    "request": {
+        "id": "rs-wide-matrix-as-binary",
+        "op": "restore_snapshot",
+        "params": {
+            "structure": "Restored",
+            "tree_type": "binary",
+            "data": {
+                "arena": {
+                    "nodes": [
+                        {
+                            "user_id": "00000000-0000-0000-0000-000000000001",
+                            "parent": null,
+                            "children": [],
+                            "sponsor": null,
+                            "sponsored": [],
+                            "depth": 0,
+                            "enrolled_at": 1000
+                        }
+                    ],
+                    "index": {
+                        "00000000-0000-0000-0000-000000000001": 0
+                    },
+                    "free_list": [],
+                    "root": 0
+                },
+                "width": 3,
+                "spillover": "breadth_first",
+                "slots": {
+                    "0": [
+                        null,
+                        null,
+                        null
+                    ]
+                },
+                "holding_tank": []
+            }
+        }
+    },
+    "expected_response": {
+        "id": "rs-wide-matrix-as-binary",
+        "ok": false,
+        "error": {
+            "code": "INVALID_PARAMS",
+            "message_contains": "snapshot data carries fields a binary snapshot does not have: holding_tank, spillover, width"
+        }
+    }
+}

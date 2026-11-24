@@ -1,0 +1,72 @@
+{
+    "description": "restore_snapshot refuses a width-2 matrix snapshot, with a user in its holding tank, sent as tree_type binary. It answers INVALID_PARAMS and names the matrix fields a binary snapshot does not have. Before HEU-1111 this restored with ok:true and dropped the holding tank. Protocol 32 carries the change.",
+    "request": {
+        "id": "rs-matrix-as-binary",
+        "op": "restore_snapshot",
+        "params": {
+            "structure": "Restored",
+            "tree_type": "binary",
+            "data": {
+                "arena": {
+                    "nodes": [
+                        {
+                            "user_id": "00000000-0000-0000-0000-000000000001",
+                            "parent": null,
+                            "children": [
+                                1
+                            ],
+                            "sponsor": null,
+                            "sponsored": [
+                                1
+                            ],
+                            "depth": 0,
+                            "enrolled_at": 1000
+                        },
+                        {
+                            "user_id": "00000000-0000-0000-0000-000000000002",
+                            "parent": 0,
+                            "children": [],
+                            "sponsor": 0,
+                            "sponsored": [],
+                            "depth": 1,
+                            "enrolled_at": 2000
+                        }
+                    ],
+                    "index": {
+                        "00000000-0000-0000-0000-000000000001": 0,
+                        "00000000-0000-0000-0000-000000000002": 1
+                    },
+                    "free_list": [],
+                    "root": 0
+                },
+                "width": 2,
+                "spillover": "breadth_first",
+                "slots": {
+                    "0": [
+                        1,
+                        null
+                    ],
+                    "1": [
+                        null,
+                        null
+                    ]
+                },
+                "holding_tank": [
+                    {
+                        "user_id": "00000000-0000-0000-0000-000000000003",
+                        "sponsor_user_id": "00000000-0000-0000-0000-000000000001",
+                        "enrolled_at": 3000
+                    }
+                ]
+            }
+        }
+    },
+    "expected_response": {
+        "id": "rs-matrix-as-binary",
+        "ok": false,
+        "error": {
+            "code": "INVALID_PARAMS",
+            "message_contains": "snapshot data carries fields a binary snapshot does not have: holding_tank, spillover, width"
+        }
+    }
+}

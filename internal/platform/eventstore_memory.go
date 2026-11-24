@@ -3,11 +3,14 @@ package platform
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -64,6 +67,14 @@ func ValidateNewEvent(e NewEvent, index int) error {
 	if e.Payload == nil {
 		return fmt.Errorf("eventstore: event at index %d has nil Payload", index)
 	}
+	if problem := jsonbProblem(e.Payload); problem != "" {
+		return fmt.Errorf("eventstore: event at index %d has Payload that %s", index, problem)
+	}
+	if e.Metadata != nil {
+		if problem := jsonbProblem(e.Metadata); problem != "" {
+			return fmt.Errorf("eventstore: event at index %d has Metadata that %s", index, problem)
+		}
+	}
 	return nil
 }
 
@@ -76,6 +87,56 @@ func textProblem(s string) string {
 		return "holds a NUL byte"
 	}
 	return ""
+}
+
+// jsonbProblem describes why raw is not storable as jsonb, or returns "".
+func jsonbProblem(raw []byte) string {
+	if len(raw) == 0 {
+		return "is empty"
+	}
+	if !utf8.Valid(raw) {
+		return "is not valid UTF-8"
+	}
+	if !json.Valid(raw) {
+		return "is not valid JSON"
+	}
+	// Valid JSON holds a backslash only inside a string, where it starts an
+	// escape. Skipping each two-byte escape whole keeps an escaped backslash
+	// followed by u0000 from reading as a NUL escape.
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		r, ok := unicodeEscapeAt(raw, i)
+		if !ok {
+			i++
+			continue
+		}
+		switch {
+		case r == 0:
+			return fmt.Sprintf(`holds a \u0000 escape at byte %d`, i)
+		case utf16.IsSurrogate(r):
+			lo, ok := unicodeEscapeAt(raw, i+6)
+			if !ok || utf16.DecodeRune(r, lo) == utf8.RuneError {
+				return fmt.Sprintf("holds an unpaired surrogate escape at byte %d", i)
+			}
+			i += 6
+		}
+		i += 5
+	}
+	return ""
+}
+
+// unicodeEscapeAt reads the six-byte unicode escape that starts at raw[i].
+func unicodeEscapeAt(raw []byte, i int) (rune, bool) {
+	if i+6 > len(raw) || raw[i] != '\\' || raw[i+1] != 'u' {
+		return 0, false
+	}
+	var b [2]byte
+	if _, err := hex.Decode(b[:], raw[i+2:i+6]); err != nil {
+		return 0, false
+	}
+	return rune(b[0])<<8 | rune(b[1]), true
 }
 
 // Compile-time check: MemoryEventStore implements EventStore.

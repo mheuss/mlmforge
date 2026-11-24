@@ -8323,6 +8323,71 @@ fn restore_snapshot_keeps_missing_field_messages_for_a_poorer_snapshot() {
     worker.wait().unwrap();
 }
 
+#[test]
+fn restore_snapshot_answers_tree_exists_before_a_field_mismatch() {
+    let mut worker = common::spawn_worker();
+    let data = tanked_matrix_snapshot(&mut worker);
+
+    let resp = restore_under(&mut worker, TREE_NAME, "unilevel", data);
+
+    let parsed: serde_json::Value = serde_json::from_str(&resp).unwrap();
+    assert_eq!(parsed["error"]["code"], "TREE_EXISTS", "got: {resp}");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_snapshot_refuses_an_escaped_foreign_key() {
+    let mut worker = common::spawn_worker();
+    build_three_node_chain(&mut worker);
+    let data = take_snapshot_data(&mut worker, TREE_NAME).to_string();
+    let fields = data
+        .strip_prefix('{')
+        .and_then(|d| d.strip_suffix('}'))
+        .expect("snapshot data is a JSON object");
+    let escaped_key = format!("holding\\u{:04x}tank", '_' as u32);
+
+    let resp = common::send_receive(
+        &mut worker,
+        &format!(
+            r#"{{"id":"esc","op":"restore_snapshot","params":{{"structure":"Restored","tree_type":"unilevel","data":{{{fields},"{escaped_key}":[]}}}}}}"#
+        ),
+    );
+
+    assert_invalid_params_message(
+        &resp,
+        "snapshot data carries fields a unilevel snapshot does not have: holding_tank",
+    );
+    assert_not_restored(&mut worker, "Restored");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
+#[test]
+fn restore_snapshot_leaves_an_unowned_key_out_of_the_named_fields() {
+    let mut worker = common::spawn_worker();
+    build_three_node_chain(&mut worker);
+    let mut data = take_snapshot_data(&mut worker, TREE_NAME);
+    let object = data
+        .as_object_mut()
+        .expect("snapshot data is a JSON object");
+    object.insert("junk".to_string(), serde_json::json!(1));
+    object.insert("width".to_string(), serde_json::json!(2));
+
+    let resp = restore_under(&mut worker, "Restored", "unilevel", data);
+
+    assert_invalid_params_message(
+        &resp,
+        "snapshot data carries fields a unilevel snapshot does not have: width",
+    );
+    assert_not_restored(&mut worker, "Restored");
+
+    drop(worker.stdin.take());
+    worker.wait().unwrap();
+}
+
 // ---- drop_structure ----------------------------------------------------------
 
 /// Sends `drop_structure` for `name` and returns the parsed response.

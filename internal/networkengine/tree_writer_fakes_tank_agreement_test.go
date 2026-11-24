@@ -122,18 +122,19 @@ func TestFakeWriterEngine_RefusesAnotherTreeTypesKeyAsTheWorkerDoes(t *testing.T
 	cases := []struct {
 		name     string
 		treeType string
-		key      string
-		value    string
+		added    map[string]string
+		named    string
 	}{
-		{"unilevel with a tank list", treeTypeUnilevel, "holding_tank", tankList},
-		{"unilevel with a tank that is no list", treeTypeUnilevel, "holding_tank", `"not a tank"`},
-		{"binary with a tank list", treeTypeBinary, "holding_tank", tankList},
-		{"binary with a tank that is no list", treeTypeBinary, "holding_tank", `"not a tank"`},
-		{"unilevel with slots", treeTypeUnilevel, "slots", `{}`},
+		{"unilevel with a tank list", treeTypeUnilevel, map[string]string{"holding_tank": tankList}, "holding_tank"},
+		{"unilevel with a tank that is no list", treeTypeUnilevel, map[string]string{"holding_tank": `"not a tank"`}, "holding_tank"},
+		{"binary with a tank list", treeTypeBinary, map[string]string{"holding_tank": tankList}, "holding_tank"},
+		{"binary with a tank that is no list", treeTypeBinary, map[string]string{"holding_tank": `"not a tank"`}, "holding_tank"},
+		{"unilevel with slots", treeTypeUnilevel, map[string]string{"slots": `{}`}, "slots"},
+		{"binary with width and spillover", treeTypeBinary, map[string]string{"width": `2`, "spillover": `"breadth_first"`}, "spillover, width"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			want := "INVALID_PARAMS: snapshot data carries fields a " + tc.treeType + " snapshot does not have: " + tc.key
+			want := "INVALID_PARAMS: snapshot data carries fields a " + tc.treeType + " snapshot does not have: " + tc.named
 			engines := map[string]removalAgreementEngine{"worker": startWorker(t), "fake": newFakeWriterEngine()}
 			for label, e := range engines {
 				agreementRooted(tc.treeType)(t, e)
@@ -141,7 +142,9 @@ func TestFakeWriterEngine_RefusesAnotherTreeTypesKeyAsTheWorkerDoes(t *testing.T
 				require.NoError(t, err)
 				var tree map[string]json.RawMessage
 				require.NoError(t, json.Unmarshal(taken.Data, &tree))
-				tree[tc.key] = json.RawMessage(tc.value)
+				for key, value := range tc.added {
+					tree[key] = json.RawMessage(value)
+				}
 				data, err := json.Marshal(tree)
 				require.NoError(t, err)
 

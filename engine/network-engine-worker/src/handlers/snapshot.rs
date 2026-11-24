@@ -283,7 +283,7 @@ mod tests {
 
     /// Returns the sorted top-level keys of `tree`'s serialized form.
     fn top_level_keys(tree: &impl serde::Serialize) -> Vec<String> {
-        let value = serde_json::to_value(tree).unwrap();
+        let value = serde_json::to_value(tree).expect("a tree serializes to JSON");
         let mut keys: Vec<String> = value
             .as_object()
             .expect("a tree serializes as a JSON object")
@@ -313,7 +313,8 @@ mod tests {
             sorted(BINARY_FIELDS),
             "binary"
         );
-        let matrix = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        let matrix = MatrixTree::new(2, SpilloverDirection::BreadthFirst)
+            .expect("a width-2 breadth-first matrix builds");
         assert_eq!(top_level_keys(&matrix), sorted(MATRIX_FIELDS), "matrix");
     }
 }

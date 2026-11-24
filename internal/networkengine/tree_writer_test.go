@@ -656,9 +656,9 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 			"scripted: pass-through", true, false},
 		{"remove_node", "CANNOT_REMOVE_ROOT", rooted(treeTypeMatrix), removeMatrix(writerRoot),
 			"cannot remove root node", false, true},
-		{"remove_node", "USER_IN_HOLDING_TANK", placed(treeTypeMatrix, writerChild, 0), removeMatrix(writerChild),
+		{"remove_node", "SPONSORLESS_WITH_RECRUITS", placed(treeTypeMatrix, writerChild, 0), removeMatrix(writerChild),
 			"scripted: pass-through", true, true},
-		{"remove_node", "SUBTREE_FULL", placed(treeTypeMatrix, writerChild, 0), removeMatrix(writerChild),
+		{"remove_node", "SPONSOR_CYCLE", placed(treeTypeMatrix, writerChild, 0), removeMatrix(writerChild),
 			"scripted: pass-through", true, true},
 	}
 	for _, tc := range cases {

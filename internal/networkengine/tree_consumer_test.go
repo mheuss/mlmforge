@@ -1760,6 +1760,9 @@ type deleteRecordingStore struct {
 	attempts        []string
 	responsors      []string
 	wroteResponsors []string
+	// undoErr, when set, is returned in place of the undo once the context
+	// check passes.
+	undoErr error
 }
 
 func (c *deleteRecordingStore) ProjectRemoval(
@@ -1777,6 +1780,9 @@ func (c *deleteRecordingStore) UndoRootProjection(ctx context.Context, treeID, u
 	c.attempts = append(c.attempts, userID)
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if c.undoErr != nil {
+		return c.undoErr
 	}
 	if err := c.MemoryTreeStore.UndoRootProjection(ctx, treeID, userID, eventVersion); err != nil {
 		return err

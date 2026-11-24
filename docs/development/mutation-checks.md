@@ -729,3 +729,20 @@ operations on the copy and on the original. Compare the two after each one.
 Prove each half with its own mutation. Skip a field on deserialize only, and the
 re-export comparison fails. Skip it in both directions, and only the replay
 fails.
+
+## A pinned count needs a fixture row on each side
+
+2026-11-24.
+
+A guard that requires an exact count can pass a mutation that keeps only one
+bound. A fixture row one above the count fails under `!=` and under `>` alike.
+With only that row, the guard can be loosened to `>` and every test stays
+green. The loosened guard then misses the count falling. A call that gets
+dropped looks the same as no change.
+
+Give an exact-count rule one fixture row below the count and one above it. Set
+up each row so the other rules hold. Then the row fails on the count alone.
+
+A pinned count of zero has no row below it. A count cannot be negative. With a
+pinned count of zero, `!=` and `>` give the same result. The row above the
+count is enough.

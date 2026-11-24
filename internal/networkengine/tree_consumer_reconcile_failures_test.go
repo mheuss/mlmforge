@@ -48,9 +48,9 @@ func TestHandleNodePlaced_ReconcileRetriesWhenTheRowReadFails(t *testing.T) {
 	err := deliver(context.Background(), c, makeEvent(EventTypeNodePlaced, placedPayload(treeTypeBinary, intPtr(1))))
 
 	require.Error(t, err)
-	assert.Len(t, tr.mutationOps, c.maxRetries+1, "a failed row read is inconclusive, so the add retries")
-	assert.Equal(t, c.maxRetries+1, store.reads)
-	assert.Equal(t, 0, tr.positionOps, "the engine is not inspected without a row to compare")
+	assert.Len(t, tr.mutationOps, c.maxRetries+1, "add calls made")
+	assert.Equal(t, c.maxRetries+1, store.reads, "reads of the user's row")
+	assert.Equal(t, 0, tr.positionOps, "get_position calls made")
 	assert.True(t, isEngineCode(err, engineCodeUserAlreadyExists), "got %v", err)
 	assert.NotContains(t, err.Error(), "row-read-marker")
 }

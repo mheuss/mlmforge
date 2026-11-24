@@ -35,12 +35,38 @@ func orNone(id *string) string {
 // requireRowsMatchEngine fails unless every active row in tree agrees with the
 // engine's position for that user on parent and depth, and every non-root row
 // on position and sponsor.
-func requireRowsMatchEngine(t *testing.T, store TreeStore, engine TreeInspector, tree string) {
+// treeLister is an engine a test can read a whole tree from.
+type treeLister interface {
+	TreeInspector
+	GetDownline(ctx context.Context, structure, userID string, depth uint32) ([]EngineNode, error)
+}
+
+func requireRowsMatchEngine(t *testing.T, store TreeStore, engine treeLister, tree string) {
 	t.Helper()
 	ctx := context.Background()
 	rows, err := store.GetByTree(ctx, tree)
 	require.NoError(t, err)
 	require.NotEmpty(t, rows)
+	var root string
+	stored := make(map[uuid.UUID]bool, len(rows))
+	for _, row := range rows {
+		stored[uuid.MustParse(row.UserID)] = true
+		if row.ParentID == nil {
+			require.Empty(t, root, "two active rows have no parent: %s and %s", root, row.UserID)
+			root = row.UserID
+		}
+	}
+	require.NotEmpty(t, root, "no active row has no parent")
+	below, err := engine.GetDownline(ctx, tree, root, 0)
+	require.NoError(t, err, "engine downline of %s", root)
+	held := []string{root}
+	for _, n := range below {
+		held = append(held, n.UserID)
+	}
+	for _, user := range held {
+		assert.True(t, stored[uuid.MustParse(user)], "the engine holds %s, which has no active row", user)
+	}
+	assert.Len(t, held, len(rows), "the engine holds %d users and the store has %d active rows", len(held), len(rows))
 	for _, row := range rows {
 		pos, err := engine.GetPosition(ctx, tree, row.UserID)
 		require.NoError(t, err, "engine position of %s", row.UserID)

@@ -128,10 +128,13 @@ These divergences are known. None is theoretical. All were reproduced.
 | `\u0000` escape in a string | accepts | rejects — text cannot hold NUL |
 | unpaired surrogate (`\ud800`) | accepts, substitutes U+FFFD | rejects |
 | raw invalid UTF-8 byte | accepts, substitutes U+FFFD | rejects at the encoding layer |
+| nesting past 10000 levels | `json.Valid` **rejects** | accepts, up to its stack depth limit (HEU-1149) |
 | number beyond float64 (`1e400`) | **rejects** | accepts as `numeric` |
 
-The last one reverses: Go is stricter. Fix it with `json.Decoder` +
-`UseNumber()`, which keeps the literal text instead of parsing to float64.
+The depth and number rows reverse: Go is stricter. Fix the number row with
+`json.Decoder` + `UseNumber()`, which keeps the literal text instead of parsing
+to float64. `json.SyntaxError.Offset` is a count, not a byte index. On go1.27
+its meaning varies by error, and it is 0 for `5.`.
 Catch raw invalid UTF-8 with `utf8.Valid`. The event store's validator refuses
 both escape-sequence cases without reimplementing jsonb's parser. It scans a
 value's escapes once `json.Valid` passes it. Postgres refuses a number outside
@@ -149,10 +152,10 @@ spelled out directly.
 
 Go's decoder also keeps the last of two repeated member names and reports no
 error. Decoding `{"left":9,"left":1,"right":1}` into a map gave `left` 1.
-Observed in Go's decoder in HEU-594. jsonb also keeps the last one. Storing
-`{"a":1,"a":2}` read back as `{"a": 2}` in HEU-1112. HEU-594's reader refuses a
-repeated name by walking the object with `Token()` and checking each name
-before decoding its value.
+Observed in Go's decoder in HEU-594. jsonb also keeps the last one. In
+HEU-1112, a stored `{"a":1,"a":2}` read back as `{"a": 2}`. HEU-594's reader
+refuses a repeated name by walking the object with `Token()` and checking each
+name before decoding its value.
 
 A value Go writes is not always a value Go can read back. `dec.Parse` refuses
 canonical text over 64 bytes, and `dec.Amount.UnmarshalJSON` goes through it.

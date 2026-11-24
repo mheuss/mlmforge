@@ -1,5 +1,5 @@
 {
-    "description": "create_tree rejects a matrix with depth_first spillover. INVALID_PARAMS, not UNSUPPORTED_SPILLOVER, is the reply today. See HEU-1131.",
+    "description": "create_tree rejects a matrix with depth_first spillover. The reply today is INVALID_PARAMS, not UNSUPPORTED_SPILLOVER. See HEU-1131.",
     "request": {
         "id": "cm-depth-first",
         "op": "create_tree",

@@ -275,3 +275,45 @@ pub(crate) fn handle_restore_snapshot(state: &mut WorkerState, request: &Request
     state.trees.insert(params.structure, instance);
     Response::success(request.id.clone(), serde_json::json!({"restored": true}))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use network_engine::config::matrix::SpilloverDirection;
+
+    /// Returns the sorted top-level keys of `tree`'s serialized form.
+    fn top_level_keys(tree: &impl serde::Serialize) -> Vec<String> {
+        let value = serde_json::to_value(tree).unwrap();
+        let mut keys: Vec<String> = value
+            .as_object()
+            .expect("a tree serializes as a JSON object")
+            .keys()
+            .cloned()
+            .collect();
+        keys.sort();
+        keys
+    }
+
+    /// Returns `fields` as sorted owned strings.
+    fn sorted(fields: &[&str]) -> Vec<String> {
+        let mut out: Vec<String> = fields.iter().map(|f| f.to_string()).collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn tree_field_lists_match_each_tree_types_snapshot() {
+        assert_eq!(
+            top_level_keys(&UnilevelTree::new()),
+            sorted(UNILEVEL_FIELDS),
+            "unilevel"
+        );
+        assert_eq!(
+            top_level_keys(&BinaryTree::new()),
+            sorted(BINARY_FIELDS),
+            "binary"
+        );
+        let matrix = MatrixTree::new(2, SpilloverDirection::BreadthFirst).unwrap();
+        assert_eq!(top_level_keys(&matrix), sorted(MATRIX_FIELDS), "matrix");
+    }
+}

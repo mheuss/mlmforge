@@ -823,7 +823,7 @@ solves the same problem with a manifest rather than a scan. That is UC-NET-011.
 
 **Problem:** A restore request carries a whole engine built by the caller. Deserializing proves the shape parses. It proves nothing about whether the stored indexes point at anything real.
 
-**Solution:** Each restorable type exposes `validate_restored()`, returning `SnapshotConsistencyError`. The handler calls it between deserializing and storing, and reports a failure as `INCONSISTENT_SNAPSHOT`. A payload that never deserializes still reports `INVALID_PARAMS`, so a caller can tell a malformed message from a self-contradicting one. Before deserializing, the handler refuses with `INVALID_PARAMS` a top-level key that belongs to another tree type (HEU-1111).
+**Solution:** Each restorable type exposes `validate_restored()`, returning `SnapshotConsistencyError`. The handler calls it between deserializing and storing, and reports a failure as `INCONSISTENT_SNAPSHOT`. A payload that never deserializes still reports `INVALID_PARAMS`, so a caller can tell a malformed message from a self-contradicting one. Before deserializing unilevel, binary or matrix data, the handler refuses with `INVALID_PARAMS` a top-level key that belongs to another of those types (HEU-1111).
 
 **Usage:**
 ```rust

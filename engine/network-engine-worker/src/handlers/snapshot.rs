@@ -91,7 +91,7 @@ const BINARY_FIELDS: &[&str] = &["arena", "slots"];
 /// Top-level fields of a matrix snapshot's data.
 const MATRIX_FIELDS: &[&str] = &["arena", "holding_tank", "slots", "spillover", "width"];
 
-/// Returns the top-level fields a `tree_type` snapshot carries, or None for an unknown tree type.
+/// Returns the top-level fields a `tree_type` snapshot carries, or None outside unilevel, binary and matrix.
 fn tree_fields(tree_type: &str) -> Option<&'static [&'static str]> {
     match tree_type {
         "unilevel" => Some(UNILEVEL_FIELDS),

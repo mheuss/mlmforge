@@ -142,7 +142,7 @@ which maps every `TreeError` variant, plus a few handler-level checks.
 | Code | Meaning |
 |------|---------|
 | `INVALID_REQUEST` | Request JSON itself is malformed |
-| `INVALID_PARAMS` | Params are malformed or not a JSON object. Omitting `params` entirely is legal and deserializes as `{}`, so a genuinely required field that is absent returns `MISSING_PARAM` instead. `restore_snapshot` also answers it when the data carries another tree type's top-level field (HEU-1111) |
+| `INVALID_PARAMS` | Params are malformed or not a JSON object. Omitting `params` entirely is legal and deserializes as `{}`, so a genuinely required field that is absent returns `MISSING_PARAM` instead. `restore_snapshot` also answers it when unilevel, binary or matrix data carries another of those types' top-level field (HEU-1111) |
 | `MISSING_PARAM` | A required parameter is absent |
 | `INVALID_UUID` | A user ID is not a valid UUID |
 | `UNKNOWN_OP` | Unrecognized operation name |

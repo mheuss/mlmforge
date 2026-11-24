@@ -1,5 +1,5 @@
 {
-    "description": "restore_snapshot refuses a binary snapshot whose only child sits in the right slot, sent as tree_type unilevel. It answers INVALID_PARAMS and names slots. Before HEU-1111 this restored with ok:true, and the child's position moved from 1 to 0. Protocol 32 carries the change.",
+    "description": "restore_snapshot refuses a binary snapshot whose only child sits in the right slot, sent as tree_type unilevel. It answers INVALID_PARAMS and names slots.",
     "request": {
         "id": "rs-binary-as-unilevel",
         "op": "restore_snapshot",

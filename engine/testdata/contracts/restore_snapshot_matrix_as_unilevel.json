@@ -1,5 +1,5 @@
 {
-    "description": "restore_snapshot refuses a width-2 matrix snapshot, with a user in its holding tank, sent as tree_type unilevel. It answers INVALID_PARAMS and names the matrix fields a unilevel snapshot does not have. Before HEU-1111 this restored with ok:true and dropped the slots and the holding tank. Protocol 32 carries the change.",
+    "description": "restore_snapshot refuses a width-2 matrix snapshot, with a user in its holding tank, sent as tree_type unilevel. It answers INVALID_PARAMS and names the matrix fields a unilevel snapshot does not have.",
     "request": {
         "id": "rs-matrix-as-unilevel",
         "op": "restore_snapshot",

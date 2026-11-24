@@ -8148,7 +8148,7 @@ fn restore_snapshot_accepts_deep_nesting_under_an_ignored_field() {
     worker.wait().unwrap();
 }
 
-// ---- HEU-1111: a snapshot sent under another tree type ----------------------
+// ---- restore_snapshot under another tree type --------------------------------
 
 /// Builds a width-2 matrix with CHILD in slot 0 and GRANDCHILD in the holding
 /// tank, and returns its snapshot data.

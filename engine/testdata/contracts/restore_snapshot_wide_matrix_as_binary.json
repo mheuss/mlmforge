@@ -1,5 +1,5 @@
 {
-    "description": "restore_snapshot refuses a width-3 matrix snapshot sent as tree_type binary. It answers INVALID_PARAMS and names the matrix fields a binary snapshot does not have. Before HEU-1111 this was refused with a deserialize message about trailing characters, because a binary slot holds two entries.",
+    "description": "restore_snapshot refuses a width-3 matrix snapshot sent as tree_type binary. It answers INVALID_PARAMS and names the matrix fields a binary snapshot does not have.",
     "request": {
         "id": "rs-wide-matrix-as-binary",
         "op": "restore_snapshot",

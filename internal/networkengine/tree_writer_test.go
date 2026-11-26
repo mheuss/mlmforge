@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -618,48 +619,81 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 				PruningMode: PruningPromoteEarliest})
 		}
 	}
+	sponsorCutInStoredSnapshot := func(treeType string) func(*testing.T, *writerEnv) {
+		return func(t *testing.T, env *writerEnv) {
+			mustAddRoot(t, env, treeType)
+			var childSlot, otherSlot *int
+			if treeType == treeTypeMatrix {
+				one := 1
+				childSlot, otherSlot = &zero, &one
+			}
+			mustPlace(t, env, writerChild, childSlot)
+			w, engine := env.writer()
+			res, err := w.Place(context.Background(), PlaceRequest{TreeID: writerTree, UserID: writerOther,
+				ParentID: writerRoot, SponsorID: writerChild, Position: otherSlot, EnrolledAt: writeTime})
+			require.NoError(t, err)
+			require.NoError(t, res.ProjectionErr)
+			taken, err := engine.TakeSnapshot(context.Background(), writerTree)
+			require.NoError(t, err)
+			snap := Snapshot{TreeID: writerTree, Version: res.Version, TreeType: taken.TreeType}
+			snap.Data = editFakeSnapshot(t, taken.Data, func(s *fakeSnapshot) {
+				n := s.Nodes[writerChild]
+				n.SponsorUserID = nil
+				s.Nodes[writerChild] = n
+				s.Sponsored[writerRoot] = slices.DeleteFunc(s.Sponsored[writerRoot],
+					func(id string) bool { return id == writerChild })
+			})
+			requireStored(t, context.Background(), env.snapshots, snap)
+		}
+	}
+	sponsorless := "cannot remove user " + writerChild +
+		": no node in its sponsor chain survives this removal. Recruits that outlive it: 1"
+	cycle := "sponsor chain from user " + writerChild + " did not reach an end within 2 steps"
+	const (
+		shapeCheckedFirst = "the writer's shape check refuses a binary position above 1 before it sends a check"
+		noCycleReachable  = "restore validation refuses a sponsor cycle on both engines, and no write makes one"
+	)
 	cases := []struct {
-		mutation, code string
-		setup          func(*testing.T, *writerEnv)
-		run            func(*TreeWriter) (WriteResult, error)
-		message        string
-		scripted       bool
-		matrixRemoval  bool
+		mutation, code  string
+		setup           func(*testing.T, *writerEnv)
+		run             func(*TreeWriter) (WriteResult, error)
+		message         string
+		scriptedBecause string
+		matrixRemoval   bool
 	}{
-		{"add_root", "ROOT_ALREADY_EXISTS", rooted(treeTypeUnilevel), addOtherRoot, "tree already has a root node", false, false},
+		{"add_root", "ROOT_ALREADY_EXISTS", rooted(treeTypeUnilevel), addOtherRoot, "tree already has a root node", "", false},
 		{"add_node", "USER_ALREADY_EXISTS", placed(treeTypeBinary, writerOther, 1), placeOther,
-			"user " + writerOther + " already exists in tree", false, false},
+			"user " + writerOther + " already exists in tree", "", false},
 		{"add_node", "USER_NOT_FOUND", rooted(treeTypeBinary), placeAt(absentParent, writerRoot, 0),
-			"user " + absentParent + " not found in tree", false, false},
+			"user " + absentParent + " not found in tree", "", false},
 		{"add_node", "POSITION_OCCUPIED", placed(treeTypeBinary, writerChild, 0), placeOther,
-			"position 0 already occupied for user " + writerRoot, false, false},
+			"position 0 already occupied for user " + writerRoot, "", false},
 		{"add_node", "INVALID_POSITION", rooted(treeTypeBinary), placeOther,
-			"scripted: pass-through", true, false},
-		{"add_node_at", "TREE_EMPTY", rejectedMatrixRoot, placeOther, "tree has no root node", false, false},
+			"position 2 out of range for user " + writerRoot + " (has 2 children)", shapeCheckedFirst, false},
+		{"add_node_at", "TREE_EMPTY", rejectedMatrixRoot, placeOther, "tree has no root node", "", false},
 		{"add_node_at", "INVALID_POSITION", rooted(treeTypeMatrix), placeAt(writerRoot, writerRoot, 3),
-			"position 3 out of range for user " + writerRoot + " (has 3 children)", false, false},
+			"position 3 out of range for user " + writerRoot + " (has 3 children)", "", false},
 		{"add_node_at", "USER_ALREADY_EXISTS", placed(treeTypeMatrix, writerOther, 1), placeOther,
-			"user " + writerOther + " already exists in tree", false, false},
+			"user " + writerOther + " already exists in tree", "", false},
 		{"add_node_at", "USER_NOT_FOUND", rooted(treeTypeMatrix), placeAt(absentParent, writerRoot, 0),
-			"user " + absentParent + " not found in tree", false, false},
+			"user " + absentParent + " not found in tree", "", false},
 		{"add_node_at", "SPONSOR_NOT_FOUND", rooted(treeTypeMatrix), placeAt(writerRoot, writerAbsentSponsor, 0),
-			"sponsor " + writerAbsentSponsor + " not found in tree", false, false},
+			"sponsor " + writerAbsentSponsor + " not found in tree", "", false},
 		{"add_node_at", "POSITION_OCCUPIED", placed(treeTypeMatrix, writerChild, 0), placeOther,
-			"position 0 already occupied for user " + writerRoot, false, false},
+			"position 0 already occupied for user " + writerRoot, "", false},
 		{"remove_node", "USER_NOT_FOUND", rooted(treeTypeUnilevel), remove(writerOther),
-			"user " + writerOther + " not found in tree", false, false},
+			"user " + writerOther + " not found in tree", "", false},
 		{"remove_node", "HAS_CHILDREN", withChild, remove(writerRoot),
-			"cannot remove user " + writerRoot + ": has 1 children (must remove children first)", false, false},
-		{"remove_node", "SPONSORLESS_WITH_RECRUITS", withChild, remove(writerChild),
-			"scripted: pass-through", true, false},
-		{"remove_node", "SPONSOR_CYCLE", withChild, remove(writerChild),
-			"scripted: pass-through", true, false},
+			"cannot remove user " + writerRoot + ": has 1 children (must remove children first)", "", false},
+		{"remove_node", "SPONSORLESS_WITH_RECRUITS", sponsorCutInStoredSnapshot(treeTypeUnilevel), remove(writerChild),
+			sponsorless, "", false},
+		{"remove_node", "SPONSOR_CYCLE", withChild, remove(writerChild), cycle, noCycleReachable, false},
 		{"remove_node", "CANNOT_REMOVE_ROOT", rooted(treeTypeMatrix), removeMatrix(writerRoot),
-			"cannot remove root node", false, true},
-		{"remove_node", "SPONSORLESS_WITH_RECRUITS", placed(treeTypeMatrix, writerChild, 0), removeMatrix(writerChild),
-			"scripted: pass-through", true, true},
+			"cannot remove root node", "", true},
+		{"remove_node", "SPONSORLESS_WITH_RECRUITS", sponsorCutInStoredSnapshot(treeTypeMatrix),
+			removeMatrix(writerChild), sponsorless, "", true},
 		{"remove_node", "SPONSOR_CYCLE", placed(treeTypeMatrix, writerChild, 0), removeMatrix(writerChild),
-			"scripted: pass-through", true, true},
+			cycle, noCycleReachable, true},
 	}
 	for _, tc := range cases {
 		name := tc.mutation + " " + tc.code
@@ -672,7 +706,7 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 			stream := TreeStreamName(writerTree)
 			before := len(streamEvents(t, env.events, stream))
 			w, engine := env.writer()
-			if tc.scripted {
+			if tc.scriptedBecause != "" {
 				engine.checkErr = &EngineError{Code: tc.code, Message: tc.message}
 			}
 

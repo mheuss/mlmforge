@@ -97,6 +97,9 @@ func TestMigrateUpIdempotent(t *testing.T) {
 // appNamedPool returns a pool whose sessions carry a unique application_name, and that name.
 func appNamedPool(t *testing.T, prefix string) (*pgxpool.Pool, string) {
 	t.Helper()
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
 	app := prefix + "-" + uuid.NewString()
 	cfg, err := pgxpool.ParseConfig(pgContainer.DSN)
 	require.NoError(t, err)

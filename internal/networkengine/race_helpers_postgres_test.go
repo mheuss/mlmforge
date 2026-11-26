@@ -16,6 +16,7 @@ func repeatableReadStore(t *testing.T) (*PostgresTreeStore, string) {
 	if pgContainer == nil {
 		t.Skip("Postgres container not available")
 	}
+	// Removing this call leaves earlier tests' rows in the tables.
 	pgContainer.NewPool(t)
 	app := "heu1113-rr-" + uuid.NewString()
 	cfg, err := pgxpool.ParseConfig(pgContainer.DSN)

@@ -310,8 +310,8 @@ func waitForRefusedPoll(t *testing.T, conn *pgx.Conn, pid int32) {
 			          AND NOT EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.locktype = 'advisory'), false)
 			   FROM pg_stat_activity a WHERE a.pid = $1`, pid).Scan(&seenState, &seenQuery, &refused)
 		if errors.Is(err, pgx.ErrNoRows) {
-			t.Fatalf("after %s, pg_stat_activity had no row for lock session pid %d",
-				time.Since(start).Round(time.Millisecond), pid)
+			t.Fatalf("after %s, pg_stat_activity had no row for lock session pid %d. Before that, %d read(s) succeeded, and the last showed state %q with last query %q",
+				time.Since(start).Round(time.Millisecond), pid, reads, state, query)
 		}
 		if err != nil && reads == 0 {
 			t.Fatalf("after %s, no pg_stat_activity read of lock session pid %d succeeded. The read returned: %v",
@@ -345,8 +345,6 @@ func TestPostgresTreeLocker_AWaiterWhoseSessionEndsMidPollFails(t *testing.T) {
 	holder, err := pgx.ConnectConfig(context.Background(), holderCfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = holder.Close(context.Background()) })
-	// Each cancel is registered after the holder's close, so cleanup runs it
-	// first.
 	q, cancelQ := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancelQ)
 	acquire, cancelAcquire := context.WithTimeout(context.Background(), 10*time.Second)
@@ -360,14 +358,14 @@ func TestPostgresTreeLocker_AWaiterWhoseSessionEndsMidPollFails(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
-	type lockResult struct {
+	type pollResult struct {
 		unlock func() error
 		err    error
 	}
-	results := make(chan lockResult, 1)
+	results := make(chan pollResult, 1)
 	go func() {
 		unlock, err := NewPostgresTreeLocker(dsn).Lock(ctx, tree)
-		results <- lockResult{unlock: unlock, err: err}
+		results <- pollResult{unlock: unlock, err: err}
 	}()
 	received := false
 	t.Cleanup(func() {

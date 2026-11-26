@@ -229,6 +229,82 @@ tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 Otherwise someone hardening the production pool to REPEATABLE READ breaks the
 error contract with every test still green.
 
+## A test of an isolation pin needs a pool that defaults to the other level
+
+HEU-1113, 2026-11-25.
+
+The test pool defaults to READ COMMITTED. A test on that pool cannot see a
+`pgx.ReadCommitted` pin, because removing the pin leaves the isolation level
+the same. On HEU-1113 the existing race test passed with the pin removed.
+
+Build a second pool whose sessions default to REPEATABLE READ. Then prove the
+default took before relying on it:
+
+```go
+cfg.ConnConfig.RuntimeParams["default_transaction_isolation"] = "repeatable read"
+```
+
+- Assert `SHOW default_transaction_isolation` reads `repeatable read`.
+- Begin a transaction with no options and assert `SHOW transaction_isolation`
+  reads the same.
+
+Without both checks, a misbuilt pool runs READ COMMITTED and the test passes
+whether or not the pin is there.
+
+Under REPEATABLE READ, a `FOR UPDATE` queued behind a transaction that only
+locked the row does not raise `40001`. One queued behind a transaction that
+updated the row does. Measured on HEU-1113 with Postgres 16. So the race needs
+an updater ahead of the transaction under test, not just a locker.
+
+## Force a unique-violation race with an uncommitted blocker row
+
+HEU-1113, 2026-11-25.
+
+Starting two inserts of one key together does not make them race on the
+constraint. If the first commits before the second runs its pre-check, the
+second fails there and never reaches the constraint. A test built that way can
+pass with the constraint branch deleted.
+
+To force both past the pre-check:
+
+1. A blocker transaction inserts a row with the contested key and does not
+   commit.
+2. Start the inserts. Neither can see the uncommitted row, so both pass a
+   `MAX` or existence pre-check. Both then wait on the unique index behind the
+   blocker.
+3. Wait until Postgres shows both waiting. Give the store under test its own
+   pool with a unique `application_name`. Then poll `pg_stat_activity` for that
+   name with `wait_event_type = 'Lock'`.
+4. Roll the blocker back. One insert commits. The other gets `23505` on the
+   constraint.
+
+Roll the blocker back, not forward. A committed blocker row keeps the key, so
+both inserts should then get `23505`. That case was reasoned from the unique
+index, not run.
+
+## pgx closes a connection itself when a read fails
+
+HEU-1113, 2026-11-25. Read in pgx v5.9.2. Check again after upgrading.
+
+pgconn closes the connection on its own in two cases:
+
+- A receive error that is not a timeout. `PgConn.peekMessage` calls
+  `asyncClose`.
+- A FATAL `ErrorResponse`. `PgConn.receiveMessage` closes the connection when
+  `OnPgError` returns false. The default `OnPgError`, set in
+  `ParseConfigWithOptions`, returns false for FATAL.
+
+A backend ended by `pg_terminate_backend` reaches the client as one of these.
+So an explicit `Close` after a failed query on that path leaves nothing a test
+can observe. On HEU-1113, deleting the locker's `closeLockConn` there failed no
+test.
+
+A non-FATAL `ErrorResponse` leaves the connection open. On that path an
+explicit `Close` is the only one.
+
+Use `pg_terminate_backend(pid, 5000)` in tests. The one-argument form returns
+once the signal is sent, not once the backend has gone.
+
 ## Two separate reads can straddle another writer's commit
 
 Two queries on the pool, with no transaction or lock around them, each see the

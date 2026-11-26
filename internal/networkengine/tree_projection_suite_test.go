@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1513,7 +1514,18 @@ func waitForLockWaiters(t *testing.T, pool *pgxpool.Pool, n int) {
 
 func TestPostgresTreeStore_ALowerVersionQueuedBehindAHigherOneIsRefused(t *testing.T) {
 	store := newTestPostgresTreeStore(t)
-	ctx := context.Background()
+	runLowerVersionQueuedBehindHigher(t, store, func(t *testing.T, n int) { waitForLockWaiters(t, store.pool, n) })
+}
+
+func TestPostgresTreeStore_ALowerVersionQueuedBehindAHigherOneIsRefusedUnderRepeatableRead(t *testing.T) {
+	store, app := repeatableReadStore(t)
+	runLowerVersionQueuedBehindHigher(t, store, func(t *testing.T, n int) { waitForAppLockWaiters(t, store.pool, app, n) })
+}
+
+func runLowerVersionQueuedBehindHigher(t *testing.T, store *PostgresTreeStore, waitForWaiters func(t *testing.T, n int)) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
 	tree, root := testTreeUUID(1), testUserUUID(1)
 	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
 	require.NoError(t, store.ProjectInsert(ctx,
@@ -1530,17 +1542,17 @@ func TestPostgresTreeStore_ALowerVersionQueuedBehindAHigherOneIsRefused(t *testi
 		higher <- store.ProjectInsert(ctx,
 			makeUUIDNode(testNodeUUID(4), tree, testUserUUID(4), 1, ptr(root), ptr(root), intPtr(2)), 4)
 	}()
-	waitForLockWaiters(t, store.pool, 1)
+	waitForWaiters(t, 1)
 	go func() {
 		lower <- store.ProjectInsert(ctx,
 			makeUUIDNode(testNodeUUID(3), tree, testUserUUID(3), 1, ptr(root), ptr(root), intPtr(1)), 3)
 	}()
-	waitForLockWaiters(t, store.pool, 2)
+	waitForWaiters(t, 2)
 	require.NoError(t, blocker.Commit(ctx))
 
-	require.NoError(t, receive(t, higher, 10*time.Second))
+	require.NoError(t, receiveWithin(t, higher, 10*time.Second, "the projection at version 4"))
 	var refused *ProjectionRefusedError
-	require.ErrorAs(t, receive(t, lower, 10*time.Second), &refused)
+	require.ErrorAs(t, receiveWithin(t, lower, 10*time.Second, "the projection at version 3"), &refused)
 	assert.Equal(t, ProjectionRefusedError{TreeID: tree, EventVersion: 3, ProjectedVersion: 4}, *refused)
 	version, _, err := store.ProjectedVersion(ctx, tree)
 	require.NoError(t, err)
@@ -1548,4 +1560,45 @@ func TestPostgresTreeStore_ALowerVersionQueuedBehindAHigherOneIsRefused(t *testi
 	row, err := store.GetNode(ctx, tree, testUserUUID(3))
 	require.NoError(t, err)
 	assert.Nil(t, row, "the lower version's row landed")
+}
+
+func TestPostgresTreeStore_AnUndoQueuedBehindAHigherProjectionIsRefusedUnderRepeatableRead(t *testing.T) {
+	store, app := repeatableReadStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	tree, root := testTreeUUID(1), testUserUUID(1)
+	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
+
+	blocker, err := store.pool.Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = blocker.Rollback(context.Background()) })
+	_, err = blocker.Exec(ctx, `SELECT 1 FROM tree_projections WHERE tree_id = $1 FOR UPDATE`, tree)
+	require.NoError(t, err)
+
+	higher, undo := make(chan error, 1), make(chan error, 1)
+	go func() {
+		higher <- store.ProjectInsert(ctx,
+			makeUUIDNode(testNodeUUID(2), tree, testUserUUID(2), 1, ptr(root), ptr(root), intPtr(0)), 2)
+	}()
+	// The undo must queue second. Started first, this test no longer
+	// exercises the race it is named for.
+	waitForAppLockWaiters(t, store.pool, app, 1)
+	go func() { undo <- store.UndoRootProjection(ctx, tree, root, 1) }()
+	waitForAppLockWaiters(t, store.pool, app, 2)
+	require.NoError(t, blocker.Commit(ctx))
+
+	require.NoError(t, receiveWithin(t, higher, 10*time.Second, "the projection at version 2"))
+	undoErr := receiveWithin(t, undo, 10*time.Second, "the undo of the root at version 1")
+	require.Error(t, undoErr, "the undo of the root at version 1 returned nil after version 2 was projected")
+	var pgErr *pgconn.PgError
+	if errors.As(undoErr, &pgErr) {
+		t.Fatalf("the undo returned SQLSTATE %s (%s); want the projected-version error", pgErr.Code, pgErr.Message)
+	}
+	assert.Contains(t, undoErr.Error(), "has projected version 2, not 1")
+	row, err := store.GetNode(ctx, tree, root)
+	require.NoError(t, err)
+	assert.NotNil(t, row, "GetNode returned no active row for the root")
+	version, _, err := store.ProjectedVersion(ctx, tree)
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), version)
 }

@@ -650,8 +650,8 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 		": no node in its sponsor chain survives this removal. Recruits that outlive it: 1"
 	cycle := "sponsor chain from user " + writerChild + " did not reach an end within 2 steps"
 	const (
-		shapeCheckedFirst = "the writer's shape check refuses a binary position above 1 before it sends a check"
-		noCycleReachable  = "restore validation refuses a sponsor cycle on both engines, and no write makes one"
+		writerNeverSends = "writer never sends this request"
+		noReachableState = "no reachable state provokes it"
 	)
 	cases := []struct {
 		mutation, code  string
@@ -669,7 +669,7 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 		{"add_node", "POSITION_OCCUPIED", placed(treeTypeBinary, writerChild, 0), placeOther,
 			"position 0 already occupied for user " + writerRoot, "", false},
 		{"add_node", "INVALID_POSITION", rooted(treeTypeBinary), placeOther,
-			"position 2 out of range for user " + writerRoot + " (has 2 children)", shapeCheckedFirst, false},
+			"position 2 out of range for user " + writerRoot + " (has 2 children)", writerNeverSends, false},
 		{"add_node_at", "TREE_EMPTY", rejectedMatrixRoot, placeOther, "tree has no root node", "", false},
 		{"add_node_at", "INVALID_POSITION", rooted(treeTypeMatrix), placeAt(writerRoot, writerRoot, 3),
 			"position 3 out of range for user " + writerRoot + " (has 3 children)", "", false},
@@ -687,13 +687,13 @@ func TestTreeWriterCheck_EveryRefusalCodeLeavesTheStreamUnchanged(t *testing.T) 
 			"cannot remove user " + writerRoot + ": has 1 children (must remove children first)", "", false},
 		{"remove_node", "SPONSORLESS_WITH_RECRUITS", sponsorCutInStoredSnapshot(treeTypeUnilevel), remove(writerChild),
 			sponsorless, "", false},
-		{"remove_node", "SPONSOR_CYCLE", withChild, remove(writerChild), cycle, noCycleReachable, false},
+		{"remove_node", "SPONSOR_CYCLE", withChild, remove(writerChild), cycle, noReachableState, false},
 		{"remove_node", "CANNOT_REMOVE_ROOT", rooted(treeTypeMatrix), removeMatrix(writerRoot),
 			"cannot remove root node", "", true},
 		{"remove_node", "SPONSORLESS_WITH_RECRUITS", sponsorCutInStoredSnapshot(treeTypeMatrix),
 			removeMatrix(writerChild), sponsorless, "", true},
 		{"remove_node", "SPONSOR_CYCLE", placed(treeTypeMatrix, writerChild, 0), removeMatrix(writerChild),
-			cycle, noCycleReachable, true},
+			cycle, noReachableState, true},
 	}
 	for _, tc := range cases {
 		name := tc.mutation + " " + tc.code

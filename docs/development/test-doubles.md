@@ -181,17 +181,17 @@ Read from the worker for HEU-949 on 2026-11-13. Its dispatch loop gives that
 reply for any request whose handler panics.
 
 A setup can come from a stored snapshot as well as from writes. The writer
-loads from its snapshot store, so an edited snapshot is a state the writer can
+loads from its snapshot store. So an edited snapshot is a state the writer can
 meet. Use one when no write sequence reaches the state.
 
-There is one exception. A code the worker can return for that request type may
-be scripted when no request the writer sends provokes it from any state
-reachable through writes or a stored snapshot. Script it to test how the writer
-handles that code. The row must say why the code is out of reach. Show that it
-is out of reach, against the real worker, before scripting it. Record how in the
-PR.
+There is one exception. A code may be scripted when the writer can never provoke
+it. That holds when no request the writer sends gives that code, in any state
+reachable through writes or a stored snapshot. The code must still be one the
+worker can return for that request type. Script it to test how the writer
+handles that code. The row must say why the code is out of reach. Show this
+against the real worker before scripting the code. Record how in the PR.
 
-Decided for HEU-1130 on 2026-11-25, and widened on 2026-11-26.
+Decided for HEU-1130 on 2026-11-25. Widened on 2026-11-26.
 
 Dated examples, from HEU-948 on 2026-10-19:
 

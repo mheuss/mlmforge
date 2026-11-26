@@ -2,8 +2,10 @@ package networkengine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime/debug"
+	"slices"
 	"testing"
 	"time"
 
@@ -247,4 +249,149 @@ func TestPostgresTreeLocker_ARefusedConnStringHoldsNoPassword(t *testing.T) {
 			require.Equal(t, tc.PgxStage, cse.Stage())
 		})
 	}
+}
+
+// lockSessionPIDs lists the pids of this database's sessions named for the tree locker.
+func lockSessionPIDs(ctx context.Context, conn *pgx.Conn) ([]int32, error) {
+	var pids []int32
+	err := conn.QueryRow(ctx,
+		`SELECT coalesce(array_agg(pid ORDER BY pid), '{}') FROM pg_stat_activity
+		 WHERE datname = current_database() AND application_name = $1`, treeLockApplicationName).Scan(&pids)
+	return pids, err
+}
+
+// waitForNewLockSession polls until exactly one locker session outside before exists, and returns its pid.
+func waitForNewLockSession(t *testing.T, conn *pgx.Conn, before []int32) int32 {
+	t.Helper()
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var after []int32
+	reads := 0
+	for {
+		seen, err := lockSessionPIDs(ctx, conn)
+		if err != nil && reads == 0 {
+			t.Fatalf("after %s, no pg_stat_activity read of the %s sessions succeeded; before the Lock they were %v. The read returned: %v",
+				time.Since(start).Round(time.Millisecond), treeLockApplicationName, before, err)
+		}
+		if err != nil {
+			t.Fatalf("after %s, the %s sessions were %v; before the Lock they were %v; want exactly one new one. The last pg_stat_activity read returned: %v",
+				time.Since(start).Round(time.Millisecond), treeLockApplicationName, after, before, err)
+		}
+		reads++
+		after = seen
+		var added []int32
+		for _, pid := range after {
+			if !slices.Contains(before, pid) {
+				added = append(added, pid)
+			}
+		}
+		if len(added) == 1 {
+			return added[0]
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// waitForRefusedPoll polls until pid sits idle after a pg_try_advisory_lock call while holding no advisory lock.
+func waitForRefusedPoll(t *testing.T, conn *pgx.Conn, pid int32) {
+	t.Helper()
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var state, query string
+	reads := 0
+	for {
+		var seenState, seenQuery string
+		var refused bool
+		err := conn.QueryRow(ctx,
+			`SELECT coalesce(a.state, ''), a.query,
+			        coalesce(a.state = 'idle' AND a.query LIKE 'SELECT pg_try_advisory_lock(%'
+			          AND NOT EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.locktype = 'advisory'), false)
+			   FROM pg_stat_activity a WHERE a.pid = $1`, pid).Scan(&seenState, &seenQuery, &refused)
+		if errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("after %s, pg_stat_activity had no row for lock session pid %d",
+				time.Since(start).Round(time.Millisecond), pid)
+		}
+		if err != nil && reads == 0 {
+			t.Fatalf("after %s, no pg_stat_activity read of lock session pid %d succeeded. The read returned: %v",
+				time.Since(start).Round(time.Millisecond), pid, err)
+		}
+		if err != nil {
+			t.Fatalf("after %s, lock session pid %d was in state %q with last query %q; want idle after a refused pg_try_advisory_lock. The last pg_stat_activity read returned: %v",
+				time.Since(start).Round(time.Millisecond), pid, state, query, err)
+		}
+		reads++
+		state, query = seenState, seenQuery
+		if refused {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestPostgresTreeLocker_AWaiterWhoseSessionEndsMidPollFails(t *testing.T) {
+	dsn := requireLockDatabase(t)
+	tree := uuid.MustParse(testTreeUUID(7))
+	key := treeLockKey(tree)
+
+	admin, err := pgx.Connect(context.Background(), dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = admin.Close(context.Background()) })
+
+	holderCfg, err := pgx.ParseConfig(dsn)
+	require.NoError(t, err)
+	holderCfg.RuntimeParams["application_name"] = "heu1113-holder"
+	holder, err := pgx.ConnectConfig(context.Background(), holderCfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = holder.Close(context.Background()) })
+	// Cancels are registered after the connection closes, so cleanup runs
+	// them first.
+	q, cancelQ := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancelQ)
+	acquire, cancelAcquire := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancelAcquire)
+	_, err = holder.Exec(acquire, "SELECT pg_advisory_lock($1, $2)", platform.TreeLockNamespace, key)
+	require.NoError(t, err, "the holder's pg_advisory_lock on tree %s did not return within 10s", tree)
+	var holderPID int32
+	require.NoError(t, holder.QueryRow(q, "SELECT pg_backend_pid()").Scan(&holderPID))
+
+	before, err := lockSessionPIDs(q, admin)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+	type lockResult struct {
+		unlock func() error
+		err    error
+	}
+	results := make(chan lockResult, 1)
+	go func() {
+		unlock, err := NewPostgresTreeLocker(dsn).Lock(ctx, tree)
+		results <- lockResult{unlock: unlock, err: err}
+	}()
+	waiter := waitForNewLockSession(t, admin, before)
+	waitForRefusedPoll(t, admin, waiter)
+
+	var ended bool
+	require.NoError(t, admin.QueryRow(q, "SELECT pg_terminate_backend($1, 5000)", waiter).Scan(&ended))
+	require.True(t, ended, "pg_terminate_backend(%d, 5000) returned false", waiter)
+
+	r := receiveWithin(t, results, 10*time.Second, "the Lock whose session was terminated")
+	if r.unlock != nil {
+		_ = r.unlock()
+		t.Fatalf("the Lock whose session was terminated returned an unlock func and error %v", r.err)
+	}
+	require.ErrorContains(t, r.err, "the pg_try_advisory_lock query for tree "+tree.String()+" failed")
+	require.NoError(t, ctx.Err(), "the Lock's ctx had ended by the time it returned")
+
+	var holders []int32
+	require.NoError(t, admin.QueryRow(q,
+		`SELECT coalesce(array_agg(l.pid ORDER BY l.pid), '{}') FROM pg_locks l
+		 WHERE l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+		   AND l.locktype = 'advisory' AND l.granted
+		   AND l.classid::bigint = ($1::bigint & 4294967295)
+		   AND l.objid::bigint = ($2::bigint & 4294967295)
+		   AND l.objsubid = 2`, platform.TreeLockNamespace, key).Scan(&holders))
+	assert.Equal(t, []int32{holderPID}, holders, "pids holding the advisory lock on tree %s", tree)
+	require.NoError(t, holder.Close(context.Background()))
 }

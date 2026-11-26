@@ -177,6 +177,9 @@ fake first. Put it in the worker's order. When a test needs any engine error for
 a valid payload, use `INTERNAL_ERROR` with the message "handler panicked
 unexpectedly". Check the worker's panic reply before copying the message.
 
+Read from the worker for HEU-949 on 2026-11-13. Its dispatch loop gives that
+reply for any request whose handler panics.
+
 A setup can come from a stored snapshot as well as from writes. The writer
 loads from its snapshot store, so an edited snapshot is a state the writer can
 meet. Use one when no write sequence reaches the state.
@@ -184,14 +187,11 @@ meet. Use one when no write sequence reaches the state.
 There is one exception. A code the worker can return for that request type may
 be scripted when no request the writer sends provokes it from any state
 reachable through writes or a stored snapshot. Script it to test how the writer
-handles that code.
-The row must say why the code is out of reach. Show that it is out of reach,
-against the real worker, before scripting it. Record how in the PR.
+handles that code. The row must say why the code is out of reach. Show that it
+is out of reach, against the real worker, before scripting it. Record how in the
+PR.
 
 Decided for HEU-1130 on 2026-11-25, and widened on 2026-11-26.
-
-Read from the worker for HEU-949 on 2026-11-13. Its dispatch loop gives that
-reply for any request whose handler panics.
 
 Dated examples, from HEU-948 on 2026-10-19:
 

@@ -164,14 +164,14 @@ A probe that logged and refused nothing found 101 calls through the four write
 methods: 80 inserts, 13 removals and 8 root undos. The refusing probe logged no
 removal or undo calls at all.
 
-## Script only replies the worker gives for the payload
+## Script a reply only where the setup makes the worker give it
 
-A scripted engine reply must be one the worker gives for that payload. A reply
-it cannot give describes a refusal that never happens. A scripted reply fires
-whether or not the payload would provoke it. The test then cannot show that the
-payload provokes the refusal.
+A scripted engine reply must be one the real worker gives for that request,
+from that test's setup. A code the worker can return for the request type is
+not enough. A scripted reply fires whether or not the setup would provoke it.
+The test then cannot show that the setup provokes the refusal.
 
-When a test needs a particular refusal, give the payload what provokes it. Let
+When a test needs a particular refusal, build the setup that provokes it. Let
 the fake refuse. When the fake does not model that refusal, add the check to the
 fake first. Put it in the worker's order. When a test needs any engine error for
 a valid payload, use `INTERNAL_ERROR` with the message "handler panicked
@@ -179,6 +179,22 @@ unexpectedly". Check the worker's panic reply before copying the message.
 
 Read from the worker for HEU-949 on 2026-11-13. Its dispatch loop gives that
 reply for any request whose handler panics.
+
+A setup can come from a stored snapshot as well as from writes. The writer
+loads from its snapshot store. So an edited snapshot is a state the writer can
+meet. Use one when no write sequence reaches the state.
+
+Two replies may be scripted without a setup that provokes them. The first is
+the `INTERNAL_ERROR` reply above. The second is a code the writer can never
+provoke. That holds when no request the writer sends gives that code, in any
+state reachable through writes or a stored snapshot. The code must still be one
+the worker can return for that request type. Script it to test how the writer
+handles that code. The row must name which condition it meets. Put the evidence
+in the PR. Before scripting the code, show from the real worker that it is out
+of reach.
+
+Decided for HEU-1130 on 2026-11-25. Widened on 2026-11-26 to requests the writer
+never sends. A stored snapshot became a reachable state the same day.
 
 Dated examples, from HEU-948 on 2026-10-19:
 
@@ -195,6 +211,16 @@ real transport can recover from. A failure that ends the connection cannot be
 followed by a reply. Use a plain error that models a transient failure.
 
 Found in plan review for HEU-1067 on 2026-11-18.
+
+A reachability search covers only the bound it ran to. Report the bound with the
+result. A path just past it can still exist. Search the requests the code under
+test sends, not every op the worker takes. Mixing the two makes a claim true for
+the code under test and false at the worker, or the reverse.
+
+Found in review for HEU-1130 on 2026-11-26. The matrix search stopped at 6
+writes after creating the tree. The adversarial reviewer reached
+`SPONSORLESS_WITH_RECRUITS` on the raw worker in 8 such writes. Two of them were
+`place_from_tank`, which the writer never sends.
 
 ## A double that ends the path leaves nothing past it to assert
 

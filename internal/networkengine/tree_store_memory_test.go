@@ -234,8 +234,7 @@ func setMemoryRemovedAt(t *testing.T, s *MemoryTreeStore, nodeID string, at time
 	require.Failf(t, "no row", "no row with id %s", nodeID)
 }
 
-// This pins the memory twin's refusal only. The chain built here is one a
-// removal is assumed never to produce.
+// This pins the memory twin's refusal of the chain built here.
 func TestMemoryTreeStore_RefusesARelocationIntoASlotAnotherRelocationVacates(t *testing.T) {
 	s := NewMemoryTreeStore()
 	ctx := context.Background()
@@ -329,8 +328,7 @@ func TestMemoryTreeStore_TwoRelocationsIntoOneEmptySlotWhateverTheCase(t *testin
 }
 
 // A relocation into a slot another relocation vacates, spelled in upper case.
-// This pins the memory twin's refusal only. The chain built here is one a
-// removal is assumed never to produce.
+// This pins the memory twin's refusal of the chain built here.
 func TestMemoryTreeStore_RelocationIntoAVacatedSlotWhateverTheCase(t *testing.T) {
 	s := NewMemoryTreeStore()
 	ctx := context.Background()

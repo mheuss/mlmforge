@@ -92,6 +92,8 @@ func TestTreePlace_ExitsThreeThenTheNextWriteHeals(t *testing.T) {
 
 	require.Equal(t, 3, exitCode(err), "stdout: %s stderr: %s", out.stdout.String(), out.stderr.String())
 	placed := appendedEventID(t, out.stdout.String())
+	require.Regexp(t, `^redelivered event `+eventIDPattern+` at version 1\nappended event `+placed+
+		` at version 2 to stream tree-`+tree+`; projection returned an error\n$`, out.stdout.String())
 	require.Contains(t, out.stderr.String(),
 		"(the server canceled the statement: lock_timeout is 500ms (set by: "+lockTimeoutEnv+"))")
 	require.Contains(t, out.stderr.String(),

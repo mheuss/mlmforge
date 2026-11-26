@@ -309,9 +309,13 @@ func waitForRefusedPoll(t *testing.T, conn *pgx.Conn, pid int32) {
 			        coalesce(a.state = 'idle' AND a.query LIKE 'SELECT pg_try_advisory_lock(%'
 			          AND NOT EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.locktype = 'advisory'), false)
 			   FROM pg_stat_activity a WHERE a.pid = $1`, pid).Scan(&seenState, &seenQuery, &refused)
+		if errors.Is(err, pgx.ErrNoRows) && reads == 0 {
+			t.Fatalf("after %s, the first pg_stat_activity read found no row for lock session pid %d. The read returned: %v",
+				time.Since(start).Round(time.Millisecond), pid, err)
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
-			t.Fatalf("after %s, pg_stat_activity had no row for lock session pid %d. Before that, %d read(s) succeeded, and the last showed state %q with last query %q",
-				time.Since(start).Round(time.Millisecond), pid, reads, state, query)
+			t.Fatalf("after %s, pg_stat_activity had no row for lock session pid %d. Before that, %d read(s) succeeded, and the last showed state %q with last query %q. The read returned: %v",
+				time.Since(start).Round(time.Millisecond), pid, reads, state, query, err)
 		}
 		if err != nil && reads == 0 {
 			t.Fatalf("after %s, no pg_stat_activity read of lock session pid %d succeeded. The read returned: %v",
@@ -358,14 +362,14 @@ func TestPostgresTreeLocker_AWaiterWhoseSessionEndsMidPollFails(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
-	type pollResult struct {
+	type waiterResult struct {
 		unlock func() error
 		err    error
 	}
-	results := make(chan pollResult, 1)
+	results := make(chan waiterResult, 1)
 	go func() {
 		unlock, err := NewPostgresTreeLocker(dsn).Lock(ctx, tree)
-		results <- pollResult{unlock: unlock, err: err}
+		results <- waiterResult{unlock: unlock, err: err}
 	}()
 	received := false
 	t.Cleanup(func() {

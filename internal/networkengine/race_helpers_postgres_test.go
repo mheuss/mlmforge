@@ -22,6 +22,7 @@ func repeatableReadStore(t *testing.T) (*PostgresTreeStore, string) {
 	require.NoError(t, err)
 	cfg.ConnConfig.RuntimeParams["default_transaction_isolation"] = "repeatable read"
 	cfg.ConnConfig.RuntimeParams["application_name"] = app
+	cfg.MaxConns = 8
 	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	require.NoError(t, err)
 	t.Cleanup(pool.Close)
@@ -30,14 +31,15 @@ func repeatableReadStore(t *testing.T) (*PostgresTreeStore, string) {
 	defer cancel()
 	var def string
 	require.NoError(t, pool.QueryRow(ctx, "SHOW default_transaction_isolation").Scan(&def))
-	require.Equal(t, "repeatable read", def, "SHOW default_transaction_isolation on the repeatable read pool")
+	require.Equal(t, "repeatable read", def,
+		"SHOW default_transaction_isolation on the pool built with default_transaction_isolation=repeatable read")
 	tx, err := pool.Begin(ctx)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
 	var level string
 	require.NoError(t, tx.QueryRow(ctx, "SHOW transaction_isolation").Scan(&level))
 	require.Equal(t, "repeatable read", level,
-		"SHOW transaction_isolation in a transaction begun with no options on the repeatable read pool")
+		"SHOW transaction_isolation in a transaction begun with no options on the pool built with default_transaction_isolation=repeatable read")
 	require.NoError(t, tx.Rollback(ctx))
 	return NewPostgresTreeStore(pool), app
 }

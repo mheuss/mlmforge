@@ -150,6 +150,17 @@ func receiveWithin[T any](t *testing.T, ch <-chan T, bound time.Duration, what s
 	}
 }
 
+// appendResult is one racing append's event ID and what Append returned.
+type appendResult struct {
+	id  string
+	err error
+}
+
+// String formats the result with the error's text, which %v cannot reach through an unexported field.
+func (r appendResult) String() string {
+	return fmt.Sprintf("{%s: %v}", r.id, r.err)
+}
+
 func TestPostgresAppend_TwoAppendsPastThePreCheckGiveOneConcurrencyError(t *testing.T) {
 	if pgContainer == nil {
 		t.Skip("Postgres container not available")
@@ -169,10 +180,6 @@ func TestPostgresAppend_TwoAppendsPastThePreCheckGiveOneConcurrencyError(t *test
 		uuid.NewString(), stream)
 	require.NoError(t, err)
 
-	type appendResult struct {
-		id  string
-		err error
-	}
 	results := make(chan appendResult, 2)
 	for _, id := range []string{"00000000-0000-0000-0000-0000000000a1", "00000000-0000-0000-0000-0000000000a2"} {
 		go func() {

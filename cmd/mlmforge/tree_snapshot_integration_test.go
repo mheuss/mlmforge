@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// snapshotVersion is the stream version at which a snapshot is expected.
+// snapshotVersion is the version this test drives the stream to.
 const snapshotVersion = 1000
 
 var snapshotEnrolledAt = time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)

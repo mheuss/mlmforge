@@ -22,6 +22,7 @@ const (
 	sweepDefaultLast         = 200
 	sweepNonLeafPromoteFloor = 600
 	sweepMostChildrenFloor   = 500
+	sweepTwoMovedFloor       = 450
 	sweepNonLeafPct          = 90
 	sweepMostChildrenPct     = 75
 	sweepPromotePct          = 90
@@ -65,6 +66,7 @@ type sweepStats struct {
 	accepted     map[PruningMode]int
 	nonLeaf      map[PruningMode]int
 	mostChildren int
+	twoMoved     int
 	refused      int
 }
 
@@ -340,8 +342,17 @@ func sweepSeed(t *testing.T, client *EngineClient, seed int, stats *sweepStats, 
 		if engineErrorOf(workerErr) != engineErrorOf(fakeErr) || (workerErr == nil) != (fakeErr == nil) {
 			stepDiffs = append(stepDiffs, fmt.Sprintf("apply error: worker %v, fake %v", workerErr, fakeErr))
 		}
+		var moved int
+		if workerErr == nil {
+			var chains []string
+			chains, moved = relocationChains(state, workerResult.Relocated)
+			stepDiffs = append(stepDiffs, chains...)
+		}
 		if workerErr == nil && fakeErr == nil {
 			stats.accepted[mode]++
+			if moved >= 2 {
+				stats.twoMoved++
+			}
 			if hasKids && kids[x] == mostAmongCands {
 				stats.mostChildren++
 			}
@@ -448,13 +459,15 @@ func TestFakeWriterEngine_SweepsMatrixRemovalsAsTheWorkerDoes(t *testing.T) {
 
 	client := startWorker(t)
 	stats, ran := runMatrixRemovalSweep(t, client, first, last)
-	t.Logf("ran %d seeds. Accepted removals: %v, of which non-leaf: %v, of which the target had the most children: %d. Refused by either engine: %d",
-		ran, stats.accepted, stats.nonLeaf, stats.mostChildren, stats.refused)
+	t.Logf("ran %d seeds. Accepted removals: %v, of which non-leaf: %v, of which the target had the most children: %d. Refused by either engine: %d. Accepted removals with two or more relocations that change slot: %d",
+		ran, stats.accepted, stats.nonLeaf, stats.mostChildren, stats.refused, stats.twoMoved)
 	if !fromEnv && ran == last-first+1 {
 		assert.GreaterOrEqual(t, stats.nonLeaf[PruningPromoteEarliest], sweepNonLeafPromoteFloor,
 			"accepted non-leaf promote_earliest removals over seeds %d-%d", first, last)
 		assert.GreaterOrEqual(t, stats.mostChildren, sweepMostChildrenFloor,
 			"accepted removals whose target had the most children among the candidates, over seeds %d-%d", first, last)
+		assert.GreaterOrEqual(t, stats.twoMoved, sweepTwoMovedFloor,
+			"accepted removals with two or more relocations that change slot, over seeds %d-%d", first, last)
 	}
 }
 

@@ -150,13 +150,13 @@ func receiveWithin[T any](t *testing.T, ch <-chan T, bound time.Duration, what s
 	}
 }
 
-// appendResult is one racing append's event ID and what Append returned.
+// appendResult is one racing append's event ID and what the append returned.
 type appendResult struct {
 	id  string
 	err error
 }
 
-// String formats the result with the error's text, which %v cannot reach through an unexported field.
+// String formats the result as its ID and the error's text.
 func (r appendResult) String() string {
 	return fmt.Sprintf("{%s: %v}", r.id, r.err)
 }

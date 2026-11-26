@@ -53,8 +53,8 @@ func TestTreeLoad_RefusesATreeTypeTheStreamDoesNotRecord(t *testing.T) {
 
 	require.Equal(t, 1, exitCode(err), "stdout: %s stderr: %s", out.stdout.String(), out.stderr.String())
 	require.Empty(t, out.stdout.String())
-	require.Contains(t, out.stderr.String(), "load failed: load tree "+tree+": stream tree-"+tree+
-		" records tree type unilevel at version 1, and the request names binary")
+	require.Equal(t, "Error: load failed: load tree "+tree+": stream tree-"+tree+
+		" records tree type unilevel at version 1, and the request names binary\n", out.stderr.String())
 }
 
 func addMatrixRoot(t *testing.T, worker, tree string) {
@@ -80,8 +80,8 @@ func TestTreeLoad_RefusesAMatrixWidthTheStreamDoesNotRecord(t *testing.T) {
 
 	require.Equal(t, 1, exitCode(err), "stdout: %s stderr: %s", out.stdout.String(), out.stderr.String())
 	require.Empty(t, out.stdout.String())
-	require.Contains(t, out.stderr.String(), "load failed: load tree "+tree+": stream tree-"+tree+
-		" records matrix width 2 at version 1, and the request names 3")
+	require.Equal(t, "Error: load failed: load tree "+tree+": stream tree-"+tree+
+		" records matrix width 2 at version 1, and the request names 3\n", out.stderr.String())
 }
 
 func TestTreeLoad_LoadsAMatrixTreeWithTheMatrixFlagsLeftOut(t *testing.T) {

@@ -22,6 +22,7 @@ func TestTreeRejectEvent_RefusesAHealthyLastEvent(t *testing.T) {
 	before := readTreeStream(t, events, tree)
 	require.Len(t, before, 2)
 	placed := before[1]
+	require.Equal(t, networkengine.EventTypeNodePlaced, placed.Type)
 
 	out, err := runTreeCmd(t, append([]string{"reject-event", "--event-id", placed.ID,
 		"--reason", "the placement is healthy"}, conn...)...)
@@ -51,11 +52,13 @@ func TestTreeRejectEvent_ARerunAfterARejectionIsAlreadyProjected(t *testing.T) {
 		TreeID: tree, UserID: child, ParentID: root, SponsorID: absent, TreeType: "unilevel", EnrolledAt: rejectTime,
 	})
 	reject := append([]string{"reject-event", "--event-id", stuck.ID, "--reason", "sponsor never enrolled"}, conn...)
+	unrejected := readTreeStream(t, events, tree)
 	out, err = runTreeCmd(t, reject...)
 	require.NoError(t, err, out.stderr.String())
 	before := readTreeStream(t, events, tree)
-	rejection := before[len(before)-1]
-	require.Equal(t, networkengine.EventTypeEventRejected, rejection.Type)
+	rejection := requireGrewByTheRejection(t, unrejected, before, stuck.ID)
+	require.Equal(t, "appended rejection "+rejection.ID+" at version 3 to stream tree-"+tree+" for event "+stuck.ID+
+		"; projected\n", out.stdout.String())
 
 	out, err = runTreeCmd(t, reject...)
 

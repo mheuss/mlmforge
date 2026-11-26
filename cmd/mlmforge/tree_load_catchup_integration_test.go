@@ -239,8 +239,8 @@ func TestTreeLoad_RefusesAStreamTwoPastTheStore(t *testing.T) {
 	require.ErrorAs(t, err, &moved)
 	require.Equal(t, 1, exitCode(err))
 	require.Empty(t, out.stdout.String())
-	require.Contains(t, out.stderr.String(), "load failed: tree "+tree+" had projected version 1 before its load, and stream tree-"+
-		tree+" ends at version 3; nothing was appended")
+	require.Equal(t, "Error: load failed: tree "+tree+" had projected version 1 before its load, and stream tree-"+
+		tree+" ends at version 3; nothing was appended\n", out.stderr.String())
 	store := networkengine.NewPostgresTreeStore(pool)
 	version, _, err := store.ProjectedVersion(t.Context(), tree)
 	require.NoError(t, err)

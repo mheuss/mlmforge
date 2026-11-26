@@ -382,6 +382,7 @@ func TestPostgresTreeLocker_AWaiterWhoseSessionEndsMidPollFails(t *testing.T) {
 				_ = r.unlock()
 			}
 		case <-time.After(10 * time.Second):
+			t.Errorf("no result from the Lock arrived within 10s of cancelling its ctx")
 		}
 	})
 	waiter := waitForNewLockSession(t, admin, before)

@@ -749,7 +749,7 @@ count is enough.
 
 ## Put the mutant definitions where the reader is
 
-An overlay mutant lives in ignored scratch, and its JSON names absolute paths in
-one worktree. A PR body that cites those files gives a reviewer nothing to rerun.
-Write each anchor and replacement, and any helper a mutant appends, into the PR
-body itself. Found in review for HEU-1114 on 2026-11-25.
+An overlay mutant lives in ignored scratch. Its JSON names absolute paths in one
+worktree. A PR body that cites those files gives a reviewer nothing to rerun.
+Write each anchor and replacement into the PR body itself. Do the same for any
+helper a mutant appends. Found in review for HEU-1114 on 2026-11-25.

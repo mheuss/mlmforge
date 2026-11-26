@@ -61,7 +61,7 @@ type sweepPosition struct {
 	Err             string
 }
 
-// sweepStats counts the sweep's removals by outcome and by the shape of their target.
+// sweepStats counts the sweep's removals by outcome and by the shape of their target or their result.
 type sweepStats struct {
 	accepted     map[PruningMode]int
 	nonLeaf      map[PruningMode]int
@@ -343,10 +343,9 @@ func sweepSeed(t *testing.T, client *EngineClient, seed int, stats *sweepStats, 
 			stepDiffs = append(stepDiffs, fmt.Sprintf("apply error: worker %v, fake %v", workerErr, fakeErr))
 		}
 		var moved int
+		var chains []string
 		if workerErr == nil {
-			var chains []string
 			chains, moved = relocationChains(state, workerResult.Relocated)
-			stepDiffs = append(stepDiffs, chains...)
 		}
 		if workerErr == nil && fakeErr == nil {
 			stats.accepted[mode]++
@@ -371,8 +370,13 @@ func sweepSeed(t *testing.T, client *EngineClient, seed int, stats *sweepStats, 
 		}
 		compared, next := c.compare(t)
 		stepDiffs = append(stepDiffs, compared...)
+		if len(chains) > 0 {
+			t.Errorf("seed %d: relocation chains in the worker's result of removal %d of %d:\n  %s", seed, step, sweepRemovalAttempts, strings.Join(chains, "\n  "))
+		}
 		if len(stepDiffs) > 0 {
 			t.Errorf("seed %d: differences after removal %d of %d:\n  %s", seed, step, sweepRemovalAttempts, strings.Join(stepDiffs, "\n  "))
+		}
+		if len(chains) > 0 || len(stepDiffs) > 0 {
 			return
 		}
 		state = next

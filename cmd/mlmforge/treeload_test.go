@@ -444,6 +444,8 @@ func TestRunTreeLoad_ReportsAFailedRedeliveryWithoutALoadedLine(t *testing.T) {
 	var failed *networkengine.CatchUpFailedError
 	require.ErrorAs(t, err, &failed)
 	require.Equal(t, 1, exitCode(err))
+	require.EqualError(t, err, "load failed: redelivering event e2 (tree.node_placed) at version 2 in stream tree-t returned: "+
+		"parent node p not found in tree t; nothing was appended")
 	require.Empty(t, out.String())
 	require.Equal(t, 1, loader.attempts)
 }

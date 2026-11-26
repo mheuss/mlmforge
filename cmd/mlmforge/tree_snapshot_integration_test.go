@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// snapshotVersion is the version this test drives the stream to.
+// snapshotVersion is the version a snapshot test drives the stream to.
 const snapshotVersion = 1000
 
 var snapshotEnrolledAt = time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
@@ -65,26 +65,33 @@ func snapshotAtTheInterval(t *testing.T, pool *pgxpool.Pool, worker, tree string
 	return conn
 }
 
+// overwriteSecondPlacement rewrites tree's version-2 placement to name a
+// sponsor the tree never held, and returns that event as it was read.
+func overwriteSecondPlacement(t *testing.T, pool *pgxpool.Pool, tree string) platform.Event {
+	t.Helper()
+	stream := networkengine.TreeStreamName(tree)
+	second, err := platform.NewPostgresEventStore(pool).ReadStream(t.Context(), stream, 2, 1)
+	require.NoError(t, err)
+	require.Len(t, second, 1)
+	data, err := json.Marshal(networkengine.NodePlacedPayload{TreeID: tree, UserID: testUserID(2), ParentID: testUserID(1),
+		SponsorID: testUserID(5000), TreeType: "unilevel", EnrolledAt: snapshotEnrolledAt})
+	require.NoError(t, err)
+	tag, err := pool.Exec(t.Context(), `UPDATE events SET payload = $1::jsonb WHERE stream = $2 AND version = 2`,
+		string(data), stream)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), tag.RowsAffected())
+	return second[0]
+}
+
 func TestTreeLoad_RestoresAStoredSnapshot(t *testing.T) {
 	if pgContainer == nil {
 		t.Skip("Postgres container not available")
 	}
 	worker := requireWorker(t)
 	pool := pgContainer.NewPool(t)
-	tree, root, absent := testTreeID(1109), testUserID(1), testUserID(5000)
+	tree := testTreeID(1109)
 	conn := snapshotAtTheInterval(t, pool, worker, tree)
-	stream := networkengine.TreeStreamName(tree)
-	second, err := platform.NewPostgresEventStore(pool).ReadStream(t.Context(), stream, 2, 1)
-	require.NoError(t, err)
-	require.Len(t, second, 1)
-	// The overwritten placement names a sponsor the tree never held.
-	data, err := json.Marshal(networkengine.NodePlacedPayload{TreeID: tree, UserID: testUserID(2), ParentID: root,
-		SponsorID: absent, TreeType: "unilevel", EnrolledAt: snapshotEnrolledAt})
-	require.NoError(t, err)
-	tag, err := pool.Exec(t.Context(), `UPDATE events SET payload = $1::jsonb WHERE stream = $2 AND version = 2`,
-		string(data), stream)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), tag.RowsAffected())
+	second := overwriteSecondPlacement(t, pool, tree)
 	load := append([]string{"load", "--tree-type", "unilevel"}, conn...)
 
 	out, err := runTreeCmd(t, load...)
@@ -93,7 +100,7 @@ func TestTreeLoad_RestoresAStoredSnapshot(t *testing.T) {
 	require.Equal(t, "loaded tree "+tree+" (1000 nodes)\n", out.stdout.String())
 	require.Empty(t, out.stderr.String())
 
-	tag, err = pool.Exec(t.Context(), `DELETE FROM tree_snapshots WHERE tree_id = $1`, tree)
+	tag, err := pool.Exec(t.Context(), `DELETE FROM tree_snapshots WHERE tree_id = $1`, tree)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), tag.RowsAffected())
 
@@ -103,7 +110,7 @@ func TestTreeLoad_RestoresAStoredSnapshot(t *testing.T) {
 	require.Empty(t, out.stdout.String())
 	require.Contains(t, out.stderr.String(),
 		"load stopped at the replay stage while building the tree from its stream: build tree "+tree+" at stage replay: ")
-	require.Contains(t, out.stderr.String(), "; event "+second[0].ID+" at version 2 of type tree.node_placed failed: ")
+	require.Contains(t, out.stderr.String(), "; event "+second.ID+" at version 2 of type tree.node_placed failed: ")
 	require.Contains(t, out.stderr.String(), "SPONSOR_NOT_FOUND")
 }
 
@@ -132,4 +139,31 @@ func TestTreeLoad_FallsBackFromASnapshotTheWorkerRefuses(t *testing.T) {
 	var left int
 	require.NoError(t, pool.QueryRow(t.Context(), `SELECT count(*) FROM tree_snapshots WHERE tree_id = $1`, tree).Scan(&left))
 	require.Zero(t, left)
+}
+
+func TestTreeLoad_FallsBackToAReplayOfTheStream(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	worker := requireWorker(t)
+	pool := pgContainer.NewPool(t)
+	tree := testTreeID(1119)
+	conn := snapshotAtTheInterval(t, pool, worker, tree)
+	second := overwriteSecondPlacement(t, pool, tree)
+	tag, err := pool.Exec(t.Context(), `UPDATE tree_snapshots SET data = convert_to('{}', 'UTF8') WHERE tree_id = $1`, tree)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), tag.RowsAffected())
+
+	out, err := runTreeCmd(t, append([]string{"load", "--tree-type", "unilevel"}, conn...)...)
+
+	require.Equal(t, 1, exitCode(err), "stdout: %s stderr: %s", out.stdout.String(), out.stderr.String())
+	require.Empty(t, out.stdout.String())
+	stderr := out.stderr.String()
+	require.Contains(t, stderr, "warning: the snapshot of tree "+tree+" at version 1000 could not be used (build tree "+
+		tree+" at stage restore: ")
+	require.Contains(t, stderr, "); dropped the structure; deleted the snapshot\n")
+	require.Contains(t, stderr,
+		"load stopped at the replay stage while building the tree from its stream: build tree "+tree+" at stage replay: ")
+	require.Contains(t, stderr, "; event "+second.ID+" at version 2 of type tree.node_placed failed: ")
+	require.Contains(t, stderr, "SPONSOR_NOT_FOUND")
 }

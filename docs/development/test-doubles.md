@@ -188,7 +188,7 @@ handles that code.
 The row must say why the code is out of reach. Show that it is out of reach,
 against the real worker, before scripting it. Record how in the PR.
 
-Decided for HEU-1130 on 2026-11-25.
+Decided for HEU-1130 on 2026-11-25, and widened on 2026-11-26.
 
 Read from the worker for HEU-949 on 2026-11-13. Its dispatch loop gives that
 reply for any request whose handler panics.

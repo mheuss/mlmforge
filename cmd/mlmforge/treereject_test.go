@@ -317,6 +317,7 @@ func TestReportReject_ReturnsAnUnknownOutcomeAsItsOwnValue(t *testing.T) {
 
 	require.Same(t, unknown, err)
 	assert.Empty(t, out.String())
+	assert.Empty(t, warn.String())
 }
 
 func TestReportReject_WrapsAPlainErrorWhoseContextEnded(t *testing.T) {
@@ -329,4 +330,5 @@ func TestReportReject_WrapsAPlainErrorWhoseContextEnded(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	require.EqualError(t, err, "the command's context ended (context canceled) and no append was confirmed: context canceled")
 	assert.Empty(t, out.String())
+	assert.Empty(t, warn.String())
 }

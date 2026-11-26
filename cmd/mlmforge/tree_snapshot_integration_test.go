@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,6 +128,7 @@ func TestTreeLoad_FallsBackFromASnapshotTheWorkerRefuses(t *testing.T) {
 		tree+" at stage restore: ")
 	require.Contains(t, stderr, "engine error [INVALID_PARAMS]: failed to deserialize unilevel snapshot")
 	require.Contains(t, stderr, "); dropped the structure; deleted the snapshot\n")
+	require.Equal(t, 1, strings.Count(stderr, "warning: "), "stderr: %s", stderr)
 	var left int
 	require.NoError(t, pool.QueryRow(t.Context(), `SELECT count(*) FROM tree_snapshots WHERE tree_id = $1`, tree).Scan(&left))
 	require.Zero(t, left)

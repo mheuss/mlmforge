@@ -149,9 +149,9 @@ evidence was in that first failure's message: the load's own stdout, reporting a
 loaded tree.
 
 **Count the cause per failing test, not per line.** testify's `Equal` prints the
-expected value twice, once on the `expected:` line and once in the diff. A count
-over the whole log lets one failing test's two lines cover for a second test that
-failed for some other reason. Attribute each match to the test whose output it
+expected value on its `expected:` line, and can print it again in a diff. A count over the whole log lets one
+failing test's two lines cover for a second test that failed for some other
+reason. Attribute each match to the test whose output it
 sits in, between that test's `=== RUN` and `--- FAIL` lines. That holds only while
 no test in the package calls `t.Parallel()`.
 

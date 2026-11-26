@@ -184,14 +184,17 @@ A setup can come from a stored snapshot as well as from writes. The writer
 loads from its snapshot store. So an edited snapshot is a state the writer can
 meet. Use one when no write sequence reaches the state.
 
-There is one exception. A code may be scripted when the writer can never provoke
-it. That holds when no request the writer sends gives that code, in any state
-reachable through writes or a stored snapshot. The code must still be one the
-worker can return for that request type. Script it to test how the writer
-handles that code. The row must say why the code is out of reach. Show this
-against the real worker before scripting the code. Record how in the PR.
+Two replies may be scripted without a setup that provokes them. The first is
+the `INTERNAL_ERROR` reply above. The second is a code the writer can never
+provoke. That holds when no request the writer sends gives that code, in any
+state reachable through writes or a stored snapshot. The code must still be one
+the worker can return for that request type. Script it to test how the writer
+handles that code. The row must name which condition it meets. Put the evidence
+in the PR. Before scripting the code, show from the real worker that it is out
+of reach.
 
-Decided for HEU-1130 on 2026-11-25. Widened on 2026-11-26.
+Decided for HEU-1130 on 2026-11-25. Widened on 2026-11-26 to requests the writer
+never sends. A stored snapshot became a reachable state the same day.
 
 Dated examples, from HEU-948 on 2026-10-19:
 

@@ -3,6 +3,8 @@ package platform
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -112,19 +114,24 @@ func waitForAppLockWaiters(t *testing.T, pool *pgxpool.Pool, app string, n int) 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var pids []int32
+	reads := 0
 	for {
 		var seen []int32
 		err := pool.QueryRow(ctx,
 			`SELECT coalesce(array_agg(pid ORDER BY pid), '{}') FROM pg_stat_activity
 			 WHERE application_name = $1 AND wait_event_type = 'Lock'`, app).Scan(&seen)
-		if err == nil {
-			pids = seen
-			if len(pids) == n {
-				return pids
-			}
-		} else {
+		if err != nil && reads == 0 {
+			t.Fatalf("after %s, no pg_stat_activity read for application_name %s succeeded; want %d session(s) waiting on a lock. The read returned: %v",
+				time.Since(start).Round(time.Millisecond), app, n, err)
+		}
+		if err != nil {
 			t.Fatalf("after %s, %d session(s) with application_name %s were waiting on a lock (pids %v); want %d. The last pg_stat_activity read returned: %v",
 				time.Since(start).Round(time.Millisecond), len(pids), app, pids, n, err)
+		}
+		reads++
+		pids = seen
+		if len(pids) == n {
+			return pids
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -157,11 +164,9 @@ func TestPostgresAppend_TwoAppendsPastThePreCheckGiveOneConcurrencyError(t *test
 	t.Cleanup(func() { _ = blocker.Rollback(context.Background()) })
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
-	// The uncommitted row is invisible to both appends' MAX(version) read, so
-	// both pass the pre-check and queue on the unique index behind it.
 	_, err = blocker.Exec(ctx,
 		`INSERT INTO events (id, stream, type, version, payload) VALUES ($1, $2, 'Blocker', 1, '{}')`,
-		"00000000-0000-0000-0000-0000000000b1", stream)
+		uuid.NewString(), stream)
 	require.NoError(t, err)
 
 	type appendResult struct {
@@ -180,7 +185,8 @@ func TestPostgresAppend_TwoAppendsPastThePreCheckGiveOneConcurrencyError(t *test
 
 	var won, lost []appendResult
 	for range 2 {
-		r := receiveWithin(t, results, 10*time.Second, "an append at expected version 0")
+		r := receiveWithin(t, results, 10*time.Second,
+			fmt.Sprintf("an append at expected version 0 (received so far: %v)", slices.Concat(won, lost)))
 		if r.err == nil {
 			won = append(won, r)
 		} else {

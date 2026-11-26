@@ -1,6 +1,8 @@
 package main
 
 import (
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/mlmforge/mlmforge/internal/networkengine"
@@ -26,8 +28,13 @@ func TestTreeLoad_ReportsARealFailedRedelivery(t *testing.T) {
 	out, err = runTreeCmd(t, append([]string{"load", "--tree-type", "unilevel"}, conn...)...)
 
 	require.Equal(t, 1, exitCode(err), "stdout: %s stderr: %s", out.stdout.String(), out.stderr.String())
-	require.NotContains(t, out.stdout.String(), "loaded tree")
-	require.Contains(t, out.stderr.String(), "load failed: redelivering event "+stuck.ID+" (tree.node_placed) at version 2 in stream tree-"+
-		tree+" returned: ")
-	require.Contains(t, out.stderr.String(), "SPONSOR_NOT_FOUND")
+	var failed *networkengine.CatchUpFailedError
+	require.ErrorAs(t, err, &failed)
+	require.Empty(t, out.stdout.String())
+	stderr := out.stderr.String()
+	require.Regexp(t, "^"+regexp.QuoteMeta("Error: load failed: redelivering event "+stuck.ID+
+		" (tree.node_placed) at version 2 in stream tree-"+tree+" returned: "), stderr)
+	require.True(t, strings.HasSuffix(stderr, "; nothing was appended\n"), "stderr: %s", stderr)
+	require.Equal(t, 1, strings.Count(stderr, "\n"), "stderr: %s", stderr)
+	require.Contains(t, stderr, "SPONSOR_NOT_FOUND")
 }

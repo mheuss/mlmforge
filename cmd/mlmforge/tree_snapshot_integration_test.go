@@ -105,3 +105,29 @@ func TestTreeLoad_RestoresAStoredSnapshot(t *testing.T) {
 	require.Contains(t, out.stderr.String(), "; event "+second[0].ID+" at version 2 of type tree.node_placed failed: ")
 	require.Contains(t, out.stderr.String(), "SPONSOR_NOT_FOUND")
 }
+
+func TestTreeLoad_FallsBackFromASnapshotTheWorkerRefuses(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	worker := requireWorker(t)
+	pool := pgContainer.NewPool(t)
+	tree := testTreeID(1110)
+	conn := snapshotAtTheInterval(t, pool, worker, tree)
+	tag, err := pool.Exec(t.Context(), `UPDATE tree_snapshots SET data = convert_to('{}', 'UTF8') WHERE tree_id = $1`, tree)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), tag.RowsAffected())
+
+	out, err := runTreeCmd(t, append([]string{"load", "--tree-type", "unilevel"}, conn...)...)
+
+	require.NoError(t, err, out.stderr.String())
+	require.Equal(t, "loaded tree "+tree+" (1000 nodes)\n", out.stdout.String())
+	stderr := out.stderr.String()
+	require.Contains(t, stderr, "warning: the snapshot of tree "+tree+" at version 1000 could not be used (build tree "+
+		tree+" at stage restore: ")
+	require.Contains(t, stderr, "engine error [INVALID_PARAMS]: failed to deserialize unilevel snapshot")
+	require.Contains(t, stderr, "); dropped the structure; deleted the snapshot\n")
+	var left int
+	require.NoError(t, pool.QueryRow(t.Context(), `SELECT count(*) FROM tree_snapshots WHERE tree_id = $1`, tree).Scan(&left))
+	require.Zero(t, left)
+}

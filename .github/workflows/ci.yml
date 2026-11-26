@@ -194,6 +194,54 @@ jobs:
           name: go-race-test-json
           path: ${{ runner.temp }}/gotest-race.json
 
+  go-race-full:
+    name: Go race, full suite
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        # Naming bash explicitly is what turns on pipefail. Without it a step
+        # ending in a pipe reports only the last command's status, so an
+        # earlier stage can fail and the step still passes.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A later step needing git credentials fails with an auth error
+          # rather than silently inheriting one.
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.4"
+
+      - name: Install Rust toolchain
+        working-directory: engine
+        run: |
+          RUSTUP_AUTO_INSTALL=0 rustup --version 2>&1 | sed -n 1p
+          rustup toolchain install --no-self-update
+          rustup show active-toolchain | grep -F "$(pwd -P)/rust-toolchain.toml"
+          rustc --version
+
+      - name: Build worker
+        working-directory: engine
+        run: cargo build --package network-engine-worker
+
+      - name: Test with the race detector
+        id: test
+        run: |
+          go test -race -timeout 45m ./... -json \
+            | tee "$RUNNER_TEMP/gotest-race-full.json" \
+            | jq -j 'select(.Action == "output" or .Action == "build-output") | .Output'
+
+      - name: Upload test record
+        if: '!cancelled() && steps.test.conclusion != ''skipped'''
+        uses: actions/upload-artifact@v7
+        with:
+          name: go-race-full-test-json
+          path: ${{ runner.temp }}/gotest-race-full.json
+
   rust:
     name: Rust
     runs-on: ubuntu-latest

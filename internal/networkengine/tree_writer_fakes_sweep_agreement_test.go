@@ -383,6 +383,36 @@ func withMostChildren(nonLeaf []string, kids map[string]int) []string {
 	return top
 }
 
+// relocationChains reports each relocation into a slot that another relocation in the same result vacates, and counts the relocations that change slot.
+func relocationChains(before map[string]sweepPosition, relocated []Relocation) ([]string, int) {
+	type slot struct {
+		parent   string
+		position int
+	}
+	old := map[string]sweepPosition{}
+	for u, p := range before {
+		old[uuidKey(u)] = p
+	}
+	vacates := map[slot]string{}
+	moved := 0
+	for _, r := range relocated {
+		p, ok := old[uuidKey(r.UserID)]
+		from, to := slot{uuidKey(p.Parent), p.Slot}, slot{uuidKey(r.ParentID), r.Position}
+		if ok && from != to {
+			vacates[from] = r.UserID
+			moved++
+		}
+	}
+	var chains []string
+	for _, r := range relocated {
+		if vacater, ok := vacates[slot{uuidKey(r.ParentID), r.Position}]; ok {
+			chains = append(chains, fmt.Sprintf("relocation chain: %s moves into parent=%s position=%d, which %s vacates",
+				r.UserID, r.ParentID, r.Position, vacater))
+		}
+	}
+	return chains, moved
+}
+
 // runMatrixRemovalSweep sweeps seeds first to last against client, one subtest per seed.
 func runMatrixRemovalSweep(t *testing.T, client *EngineClient, first, last int) (*sweepStats, int) {
 	t.Helper()
@@ -453,5 +483,56 @@ func TestParseSweepSeeds(t *testing.T) {
 	} {
 		_, _, err := parseSweepSeeds(row.value)
 		require.EqualError(t, err, row.message, "value %q", row.value)
+	}
+}
+
+func TestRelocationChains(t *testing.T) {
+	root, a, b, c := hexUser(1), hexUser(2), hexUser(3), hexUser(4)
+	layout := func(spell func(string) string) map[string]sweepPosition {
+		return map[string]sweepPosition{
+			spell(root): {},
+			spell(a):    {Parent: spell(root), Slot: 0, Depth: 1},
+			spell(b):    {Parent: spell(root), Slot: 1, Depth: 1},
+			spell(c):    {Parent: spell(a), Slot: 0, Depth: 2},
+		}
+	}
+	same := func(s string) string { return s }
+	up := strings.ToUpper
+	chain := func(mover, parent string, position int, vacater string) string {
+		return fmt.Sprintf("relocation chain: %s moves into parent=%s position=%d, which %s vacates", mover, parent, position, vacater)
+	}
+	for _, row := range []struct {
+		name      string
+		before    map[string]sweepPosition
+		relocated []Relocation
+		chains    []string
+		moved     int
+	}{
+		{"a moves into the slot b vacates", layout(same),
+			[]Relocation{{UserID: b, ParentID: root, Position: 2, Depth: 1}, {UserID: a, ParentID: root, Position: 1, Depth: 1}},
+			[]string{chain(a, root, 1, b)}, 2},
+		{"the chain with the relocations in upper case", layout(same),
+			[]Relocation{{UserID: up(b), ParentID: up(root), Position: 2, Depth: 1}, {UserID: up(a), ParentID: up(root), Position: 1, Depth: 1}},
+			[]string{chain(up(a), up(root), 1, up(b))}, 2},
+		{"the chain with the positions before in upper case", layout(up),
+			[]Relocation{{UserID: b, ParentID: root, Position: 2, Depth: 1}, {UserID: a, ParentID: root, Position: 1, Depth: 1}},
+			[]string{chain(a, root, 1, b)}, 2},
+		{"a and b swap slots", layout(same),
+			[]Relocation{{UserID: a, ParentID: root, Position: 1, Depth: 1}, {UserID: b, ParentID: root, Position: 0, Depth: 1}},
+			[]string{chain(a, root, 1, b), chain(b, root, 0, a)}, 2},
+		{"c keeps its slot and changes depth", layout(same),
+			[]Relocation{{UserID: c, ParentID: a, Position: 0, Depth: 1}}, nil, 0},
+		{"c moves into the slot of a, which is removed and not relocated", layout(same),
+			[]Relocation{{UserID: c, ParentID: root, Position: 0, Depth: 1}}, nil, 1},
+		{"a moves into an empty slot", layout(same),
+			[]Relocation{{UserID: a, ParentID: root, Position: 2, Depth: 1}}, nil, 1},
+		{"the count is per relocation, with a listed twice", layout(same),
+			[]Relocation{{UserID: a, ParentID: root, Position: 2, Depth: 1}, {UserID: a, ParentID: root, Position: 2, Depth: 1}}, nil, 2},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			chains, moved := relocationChains(row.before, row.relocated)
+			assert.Equal(t, row.chains, chains)
+			assert.Equal(t, row.moved, moved)
+		})
 	}
 }

@@ -212,6 +212,16 @@ followed by a reply. Use a plain error that models a transient failure.
 
 Found in plan review for HEU-1067 on 2026-11-18.
 
+A reachability search covers only the bound it ran to. Report the bound with the
+result. A path just past it can still exist. Search the requests the code under
+test sends, not every op the worker takes. Mixing the two makes a claim true for
+the code under test and false at the worker, or the reverse.
+
+Found in review for HEU-1130 on 2026-11-26. The matrix search stopped at 6
+writes after creating the tree. The adversarial reviewer reached
+`SPONSORLESS_WITH_RECRUITS` on the raw worker in 8 such writes. Two of them were
+`place_from_tank`, which the writer never sends.
+
 ## A double that ends the path leaves nothing past it to assert
 
 A double that fails the call ends the code path there. An assertion about

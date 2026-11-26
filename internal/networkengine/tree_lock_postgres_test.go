@@ -322,8 +322,8 @@ func waitForRefusedPoll(t *testing.T, conn *pgx.Conn, pid int32) {
 				time.Since(start).Round(time.Millisecond), pid, err)
 		}
 		if err != nil {
-			t.Fatalf("after %s, lock session pid %d was in state %q with last query %q; want idle after a refused pg_try_advisory_lock. The last pg_stat_activity read returned: %v",
-				time.Since(start).Round(time.Millisecond), pid, state, query, err)
+			t.Fatalf("after %s, the last of %d successful read(s) of lock session pid %d showed state %q with last query %q; want idle after a refused pg_try_advisory_lock. The next read returned: %v",
+				time.Since(start).Round(time.Millisecond), reads, pid, state, query, err)
 		}
 		reads++
 		state, query = seenState, seenQuery

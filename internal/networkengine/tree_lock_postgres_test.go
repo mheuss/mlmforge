@@ -345,14 +345,14 @@ func TestPostgresTreeLocker_AWaiterWhoseSessionEndsMidPollFails(t *testing.T) {
 	holder, err := pgx.ConnectConfig(context.Background(), holderCfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = holder.Close(context.Background()) })
-	// Cancels are registered after the connection closes, so cleanup runs
-	// them first.
+	// Each cancel is registered after the holder's close, so cleanup runs it
+	// first.
 	q, cancelQ := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancelQ)
 	acquire, cancelAcquire := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancelAcquire)
 	_, err = holder.Exec(acquire, "SELECT pg_advisory_lock($1, $2)", platform.TreeLockNamespace, key)
-	require.NoError(t, err, "the holder's pg_advisory_lock on tree %s did not return within 10s", tree)
+	require.NoError(t, err, "the holder's pg_advisory_lock on tree %s, run under a 10s ctx, returned an error", tree)
 	var holderPID int32
 	require.NoError(t, holder.QueryRow(q, "SELECT pg_backend_pid()").Scan(&holderPID))
 
@@ -369,6 +369,21 @@ func TestPostgresTreeLocker_AWaiterWhoseSessionEndsMidPollFails(t *testing.T) {
 		unlock, err := NewPostgresTreeLocker(dsn).Lock(ctx, tree)
 		results <- lockResult{unlock: unlock, err: err}
 	}()
+	received := false
+	t.Cleanup(func() {
+		if received {
+			return
+		}
+		// Cancel before draining, or the receive below can wait out its bound.
+		cancel()
+		select {
+		case r := <-results:
+			if r.unlock != nil {
+				_ = r.unlock()
+			}
+		case <-time.After(10 * time.Second):
+		}
+	})
 	waiter := waitForNewLockSession(t, admin, before)
 	waitForRefusedPoll(t, admin, waiter)
 
@@ -377,12 +392,13 @@ func TestPostgresTreeLocker_AWaiterWhoseSessionEndsMidPollFails(t *testing.T) {
 	require.True(t, ended, "pg_terminate_backend(%d, 5000) returned false", waiter)
 
 	r := receiveWithin(t, results, 10*time.Second, "the Lock whose session was terminated")
+	received = true
 	if r.unlock != nil {
 		_ = r.unlock()
 		t.Fatalf("the Lock whose session was terminated returned an unlock func and error %v", r.err)
 	}
 	require.ErrorContains(t, r.err, "the pg_try_advisory_lock query for tree "+tree.String()+" failed")
-	require.NoError(t, ctx.Err(), "the Lock's ctx had ended by the time it returned")
+	require.NoError(t, ctx.Err(), "the Lock's ctx had ended when checked after its result was received")
 
 	var holders []int32
 	require.NoError(t, admin.QueryRow(q,

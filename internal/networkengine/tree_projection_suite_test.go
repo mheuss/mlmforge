@@ -1524,7 +1524,8 @@ func TestPostgresTreeStore_ALowerVersionQueuedBehindAHigherOneIsRefusedUnderRepe
 
 func runLowerVersionQueuedBehindHigher(t *testing.T, store *PostgresTreeStore, waitForWaiters func(t *testing.T, n int)) {
 	t.Helper()
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
 	tree, root := testTreeUUID(1), testUserUUID(1)
 	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
 	require.NoError(t, store.ProjectInsert(ctx,
@@ -1563,7 +1564,8 @@ func runLowerVersionQueuedBehindHigher(t *testing.T, store *PostgresTreeStore, w
 
 func TestPostgresTreeStore_AnUndoQueuedBehindAHigherProjectionIsRefusedUnderRepeatableRead(t *testing.T) {
 	store, app := repeatableReadStore(t)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
 	tree, root := testTreeUUID(1), testUserUUID(1)
 	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
 
@@ -1595,7 +1597,7 @@ func TestPostgresTreeStore_AnUndoQueuedBehindAHigherProjectionIsRefusedUnderRepe
 	assert.Contains(t, undoErr.Error(), "has projected version 2, not 1")
 	row, err := store.GetNode(ctx, tree, root)
 	require.NoError(t, err)
-	assert.NotNil(t, row, "the root row was deleted")
+	assert.NotNil(t, row, "GetNode returned no active row for the root")
 	version, _, err := store.ProjectedVersion(ctx, tree)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), version)

@@ -12,15 +12,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// snapshotVersion is the stream version the snapshot tests store their
-// snapshot at.
+// snapshotVersion is the stream version at which a snapshot is expected.
 const snapshotVersion = 1000
 
-// snapshotEnrolledAt is the enrolment time of every placement these tests write.
 var snapshotEnrolledAt = time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
 
-// seedProjectedPlacements appends and projects a placement under root at each
-// version from through to, placing testUserID(version).
+// seedProjectedPlacements appends and projects one placement under root at
+// each version from through to.
 func seedProjectedPlacements(t *testing.T, pool *pgxpool.Pool, tree, root string, from, to int) {
 	t.Helper()
 	events := platform.NewPostgresEventStore(pool)
@@ -94,8 +92,9 @@ func TestTreeLoad_RestoresAStoredSnapshot(t *testing.T) {
 	require.Equal(t, "loaded tree "+tree+" (1000 nodes)\n", out.stdout.String())
 	require.Empty(t, out.stderr.String())
 
-	_, err = pool.Exec(t.Context(), `DELETE FROM tree_snapshots WHERE tree_id = $1`, tree)
+	tag, err = pool.Exec(t.Context(), `DELETE FROM tree_snapshots WHERE tree_id = $1`, tree)
 	require.NoError(t, err)
+	require.Equal(t, int64(1), tag.RowsAffected())
 
 	out, err = runTreeCmd(t, load...)
 

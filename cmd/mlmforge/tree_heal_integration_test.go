@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// holdProjectionInsert inserts tree's tree_projections row in a transaction it
+// holdProjectionInsert inserts treeID's tree_projections row in a transaction it
 // leaves open, and returns that transaction.
 func holdProjectionInsert(t *testing.T, treeID string) pgx.Tx {
 	t.Helper()
@@ -25,10 +25,10 @@ func TestTreeAddRoot_ExitsThreeThenTreeLoadHeals(t *testing.T) {
 		t.Skip("Postgres container not available")
 	}
 	worker := requireWorker(t)
-	pool := pgContainer.NewPool(t)
 	t.Setenv("PGOPTIONS", "")
 	t.Setenv(statementTimeoutEnv, "")
 	t.Setenv(lockTimeoutEnv, "500ms")
+	pool := pgContainer.NewPool(t)
 	tree, root := testTreeID(1111), testUserID(1)
 	conn := []string{"--db-url", pgContainer.DSN, "--worker", worker, "--tree-id", tree}
 	held := holdProjectionInsert(t, tree)
@@ -40,6 +40,8 @@ func TestTreeAddRoot_ExitsThreeThenTreeLoadHeals(t *testing.T) {
 	rootEvent := appendedEventID(t, out.stdout.String())
 	require.Equal(t, "appended event "+rootEvent+" at version 1 to stream tree-"+tree+"; projection returned an error\n",
 		out.stdout.String())
+	require.Contains(t, out.stderr.String(),
+		"(the server canceled the statement: lock_timeout is 500ms (set by: "+lockTimeoutEnv+"))")
 	require.Contains(t, out.stderr.String(),
 		"The tree has no projection row. The next write or tree load of this tree redelivers it.")
 	require.NoError(t, held.Rollback(context.Background()))

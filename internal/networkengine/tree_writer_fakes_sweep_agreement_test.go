@@ -22,6 +22,7 @@ const (
 	sweepDefaultLast         = 200
 	sweepNonLeafPromoteFloor = 600
 	sweepMostChildrenFloor   = 500
+	sweepTwoMovedFloor       = 450
 	sweepNonLeafPct          = 90
 	sweepMostChildrenPct     = 75
 	sweepPromotePct          = 90
@@ -60,11 +61,12 @@ type sweepPosition struct {
 	Err             string
 }
 
-// sweepStats counts the sweep's removals by outcome and by the shape of their target.
+// sweepStats counts the sweep's removals by outcome and by the shape of their target or their result.
 type sweepStats struct {
 	accepted     map[PruningMode]int
 	nonLeaf      map[PruningMode]int
 	mostChildren int
+	twoMoved     int
 	refused      int
 }
 
@@ -340,8 +342,16 @@ func sweepSeed(t *testing.T, client *EngineClient, seed int, stats *sweepStats, 
 		if engineErrorOf(workerErr) != engineErrorOf(fakeErr) || (workerErr == nil) != (fakeErr == nil) {
 			stepDiffs = append(stepDiffs, fmt.Sprintf("apply error: worker %v, fake %v", workerErr, fakeErr))
 		}
+		var moved int
+		var chains []string
+		if workerErr == nil {
+			chains, moved = relocationChains(state, workerResult.Relocated)
+		}
 		if workerErr == nil && fakeErr == nil {
 			stats.accepted[mode]++
+			if moved >= 2 {
+				stats.twoMoved++
+			}
 			if hasKids && kids[x] == mostAmongCands {
 				stats.mostChildren++
 			}
@@ -360,8 +370,13 @@ func sweepSeed(t *testing.T, client *EngineClient, seed int, stats *sweepStats, 
 		}
 		compared, next := c.compare(t)
 		stepDiffs = append(stepDiffs, compared...)
+		if len(chains) > 0 {
+			t.Errorf("seed %d: relocation chains in the worker's result of removal %d of %d:\n  %s", seed, step, sweepRemovalAttempts, strings.Join(chains, "\n  "))
+		}
 		if len(stepDiffs) > 0 {
 			t.Errorf("seed %d: differences after removal %d of %d:\n  %s", seed, step, sweepRemovalAttempts, strings.Join(stepDiffs, "\n  "))
+		}
+		if len(chains) > 0 || len(stepDiffs) > 0 {
 			return
 		}
 		state = next
@@ -381,6 +396,36 @@ func withMostChildren(nonLeaf []string, kids map[string]int) []string {
 		}
 	}
 	return top
+}
+
+// relocationChains reports each relocation into a slot that another relocation in the same result vacates, and counts the relocations that change slot.
+func relocationChains(before map[string]sweepPosition, relocated []Relocation) ([]string, int) {
+	type slot struct {
+		parent   string
+		position int
+	}
+	old := map[string]sweepPosition{}
+	for u, p := range before {
+		old[uuidKey(u)] = p
+	}
+	vacates := map[slot]string{}
+	moved := 0
+	for _, r := range relocated {
+		p, ok := old[uuidKey(r.UserID)]
+		from, to := slot{uuidKey(p.Parent), p.Slot}, slot{uuidKey(r.ParentID), r.Position}
+		if ok && from != to {
+			vacates[from] = r.UserID
+			moved++
+		}
+	}
+	var chains []string
+	for _, r := range relocated {
+		if vacater, ok := vacates[slot{uuidKey(r.ParentID), r.Position}]; ok {
+			chains = append(chains, fmt.Sprintf("relocation chain: %s moves into parent=%s position=%d, which %s vacates",
+				r.UserID, r.ParentID, r.Position, vacater))
+		}
+	}
+	return chains, moved
 }
 
 // runMatrixRemovalSweep sweeps seeds first to last against client, one subtest per seed.
@@ -418,13 +463,15 @@ func TestFakeWriterEngine_SweepsMatrixRemovalsAsTheWorkerDoes(t *testing.T) {
 
 	client := startWorker(t)
 	stats, ran := runMatrixRemovalSweep(t, client, first, last)
-	t.Logf("ran %d seeds. Accepted removals: %v, of which non-leaf: %v, of which the target had the most children: %d. Refused by either engine: %d",
-		ran, stats.accepted, stats.nonLeaf, stats.mostChildren, stats.refused)
+	t.Logf("ran %d seeds. Accepted removals: %v, of which non-leaf: %v, of which the target had the most children: %d. Refused by either engine: %d. Accepted removals with two or more relocations that change slot: %d",
+		ran, stats.accepted, stats.nonLeaf, stats.mostChildren, stats.refused, stats.twoMoved)
 	if !fromEnv && ran == last-first+1 {
 		assert.GreaterOrEqual(t, stats.nonLeaf[PruningPromoteEarliest], sweepNonLeafPromoteFloor,
 			"accepted non-leaf promote_earliest removals over seeds %d-%d", first, last)
 		assert.GreaterOrEqual(t, stats.mostChildren, sweepMostChildrenFloor,
 			"accepted removals whose target had the most children among the candidates, over seeds %d-%d", first, last)
+		assert.GreaterOrEqual(t, stats.twoMoved, sweepTwoMovedFloor,
+			"accepted removals with two or more relocations that change slot, over seeds %d-%d", first, last)
 	}
 }
 
@@ -453,5 +500,60 @@ func TestParseSweepSeeds(t *testing.T) {
 	} {
 		_, _, err := parseSweepSeeds(row.value)
 		require.EqualError(t, err, row.message, "value %q", row.value)
+	}
+}
+
+func TestRelocationChains(t *testing.T) {
+	root, a, b, c := hexUser(1), hexUser(2), hexUser(3), hexUser(4)
+	layout := func(spell func(string) string) map[string]sweepPosition {
+		return map[string]sweepPosition{
+			spell(root): {},
+			spell(a):    {Parent: spell(root), Slot: 0, Depth: 1},
+			spell(b):    {Parent: spell(root), Slot: 1, Depth: 1},
+			spell(c):    {Parent: spell(a), Slot: 0, Depth: 2},
+		}
+	}
+	same := func(s string) string { return s }
+	up := strings.ToUpper
+	chain := func(mover, parent string, position int, vacater string) string {
+		return fmt.Sprintf("relocation chain: %s moves into parent=%s position=%d, which %s vacates", mover, parent, position, vacater)
+	}
+	for _, row := range []struct {
+		name      string
+		before    map[string]sweepPosition
+		relocated []Relocation
+		chains    []string
+		moved     int
+	}{
+		{"a moves into the slot b vacates", layout(same),
+			[]Relocation{{UserID: b, ParentID: root, Position: 2, Depth: 1}, {UserID: a, ParentID: root, Position: 1, Depth: 1}},
+			[]string{chain(a, root, 1, b)}, 2},
+		{"the chain with the relocations in upper case", layout(same),
+			[]Relocation{{UserID: up(b), ParentID: up(root), Position: 2, Depth: 1}, {UserID: up(a), ParentID: up(root), Position: 1, Depth: 1}},
+			[]string{chain(up(a), up(root), 1, up(b))}, 2},
+		{"the chain with the positions before in upper case", layout(up),
+			[]Relocation{{UserID: b, ParentID: root, Position: 2, Depth: 1}, {UserID: a, ParentID: root, Position: 1, Depth: 1}},
+			[]string{chain(a, root, 1, b)}, 2},
+		{"a and b swap slots", layout(same),
+			[]Relocation{{UserID: a, ParentID: root, Position: 1, Depth: 1}, {UserID: b, ParentID: root, Position: 0, Depth: 1}},
+			[]string{chain(a, root, 1, b), chain(b, root, 0, a)}, 2},
+		{"c keeps its slot and changes depth", layout(same),
+			[]Relocation{{UserID: c, ParentID: a, Position: 0, Depth: 1}}, nil, 0},
+		{"c keeps its slot, with the relocation in upper case", layout(same),
+			[]Relocation{{UserID: up(c), ParentID: up(a), Position: 0, Depth: 1}}, nil, 0},
+		{"a relocated user missing from the positions before", layout(same),
+			[]Relocation{{UserID: hexUser(9), ParentID: root, Position: 2, Depth: 1}}, nil, 0},
+		{"c moves into the slot of a, which is removed and not relocated", layout(same),
+			[]Relocation{{UserID: c, ParentID: root, Position: 0, Depth: 1}}, nil, 1},
+		{"a moves into an empty slot", layout(same),
+			[]Relocation{{UserID: a, ParentID: root, Position: 2, Depth: 1}}, nil, 1},
+		{"the count is per relocation, with a listed twice", layout(same),
+			[]Relocation{{UserID: a, ParentID: root, Position: 2, Depth: 1}, {UserID: a, ParentID: root, Position: 2, Depth: 1}}, nil, 2},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			chains, moved := relocationChains(row.before, row.relocated)
+			assert.Equal(t, row.chains, chains)
+			assert.Equal(t, row.moved, moved)
+		})
 	}
 }

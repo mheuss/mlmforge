@@ -746,3 +746,10 @@ up each row so the other rules hold. Then the row fails on the count alone.
 A pinned count of zero has no row below it. A count cannot be negative. With a
 pinned count of zero, `!=` and `>` give the same result. The row above the
 count is enough.
+
+## Put the mutant definitions where the reader is
+
+An overlay mutant lives in ignored scratch. Its JSON names absolute paths in one
+worktree. A PR body that cites those files gives a reviewer nothing to rerun.
+Write each anchor and replacement into the PR body itself. Do the same for any
+helper a mutant appends. Found in review for HEU-1114 on 2026-11-25.

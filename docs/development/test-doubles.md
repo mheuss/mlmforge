@@ -378,6 +378,14 @@ most-children bias off. In that run, the mutant whose free-slot search skipped
 repositioned siblings' subtrees failed exactly 5 seeds. The non-leaf floor still
 passed.
 
+A floor catches a counter that stops counting. It does not catch one that counts
+too much. Loosen the condition the counter tests and it counts a superset of the
+same cases. The count can only rise, so the floor still passes. Where a looser
+condition would matter, say so in the PR. Pin the count with a ceiling only when
+a rise would mean a defect. Used for HEU-1114 on 2026-11-25. Counting results
+with one slot-changing relocation instead of two would raise 575 to 781. The
+floor is 450.
+
 Choose each step from the real engine's state, never the fake's. A mutated fake
 then gets the same cases as the real one. Its counts can be compared.
 

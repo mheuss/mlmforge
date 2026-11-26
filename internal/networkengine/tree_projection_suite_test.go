@@ -1513,6 +1513,16 @@ func waitForLockWaiters(t *testing.T, pool *pgxpool.Pool, n int) {
 
 func TestPostgresTreeStore_ALowerVersionQueuedBehindAHigherOneIsRefused(t *testing.T) {
 	store := newTestPostgresTreeStore(t)
+	runLowerVersionQueuedBehindHigher(t, store, func(t *testing.T, n int) { waitForLockWaiters(t, store.pool, n) })
+}
+
+func TestPostgresTreeStore_ALowerVersionQueuedBehindAHigherOneIsRefusedUnderRepeatableRead(t *testing.T) {
+	store, app := repeatableReadStore(t)
+	runLowerVersionQueuedBehindHigher(t, store, func(t *testing.T, n int) { waitForAppLockWaiters(t, store.pool, app, n) })
+}
+
+func runLowerVersionQueuedBehindHigher(t *testing.T, store *PostgresTreeStore, waitForWaiters func(t *testing.T, n int)) {
+	t.Helper()
 	ctx := context.Background()
 	tree, root := testTreeUUID(1), testUserUUID(1)
 	require.NoError(t, store.ProjectInsert(ctx, makeUUIDNode(testNodeUUID(1), tree, root, 0, nil, ptr(root), nil), 1))
@@ -1530,17 +1540,17 @@ func TestPostgresTreeStore_ALowerVersionQueuedBehindAHigherOneIsRefused(t *testi
 		higher <- store.ProjectInsert(ctx,
 			makeUUIDNode(testNodeUUID(4), tree, testUserUUID(4), 1, ptr(root), ptr(root), intPtr(2)), 4)
 	}()
-	waitForLockWaiters(t, store.pool, 1)
+	waitForWaiters(t, 1)
 	go func() {
 		lower <- store.ProjectInsert(ctx,
 			makeUUIDNode(testNodeUUID(3), tree, testUserUUID(3), 1, ptr(root), ptr(root), intPtr(1)), 3)
 	}()
-	waitForLockWaiters(t, store.pool, 2)
+	waitForWaiters(t, 2)
 	require.NoError(t, blocker.Commit(ctx))
 
-	require.NoError(t, receive(t, higher, 10*time.Second))
+	require.NoError(t, receiveWithin(t, higher, 10*time.Second, "the projection at version 4"))
 	var refused *ProjectionRefusedError
-	require.ErrorAs(t, receive(t, lower, 10*time.Second), &refused)
+	require.ErrorAs(t, receiveWithin(t, lower, 10*time.Second, "the projection at version 3"), &refused)
 	assert.Equal(t, ProjectionRefusedError{TreeID: tree, EventVersion: 3, ProjectedVersion: 4}, *refused)
 	version, _, err := store.ProjectedVersion(ctx, tree)
 	require.NoError(t, err)

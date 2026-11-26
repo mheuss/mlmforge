@@ -164,18 +164,31 @@ A probe that logged and refused nothing found 101 calls through the four write
 methods: 80 inserts, 13 removals and 8 root undos. The refusing probe logged no
 removal or undo calls at all.
 
-## Script only replies the worker gives for the payload
+## Script a reply only where the setup makes the worker give it
 
-A scripted engine reply must be one the worker gives for that payload. A reply
-it cannot give describes a refusal that never happens. A scripted reply fires
-whether or not the payload would provoke it. The test then cannot show that the
-payload provokes the refusal.
+A scripted engine reply must be one the real worker gives for that request,
+from that test's setup. A code the worker can return for the request type is
+not enough. A scripted reply fires whether or not the setup would provoke it.
+The test then cannot show that the setup provokes the refusal.
 
-When a test needs a particular refusal, give the payload what provokes it. Let
+When a test needs a particular refusal, build the setup that provokes it. Let
 the fake refuse. When the fake does not model that refusal, add the check to the
 fake first. Put it in the worker's order. When a test needs any engine error for
 a valid payload, use `INTERNAL_ERROR` with the message "handler panicked
 unexpectedly". Check the worker's panic reply before copying the message.
+
+A setup can come from a stored snapshot as well as from writes. The writer
+loads from its snapshot store, so an edited snapshot is a state the writer can
+meet. Use one when no write sequence reaches the state.
+
+There is one exception. A code the worker can return for that request type may
+be scripted when no request the writer sends provokes it from any state
+reachable through writes or a stored snapshot. Script it to test how the writer
+handles that code.
+The row must say why the code is out of reach. Show that it is out of reach,
+against the real worker, before scripting it. Record how in the PR.
+
+Decided for HEU-1130 on 2026-11-25.
 
 Read from the worker for HEU-949 on 2026-11-13. Its dispatch loop gives that
 reply for any request whose handler panics.

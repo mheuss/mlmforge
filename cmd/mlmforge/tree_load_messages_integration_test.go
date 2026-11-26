@@ -38,3 +38,65 @@ func TestTreeLoad_ReportsARealFailedRedelivery(t *testing.T) {
 	require.Equal(t, 1, strings.Count(stderr, "\n"), "stderr: %s", stderr)
 	require.Contains(t, stderr, "SPONSOR_NOT_FOUND")
 }
+
+func TestTreeLoad_RefusesATreeTypeTheStreamDoesNotRecord(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	worker := requireWorker(t)
+	_ = pgContainer.NewPool(t)
+	tree := testTreeID(1116)
+	seedTree(t, worker, tree, 0)
+
+	out, err := runTreeCmd(t, "load", "--db-url", pgContainer.DSN, "--worker", worker, "--tree-id", tree,
+		"--tree-type", "binary")
+
+	require.Equal(t, 1, exitCode(err), "stdout: %s stderr: %s", out.stdout.String(), out.stderr.String())
+	require.Empty(t, out.stdout.String())
+	require.Contains(t, out.stderr.String(), "load failed: load tree "+tree+": stream tree-"+tree+
+		" records tree type unilevel at version 1, and the request names binary")
+}
+
+func addMatrixRoot(t *testing.T, worker, tree string) {
+	t.Helper()
+	root := testUserID(1)
+	out, err := runTreeCmd(t, "add-root", "--db-url", pgContainer.DSN, "--worker", worker, "--tree-id", tree,
+		"--user-id", root, "--sponsor-id", root, "--tree-type", "matrix",
+		"--matrix-width", "2", "--matrix-spillover", "breadth_first")
+	require.NoError(t, err, out.stderr.String())
+}
+
+func TestTreeLoad_RefusesAMatrixWidthTheStreamDoesNotRecord(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	worker := requireWorker(t)
+	_ = pgContainer.NewPool(t)
+	tree := testTreeID(1117)
+	addMatrixRoot(t, worker, tree)
+
+	out, err := runTreeCmd(t, "load", "--db-url", pgContainer.DSN, "--worker", worker, "--tree-id", tree,
+		"--tree-type", "matrix", "--matrix-width", "3")
+
+	require.Equal(t, 1, exitCode(err), "stdout: %s stderr: %s", out.stdout.String(), out.stderr.String())
+	require.Empty(t, out.stdout.String())
+	require.Contains(t, out.stderr.String(), "load failed: load tree "+tree+": stream tree-"+tree+
+		" records matrix width 2 at version 1, and the request names 3")
+}
+
+func TestTreeLoad_LoadsAMatrixTreeWithTheMatrixFlagsLeftOut(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	worker := requireWorker(t)
+	_ = pgContainer.NewPool(t)
+	tree := testTreeID(1118)
+	addMatrixRoot(t, worker, tree)
+
+	out, err := runTreeCmd(t, "load", "--db-url", pgContainer.DSN, "--worker", worker, "--tree-id", tree,
+		"--tree-type", "matrix")
+
+	require.NoError(t, err, out.stderr.String())
+	require.Equal(t, "loaded tree "+tree+" (1 nodes)\n", out.stdout.String())
+	require.Empty(t, out.stderr.String())
+}

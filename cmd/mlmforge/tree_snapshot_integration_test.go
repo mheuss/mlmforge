@@ -65,8 +65,8 @@ func snapshotAtTheInterval(t *testing.T, pool *pgxpool.Pool, worker, tree string
 	return conn
 }
 
-// overwriteSecondPlacement rewrites tree's version-2 placement to name a
-// sponsor the tree never held, and returns that event as it was read.
+// overwriteSecondPlacement replaces the payload of tree's version-2 placement
+// with one that changes its sponsor, and returns the event as read before that.
 func overwriteSecondPlacement(t *testing.T, pool *pgxpool.Pool, tree string) platform.Event {
 	t.Helper()
 	stream := networkengine.TreeStreamName(tree)

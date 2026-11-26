@@ -303,3 +303,32 @@ func TestReportReject_PrintsEachWarning(t *testing.T) {
 		})
 	}
 }
+
+func TestReportReject_ReturnsAnUnknownOutcomeAsItsOwnValue(t *testing.T) {
+	unknown := &networkengine.AppendOutcomeUnknownError{
+		Stream: "tree-t", Version: 3, EventID: "r",
+		AppendErr: context.Canceled, ReadErr: errors.New("read timed out"),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out, warn bytes.Buffer
+
+	err := reportReject(ctx, &out, &warn, networkengine.RejectResult{Stream: "tree-t"}, unknown)
+
+	require.Same(t, unknown, err)
+	assert.Empty(t, out.String())
+	assert.Empty(t, warn.String())
+}
+
+func TestReportReject_WrapsAPlainErrorWhoseContextEnded(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var out, warn bytes.Buffer
+
+	err := reportReject(ctx, &out, &warn, networkengine.RejectResult{Stream: "tree-t"}, context.Canceled)
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.EqualError(t, err, "the command's context ended (context canceled) and no append was confirmed: context canceled")
+	assert.Empty(t, out.String())
+	assert.Empty(t, warn.String())
+}

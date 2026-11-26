@@ -131,6 +131,38 @@ harness refuse instead:
 Run it before the first mutation, not before each one: by the time a mutation
 is applied the file is dirty by design.
 
+## The cause pattern names the assertion that fails first
+
+A count of failing tests says the mutation was caught. It does not say where. A
+harness that also matches a cause pattern in the failure output can say where,
+but only if the pattern can appear there.
+
+**Name the first assertion the mutation can trip, not the one the test exists
+for.** A `require` stops the test at its first failure, so every assertion below
+it never runs under that mutation.
+
+Worked case, HEU-1109. A row skipped the stream replay after a load dropped a
+refused snapshot. The predicted pattern was the replay-stage error. Under the
+mutation the load succeeded, so the test stopped at its exit-code check. The
+replay assertion was never reached, and the pattern matched nothing. The
+evidence was in that first failure's message: the load's own stdout, reporting a
+loaded tree.
+
+**Count the cause per failing test, not per line.** testify's `Equal` prints the
+expected value on its `expected:` line, and can print it again in a diff. A count over the whole log lets one
+failing test's two lines cover for a second test that failed for some other
+reason. Attribute each match to the test whose output it
+sits in, between that test's `=== RUN` and `--- FAIL` lines. That holds only while
+no test in the package calls `t.Parallel()`.
+
+**A check inside `require.True` leaves no expected text in the log.** It prints
+"Should be true" and its message. A pattern that names the expected literal then
+has nothing to match. Assert with `Regexp`, `Contains` or `Equal`, so the failure
+prints what was expected.
+
+`awk -v` reprocesses backslashes in a pattern, so write a literal parenthesis as
+`[(]` rather than `\(`.
+
 ## After a fix, re-run the whole set
 
 A fix can make a mutation survive in code it never touched. Re-running the rows

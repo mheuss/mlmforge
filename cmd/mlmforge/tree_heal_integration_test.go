@@ -60,3 +60,56 @@ func TestTreeAddRoot_ExitsThreeThenTreeLoadHeals(t *testing.T) {
 	require.Empty(t, out.stderr.String())
 	requireProjectedVersion(t, store, tree, 1)
 }
+
+// holdChildInsert inserts an active row for userID under parentID in a
+// transaction it leaves open, and returns that transaction.
+func holdChildInsert(t *testing.T, treeID, userID, parentID string) pgx.Tx {
+	t.Helper()
+	tx := holdTx(t)
+	_, err := tx.Exec(context.Background(), `INSERT INTO tree_nodes (id, tree_id, user_id, parent_id, sponsor_id, depth, enrolled_at)
+VALUES (gen_random_uuid(), $1, $2, $3, $3, 1, now())`, treeID, userID, parentID)
+	require.NoError(t, err)
+	return tx
+}
+
+func TestTreePlace_ExitsThreeThenTheNextWriteHeals(t *testing.T) {
+	if pgContainer == nil {
+		t.Skip("Postgres container not available")
+	}
+	worker := requireWorker(t)
+	t.Setenv("PGOPTIONS", "")
+	t.Setenv(statementTimeoutEnv, "")
+	t.Setenv(lockTimeoutEnv, "")
+	pool := pgContainer.NewPool(t)
+	tree, root, child, next := testTreeID(1112), testUserID(1), testUserID(2), testUserID(3)
+	seedTree(t, worker, tree, 0)
+	conn := []string{"--db-url", pgContainer.DSN, "--worker", worker, "--tree-id", tree}
+	held := holdChildInsert(t, tree, child, root)
+	t.Setenv(lockTimeoutEnv, "500ms")
+
+	out, err := runTreeCmd(t, append([]string{"place", "--user-id", child, "--parent-id", root,
+		"--sponsor-id", root}, conn...)...)
+
+	require.Equal(t, 3, exitCode(err), "stdout: %s stderr: %s", out.stdout.String(), out.stderr.String())
+	placed := appendedEventID(t, out.stdout.String())
+	require.Contains(t, out.stderr.String(),
+		"(the server canceled the statement: lock_timeout is 500ms (set by: "+lockTimeoutEnv+"))")
+	require.Contains(t, out.stderr.String(),
+		"The tree's projected version is 1. The next write or tree load of this tree redelivers it.")
+	require.NoError(t, held.Rollback(context.Background()))
+	store := networkengine.NewPostgresTreeStore(pool)
+	row, err := store.GetNode(t.Context(), tree, child)
+	require.NoError(t, err)
+	require.Nil(t, row, "the child has a row before the heal")
+	requireProjectedVersion(t, store, tree, 1)
+
+	out, err = runTreeCmd(t, append([]string{"place", "--user-id", next, "--parent-id", root,
+		"--sponsor-id", root}, conn...)...)
+
+	require.NoError(t, err, out.stderr.String())
+	row, err = store.GetNode(t.Context(), tree, child)
+	require.NoError(t, err)
+	require.NotNil(t, row, "the next write left no row for the first placement")
+	require.Equal(t, placed, row.ID)
+	requireProjectedVersion(t, store, tree, 3)
+}
